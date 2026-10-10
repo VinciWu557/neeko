@@ -41,16 +41,29 @@ impl PlatformWatcher {
     /// **为什么需要它**：排除集合是 ignore 规则的派生值。`.gitignore` / 用户排除变化后，
     /// 新可见的子树若仍留在旧排除集合里，其事件将永不投递（无界陈旧，违反下端界契约）。
     /// 维护线程在 `ReloadAll` 时调用本方法，把新集合重烘焙进流。
+    #[cfg(target_os = "macos")]
     #[must_use]
     pub fn set_exclusion_paths(&mut self, exclusions: &[std::path::PathBuf]) -> bool {
         match self {
             Self::Native(_) => false,
-            #[cfg(target_os = "macos")]
             Self::MacExclusion(watcher) => {
                 watcher.update_exclusions(exclusions);
                 true
             }
         }
+    }
+}
+
+/// 非 macOS：无物理排除后端（`MacExclusion` 变体不存在），提供同签名 no-op stub。
+#[cfg(not(target_os = "macos"))]
+impl PlatformWatcher {
+    /// 非 macOS stub：恒 no-op 返回 `false`。**必须为 `const fn`**（红线 10）—— 参数在非目标
+    /// 平台不被消费，遗留普通 `fn` 会同时触发 `unused_variables` 与 `missing_const_for_fn`，
+    /// 被 clippy `-D warnings` 升级为 CI 错误。
+    #[must_use]
+    pub const fn set_exclusion_paths(&mut self, _exclusions: &[std::path::PathBuf]) -> bool {
+        let _ = self;
+        false
     }
 }
 
