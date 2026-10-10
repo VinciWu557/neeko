@@ -96,15 +96,54 @@
 
 - **唯一缓存所有者 = 后端**：`DIFF_CACHE`（LRU，cap 50）是 diff 内容唯一缓存；前端是**无状态消费者**，
   每次展示/聚焦直接 `get_file_diff`，不得持有跨挂载的模块级 diff 缓存。
-- **工作区 diff**（`get_cached_worktree_diff`）：命中时重新 `stat` 文件，指纹 `(mtime_ns, size)` 一致
-  才返回缓存，不一致即重算并刷新；文件删除/新增（`None↔Some`）同样触发重算。
+- **工作区 diff**（`get_cached_worktree_diff`）：命中判据 = 下方「全输入指纹」，任一输入变化即重算并刷新；
+  文件删除/新增（`None↔Some`）同样触发重算。指纹类型（`DiffInputFingerprint`）与采集函数
+  （`capture_diff_input_fingerprint`）是 `cache/file.rs` 的**私有实现细节**，模块只对外暴露 `get_cached_worktree_diff`。
+- **单文件 diff 语义（三态 + 基线统一）**：`get_file_diff` 的产物只有三种合法形态，与 transport 无关：
+  ① 已跟踪且相对 HEAD 无改动 → `hunks` 为空；② 已跟踪且有改动 → 对应 hunk；③ 未跟踪/新文件 → 全 `Added`。
+  **空 hunk 只表示 ①，绝不等于 ③** —— untracked 必须由差分引擎自身纳入（git2 需同时置
+  `include_untracked` + `recurse_untracked_dirs` + `show_untracked_content`，缺 `show_untracked_content`
+  只会有 delta 名、无 patch 行），shell 分支用 `git ls-files --others --exclude-standard` 显式判定后
+  才补 `Added`。基线两端一律「工作区 vs HEAD」（shell = `git diff HEAD`；unborn HEAD 退回
+  `git diff`，与 git2 的 `diff_index_to_workdir(None)` 同义）。回归：
+  `local::diff::clean_tracked_file_has_no_hunks`、`operations::file_diff_shell_clean_tracked_file_yields_no_hunks`、
+  `git_test::get_file_diff_on_clean_tracked_file_has_no_hunks`（历史缺陷：「hunks 为空 ⇒ 读工作区字节伪造全 Added」
+  让已提交的干净文件整篇显示为新增行）。
+- **命中指纹 = diff 全输入**：缓存条目存 `capture_diff_input_fingerprint` = `f(HEAD oid, index 文件指针, 工作区文件指针)`。
+  任一变化即失效重算 —— 只比工作区文件是错的：外部 `commit`／`checkout` 会移动 HEAD 而文件不动，
+  `git add` 会改 index 而文件不动，两者都会命中 commit 前的旧 diff（「已提交却仍显示变更高亮」）。
+  index 位于该单元自己的 gitdir（linked worktree = 私有 gitdir），只能经 `Repository::path()` 取得。
+  回归：`worktree_diff_recomputes_when_head_moves`、`worktree_diff_recomputes_when_index_changes`。
 - **键隔离**：`{repo}:{path}:collapse={bool}`，collapse 不同各自缓存。
 - **失效**：`invalidate_repo_caches` 仅覆盖 git 写操作（branch 切换 / commit / stash 等 HEAD 或 index 变化）；
-  普通文件编辑**不**清缓存——由指纹校验兜底，保证"后端永远返回当前磁盘真相"。
+  普通文件编辑**不**清缓存——由输入指纹校验兜底，保证"后端永远返回当前磁盘真相"。
 - **远程/WSL**：`open_repo` 仅 `ExecTarget::Local` 返回 `Some`，其余走 shell 分支**不缓存**（每次现算）；
   前端靠"显示即拉 + 手动刷新"保证新鲜。
-- **阻塞 I/O**：`capture_file_fingerprint` 内含 `std::fs::metadata`，只能在 `spawn_blocking` 内调用
-  （`operations::get_file_diff` 已包裹）。
+- **阻塞 I/O**：`capture_diff_input_fingerprint` 内含 `Repository::open` / `std::fs::metadata`，只能在
+  `spawn_blocking` 内调用（`operations::get_file_diff` 已包裹）。
+
+### 5b. IPC 载荷封顶（红线 4）
+
+`full_diff_context_lines` 只约束 **context** 行，`Added` / `Removed` 不受其约束：一个超大改动
+（尤其未跟踪新文件被整份读入）仍可让 `get_file_diff` 的 JSON 超过 2MB。
+
+- **唯一实现 = `parsers::cap_diff_payload`（纯函数），所有 `DiffResult` 出口都必须过它**：
+  已接线于 `operations::get_file_diff`（派发缝，覆盖 local git2 / shell 与未来 transport）与
+  `operations::log::get_revision_file_diff`（覆盖 commit / stash 文件 diff）。禁止各分支自造护栏。
+- **判据 = 目标度量本身**：每行经真实序列化器（计数 sink，`serde_json::to_writer`，不分配）量出
+  JSON 字节数，再叠加 hunk / 顶层结构开销；**禁止用「内容长度 × 近似转义系数」** —— 控制字符
+  JSON 转义最长 6×（`\x01` → `\u0001`），任何近似系数都会被击穿。预算 `DIFF_PAYLOAD_MAX_BYTES`
+  = 1.5MB，给结构开销与命令封装留 0.5MB 余量。
+- **截断语义**：超预算即从截断点丢弃该行及之后所有 hunk，被截断 hunk 若为空则一并清除；`truncated = true`。
+- **用户可见面（必须）**：diff 视图必须消费 `truncated` —— `DiffContent` 是 unified / split 表格的
+  **唯一渲染实现**，`SingleDiffBody`（单文件）与 `FileDiffSection`（多文件，含 combined）都经它渲染；
+  其内联的 `DiffTruncatedNotice` 显隐**只由 `truncated` 决定、与 hunk 数正交**。**含「截断到 0 hunk」
+  （单行即超预算）**：此时只渲染提示，禁止退化为「No changes」。**编辑器高亮**（`deriveFileLineChanges`）
+  是另一类消费者，接受部分渲染、不承担告知义务（告知义务归 diff 视图）。禁止后端置位、diff 视图静默丢弃。
+- **回归**：`diff_payload_cap_tests`（含 **控制字符 6× 转义下 `serde_json::to_vec` ≤ 2MB** 硬断言、
+  计量与真实序列化一致）、`file_diff_shell_caps_oversized_untracked_payload`、
+  `file_diff_caps_oversized_untracked_payload`（派发缝）、`get_commit_file_diff_caps_oversized_payload`
+  （revision 出口）、`DiffTruncationNotice.test.tsx`（前端：有 hunk / 无截断 / **截断到 0 hunk** 三态）。
 
 ## 6. 测试要求
 
@@ -113,7 +152,8 @@
 - `parse_stash_list`：selector/hash/message/branch/timestamp 解析；空输出。
 - 集成：临时仓库含孤立 `refs/synara/checkpoints` 提交时，`get_commit_log`（HEAD）不包含该提交；
   decorate 含 tool refs 的提交其 `refs`/`refs_list` 不含 tool 项；stash list/files roundtrip。
-- 缓存（`cache.rs` tests）：未变命中（fetch 仅一次）；文件修改/删除后重算；collapse 键隔离。
+- 缓存（`cache.rs` tests）：未变命中（fetch 仅一次）；文件修改/删除后重算；collapse 键隔离；
+  **HEAD 位移（空 commit）与 index 变化后必须重算**（全输入指纹）。
 
 ## 7. 换行边界契约（git 归一化视图 vs 工作区字节）
 
@@ -138,10 +178,12 @@
 - **护栏**：`tools/guards/checks/check_worktree_byte_assertions.py` 检出「read_to_string 绑定变量被
   assert_eq! 字节级引用」模式，已接入 `pnpm lint` 与 CI（backend-check ubuntu）。
 
-**生产审计（L4）**：`common/git/` 5 处工作区字节读点全部 CRLF 兼容——`operations.rs:1106`
-（`get_file_diff` fallback）、`operations.rs:1193`（untracked 行数）、`local.rs:310`（行数
-fallback，主路径 `wc -l` 按 `\n` 计数）、`local.rs:514`（git2 fallback，其 diff 行内容另有
-`trim_end_matches('\r')`）、`local.rs:1412`（untracked diff fallback）——均走 `.lines()`。
+**生产审计（L4）**：`common/git/` 的工作区字节读点（shell 分支 `operations::maybe_add_untracked_hunk`
+读未跟踪文件、untracked 行数统计、`local` 的行数 fallback 与 diff 行内容）全部 CRLF 兼容 —— 均走
+`.lines()` 或显式 `trim_end_matches('\r')`。`common/git/` 的 diff 读取不再有「hunks/diff 为空 ⇒ 当新文件
+读工作区字节」的伪造路径：`get_file_diff`（local git2 由差分引擎纳入 untracked；shell 由 `has_head`
+定 HEAD 基线 + `git ls-files --others` 确认 untracked）与 `get_diff_for_files`（先 `ls-files --others`
+过滤）都先确认文件确实未跟踪才读工作区字节（见 §5 三态契约）。
 `transport.rs` 的 `write_all(stdin)` 写入 git 子进程 stdin（如 `git apply --stdin`），非工作区
 字节。无任何生产 autocrlf 注入。回归测试：`git_test::file_diff_new_crlf_file_strips_carriage_returns`
 （git2 分支）`operations::file_diff_shell_fallback_crlf_file_strips_carriage_returns`（shell 分支，
@@ -648,7 +690,7 @@ ignored 根**整体置入（`FSEventStreamSetExclusionPaths` 无否定语义）�
 - `src-tauri/src/common/git/path_guard.rs` — 工作树路径与仓库内相对路径的**校验**（归一不在此）
 - `src-tauri/src/common/git/refs.rs` — refs 分类纯函数
 - `src-tauri/src/common/git/parsers/` — `status` / `numstat` / `commit` / `quoting`（C 转义唯一解码点）
-- `src-tauri/src/common/git/cache/` — `get_cached_worktree_diff` / `FileFingerprint` / LRU diff 缓存
+- `src-tauri/src/common/git/cache/` — `get_cached_worktree_diff` / `capture_diff_input_fingerprint` / `DiffInputFingerprint` / LRU diff 缓存
 - `src-tauri/src/common/git/status_worker/` — status 快照唯一计算路径（含折叠 untracked 目录内容摘要 `collapsed_probe.rs`）
 - `src-tauri/src/git/services/status.rs` — 单元 status 读接口与挂载编排（`read_workspace_status` / `activate` / `wait_status_fresh`）
 - `src-tauri/src/common/file/watcher/manager/` — 按单元挂载的资源注册表（`watchers` / `snapshots` 主键 = `WorkspaceRef::key()`）

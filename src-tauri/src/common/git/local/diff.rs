@@ -114,6 +114,10 @@ fn count_lines_with_wc(path: &Path) -> usize {
 }
 
 /// Get the diff for a single file (working tree vs HEAD).
+///
+/// **三态契约**（`git-domain.md` §5）：已跟踪干净 → `hunks` 为空；已跟踪有改动 → 对应 hunk；
+/// 未跟踪 → 全 `Added`（由 `include_untracked` + `show_untracked_content` 纳入）。
+/// 「hunks 为空」只表示干净，绝不推断为新文件。
 pub fn get_file_diff(repo_path: &Path, file_path: &str, collapse: bool) -> Result<DiffResult> {
     crate::common::git::cache::get_cached_worktree_diff(repo_path, file_path, collapse, || {
         let t_open = std::time::Instant::now();
@@ -139,7 +143,13 @@ pub fn get_file_diff(repo_path: &Path, file_path: &str, collapse: bool) -> Resul
         };
         opts.pathspec(file_path)
             .context_lines(context_lines)
-            .ignore_whitespace_eol(false);
+            .ignore_whitespace_eol(false)
+            // 未跟踪文件由差分引擎自身按 `Added` 表达（而不是在「hunks 为空」时
+            // 读工作区字节伪造）——「空 diff」只表示「已跟踪且无改动」。
+            // `show_untracked_content` 才会为未跟踪 delta 生成 patch 行（否则只有 delta 名、无 hunk）。
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
 
         let old_tree = repo
             .head()
@@ -202,31 +212,8 @@ pub fn get_file_diff(repo_path: &Path, file_path: &str, collapse: bool) -> Resul
             t_foreach.elapsed().as_millis()
         );
 
-        let mut result_hunks = hunks.into_inner();
-
-        // If hunks is empty, try to read file content (may be a new file)
-        if result_hunks.is_empty() {
-            let full_path = repo_path.join(file_path);
-            if full_path.exists() && full_path.is_file() {
-                if let Ok(content) = std::fs::read_to_string(&full_path) {
-                    let lines: Vec<DiffLine> = content
-                        .lines()
-                        .map(|line| DiffLine::Added(line.to_string()))
-                        .collect();
-
-                    if !lines.is_empty() {
-                        #[allow(clippy::cast_possible_truncation)]
-                        result_hunks.push(DiffHunk {
-                            old_start: 0,
-                            old_lines: 0,
-                            new_start: 1,
-                            new_lines: lines.len() as u32,
-                            lines,
-                        });
-                    }
-                }
-            }
-        }
+        // hunks 为空 = 已跟踪且相对 HEAD 无改动（untracked 已由 include_untracked 纳入）。
+        let result_hunks = hunks.into_inner();
 
         Ok(DiffResult {
             hunks: result_hunks,
@@ -303,17 +290,31 @@ pub fn get_diff_for_files(
 
     let mut diff_text = String::from_utf8_lossy(&diff_output.stdout).to_string();
 
-    // 对于新文件（untracked），git diff HEAD 返回空；读文件内容补充
+    // `git diff HEAD` 为空有两种可能：已跟踪但干净（不许伪造），或未跟踪新文件（要补）。
+    // 只对后者读工作区字节 —— 「空 ⇒ 新文件」的反推不成立（`git-domain.md` §5）。
     if diff_text.trim().is_empty() {
+        let mut ls_args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
+        ls_args.extend(file_paths.iter().map(String::as_str));
+        let ls_output = run_cmd_local(Some(repo_path), "git", &ls_args)
+            .context("Failed to run git ls-files --others")?;
+        // `-z` + NUL 分隔：路径不做 C 转义（`git-domain.md` §8）。
+        let listed = String::from_utf8_lossy(&ls_output.stdout);
+        let untracked: std::collections::HashSet<&str> =
+            listed.split('\0').filter(|s| !s.is_empty()).collect();
+
         let mut lines: Vec<String> = Vec::new();
         for fp in file_paths {
+            if !untracked.contains(fp.as_str()) {
+                continue;
+            }
             let full = repo_path.join(fp);
-            if full.exists() {
-                if let Ok(content) = std::fs::read_to_string(&full) {
-                    lines.push(format!("--- /dev/null\n+++ b/{}", fp));
-                    for line in content.lines() {
-                        lines.push(format!("+{}", line));
-                    }
+            if !full.exists() {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(&full) {
+                lines.push(format!("--- /dev/null\n+++ b/{}", fp));
+                for line in content.lines() {
+                    lines.push(format!("+{}", line));
                 }
             }
         }
@@ -372,6 +373,87 @@ pub fn get_recent_commit_messages(repo_path: &Path, count: usize) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 建一个含一次提交的仓库，`tracked.txt` 已落在 HEAD 中（工作区与其一致）。
+    fn init_repo_with_tracked_file(repo_path: &Path) {
+        let repo = Repository::init(repo_path).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "test").unwrap();
+        config.set_str("user.email", "test@test.com").unwrap();
+        std::fs::write(repo_path.join("tracked.txt"), "keep\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+    }
+
+    /// 回归（「已提交代码仍全绿边」根因）：已跟踪且无改动 → 相对 HEAD 无 diff，
+    /// 不得回退到「读工作区字节伪造 Added」。
+    #[test]
+    fn clean_tracked_file_has_no_hunks() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo_with_tracked_file(dir.path());
+
+        let result = get_file_diff(dir.path(), "tracked.txt", false).unwrap();
+        assert!(
+            result.hunks.is_empty(),
+            "clean tracked file must yield no hunks, got {:?}",
+            result.hunks
+        );
+    }
+
+    /// 未跟踪文件由差分引擎自身按 `Added` 表达（include_untracked），
+    /// 而不是靠「hunks 为空」反推为「新文件」。
+    #[test]
+    fn untracked_file_is_reported_as_added_by_diff_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo_with_tracked_file(dir.path());
+        std::fs::write(dir.path().join("new.txt"), "a\nb\n").unwrap();
+
+        let result = get_file_diff(dir.path(), "new.txt", false).unwrap();
+        let added: Vec<&str> = result
+            .hunks
+            .iter()
+            .flat_map(|h| h.lines.iter())
+            .filter_map(|l| match l {
+                DiffLine::Added(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(added, vec!["a", "b"], "untracked file must be all Added");
+    }
+
+    /// 回归（同根因，AI commit message 路径）：`get_diff_for_files` 里
+    /// 「`git diff HEAD` 为空 ⇒ 读工作区字节当新文件」会把已提交的干净文件伪造成新文件。
+    #[test]
+    fn diff_for_files_does_not_fabricate_clean_tracked_files() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo_with_tracked_file(dir.path());
+
+        let text = get_diff_for_files(dir.path(), &["tracked.txt".to_string()], 500).unwrap();
+        assert!(
+            text.trim().is_empty(),
+            "clean tracked file must not be fabricated as new, got: {text}"
+        );
+    }
+
+    /// 未跟踪文件仍必须作为新文件补入（修复不能把新文件一并弄丢）。
+    #[test]
+    fn diff_for_files_includes_untracked_files() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo_with_tracked_file(dir.path());
+        std::fs::write(dir.path().join("new.txt"), "a\nb\n").unwrap();
+
+        let text = get_diff_for_files(dir.path(), &["new.txt".to_string()], 500).unwrap();
+        assert!(
+            text.contains("+++ b/new.txt") && text.contains("+a") && text.contains("+b"),
+            "untracked file must be included as new, got: {text}"
+        );
+    }
 
     #[test]
     fn collapse_false_returns_full_context_in_file_diff() {

@@ -4,7 +4,7 @@ pub mod file;
 pub mod key;
 pub mod memory;
 
-pub use file::{capture_file_fingerprint, get_cached_worktree_diff, FileFingerprint};
+pub use file::get_cached_worktree_diff;
 pub use key::{diff_cache_key, repo_key_prefix};
 pub use memory::{
     get_cached_ahead_behind, get_cached_default_branch, get_cached_diff_stats,

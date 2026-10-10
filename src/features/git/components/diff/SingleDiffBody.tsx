@@ -4,12 +4,11 @@ import { openProjectFile } from '@/features/quick-open';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
-import DiffTable from './DiffTable';
+import DiffContent from './DiffContent';
 import DiffToolbar from './DiffToolbar';
 import type { SelectionMode } from './diffViewUtils';
 import { DiffFileCard } from './FileDiffSection';
 import { detectLanguage, ensureLanguageRegistered } from './highlight';
-import SplitDiffTable from './SplitDiffTable';
 import type { DiffResult, ViewMode } from './types';
 
 /** Loading 骨架（8 条脉冲占位条）。 */
@@ -157,35 +156,22 @@ function SingleDiffBody(props: SingleDiffBodyProps) {
     body = <DiffLoadingSkeleton />;
   } else if (error) {
     body = <DiffErrorState error={error} onRetry={onRetry} />;
-  } else if (diffResult && diffResult.hunks.length > 0) {
-    body =
-      viewMode === 'unified' ? (
-        <DiffTable
-          diffResult={diffResult}
-          language={language}
-          languageReady={languageReady}
-          selectedLines={selectedLines}
-          onToggleLine={onToggleLine}
-          onDragCommit={(keys, mode) => onDragCommit(keys, mode)}
-          fullHunks={fullHunks ?? undefined}
-          expandedSections={expandedSections}
-          onToggleSection={onToggleSection}
-          selectionActionBar={selectionActionBar}
-        />
-      ) : (
-        <SplitDiffTable
-          diffResult={diffResult}
-          language={language}
-          languageReady={languageReady}
-          selectedLines={selectedLines}
-          onToggleLine={onToggleLine}
-          onDragCommit={(keys, mode) => onDragCommit(keys, mode)}
-          fullHunks={fullHunks ?? undefined}
-          expandedSections={expandedSections}
-          onToggleSection={onToggleSection}
-          selectionActionBar={selectionActionBar}
-        />
-      );
+  } else if (diffResult && (diffResult.hunks.length > 0 || diffResult.truncated)) {
+    body = (
+      <DiffContent
+        diffResult={diffResult}
+        viewMode={viewMode}
+        language={language}
+        languageReady={languageReady}
+        selectedLines={selectedLines}
+        onToggleLine={onToggleLine}
+        onDragCommit={(keys, mode) => onDragCommit(keys, mode)}
+        fullHunks={fullHunks ?? undefined}
+        expandedSections={expandedSections}
+        onToggleSection={onToggleSection}
+        selectionActionBar={selectionActionBar}
+      />
+    );
   } else {
     body = <DiffEmptyState />;
   }

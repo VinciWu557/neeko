@@ -484,7 +484,7 @@ async fn discard_paths_should_delete_staged_add_in_repo_without_head() {
 async fn discard_paths_should_propagate_reset_error_when_head_exists() {
     // HEAD 存在时 reset 的任何错误都是真实错误 → 传播，不得触发 rm --cached 兜底
     let transport = UnstageGateTransport::new(true, Some("fatal: unable to reset"));
-    let result = discard_paths(&transport, "/tmp", &discard_targets(&["new.txt"])).await;
+    let result = discard_paths(&transport, &temp_work_dir(), &discard_targets(&["new.txt"])).await;
     assert!(result.is_err(), "real reset error should propagate");
     assert!(
         !transport
@@ -504,7 +504,7 @@ async fn discard_paths_should_not_trust_stderr_sniff_when_head_exists() {
         true,
         Some("fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree."),
     );
-    let result = discard_paths(&transport, "/tmp", &discard_targets(&["new.txt"])).await;
+    let result = discard_paths(&transport, &temp_work_dir(), &discard_targets(&["new.txt"])).await;
     assert!(result.is_err(), "stderr text must not decide the fallback");
     assert!(
         !transport
@@ -523,7 +523,7 @@ async fn discard_paths_should_fall_back_to_rm_cached_without_head() {
         false,
         Some("fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree."),
     );
-    let result = discard_paths(&transport, "/tmp", &discard_targets(&["new.txt"])).await;
+    let result = discard_paths(&transport, &temp_work_dir(), &discard_targets(&["new.txt"])).await;
     result.expect("unborn-HEAD fallback should complete the discard");
     let calls = transport.recorded_calls();
     assert!(
@@ -536,12 +536,68 @@ async fn discard_paths_should_fall_back_to_rm_cached_without_head() {
     );
 }
 
-/// 脚本化 mock transport：open_repo=None 强制走 shell 分支；run_git 返回空 diff，
-/// 使 `get_file_diff_shell` 的 fallback 读工作区字节。
-struct NoHunkShellTransport;
+/// 临时工作目录路径（mock transport 忽略 `work_dir`，但夹具不得硬编码 POSIX 绝对路径 —— 红线 13）。
+/// `tempdir()` 立即释放：目录不存在反而是 shell 分支 `-U` 护栏的期望前置（取全量上下文）。
+fn temp_work_dir() -> String {
+    tempfile::tempdir()
+        .expect("tempdir")
+        .path()
+        .to_string_lossy()
+        .to_string()
+}
+
+/// 脚本化 mock transport：open_repo=None 强制走 shell 分支，按子命令分流：
+/// - `diff HEAD ...` 在 `head_diff_exit` 有值时按该 exit code 失败；
+/// - `diff ...`（index 基线）返回 `diff_output`；
+/// - `rev-parse --verify --quiet HEAD` 按 `head_exists` 返回成功 / exit 1；
+/// - `ls-files --others` 返回 `untracked`（未跟踪清单）。
+struct ShellDiffTransport {
+    diff_output: String,
+    untracked: String,
+    /// `diff HEAD` 失败时的 exit code；`None` = 成功返回 `diff_output`。
+    head_diff_exit: Option<i32>,
+    /// `rev-parse --verify --quiet HEAD` 是否有可解析 HEAD。
+    head_exists: bool,
+    captured_args: Mutex<Vec<String>>,
+}
+
+impl ShellDiffTransport {
+    fn new(diff_output: impl Into<String>, untracked: impl Into<String>) -> Self {
+        Self {
+            diff_output: diff_output.into(),
+            untracked: untracked.into(),
+            head_diff_exit: None,
+            head_exists: true,
+            captured_args: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// 让 `diff HEAD` 以 `exit_code` 失败，并声明 HEAD 是否存在（`false` = unborn）。
+    fn head_diff_fails(mut self, exit_code: i32, head_exists: bool) -> Self {
+        self.head_diff_exit = Some(exit_code);
+        self.head_exists = head_exists;
+        self
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.captured_args.lock().unwrap().clone()
+    }
+}
+
+/// 构造带指定 exit code 的 [`GitExecError`]（`has_head` / 错误传播分支依赖它）。
+fn git_exit_error(exit_code: i32) -> anyhow::Error {
+    GitExecError {
+        kind: ErrorKind::Other,
+        stderr: String::new(),
+        stdout: String::new(),
+        command: "git".to_string(),
+        exit_code,
+    }
+    .into()
+}
 
 #[async_trait]
-impl GitTransport for NoHunkShellTransport {
+impl GitTransport for ShellDiffTransport {
     async fn run_git(&self, args: &[&str], work_dir: &str) -> Result<String> {
         self.run_git_opts(args, work_dir, GitExecOptions::default())
             .await
@@ -549,11 +605,29 @@ impl GitTransport for NoHunkShellTransport {
 
     async fn run_git_opts(
         &self,
-        _args: &[&str],
+        args: &[&str],
         _work_dir: &str,
         _opts: GitExecOptions<'_>,
     ) -> Result<String> {
-        Ok(String::new())
+        self.captured_args.lock().unwrap().push(args.join(" "));
+        match args.first() {
+            Some(&"ls-files") => return Ok(self.untracked.clone()),
+            Some(&"rev-parse") => {
+                return if self.head_exists {
+                    Ok("deadbeef\n".to_string())
+                } else {
+                    Err(git_exit_error(1))
+                };
+            }
+            _ => {}
+        }
+        // 基线：`HEAD` 是 diff 的第二个参数（`-U…` 在其后）。
+        if args.get(1) == Some(&"HEAD") {
+            if let Some(code) = self.head_diff_exit {
+                return Err(git_exit_error(code));
+            }
+        }
+        Ok(self.diff_output.clone())
     }
 
     async fn run_git_with_stdin(
@@ -585,15 +659,16 @@ impl GitTransport for NoHunkShellTransport {
 
 #[tokio::test]
 async fn file_diff_shell_fallback_crlf_file_strips_carriage_returns() {
-    // L4 换行边界（shell 分支）：WSL/SSH transport 无 git2 repo（open_repo=None），
-    // 走 `get_file_diff_shell` 的 fallback 读工作区字节构建 Added 行。
-    // 必须用 `.lines()` 等 CRLF 兼容解析，禁止把 `\r` 泄漏进 diff 视图。
+    // L4 换行边界（shell 分支）：WSL/SSH transport 无 git2 repo（open_repo=None）。
+    // 未跟踪文件不出现在 `git diff HEAD` 中，由 `ls-files --others` 判定后读工作区字节。
+    // 构建 Added 行必须用 `.lines()` 等 CRLF 兼容解析，禁止把 `\r` 泄漏进 diff 视图。
     let (dir, path) = init_repo().await;
     std::fs::write(dir.path().join("crlf.txt"), "line1\r\nline2\r\n").expect("write crlf file");
 
-    let result = get_file_diff(&NoHunkShellTransport, &path, "crlf.txt", false)
+    let transport = ShellDiffTransport::new("", "crlf.txt\n");
+    let result = get_file_diff(&transport, &path, "crlf.txt", false)
         .await
-        .expect("shell fallback diff on CRLF file should succeed");
+        .expect("shell diff on untracked CRLF file should succeed");
 
     let added: Vec<&str> = result
         .hunks
@@ -605,6 +680,112 @@ async fn file_diff_shell_fallback_crlf_file_strips_carriage_returns() {
         })
         .collect();
     assert_eq!(added, vec!["line1", "line2"], "CRLF 行尾不应泄漏 \\r");
+}
+
+/// 回归（「已提交代码仍全绿边」根因）：已跟踪且相对 HEAD 干净的文件，`git diff HEAD`
+/// 同样为空，但**不是**新文件 —— 绝不能因此读工作区字节伪造全 `Added`。
+#[tokio::test]
+async fn file_diff_shell_clean_tracked_file_yields_no_hunks() {
+    let (dir, path) = init_repo().await;
+    // base.txt 已提交且未修改；仍写一份磁盘内容，确认不会被当成未跟踪。
+    std::fs::write(dir.path().join("base.txt"), "base\n").expect("rewrite base");
+
+    let transport = ShellDiffTransport::new("", "");
+    let result = get_file_diff(&transport, &path, "base.txt", false)
+        .await
+        .expect("shell diff on clean tracked file should succeed");
+
+    assert!(
+        result.hunks.is_empty(),
+        "已跟踪无改动文件必须零 hunk，got: {:?}",
+        result.hunks
+    );
+}
+
+/// 基线统一：shell 分支的首选命令是 `git diff HEAD`（与 local git2 的
+/// `diff_tree_to_workdir_with_index(HEAD)` 同语义）。
+#[tokio::test]
+async fn file_diff_shell_uses_head_baseline() {
+    let work_dir = temp_work_dir();
+    let transport = ShellDiffTransport::new("", "");
+    let _ = get_file_diff(&transport, &work_dir, "a.txt", false).await;
+
+    assert_eq!(
+        transport.calls().first().map(String::as_str),
+        Some("diff HEAD -U100000 -- a.txt"),
+        "shell 分支必须以 HEAD 为基线：{:?}",
+        transport.calls()
+    );
+}
+
+/// unborn HEAD（尚无任何提交）：`git diff HEAD` 确定失败（exit 1 探测）后退回 `git diff`
+/// （工作区 vs index），与 local 的 `diff_index_to_workdir(None)` 分支同义。
+#[tokio::test]
+async fn file_diff_shell_falls_back_to_index_when_head_unborn() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1 @@\n+hello\n";
+    let transport = ShellDiffTransport::new(diff, "").head_diff_fails(1, false);
+    let result = get_file_diff(&transport, &temp_work_dir(), "a.txt", false)
+        .await
+        .expect("unborn HEAD should fall back to worktree-vs-index diff");
+
+    assert_eq!(result.hunks.len(), 1, "退回基线后应解析到 diff hunk");
+    let calls = transport.calls();
+    assert_eq!(calls.len(), 3, "diff HEAD → rev-parse → diff：{calls:?}");
+    assert!(
+        calls.last().unwrap().starts_with("diff -U") && !calls.last().unwrap().contains("HEAD"),
+        "退回命令不得再带 HEAD：{calls:?}"
+    );
+}
+
+/// HEAD **存在**时，`diff HEAD` 的任何失败都是真实错误 → 原样上抛，不做 index 降级。
+/// 回归：旧实现用 `Err(_) => retry` 对所有错误一律重试，会把认证 / 超时错误吞成空 diff。
+#[tokio::test]
+async fn file_diff_shell_propagates_real_error_when_head_exists() {
+    let transport = ShellDiffTransport::new("", "").head_diff_fails(128, true);
+
+    let result = get_file_diff(&transport, &temp_work_dir(), "a.txt", false).await;
+    assert!(result.is_err(), "HEAD 存在时 diff 失败必须传播，不得降级");
+    let calls = transport.calls();
+    assert_eq!(
+        calls.len(),
+        2,
+        "diff HEAD → rev-parse（不再发 index 基线）：{calls:?}"
+    );
+    assert!(
+        calls.iter().all(|c| !c.starts_with("diff -U")),
+        "不得发出无 HEAD 的降级 diff：{calls:?}"
+    );
+}
+
+/// 红线 4：context 护栏不约束 `Added` 行，超大未跟踪文件必须在 IPC 载荷处封顶。
+#[tokio::test]
+async fn file_diff_shell_caps_oversized_untracked_payload() {
+    let (dir, path) = init_repo().await;
+    // ~20_000 行 × 200B ≈ 4MB > 1.5MB 预算
+    let content: String = (0..20_000)
+        .map(|_| format!("{}\n", "x".repeat(200)))
+        .collect();
+    std::fs::write(dir.path().join("big.txt"), content).expect("write big untracked");
+
+    let transport = ShellDiffTransport::new("", "big.txt\n");
+    let result = get_file_diff(&transport, &path, "big.txt", false)
+        .await
+        .expect("diff on big untracked file should succeed");
+
+    assert!(result.truncated, "超预算未跟踪内容必须标记 truncated");
+    let bytes: usize = result
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .map(|l| match l {
+            DiffLine::Added(s) => s.len(),
+            _ => 0,
+        })
+        .sum();
+    assert!(
+        bytes <= crate::common::git::parsers::DIFF_PAYLOAD_MAX_BYTES,
+        "内容字节必须落在预算内，got {bytes}"
+    );
 }
 
 // ── collapse 参数：false 时跳过上下文折叠、返回完整上下文 ────────────────
@@ -696,10 +877,33 @@ fn long_context_diff() -> String {
     out
 }
 
+/// 红线 4：revision（commit / stash）文件 diff 也必须封顶 —— context 护栏不约束 added 行。
+#[tokio::test]
+async fn get_commit_file_diff_caps_oversized_payload() {
+    // ~20_000 行 added、每行 ~79B → 约 1.8MB JSON > 1.5MB 预算
+    let mut out = String::from("diff --git a/a.txt b/a.txt\n@@ -0,0 +1,20000 @@\n");
+    let added = format!("+{}\n", "x".repeat(78));
+    for _ in 0..20_000 {
+        out.push_str(&added);
+    }
+
+    let transport = DiffTextTransport::new(out);
+    let result = get_commit_file_diff(&transport, &temp_work_dir(), "abc123", "a.txt", false)
+        .await
+        .expect("parse diff");
+
+    assert!(result.truncated, "revision diff 超预算必须标记 truncated");
+    let serialized = serde_json::to_vec(&result).expect("serialize").len();
+    assert!(
+        serialized <= 2_000_000,
+        "序列化结果必须 ≤ 2MB 红线，got {serialized}"
+    );
+}
+
 #[tokio::test]
 async fn get_commit_file_diff_collapse_true_keeps_markers() {
     let transport = DiffTextTransport::new(long_context_diff());
-    let result = get_commit_file_diff(&transport, "/tmp", "abc123", "a.txt", true)
+    let result = get_commit_file_diff(&transport, &temp_work_dir(), "abc123", "a.txt", true)
         .await
         .expect("parse diff");
     let has_collapsed = result
@@ -726,7 +930,7 @@ async fn get_commit_file_diff_collapse_true_keeps_markers() {
 #[tokio::test]
 async fn get_commit_file_diff_collapse_false_expands_full_context() {
     let transport = DiffTextTransport::new(long_context_diff());
-    let result = get_commit_file_diff(&transport, "/tmp", "abc123", "a.txt", false)
+    let result = get_commit_file_diff(&transport, &temp_work_dir(), "abc123", "a.txt", false)
         .await
         .expect("parse diff");
     let has_collapsed = result
@@ -813,7 +1017,7 @@ async fn get_file_diff_shell_collapse_contract() {
     let transport = DiffTextTransport::new(long_context_diff());
 
     // collapse=false：全量上下文参数 + 无折叠标记
-    let expanded = get_file_diff(&transport, "/tmp", "a.txt", false)
+    let expanded = get_file_diff(&transport, &temp_work_dir(), "a.txt", false)
         .await
         .expect("parse expanded diff");
     let args = transport.last_args();
@@ -832,7 +1036,7 @@ async fn get_file_diff_shell_collapse_contract() {
     );
 
     // collapse=true：-U3 + Collapsed 标记
-    let collapsed = get_file_diff(&transport, "/tmp", "a.txt", true)
+    let collapsed = get_file_diff(&transport, &temp_work_dir(), "a.txt", true)
         .await
         .expect("parse collapsed diff");
     let args = transport.last_args();

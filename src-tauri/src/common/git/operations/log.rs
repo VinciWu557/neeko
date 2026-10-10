@@ -152,7 +152,9 @@ pub(crate) async fn get_revision_file_diff(
     if collapse {
         crate::common::git::parsers::collapse_diff_context(&mut result.hunks, 12);
     }
-    Ok(result)
+    // 红线 4：context 护栏不约束 added/removed 行；与 `get_file_diff` 同款统一封顶，
+    // 覆盖 commit / stash 两条 revision 文件 diff（唯一实现 = `parsers::cap_diff_payload`）。
+    Ok(crate::common::git::parsers::cap_diff_payload(result))
 }
 
 /// Get ahead/behind counts relative to the tracked upstream (`@{upstream}`).

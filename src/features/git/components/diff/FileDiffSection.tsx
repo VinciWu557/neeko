@@ -5,7 +5,7 @@ import { ChevronRight } from '@/shared/components/icons';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
-import DiffTable from './DiffTable';
+import DiffContent from './DiffContent';
 import {
   fileBlockId,
   splitFilePath,
@@ -14,7 +14,6 @@ import {
   type SelectionMode,
 } from './diffViewUtils';
 import { detectLanguage, ensureLanguageRegistered } from './highlight';
-import SplitDiffTable from './SplitDiffTable';
 import type { DiffHunk, DiffViewProps, ViewMode } from './types';
 import { useDiffData } from './useDiffData';
 
@@ -254,36 +253,21 @@ const FileDiffSection: React.FC<FileDiffSectionProps> = React.memo(
               Retry
             </button>
           </div>
-        ) : diffResult && diffResult.hunks.length > 0 ? (
-          viewMode === 'unified' ? (
-            <DiffTable
-              diffResult={diffResult}
-              language={language}
-              languageReady={languageReady}
-              selectedLines={selectedLines}
-              onToggleLine={onToggleLine}
-              onDragCommit={onDragCommit}
-              blockIdPrefix={`cb-${blockId}`}
-              fullHunks={fullHunks ?? undefined}
-              expandedSections={expandedSections}
-              onToggleSection={handleToggleSection}
-              selectionActionBar={selectionActionBar}
-            />
-          ) : (
-            <SplitDiffTable
-              diffResult={diffResult}
-              language={language}
-              languageReady={languageReady}
-              selectedLines={selectedLines}
-              onToggleLine={onToggleLine}
-              onDragCommit={onDragCommit}
-              blockIdPrefix={`cb-${blockId}`}
-              fullHunks={fullHunks ?? undefined}
-              expandedSections={expandedSections}
-              onToggleSection={handleToggleSection}
-              selectionActionBar={selectionActionBar}
-            />
-          )
+        ) : diffResult && (diffResult.hunks.length > 0 || diffResult.truncated) ? (
+          <DiffContent
+            diffResult={diffResult}
+            viewMode={viewMode}
+            language={language}
+            languageReady={languageReady}
+            selectedLines={selectedLines}
+            onToggleLine={onToggleLine}
+            onDragCommit={onDragCommit}
+            blockIdPrefix={`cb-${blockId}`}
+            fullHunks={fullHunks ?? undefined}
+            expandedSections={expandedSections}
+            onToggleSection={handleToggleSection}
+            selectionActionBar={selectionActionBar}
+          />
         ) : (
           <div className="text-text-muted text-[var(--font-size)] py-4 text-center">No changes</div>
         )}

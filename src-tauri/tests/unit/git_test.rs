@@ -214,11 +214,25 @@ fn get_file_diff_on_new_file() {
     assert!(all_added);
 }
 
+/// 回归（「已提交代码仍全绿边」根因）：已跟踪且相对 HEAD 干净的文件必须零 hunk。
+/// 曾经这里会因「hunks 为空」而被当成新文件、读工作区字节伪造全 `Added`。
+#[test]
+fn get_file_diff_on_clean_tracked_file_has_no_hunks() {
+    let (tmp, _repo) = create_test_repo();
+
+    let diff = git::get_file_diff(tmp.path(), "README.md", false).unwrap();
+    assert!(
+        diff.hunks.is_empty(),
+        "clean tracked file must yield no hunks, got {:?}",
+        diff.hunks
+    );
+}
+
 #[tokio::test]
 async fn file_diff_new_crlf_file_strips_carriage_returns() {
     // L4 换行边界：工作区字节是不透明平台数据（Windows/autocrlf 下可能是 CRLF）。
-    // 新文件（untracked）diff 无 hunk，走 fallback 读工作区字节构建 Added 行，
-    // 必须用 `.lines()` 等 CRLF 兼容解析，禁止把 `\r` 泄漏进 diff 视图。
+    // 新文件（untracked）由差分引擎的 include_untracked 纳入，构建 Added 行时必须用
+    // `.lines()` 等 CRLF 兼容解析，禁止把 `\r` 泄漏进 diff 视图。
     let (tmp, _repo) = create_test_repo();
     let path = tmp.path().to_string_lossy().to_string();
     std::fs::write(tmp.path().join("crlf.txt"), "line1\r\nline2\r\n").unwrap();
@@ -238,6 +252,38 @@ async fn file_diff_new_crlf_file_strips_carriage_returns() {
         })
         .collect();
     assert_eq!(added, vec!["line1", "line2"], "CRLF 行尾不应泄漏 \\r");
+}
+
+/// 红线 4：超大未跟踪文件经 git2 `show_untracked_content` 产出全文后，
+/// 也必须在派发缝 `operations::get_file_diff` 被截断（context 护栏只管 context 行）。
+#[tokio::test]
+async fn file_diff_caps_oversized_untracked_payload() {
+    let (tmp, _repo) = create_test_repo();
+    // ~20_000 行 × 200B ≈ 4MB > 1.5MB 预算
+    let content: String = (0..20_000)
+        .map(|_| format!("{}\n", "x".repeat(200)))
+        .collect();
+    std::fs::write(tmp.path().join("big_new.txt"), content).unwrap();
+
+    let path = tmp.path().to_string_lossy().to_string();
+    let result = operations::get_file_diff(&ExecTarget::Local, &path, "big_new.txt", false)
+        .await
+        .expect("diff on big untracked file should succeed");
+
+    assert!(result.truncated, "超预算未跟踪内容必须标记 truncated");
+    let bytes: usize = result
+        .hunks
+        .iter()
+        .flat_map(|h| h.lines.iter())
+        .map(|l| match l {
+            DiffLine::Added(s) => s.len(),
+            _ => 0,
+        })
+        .sum();
+    assert!(
+        bytes <= neeko_lib::common::git::parsers::DIFF_PAYLOAD_MAX_BYTES,
+        "内容字节必须落在预算内，got {bytes}"
+    );
 }
 
 // --- get_changed_files_diff_stats (numstat) ---

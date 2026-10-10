@@ -25,6 +25,85 @@ pub fn full_diff_context_arg(file_bytes: u64) -> String {
     format!("-U{}", full_diff_context_lines(file_bytes))
 }
 
+/// 单次 `get_file_diff` IPC 的 **JSON 字节预算**（红线 4：序列化结果 ≤ 2MB）。
+///
+/// 预算按**目标度量本身**计算：每行用真实序列化器（计数 sink，不分配）量出 JSON 字节数，
+/// 不引入「转义 ≈ 1×」这类近似系数 —— 控制字符 JSON 转义最长 6×（`\x01` → `\u0001`），
+/// 任何近似系数都会被击穿。1.5MB 预算给 hunk 结构开销与命令封装留 0.5MB 余量。
+pub const DIFF_PAYLOAD_MAX_BYTES: usize = 1_500_000;
+
+/// 单个 hunk 的 JSON 结构开销近似（`old_start`/`old_lines`/`new_start`/`new_lines`/`lines` 包装）。
+const DIFF_HUNK_JSON_OVERHEAD: usize = 96;
+
+/// `DiffResult` 顶层包装开销近似（`{"hunks":[…],"truncated":…}`）。
+const DIFF_RESULT_JSON_OVERHEAD: usize = 32;
+
+/// 只计量字节、不落盘的 `io::Write`：让 `serde_json` 直接给出序列化长度，避免额外分配。
+#[derive(Default)]
+struct ByteCounter(usize);
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 一条 `DiffLine` 的 JSON 字节数（含尾随 `,` 分隔符），按真实序列化器计量。
+fn diff_line_json_bytes(line: &DiffLine) -> usize {
+    let mut counter = ByteCounter::default();
+    match serde_json::to_writer(&mut counter, line) {
+        Ok(()) => counter.0 + 1,
+        // 计量失败必须 fail-closed：返回超预算值强制截断，绝不把无法计量的行当 0 字节放行。
+        Err(_) => DIFF_PAYLOAD_MAX_BYTES + 1,
+    }
+}
+
+/// 把 `DiffResult` 截断到 [`DIFF_PAYLOAD_MAX_BYTES`] 内（红线 4）：丢弃尾部行并置 `truncated`。
+///
+/// `full_diff_context_lines` 护栏只约束 **context** 行；`Added`/`Removed` 不受其约束，
+/// 超大改动（尤其未跟踪新文件）仍可把 JSON 推过 2MB。本函数是载荷封顶的**唯一实现**，
+/// 在派发缝 `operations::get_file_diff` 统一应用，新增 transport 自动受约束。
+/// 计账覆盖行内容（真实转义后字节）+ hunk / 顶层结构开销。
+#[must_use]
+pub fn cap_diff_payload(mut result: DiffResult) -> DiffResult {
+    let mut used = DIFF_RESULT_JSON_OVERHEAD;
+    let mut capped = false;
+    let mut cut_at = result.hunks.len();
+    for (hunk_idx, hunk) in result.hunks.iter_mut().enumerate() {
+        let mut running = used.saturating_add(DIFF_HUNK_JSON_OVERHEAD);
+        let mut keep = 0usize;
+        let mut hunk_capped = false;
+        for (line_idx, line) in hunk.lines.iter().enumerate() {
+            let bytes = diff_line_json_bytes(line);
+            if running.saturating_add(bytes) > DIFF_PAYLOAD_MAX_BYTES {
+                hunk_capped = true;
+                break;
+            }
+            running += bytes;
+            keep = line_idx + 1;
+        }
+        used = running;
+        if hunk_capped {
+            capped = true;
+            hunk.lines.truncate(keep);
+            cut_at = hunk_idx + 1;
+            break;
+        }
+    }
+    if capped {
+        // 截断点之后的 hunk 一律丢弃；被截断的 hunk 自身可能为空。
+        result.hunks.truncate(cut_at);
+        result.hunks.retain(|h| !h.lines.is_empty());
+        result.truncated = true;
+    }
+    result
+}
+
 /// Parse git diff --unified=3 text output into DiffResult
 #[must_use]
 pub fn parse_unified_diff(output: &str) -> DiffResult {
@@ -266,5 +345,102 @@ mod diff_context_guard_tests {
         );
         // 回退上下文仍远大于折叠模式的 3 行
         assert!(DIFF_FULL_FALLBACK_CONTEXT_LINES > 3);
+    }
+}
+
+#[cfg(test)]
+mod diff_payload_cap_tests {
+    use super::*;
+    use crate::common::git::types::DiffHunk;
+
+    /// 红线 4：单次 Command 返回 JSON ≤ 2MB。
+    const IPC_JSON_LIMIT: usize = 2_000_000;
+
+    fn added_hunk_of(count: usize, content: &str) -> DiffHunk {
+        DiffHunk {
+            old_start: 0,
+            old_lines: 0,
+            new_start: 1,
+            new_lines: count as u32,
+            lines: (0..count)
+                .map(|_| DiffLine::Added(content.to_string()))
+                .collect(),
+        }
+    }
+
+    fn added_hunk(count: usize, line_len: usize) -> DiffHunk {
+        added_hunk_of(count, &"x".repeat(line_len))
+    }
+
+    fn serialized_len(result: &DiffResult) -> usize {
+        serde_json::to_vec(result)
+            .expect("serialize diff result")
+            .len()
+    }
+
+    /// 计量必须与真实序列化一致（防序列化器行为漂移导致护栏失真）。
+    #[test]
+    fn measured_json_bytes_match_serializer() {
+        let line = DiffLine::Added("a\"b\\c\u{1}中文".to_string());
+        assert_eq!(
+            diff_line_json_bytes(&line),
+            serde_json::to_string(&line).expect("serialize").len() + 1
+        );
+    }
+
+    #[test]
+    fn small_payload_is_untouched() {
+        let capped = cap_diff_payload(DiffResult {
+            hunks: vec![added_hunk(10, 10)],
+            truncated: false,
+        });
+        assert!(!capped.truncated);
+        assert_eq!(capped.hunks[0].lines.len(), 10);
+    }
+
+    #[test]
+    fn oversized_payload_is_capped_and_flagged() {
+        // 20_000 行 × 100B ≈ 2MB 内容 > 1.5MB 预算。
+        let capped = cap_diff_payload(DiffResult {
+            hunks: vec![added_hunk(20_000, 100)],
+            truncated: false,
+        });
+        assert!(capped.truncated, "超预算 payload 必须标记 truncated");
+        assert!(!capped.hunks.is_empty(), "应保留预算内的前缀行");
+        assert!(
+            serialized_len(&capped) <= IPC_JSON_LIMIT,
+            "实际序列化必须 ≤ 2MB，got {}",
+            serialized_len(&capped)
+        );
+    }
+
+    /// 回归（关键）：控制字符 JSON 转义 6×（`\x01` → `\u0001`），
+    /// 近似预算会被击穿，实测序列化必须仍 ≤ 2MB。
+    #[test]
+    fn control_char_escaping_cannot_break_ipc_limit() {
+        let capped = cap_diff_payload(DiffResult {
+            hunks: vec![added_hunk_of(5_000, &"\u{1}".repeat(100))],
+            truncated: false,
+        });
+        assert!(capped.truncated, "6× 转义内容必须触发截断");
+        assert!(
+            serialized_len(&capped) <= IPC_JSON_LIMIT,
+            "序列化结果必须 ≤ 2MB 红线，got {}",
+            serialized_len(&capped)
+        );
+    }
+
+    #[test]
+    fn drops_tail_hunks_beyond_budget() {
+        let capped = cap_diff_payload(DiffResult {
+            hunks: vec![added_hunk(20_000, 100), added_hunk(5, 100)],
+            truncated: false,
+        });
+        assert!(capped.truncated);
+        assert!(
+            capped.hunks.iter().all(|h| !h.lines.is_empty()),
+            "不得留空 hunk"
+        );
+        assert_eq!(capped.hunks.len(), 1, "截断点之后的 hunk 必须丢弃");
     }
 }

@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, missing_docs)]
 
 use crate::common::git::types::DiffResult;
+use git2::Repository;
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{LazyLock, Mutex};
@@ -11,19 +12,17 @@ use super::key::{diff_cache_key, repo_key_prefix};
 
 const DIFF_CACHE_CAP: usize = 50;
 
-/// Worktree file input fingerprint: mtime + size.
+/// 单个文件的 `(mtime_ns, size)` 指纹。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FileFingerprint {
+struct FileFingerprint {
     /// File modification time (nanoseconds since UNIX epoch).
-    pub mtime_ns: u64,
+    mtime_ns: u64,
     /// File byte size.
-    pub size: u64,
+    size: u64,
 }
 
-/// Capture current file's (mtime_ns, size) fingerprint; None if file missing.
-#[must_use]
-pub fn capture_file_fingerprint(repo_path: &Path, file_path: &str) -> Option<FileFingerprint> {
-    let meta = std::fs::metadata(repo_path.join(file_path)).ok()?;
+fn stat_fingerprint(path: &Path) -> Option<FileFingerprint> {
+    let meta = std::fs::metadata(path).ok()?;
     let mtime_ns = meta
         .modified()
         .ok()
@@ -36,10 +35,47 @@ pub fn capture_file_fingerprint(repo_path: &Path, file_path: &str) -> Option<Fil
     })
 }
 
+/// 工作区 diff 的**全输入**指纹 —— diff 是 `f(HEAD, index, 工作区文件)`，
+/// 命中判据必须覆盖全部输入。只比工作区文件会漏掉「HEAD 移动（外部 commit）/
+/// index 变化而文件未动」，于是返回 commit 前的旧 diff（已提交却仍显示变更高亮）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiffInputFingerprint {
+    /// HEAD commit oid；`None` = unborn（无任何提交，diff 退化为 index↔工作区）。
+    head_oid: Option<String>,
+    /// index 文件指纹；`None` = 无 index。
+    index: Option<FileFingerprint>,
+    /// 工作区文件指纹；`None` = 文件不在盘上。
+    worktree: Option<FileFingerprint>,
+}
+
+/// 采集 `f(HEAD, index, 工作区文件)` 三元指纹。
+///
+/// 阻塞 I/O（`Repository::open` / `stat`），只能在 `spawn_blocking` 内调用
+/// （`operations::get_file_diff` 已包裹）。
+#[must_use]
+fn capture_diff_input_fingerprint(repo_path: &Path, file_path: &str) -> DiffInputFingerprint {
+    // index 属于该单元自己的 gitdir（linked worktree 是私有 gitdir），
+    // 只能经 `Repository::path()` 取得，不得手拼 `repo_path/.git/index`。
+    let repo = Repository::open(repo_path).ok();
+    let head_oid = repo
+        .as_ref()
+        .and_then(|r| r.head().ok())
+        .and_then(|h| h.peel_to_commit().ok())
+        .map(|c| c.id().to_string());
+    let index = repo
+        .as_ref()
+        .and_then(|r| stat_fingerprint(&r.path().join("index")));
+    DiffInputFingerprint {
+        head_oid,
+        index,
+        worktree: stat_fingerprint(&repo_path.join(file_path)),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct DiffEntry {
     result: DiffResult,
-    fingerprint: Option<FileFingerprint>,
+    fingerprint: DiffInputFingerprint,
 }
 
 struct LruCache {
@@ -134,11 +170,11 @@ pub fn get_cached_worktree_diff(
 ) -> anyhow::Result<DiffResult> {
     let key = diff_cache_key(repo_path, file_path, collapse);
     if let Some(entry) = DIFF_CACHE.get(&key) {
-        if capture_file_fingerprint(repo_path, file_path) == entry.fingerprint {
+        if capture_diff_input_fingerprint(repo_path, file_path) == entry.fingerprint {
             return Ok(entry.result);
         }
     }
-    let fingerprint = capture_file_fingerprint(repo_path, file_path);
+    let fingerprint = capture_diff_input_fingerprint(repo_path, file_path);
     let result = fetch()?;
     DIFF_CACHE.set(
         key,
@@ -288,6 +324,106 @@ mod tests {
             *computed.lock().unwrap(),
             vec!["collapsed".to_string(), "full".to_string()],
             "collapse 不同应各自缓存（键隔离）"
+        );
+    }
+
+    /// 建一个含一次提交的仓库，`a.txt` 已提交且工作区干净。
+    fn init_repo_with_commit(repo_path: &Path) -> Repository {
+        let repo = Repository::init(repo_path).unwrap();
+        {
+            let mut config = repo.config().unwrap();
+            config.set_str("user.name", "test").unwrap();
+            config.set_str("user.email", "test@test.com").unwrap();
+        }
+        std::fs::write(repo_path.join("a.txt"), "hello").unwrap();
+        {
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("a.txt")).unwrap();
+            index.write().unwrap();
+            let tree_id = index.write_tree().unwrap();
+            let tree = repo.find_tree(tree_id).unwrap();
+            let sig = git2::Signature::now("test", "test@test.com").unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+                .unwrap();
+        }
+        repo
+    }
+
+    /// 回归（外部 commit）：HEAD 移动而工作区文件与 index 都没动，命中判据必须
+    /// 因 HEAD oid 变化而失效——只比工作区文件指纹会命中 commit 前的旧 diff。
+    #[test]
+    fn worktree_diff_recomputes_when_head_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path();
+        let repo = init_repo_with_commit(repo_path);
+        let computed = Arc::new(Mutex::new(Vec::new()));
+
+        get_cached_worktree_diff(
+            repo_path,
+            "a.txt",
+            true,
+            fetch_with_label(computed.clone(), "before"),
+        )
+        .unwrap();
+
+        // 空 commit：复用父 tree，不写 index、不动 a.txt，只把 HEAD 往前推一格。
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        let tree = parent.tree().unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "empty", &tree, &[&parent])
+            .unwrap();
+
+        get_cached_worktree_diff(
+            repo_path,
+            "a.txt",
+            true,
+            fetch_with_label(computed.clone(), "after"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            *computed.lock().unwrap(),
+            vec!["before".to_string(), "after".to_string()],
+            "HEAD 移动（文件与 index 未动）后必须重算"
+        );
+    }
+
+    /// index 变化（stage）而工作区文件与 HEAD 未动时，命中判据也必须失效。
+    #[test]
+    fn worktree_diff_recomputes_when_index_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_path = dir.path();
+        let repo = init_repo_with_commit(repo_path);
+        let computed = Arc::new(Mutex::new(Vec::new()));
+
+        get_cached_worktree_diff(
+            repo_path,
+            "a.txt",
+            true,
+            fetch_with_label(computed.clone(), "before"),
+        )
+        .unwrap();
+
+        // 只 stage 一个新文件：a.txt 未动、HEAD 未动，只有 index 变化。
+        std::fs::write(repo_path.join("b.txt"), "b").unwrap();
+        {
+            let mut index = repo.index().unwrap();
+            index.add_path(Path::new("b.txt")).unwrap();
+            index.write().unwrap();
+        }
+
+        get_cached_worktree_diff(
+            repo_path,
+            "a.txt",
+            true,
+            fetch_with_label(computed.clone(), "after"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            *computed.lock().unwrap(),
+            vec!["before".to_string(), "after".to_string()],
+            "index 变化后必须重算"
         );
     }
 }

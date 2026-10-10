@@ -26,8 +26,8 @@
 
 use std::collections::HashMap;
 
-use super::invalidate_caches;
-use crate::common::git::transport::{GitExecError, GitTransport};
+use super::{has_head, invalidate_caches};
+use crate::common::git::transport::GitTransport;
 use anyhow::{bail, Result};
 
 /// `git status --porcelain=1 -z` 的一条记录。
@@ -163,24 +163,6 @@ async fn unstage(transport: &dyn GitTransport, work_dir: &str, paths: &[String])
         transport.run_git(&rm_args, work_dir).await?;
     }
     Ok(())
-}
-
-/// 仓库是否有可解析的 HEAD（unborn 分支 → `false`）。
-///
-/// 探测用 `rev-parse --verify --quiet HEAD`：ref 无法解析时以 **exit 1** 退出
-/// （git 源码 `die_no_single_rev` 的稳定行为：`--quiet` 走 1，报错版走 128）。
-/// exit 1 → 无 HEAD；其余错误（非仓库、权限等）一律传播，不误判为 unborn。
-async fn has_head(transport: &dyn GitTransport, work_dir: &str) -> Result<bool> {
-    match transport
-        .run_git(&["rev-parse", "--verify", "--quiet", "HEAD"], work_dir)
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(e) => match e.downcast_ref::<GitExecError>() {
-            Some(ge) if ge.exit_code == 1 => Ok(false),
-            _ => Err(e),
-        },
-    }
 }
 
 /// 已暂存 rename 的 `new → old` 映射。

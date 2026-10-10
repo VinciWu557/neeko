@@ -1,5 +1,6 @@
 // Git operations — diff sub-module (split from operations.rs God File).
 
+use super::has_head;
 use crate::common::executor::factory::ExecTarget;
 use crate::common::git::transport::GitTransport;
 use crate::common::git::types::{DiffHunk, DiffLine, DiffResult};
@@ -69,63 +70,126 @@ pub async fn get_staged_diff(
 // ─── Info operations (shell-based, works for all transports) ─────────────────
 
 /// Get file diff for a worktree path (shell-based)
+///
+/// 与 local（git2）分支同语义：**工作区 vs HEAD**（含 staged + unstaged）。
+/// 未跟踪文件不出现在 `git diff HEAD` 中，必须靠 `git ls-files --others` 显式判定后
+/// 才补 `Added` 行 —— 禁止再把「hunks 为空」当成「新文件」（已跟踪且干净同样为空）。
 pub(crate) async fn get_file_diff_shell(
     transport: &dyn GitTransport,
     work_dir: &str,
     file_path: &str,
     collapse: bool,
 ) -> Result<DiffResult> {
-    let mut args = vec!["diff".to_string()];
+    // ctx/flags + `--` + path 与「是否带 HEAD」无关，抽成 tail 供两条基线复用
+    // （unborn HEAD 时 `git diff HEAD` 报错，退回工作区 vs index，与 local 的
+    // `diff_index_to_workdir(None)` 同义）。
+    let mut tail: Vec<String> = Vec::new();
     if collapse {
-        args.push("-U3".to_string());
+        tail.push("-U3".to_string());
     } else {
         // 全量护栏：按文件字节数生成 -U 参数，防止 IPC JSON 超 2MB
         let file_bytes = tokio::fs::metadata(std::path::Path::new(work_dir).join(file_path))
             .await
             .map(|m| m.len())
             .unwrap_or(0);
-        args.push(crate::common::git::parsers::full_diff_context_arg(
+        tail.push(crate::common::git::parsers::full_diff_context_arg(
             file_bytes,
         ));
     }
-    args.push("--".to_string());
-    args.push(file_path.to_string());
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = transport.run_git(&arg_refs, work_dir).await?;
+    tail.push("--".to_string());
+    tail.push(file_path.to_string());
+
+    let head_args: Vec<&str> = std::iter::once("diff")
+        .chain(std::iter::once("HEAD"))
+        .chain(tail.iter().map(String::as_str))
+        .collect();
+    let output = match transport.run_git(&head_args, work_dir).await {
+        Ok(output) => output,
+        Err(head_err) => {
+            // 只有确认 HEAD 不存在（unborn）才降级 index 基线；其余错误（认证 / 超时 /
+            // 权限）原样上抛，不得吞成空 diff。判定走确定性 exit code（§11），不嗅探 stderr。
+            if has_head(transport, work_dir).await? {
+                return Err(head_err);
+            }
+            let no_head_args: Vec<&str> = std::iter::once("diff")
+                .chain(tail.iter().map(String::as_str))
+                .collect();
+            transport.run_git(&no_head_args, work_dir).await?
+        }
+    };
+
     let mut result = crate::common::git::parsers::parse_unified_diff(&output);
     if result.hunks.is_empty() {
-        let path = std::path::Path::new(work_dir).join(file_path);
-        // 新建文件的 `exists` / 读取都是阻塞 I/O —— 隔离到 OS 阻塞线程池（规则 #3）。
-        let content = crate::common::runtime::run_blocking(move || {
-            if !path.is_file() {
-                return None;
-            }
-            std::fs::read_to_string(&path).ok()
-        })
-        .await
-        .ok()
-        .flatten();
-        if let Some(content) = content {
-            let lines: Vec<DiffLine> = content
-                .lines()
-                .map(|line| DiffLine::Added(line.to_string()))
-                .collect();
-            if !lines.is_empty() {
-                #[allow(clippy::cast_possible_truncation)]
-                result.hunks.push(DiffHunk {
-                    old_start: 0,
-                    old_lines: 0,
-                    new_start: 1,
-                    new_lines: lines.len() as u32,
-                    lines,
-                });
-            }
-        }
+        maybe_add_untracked_hunk(transport, work_dir, file_path, &mut result).await;
     }
     if collapse {
         crate::common::git::parsers::collapse_diff_context(&mut result.hunks, 12);
     }
     Ok(result)
+}
+
+/// 仅当 `file_path` 确为**未跟踪**（`git ls-files --others` 命中）时，读工作区字节补一个全 `Added` hunk。
+///
+/// 已跟踪但相对 HEAD 干净的文件 diff 同样为空，此处必须保持 `result` 不动 —— 这是
+/// 「已提交代码仍显示全绿边」的根因修复点。本函数**不可能失败**（探测失败即静默放弃，
+/// 宁缺不伪），故返回 `()`。读取是阻塞 I/O，隔离到 OS 阻塞线程池（规则 #3）。
+async fn maybe_add_untracked_hunk(
+    transport: &dyn GitTransport,
+    work_dir: &str,
+    file_path: &str,
+    result: &mut DiffResult,
+) {
+    // 无法确认「未跟踪」就不补 Added（宁缺不伪）：ls-files 失败时静默降级，
+    // 不让一次探测失败把已经成功的 diff 结果变成整条命令报错。
+    let Ok(untracked) = transport
+        .run_git(
+            &[
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "--",
+                file_path,
+            ],
+            work_dir,
+        )
+        .await
+    else {
+        return;
+    };
+    if untracked.trim().is_empty() {
+        return;
+    }
+
+    let path = std::path::Path::new(work_dir).join(file_path);
+    let content = crate::common::runtime::run_blocking(move || {
+        if path.is_file() {
+            std::fs::read_to_string(&path).ok()
+        } else {
+            None
+        }
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some(content) = content else {
+        return;
+    };
+
+    let lines: Vec<DiffLine> = content
+        .lines()
+        .map(|line| DiffLine::Added(line.to_string()))
+        .collect();
+    if lines.is_empty() {
+        return;
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    result.hunks.push(DiffHunk {
+        old_start: 0,
+        old_lines: 0,
+        new_start: 1,
+        new_lines: lines.len() as u32,
+        lines,
+    });
 }
 
 /// Get changed files diff stats (additions/deletions) for local
@@ -232,25 +296,33 @@ pub async fn get_changed_files_diff_stats(
 
 /// Get file diff for a worktree path. Uses git2 for local transports,
 /// shell fallback otherwise.
+///
+/// **单文件 diff 三态契约**（`git-domain.md` §5，与 transport / 实现无关，新增实现必须遵守）：
+/// ① 已跟踪且相对 HEAD 无改动 → `hunks` 为空；② 已跟踪且有改动 → 对应 hunk；
+/// ③ 未跟踪 / 新文件 → 全部 `Added`。**空 hunk 只表示 ①，绝不等于 ③**。
+/// 两条实现（`local::get_file_diff` / `get_file_diff_shell`）必须行为一致。
 pub async fn get_file_diff(
     transport: &dyn GitTransport,
     work_dir: &str,
     file_path: &str,
     collapse: bool,
 ) -> Result<DiffResult> {
-    if let Some(_repo) = transport.open_repo_async(work_dir).await {
-        let work_dir_owned = work_dir.to_string();
-        let file_path_owned = file_path.to_string();
-        tokio::task::spawn_blocking(move || {
-            crate::common::git::local::get_file_diff(
-                std::path::Path::new(&work_dir_owned),
-                &file_path_owned,
-                collapse,
-            )
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("git file diff task join error: {e}"))?
-    } else {
-        get_file_diff_shell(transport, work_dir, file_path, collapse).await
-    }
+    let result = match transport.open_repo_async(work_dir).await {
+        Some(_repo) => {
+            let work_dir_owned = work_dir.to_string();
+            let file_path_owned = file_path.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::common::git::local::get_file_diff(
+                    std::path::Path::new(&work_dir_owned),
+                    &file_path_owned,
+                    collapse,
+                )
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("git file diff task join error: {e}"))??
+        }
+        None => get_file_diff_shell(transport, work_dir, file_path, collapse).await?,
+    };
+    // 红线 4：单次 IPC 载荷封顶（context 护栏不约束 added/removed 行，未跟踪新文件尤甚）。
+    Ok(crate::common::git::parsers::cap_diff_payload(result))
 }

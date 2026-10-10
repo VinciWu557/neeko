@@ -27,6 +27,7 @@ pub mod sync;
 /// Linked worktree 管理。
 pub mod worktree;
 
+pub(crate) use support::has_head;
 pub(crate) use support::invalidate_caches;
 pub use support::resolve_worktree_path;
 
