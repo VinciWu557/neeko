@@ -127,6 +127,12 @@ clippy `missing_const_for_fn`），业务代码无条件调用统一接口。
 import —— 未门控会在非目标平台触发 `unused_imports`，被 clippy `-D warnings` 升级为 CI 错误。
 **完整模式、反模式与历史豁免撤销：`.trellis/spec/backend/quality-guidelines.md`「平台差异集中化」。**
 
+**测试域（`#[cfg(test)]` 域内，含外部 `tests.rs` 与 `#[cfg(all(test, …))]` item）**：平台差异只允许
+**item 级**门控 —— 整测试（平台维度上移测试名）、item 级 gated `const` / fixture（每平台一条真实腿，
+无腿平台给同签名 stub）；**禁止**把 `#[cfg]` 挂在函数体内的语句 / 裸块 / 断言 / match arm / 字段
+init 上（门控粒度 < 作用域粒度 = `unused_*` 与「断言在非目标平台静默消失」的共同温床）。
+判据 `check_platform_cfg_placement`（零容忍，已接 `pnpm lint` 与 CI）。
+
 **11. 换行边界（Line-Ending Boundary）** —— Git 客户端同时面对「git 归一化视图」（blob/diff/status，
 受 `text`/`core.autocrlf` 影响时统一 LF，**确定**）与「工作区物化字节」（由平台 + git 配置决定，
 Windows 默认 `autocrlf=true` 会转 CRLF，**不确定**）。

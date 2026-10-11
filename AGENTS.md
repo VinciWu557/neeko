@@ -107,7 +107,7 @@ Red（先写失败测试）→ Green（最少代码让测试通过）→ Refacto
 | 7 | `if let` 嵌套不超过 3 层 | 连续 ≥3 层 `if let` 拍平成 `match`；仅 1-2 条 happy path 才用 `if let` | `src-tauri/AGENTS.md` |
 | 8 | 路径安全校验（`canonicalize` + capabilities 白名单） | 前端传入路径消费前必须 `canonicalize`，capabilities 禁止 allow-all | `src-tauri/AGENTS.md` |
 | 9 | `mod.rs` 保持极薄 | `mod.rs` 只允许 `mod` 声明 + `pub use`，业务 `fn`/`impl` 抽同级文件 | `src-tauri/AGENTS.md` |
-| 10 | 平台代码规范化（Platform Adapter） | 平台差异与单平台代码必须落 `platform/<theme>/`，通用文件禁止平铺 `#[cfg]` | `src-tauri/AGENTS.md` |
+| 10 | 平台代码规范化（Platform Adapter） | 平台差异与单平台代码必须落 `platform/<theme>/`，通用文件禁止平铺 `#[cfg]`；测试域只许 item 级门控（整测试 / gated 夹具） | `src-tauri/AGENTS.md` |
 | 11 | 换行边界（Line-Ending Boundary） | 禁止注入 `core.autocrlf`；禁止对工作区换行做字节级断言 | `src-tauri/AGENTS.md` |
 | 12 | 路径身份唯一化（`FileRef`） | 同文件判定必须走 `FileRef`，禁止消费侧自造字符串归一 / 别名匹配 | `src/AGENTS.md` |
 | 13 | 测试夹具路径平台无关 | 夹具路径一律由 `tempdir()` 推导，禁止硬编码 POSIX 绝对路径 | `src-tauri/AGENTS.md` |
