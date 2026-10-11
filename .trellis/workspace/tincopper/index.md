@@ -7,9 +7,9 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-5.md`
-- **Total Sessions**: 263
-- **Last Active**: 2026-10-10
+- **Active File**: `journal-6.md`
+- **Total Sessions**: 266
+- **Last Active**: 2026-10-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-5.md` | ~1958 | Active |
+| `journal-6.md` | ~157 | Active |
+| `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
 | `journal-2.md` | ~1991 | Archived |
@@ -33,6 +34,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 266 | 2026-10-11 | neeko-check 评审修复：判据结构性重构 + 夹具所有权（TestRoot）+ 红线 10 测试域条款 | - | `main` |
+| 265 | 2026-10-11 | L2 禁令落地：测试域平台门控只许挂 item（结构护栏 + 38 处迁移清零） | - | `main` |
+| 264 | 2026-10-11 | CI 三平台静态检查红：平台 cfg 独占消费者（修 3 处 + 护栏判据升级） | - | `main` |
 | 263 | 2026-10-10 | Tab identity model: address tabs by WorkspaceSession | `449bc432` | `main` |
 | 262 | 2026-10-10 | Watcher boundary & cost model: ignored subtrees zero-watch | `c690c8df` | `main` |
 | 261 | 2026-10-09 | 领域命名收敛：App → Project → Workspace（全栈对齐 + 四轮复核修复） | `f784b8e7` | `main` |
