@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 266
+- **Total Sessions**: 270
 - **Last Active**: 2026-10-11
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~157 | Active |
+| `journal-6.md` | ~435 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,10 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 270 | 2026-10-11 | neeko-check 评审修复：台账措辞收窄 + 守卫 arm 提前 + A4 注释剥除 + pending staleness 对齐 | - | `main` |
+| 269 | 2026-10-11 | 批 3：治理收口 —— 门禁信号独立性（A4 判据）+ 设计期三问 + 不变量登记 | - | `main` |
+| 268 | 2026-10-11 | 批 2：activate 就绪等待语义定档 —— Pending 一等结果（写入权之后的第二次保证强度对齐） | - | `main` |
+| 267 | 2026-10-11 | 批 1：类型化挂载票号（MountTicket）—— 写入权与挂载同生共死 | - | `main` |
 | 266 | 2026-10-11 | neeko-check 评审修复：判据结构性重构 + 夹具所有权（TestRoot）+ 红线 10 测试域条款 | - | `main` |
 | 265 | 2026-10-11 | L2 禁令落地：测试域平台门控只许挂 item（结构护栏 + 38 处迁移清零） | - | `main` |
 | 264 | 2026-10-11 | CI 三平台静态检查红：平台 cfg 独占消费者（修 3 处 + 护栏判据升级） | - | `main` |

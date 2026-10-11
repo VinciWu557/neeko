@@ -155,3 +155,281 @@ factory.rs 的 `use ExecError` 与 instance.rs 的 `let info`（都只被 not(ta
 ### Next Steps
 
 - None - task complete
+
+
+## Session 267: 批 1：类型化挂载票号（MountTicket）—— 写入权与挂载同生共死
+
+**Date**: 2026-10-11
+**Task**: 批 1：类型化挂载票号（MountTicket）—— 写入权与挂载同生共死
+**Branch**: `main`
+
+### Summary
+
+2026-10 CI 竞态根治（A 簇）：写权载体从隐式 Arc（进程级）收紧为显式票（挂载级）。MountTicket 私有字段唯一签发方 + RAII 守卫覆盖 setup 失败出口 + release_one 先吊销票再删快照（compare-and-remove）；store_snapshot 拆为 store_push（凭证闸门）/store_pull（不变）/stamp_and_insert 内核；3 条确定性回归测试；pnpm check 24 条全绿
+
+### Main Changes
+
+## 背景
+CI backend-test 在 macOS 偶发 `activate_style_release_except_keeps_only_the_target_unit` 失败：
+worker 推送回调活在 watch() 栈之外，释放单元后晚到的首推会把已作废槽位重新填上权威数据。
+10-08 同测试已挂过（既存 flaky），本次改动只是让测试 job 从被静态检查短路中恢复执行、暴露旧账。
+
+## 实现（src-tauri/src/common/file/watcher/manager/core.rs）
+- `MountTicket { key, seq }`：字段私有、只能由 issue_ticket 构造 ⇒ 票不可伪造；key 嵌在票里
+  ⇒ 票是单元专属的（不能给别的单元写）。
+- `mount_tickets: HashMap<key, seq>` + `ticket_serial: AtomicU64`：在册登记表 + 单调发号器。
+- `MountTicketGuard`（RAII）：watch() 签发后立即 arm；**4 个 setup 失败出口全部由 Drop 兜底吊销**，
+  不靠「每个出口记得回收」；handle 登记成功才 commit。
+- watch()：**先于 worker 创建**签发票号（覆盖「首个快照先于 handle 登记到达」的合法窗口，
+  这也是旧实现不敢用 watchers.contains_key 做守卫的原因）；回调改走 deliver_push。
+- release_one：先吊销票（compare-and-remove，只杀本挂载自己的票，防并发重挂载误杀新票）
+  **再**作废快照 —— 顺序契约，排除「校验通过→释放发生→晚到插入复活槽位」窗口。
+- stop_all：清空票表（全停 ⇒ 无有效写入者）；WatcherHandle 增 mount_ticket 字段（释放依据）。
+- store_snapshot 拆三：stamp_and_insert（盖章内核，签名强制持 store 锁）/
+  store_pull_snapshot（R2.4 守卫不变，无闸门）/ store_push_snapshot（凭证闸门与插入同临界区，
+  失效返 None）；deliver_push 统一「写入 + emit 决策」，失效丢弃且**不 emit**。
+- 锁纪律文档更新：嵌套锁序新增 store → tickets，禁止反向。
+
+## 确定性回归测试（lifecycle_tests.rs，全部不依赖线程时序）
+1. push_with_current_ticket_is_written_and_emitted：当期票接受 + 写入 + emit + 同版本；
+2. push_after_release_with_stale_ticket_is_rejected：释放后旧票拒绝 + 槽位空 + 无 emit 增量 + 票已注销；
+3. remount_rejects_previous_mounts_late_push：释放→重挂载后旧票拒绝（槽位 version 不动）+ 新票可用。
+
+## 验证
+- manager 38 测试全绿（含 CI 曾失败的 activate_style_release_except 那条）
+- 新测试连跑 8 轮全绿（确定性）；下游 services 41 / status_worker 26 / git::services 11 全绿
+- clippy --all-targets -D warnings 全绿；pnpm check 24 条护栏全绿；CR/NUL 校验干净
+- 改动 4 文件（+447/−68），停在未提交状态
+
+## 待办（批 2/3，未开始）
+- 批 2（B 簇）：activate 就绪等待语义定档（Pending 化或预算抬升），Windows CI 冷 FS 超时问题；
+- 批 3（治理）：ci.yml 去 backend-check→backend-test 短路；spec 三问扩章 + 不变量登记。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 268: 批 2：activate 就绪等待语义定档 —— Pending 一等结果（写入权之后的第二次保证强度对齐）
+
+**Date**: 2026-10-11
+**Task**: 批 2：activate 就绪等待语义定档 —— Pending 一等结果（写入权之后的第二次保证强度对齐）
+**Branch**: `main`
+
+### Summary
+
+B 簇：冷窗口超时从错误空间移出。WorkspaceActivation{Ready|Pending}（serde tag=state）+ read_mounted_snapshot（等待降级为延迟优化）+ 命令层/前端类型同步 + 3 条新测试（含 pull 恒 Ready 与前端两条 pending 用例）；pnpm check 24 条全绿
+
+### Main Changes
+
+## 背景
+CI backend-test 在 Windows 偶发 `activate_releases_the_previous_unit` /
+`remote_branch_pulls_without_mounting_and_releases_the_previous_unit` 失败：
+`NotFound("status for workspace … is not available yet")` —— 冷启动窗口（挂载已成立、
+worker 首轮重算在途）在慢环境（CI 冷 FS / Defender）上超过 1500ms 预算，超时被当成错误。
+与批 1（macOS 槽位竞态）同属「保证强度脱钩」类：实现给 best-effort，消费方假定 must-succeed。
+
+## 方案判定（用户选型：Pending 一等结果）
+合理 —— 但前提是「等待」必须降级为**延迟优化**，正确性归推送事件：
+1. 未就绪是一等状态而非错误 ⇒ 超时从错误空间消失，该类结构性消灭（不是调大赌注）；
+2. 收敛通道已存在：useActiveWorkspaceSync 的 reconciliation 环（判据 = 槽位为空）+
+   git-status-snapshot 推送 —— Pending 只是把后端契约对齐到前端已有的收敛模型；
+3. 等待保留（毫秒级就绪时同步返回，避免首屏闪 loading），但不再承担正确性；
+4. 边界：只在挂载已成立时 Pending（非 git 库/解析失败仍 Err）；pull 分支恒 Ready（测试钉住）；
+   Pending 与 failed 在前端分开处理。
+
+## 实现
+Rust（git/services/status.rs）：
+- `WorkspaceActivation { Ready { snapshot } | Pending { workspace_key } }`（serde tag = "state"）；
+- 抽 `read_mounted_snapshot()`：等待 = 事件驱动（poke + Condvar 谓词）+ 预算防死锁，
+  返回 Option（不判错），两个调用方各自定义 None 语义（读命令 Err，激活命令 Pending）；
+- `first_snapshot_outcome()` 纯映射（便于直测）：None → Pending，绝不 Err；
+- `activate_with` push 分支：挂载未成立退化为一次性 pull（保持旧行为）；成立则 Ready/Pending；
+- 命令层 `set_active_workspace` 返回类型同步；read 命令（get_workspace_status）语义不动
+  （其消费方均为 catch→null→未知，收益/波及不成比例，留作后续可选）。
+前端：
+- `shared/types/git.ts` 新增 `WorkspaceActivation`（与 Rust 同形）；`git/types.ts` 转出；
+- `gitApi.activateWorkspace` 返回类型；`useActivateWorkspace` 处理 pending（不写槽位、不报错、
+  返回 'pending'，收敛交给调用方）；`useActiveWorkspaceSync` 注释同步 pending。
+
+## 测试
+- Rust 新纯映射测试 `cold_window_maps_to_pending_never_to_error`（时序不可控但归宿必须恒为
+  Ready|Pending；旧实现把超时映射进 Err 正是事故根因）；
+- `activate_mounts_…` 改为「冷窗口不得为错误 + 事件通道有界等待收敛」（原断言依赖预算内就绪）；
+- `remote_branch_…` 钉住 pull 恒 Ready（Pending 只属于 push 生产者的冷窗口）；
+- 前端：两个测试文件的 mock 改为 ready 信封；各新增 1 条 pending 用例
+  （useActivateWorkspace：不写槽位不报错；useActiveWorkspaceSync：不判死、退避重试直到落地）。
+
+## 验证
+- cargo：git::services::status 7 全绿；clippy --all-targets -D warnings 全绿（含 missing-docs）；
+- vitest：22 全绿（两文件）；tsc --noEmit 全绿；
+- pnpm check 24 条护栏全绿（首次复跑曾抓到 1 处：测试里手写 `\u{0}` key 字面量触发
+  check_workspace_identity，已改为占位串并注明透传语义）；
+- spec 同步：git-domain.md「挂载唯一入口」段改为 Ready|Pending 契约 + 有界等待定性；
+- 16 文件改动，NUL/CR 校验干净，停在未提交。
+
+## 待办（批 3，未开始）
+- ci.yml 去 backend-check → backend-test 短路（flaky 积压一周的放大因素）；
+- spec 三问扩章（写入凭证/等待语义/门禁独立性）+ 不变量登记。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 269: 批 3：治理收口 —— 门禁信号独立性（A4 判据）+ 设计期三问 + 不变量登记
+
+**Date**: 2026-10-11
+**Task**: 批 3：治理收口 —— 门禁信号独立性（A4 判据）+ 设计期三问 + 不变量登记
+**Branch**: `main`
+
+### Summary
+
+C 簇：去 ci.yml 三条 check→test/coverage 短路（2026-10 flaky 积压一周的放大因素）；check_gate_topology 新增 A4 判据（*-test/*-coverage 的 needs 不得含 *-check，红/绿双向验证）；spec 三问章节 + 票号契约第 6 条；invariants 17→20 条；pnpm check 24 条全绿
+
+### Main Changes
+
+## 背景
+批 1/2 修掉 A（槽位竞态）、B（冷窗口超时）两簇；批 3 处理放大因素与机制保障（"C 簇"）：
+`backend-test needs backend-check` ⇒ 静态检查红了一周 ⇒ 测试从未执行 ⇒ 测试层 flaky
+（正好是 A/B 两簇）积压到修复当天才第一次现身。原则：**门禁的价值 = 暴露频率 × 信号独立度**。
+
+## 1) CI 拓扑（.github/workflows/ci.yml）
+- 去掉三条「check 短路证据」：`frontend-test needs frontend-check`、`backend-test needs
+  backend-check`、`backend-coverage needs backend-check`；
+- 每个 job 上方留注释写明原因（引 2026-10 事故 + 指向 A4 判据）；
+- 对齐既有先例：`frontend-build` 的注释早已写着「不 needs frontend-check：静态检查结论不构成
+  前置条件，独立并行出反馈更快」—— 本批只是把同一条理念贯彻到其余三个 job。
+
+## 2) A4 判据（tools/guards/checks/check_gate_topology.py）
+- 新增 `_parse_ci_needs`：`jobs:` → {job: [needs]}，支持 `needs: x` / `needs: [a, b]` /
+  块列表（`needs:` + `- x`）三形态，引号剥除；
+- 新增 `check_signal_independence`（A4）：证据类 job（`*-test` / `*-coverage`）的 needs
+  不得含检查类 job（`*-check`）；违规消息直接给出事故语境与修法；
+- 防静默失效：run / needs 两个解析器的 job 集必须相等，不等判 broken；
+- 单测 +6（正例×2 / 负例×4 覆盖三种 needs 形态与 build 依赖豁免）；
+- **红/绿双向验证**：把 `needs: backend-check` 加回 backend-test ⇒ A4 立即报精确违规；
+  还原 ⇒ 绿。
+
+## 3) spec 落地
+- `quality-guidelines.md` 新增「保证强度对齐（设计期三问）」章节：写入者问（凭证寿命 vs 状态
+  寿命）/ 等待者问（事件 vs 时间；超时进状态不进错误）/ 门禁问（信号短路与暴露频率），
+  各配 2026-10 反例与结构化解法落点；
+- `concurrency-guidelines.md` 的 watcher 所有权契约补第 6 条「写入凭证随挂载失效（票号）」
+  —— 批 1 机制的权威叙述（为什么不是 contains_key、三条确定性契约测试、RAII 兜底）；
+- 批 2 时已同步 `git-domain.md` 的「挂载唯一入口」段（Ready|Pending 契约）。
+
+## 4) 不变量登记（tools/guards/ledger/invariants.json：17 → 20 条）
+- `mount-write-credential-lifetime`（tier=type：无凭证写入编译不过；测试落点 lifecycle_tests）；
+- `activation-readiness-is-a-state-not-an-error`（tier=type：枚举无错误分支；Rust + 前端双侧测试）；
+- `gate-check-test-signal-independence`（tier=guard：check_gate_topology A4 + 其自测）。
+
+## 验证
+- check_gate_topology 单测 22 全绿；`check_invariant_enforcement` 20 条不变量 / 20 个 guard
+  文件 / 0 违规；全量 lint 档 21 条护栏绿；pnpm check（进行中→结果见下）；
+- 改动 22 文件（批 1+2+3 累计，未提交）。
+
+## 三批收束
+A（票号）/ B（Pending）/ C（信号独立）各配：类型或凭证落点 + 确定性测试 + spec 口径 +
+不变量台账。同一缺陷类「保证强度脱钩」的三次实例全部关掉，且各自有机械判据防回归。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 270: neeko-check 评审修复：台账措辞收窄 + 守卫 arm 提前 + A4 注释剥除 + pending staleness 对齐
+
+**Date**: 2026-10-11
+**Task**: neeko-check 评审修复：台账措辞收窄 + 守卫 arm 提前 + A4 注释剥除 + pending staleness 对齐
+**Branch**: `main`
+
+### Summary
+
+22 文件增量审核 0 Block / 1 Warning + 3 Nit，本轮全部修复；manager 38 测试 + A4 单测 24 + 前端 23 用例全绿；pnpm check 24 条全绿；改动累计 22 文件未提交
+
+### Main Changes
+
+## 审核范围
+neeko-check 增量（22 文件）：批 1（票号）/ 批 2（Pending）/ 批 3（信号独立）三阶段产物的对抗性复读。
+结论：0 Block；1 Warning（台账措辞）+ 3 Nit。本轮全部修复。
+
+## 修复（1 Warning + 3 Nit）
+1. [Warning] 不变量第 19 条措辞与读路径范围张力 → 标题收窄为「**激活命令的**就绪性是一等状态」，
+   首条 enforcement note 增补范围说明：「读命令（get_workspace_status）冷窗口仍返回
+   Err(NotFound) —— 消费方按『未知』收敛（catch→null），如需同化另行评估」。
+2. [Nit] watch() 的签发→arm 之间的 panic 逃生窗口 → `MountTicketGuard` 改为**在签发行后立刻
+   arm**（分支内创建、随 4 元组带出：`(worker, scheduler, mount_ticket, mut ticket_guard)`），
+   worker 线程创建 panic 的 unwind 现在也走 Drop 吊销；旧的分支后 arm 块删除。
+3. [Nit] A4 needs 解析不吃行内注释 → `_parse_ci_needs` 两处（内联值与块列表项）增补
+   `split(" #", 1)[0]` 注释剥除 + docstring 同步；新增 2 条单测（内联注释 / 块列表项注释）。
+4. [Nit] 前端 pending 先于 staleness 检查 → `useActivateWorkspace` 改为**staleness 守卫先行**
+   （ready/pending 共用，取 respondedKey），pending 判断后置；新增 1 条「迟到 pending ⇒ stale」用例。
+
+## 验证（冻结态）
+- cargo：fmt/clippy 全绿；manager 38 测试全绿（含票号三例）
+- 护栏：check_gate_topology 24 单测全绿；真实仓库 0 违规；check_invariant_enforcement 通过
+- 前端：tsc 全绿；两测试文件 23 用例全绿（含新增迟到 pending 用例）
+- **pnpm check 24 条护栏全绿**（test_rust / test_fe / test_host / 两档 lint）
+- NUL/CR 校验干净；改动累计 22 文件，停在未提交
+
+## 复核要点（本轮机械证据）
+- diff 内 4 处 .expect 全在 #[cfg(test)] 域；无新增 unwrap / 平台 cfg / std::process / 硬编码路径
+- 无锁跨 await（status.rs 新增代码零直接 .lock()；core.rs 新增代码全同步）
+- A4 判据红/绿双向验证保持（批 3）；行内注释形态由新单测钉住
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
