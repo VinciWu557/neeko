@@ -252,7 +252,10 @@ mod tests {
 
     #[test]
     fn digest_unknown_when_git_cannot_run() {
-        let missing = std::env::temp_dir().join("neeko-probe-missing-repo-does-not-exist");
+        // 路径由 tempdir 派生：**保证**不存在（固定名可能被系统 TEMP 里的残留撞成存在 →
+        // 断言翻面）。TempDir 由本测试持有，Drop 即回收。
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("neeko-probe-missing-repo-does-not-exist");
         let entries = [collapsed_dir("any")];
         assert_eq!(
             collapsed_dirs_digest(&missing, &entries),

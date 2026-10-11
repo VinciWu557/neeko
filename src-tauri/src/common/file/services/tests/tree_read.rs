@@ -134,7 +134,7 @@ fn read_dir_tree_prunes_ignored_dirs_before_descending() {
     fs::write(root.join("src.rs"), "fn main() {}").expect("写入 src.rs 失败");
     fs::write(root.join(".gitignore"), "target/\n").expect("写入 .gitignore 失败");
 
-    let filter = GitIgnoreFilter::new(root.clone());
+    let filter = GitIgnoreFilter::new(root.to_path_buf());
     let result = read_dir_recursive(&root, &root, 3, Some(&filter)).expect("读取目录树失败");
     let tree = &result.nodes;
 
@@ -228,7 +228,7 @@ async fn resolve_gitignore_filter_returns_none_for_non_git_dir() {
 async fn resolve_gitignore_filter_reuses_existing_watcher_filter() {
     let root = temp_root("gitignore_fallback_existing");
     fs::create_dir_all(root.join(".git")).expect("创建 .git 测试目录失败");
-    let shared = Arc::new(GitIgnoreFilter::new(root.clone()));
+    let shared = Arc::new(GitIgnoreFilter::new(root.to_path_buf()));
     let resolved = crate::common::file::services::resolve_gitignore_filter(
         &ExecTarget::Local,
         Some(Arc::clone(&shared)),
@@ -258,7 +258,7 @@ async fn resolve_gitignore_filter_builds_base_root_when_existing_root_mismatches
     fs::write(main_root.join(".gitignore"), "main.log\n").expect("写入主 .gitignore 失败");
     fs::write(wt_root.join(".gitignore"), "wt.log\n").expect("写入 worktree .gitignore 失败");
     // watcher 共享过滤器：根固定在主项目路径
-    let shared = Arc::new(GitIgnoreFilter::new(main_root.clone()));
+    let shared = Arc::new(GitIgnoreFilter::new(main_root.to_path_buf()));
 
     // base = worktree 路径（主仓库之外）→ 根不匹配 → 现场构建 worktree 根过滤器
     let resolved = crate::common::file::services::resolve_gitignore_filter(
@@ -307,7 +307,7 @@ async fn flatten_join_result_degrades_to_none_on_join_failure() {
     let root = temp_root("join_ok");
     fs::create_dir_all(root.join(".git")).unwrap();
     let ok_result: Result<Option<Arc<GitIgnoreFilter>>, _> =
-        Ok(Some(Arc::new(GitIgnoreFilter::new(root.clone()))));
+        Ok(Some(Arc::new(GitIgnoreFilter::new(root.to_path_buf()))));
     assert!(
         flatten_join_result(ok_result).is_some(),
         "Ok(Some) 应透传过滤器"
@@ -402,7 +402,7 @@ fn read_dir_recursive_partial_ignore_only_prunes_matched_dir() {
     fs::write(root.join("sub/keep.txt"), "x").unwrap();
     fs::write(root.join(".gitignore"), "sub/deep\n").unwrap();
 
-    let filter = GitIgnoreFilter::new(root.clone());
+    let filter = GitIgnoreFilter::new(root.to_path_buf());
     let tree = read_dir_recursive(&root, &root, 3, Some(&filter))
         .unwrap()
         .nodes;
@@ -426,7 +426,7 @@ fn read_dir_recursive_expand_inside_ignored_dir_keeps_children_visible() {
     fs::write(root.join("node_modules/lodash/index.js"), "x").unwrap();
     fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
 
-    let filter = GitIgnoreFilter::new(root.clone());
+    let filter = GitIgnoreFilter::new(root.to_path_buf());
     // 懒加载：根 = node_modules 本身，depth=2 覆盖到孙子
     let tree = read_dir_recursive(&root.join("node_modules"), &root, 2, Some(&filter))
         .unwrap()
@@ -447,7 +447,7 @@ fn read_dir_recursive_marks_ignored_files() {
     fs::write(root.join(".env"), "secret").unwrap();
     fs::write(root.join(".gitignore"), ".env\n").unwrap();
 
-    let filter = GitIgnoreFilter::new(root.clone());
+    let filter = GitIgnoreFilter::new(root.to_path_buf());
     let tree = read_dir_recursive(&root, &root, 1, Some(&filter))
         .unwrap()
         .nodes;
