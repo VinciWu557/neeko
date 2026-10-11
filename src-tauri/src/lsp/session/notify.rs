@@ -32,6 +32,14 @@ pub(super) fn handle_diagnostics_notification(
     });
 }
 
+/// rust-analyzer 的就绪通知方法（能力门控：仅声明 `experimental.serverStatusNotification`
+/// 的插件会收到；声明见 `plugin/builtins/rust_lang.rs`，红线 14 的消费点即本模块）。
+pub(super) const SERVER_STATUS_METHOD: &str = "experimental/serverStatus";
+
+/// `experimental/serverStatus` 的合成 token 名：前端只认「token 非空 ⇒ busy」，
+/// 复用既有进度投影（session 事件 + lsp-progress 事件），**前端零改动**。
+const SERVER_STATUS_TOKEN: &str = "experimental/serverStatus";
+
 /// 维护会话的**在途 progress token** 集合并转发进度事件。
 ///
 /// `begin` 加入、`end` 移除、`report` 只更新（不改集合）—— 集合是
@@ -131,6 +139,44 @@ pub(super) fn handle_progress_notification(
         }
         _ => {}
     }
+}
+
+/// 处理 rust-analyzer 的 `experimental/serverStatus`（就绪语义）。
+///
+/// 第一性原理：「Running」必须止于**服务器自述就绪**，而不是客户端握手完成 ——
+/// RA 的 cachePriming / flycheck 等 token 结束后、到真正答得快之间还有一段**无信号
+/// 尾巴**（2026-10-11 实测：token 全结束后 definition 仍需 18–19s）。RA 的
+/// `quiescent` 正是这段的官方信号，本函数把它翻译成既有的合成 token：
+/// `quiescent=false` → `begin`（busy/Indexing），`quiescent=true` → `end`（回 ready）。
+///
+/// 形态不符（缺 `quiescent` / 非布尔）一律忽略：不改变任何状态（防御畸形通知）。
+pub(super) fn handle_server_status_notification(
+    params: &Value,
+    project_path: &str,
+    language_id: &str,
+    transport: &dyn LspTransport,
+    in_flight: &Mutex<HashSet<String>>,
+) {
+    let Some(quiescent) = params.get("quiescent").and_then(Value::as_bool) else {
+        return;
+    };
+    let value = if quiescent {
+        serde_json::json!({ "kind": "end" })
+    } else {
+        let mut value = serde_json::json!({ "kind": "begin" });
+        if let Some(message) = params.get("message").and_then(Value::as_str) {
+            value["title"] = Value::String(message.to_string());
+        }
+        value
+    };
+    // 翻译成标准进度形态，复用 token 记账 / 会话事件 / 前端进度事件的全套既有逻辑。
+    handle_progress_notification(
+        &serde_json::json!({ "token": SERVER_STATUS_TOKEN, "value": value }),
+        project_path,
+        language_id,
+        transport,
+        in_flight,
+    );
 }
 
 #[cfg(test)]
@@ -240,6 +286,78 @@ mod tests {
         let s = Mutex::new(HashSet::new());
         handle_progress_notification(&serde_json::json!({ "token": "x" }), "/p", "java", &t, &s);
         assert!(snapshot(&s).is_empty());
+    }
+
+    // ── rust-analyzer 就绪语义（experimental/serverStatus，能力门控）────────
+
+    /// `quiescent=false` → 合成 busy token + `indexing` 会话事件（「Running」不再早于
+    /// 服务器自述就绪）；`quiescent=true` → 摘除 token + `ready`。重复通知幂等。
+    #[test]
+    fn server_status_tracks_quiescent_as_synthetic_token() {
+        let transport = crate::lsp::session::testing::RecordingTransport::default();
+        let s = Mutex::new(HashSet::new());
+
+        // 加载中（含 message）：合成 begin，并把 message 作为进度标题透传。
+        handle_server_status_notification(
+            &serde_json::json!({ "health": "ok", "quiescent": false, "message": "workspace loading" }),
+            "/p",
+            "rust",
+            &transport,
+            &s,
+        );
+        assert_eq!(snapshot(&s), vec![SERVER_STATUS_TOKEN]);
+        let events = transport.take();
+        assert!(
+            events.iter().any(|(pp, lid, status, msg, _)| pp == "/p"
+                && lid == "rust"
+                && status == "indexing"
+                && msg.as_deref() == Some("workspace loading")),
+            "加载中必须合成 busy 事件（含 RA 的 message）: {events:?}"
+        );
+
+        // 重复的 false 通知不得产生重复 token。
+        handle_server_status_notification(
+            &serde_json::json!({ "quiescent": false }),
+            "/p",
+            "rust",
+            &transport,
+            &s,
+        );
+        assert_eq!(snapshot(&s), vec![SERVER_STATUS_TOKEN]);
+
+        // quiescent=true：摘除 token 并回 ready（前端据此清 busy）。
+        handle_server_status_notification(
+            &serde_json::json!({ "health": "ok", "quiescent": true, "message": null }),
+            "/p",
+            "rust",
+            &transport,
+            &s,
+        );
+        assert!(snapshot(&s).is_empty(), "quiescent 后必须摘除合成 token");
+        assert!(
+            transport.has("/p", "rust", "ready"),
+            "quiescent=true 必须回 ready: {:?}",
+            transport.take()
+        );
+    }
+
+    /// 形态不符（缺 `quiescent` / 非布尔 / 非对象）一律忽略：不改变任何状态。
+    #[test]
+    fn server_status_malformed_payload_is_ignored() {
+        let transport = crate::lsp::session::testing::RecordingTransport::default();
+        let s = Mutex::new(HashSet::new());
+
+        for params in [
+            serde_json::json!({}),
+            serde_json::json!({ "quiescent": "yes" }),
+            serde_json::json!({ "quiescent": null }),
+            serde_json::Value::Null,
+        ] {
+            handle_server_status_notification(&params, "/p", "rust", &transport, &s);
+        }
+
+        assert!(snapshot(&s).is_empty(), "畸形通知不得改变在途集合");
+        assert!(transport.take().is_empty(), "畸形通知不得产生任何事件");
     }
 
     /// `version` 必须原样带到 DiagnosticBus：前端据此让 lsp-client 的版本门生效

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/lsp-domain.md", "reason": "LSP 域不变量：三通道模型、诊断单写点、形态判据（§6）、语言差异落插件数据（红线 15）、F1-F7 回退台账"}
+{"file": ".trellis/spec/backend/command-execution.md", "reason": "探测/启动/安装一律经 core::exec facade，禁止绕开（红线 1）；argv 与 script 两形态的边界"}
+{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "spawn_blocking 隔离阻塞 I/O（红线 3）与 core::exec 同步桥的允许调用位置"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "mod.rs 极薄（红线 9）、平台差异集中化（红线 10）、禁止模式清单"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "夹具路径平台无关（红线 13）、测试仓库确定性 builder、行尾无关断言"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 契约与命令边界错误转换（读路径不得把查表未命中包装成领域错误）"}

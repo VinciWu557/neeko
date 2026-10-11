@@ -13,6 +13,7 @@ use crate::common::executor::factory::ExecTarget;
 use crate::lsp::plugin::types::InstallOp;
 use crate::lsp::plugin::LspPlugin;
 use crate::lsp::process::run_command_streaming;
+use crate::lsp::spawn_spec::LspExecContext;
 use crate::lsp::types::LSP_INSTALL_PROGRESS_EVENT;
 
 /// Track in-progress installs to avoid concurrent attempts per language.
@@ -115,12 +116,16 @@ pub fn check_plugin_installed(plugin: &LspPlugin, target: &ExecTarget) -> bool {
 
 /// Try to auto-install the plugin's server **in the project's environment**.
 ///
+/// 执行走 [`LspExecContext`]（cwd / env 与探测、启动同源 —— 安装同样属于
+/// 「在项目环境里执行」：如 `rustup component add` 会按项目 `rust-toolchain.toml`
+/// 选择 toolchain）。
+///
 /// Returns `Ok(true)` if install ran successfully, `Ok(false)` if the plugin
 /// has no install recipe, `Err` on failure.
-pub fn install_plugin_server(
+pub(crate) fn install_plugin_server(
     plugin: &LspPlugin,
     app_handle: &tauri::AppHandle,
-    target: &ExecTarget,
+    ctx: &LspExecContext,
 ) -> Result<bool, String> {
     let language_id = plugin.language_id.as_str();
     {
@@ -135,7 +140,7 @@ pub fn install_plugin_server(
         in_progress.insert(language_id.to_string());
     }
 
-    let result = install_plugin_server_impl(plugin, app_handle, target);
+    let result = install_plugin_server_impl(plugin, app_handle, ctx);
 
     {
         let mut in_progress = INSTALL_IN_PROGRESS.lock().map_err(|e| {
@@ -148,10 +153,28 @@ pub fn install_plugin_server(
     result
 }
 
+/// 失败消息里的「修法」提示：由插件 `install` 数据派生（数据驱动，**不按语言
+/// 分支**，红线 15）。无安装配方 → `None`（不编造建议）。
+#[must_use]
+pub(crate) fn install_hint(plugin: &LspPlugin) -> Option<String> {
+    let install = plugin.install.as_ref()?;
+    let mut methods: Vec<&'static str> = vec![install.primary.describe()];
+    methods.extend(install.fallbacks.iter().map(|op| op.describe()));
+    let tools = methods
+        .iter()
+        .map(|tool| format!("`{tool}`"))
+        .collect::<Vec<_>>()
+        .join(" / ");
+    Some(format!(
+        " | install via {tools} (needs: {})",
+        install.prerequisite
+    ))
+}
+
 fn install_plugin_server_impl(
     plugin: &LspPlugin,
     app_handle: &tauri::AppHandle,
-    target: &ExecTarget,
+    ctx: &LspExecContext,
 ) -> Result<bool, String> {
     let language_id = plugin.language_id.as_str();
     let bin = plugin.server_binary.as_str();
@@ -173,7 +196,7 @@ fn install_plugin_server_impl(
     while !remaining.is_empty() {
         // 下一个可用（探测目标可解析）的安装操作；之前的不可用操作记录原因后跳过。
         let Some(idx) = first_available_method(remaining, &|op| {
-            check_binary_installed(op.probe_tool(), target)
+            check_binary_installed(op.probe_tool(), &ctx.target)
         }) else {
             for op in remaining {
                 reasons.push(format!(
@@ -221,7 +244,7 @@ fn install_plugin_server_impl(
                 );
             }
         };
-        let code = run_command_streaming(target, program, &args, on_line)
+        let code = run_command_streaming(ctx, program, &args, on_line)
             .map_err(|e| format!("Install command failed: {}", e))?;
         let log = log.lock().snapshot().to_string();
         if code == 0 {
@@ -317,6 +340,31 @@ mod tests {
         assert_eq!(first_available_method(methods, &|_| false), None);
         // Script 形态的探测目标是 sh（而非把它当成「名为 sh 的安装工具」）
         assert_eq!(methods[2].probe_tool(), "sh");
+    }
+
+    /// AC5 的「修法」提示：由插件 install 数据派生（数据驱动，不按语言分支）。
+    #[test]
+    fn install_hint_derives_from_plugin_data() {
+        let registry = crate::lsp::plugin::LspPluginRegistry::with_defaults();
+        let rust = registry
+            .resolve_by_language("rust")
+            .expect("rust plugin exists");
+        let hint = install_hint(&rust).expect("rust 插件有安装配方");
+        assert!(hint.contains("`rustup`"), "提示必须点名安装工具: {hint}");
+        assert!(hint.contains("needs:"), "提示必须带前置条件说明: {hint}");
+    }
+
+    /// 无安装配方 → 不编造建议。
+    #[test]
+    fn install_hint_is_none_without_recipe() {
+        let plugin = LspPlugin::builtin(
+            "no-install",
+            &["ni"],
+            "no-install-bin",
+            &["no-install-bin"],
+            None,
+        );
+        assert_eq!(install_hint(&plugin), None);
     }
 
     #[test]

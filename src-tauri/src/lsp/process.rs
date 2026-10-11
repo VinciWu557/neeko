@@ -13,6 +13,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 use crate::common::executor::factory::{create_executor, ExecTarget};
 use crate::common::executor::{BoxAsyncRead, ExecChild, SpawnOptions};
 use crate::common::runtime::AppRuntime;
+use crate::lsp::spawn_spec::LspExecContext;
 
 /// Long-lived LSP process with sync stdio + kill handle.
 pub struct LspProcess {
@@ -101,6 +102,13 @@ pub fn resolve_java_home(target: &ExecTarget) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// 本地测试用执行上下文：cwd 用当前目录（这些用例只关心输出/退出码/超时，
+    /// 不关心具体目录；探测的 cwd 语义由 `probe_runs_in_context_cwd` 与
+    /// `spawn_spec` 的单测覆盖）。
+    fn local_ctx() -> LspExecContext {
+        LspExecContext::new(ExecTarget::Local, ".", Vec::new())
+    }
+
     #[test]
     fn parse_java_home_extracts_path_from_xshowsettings() {
         let out = "    java.home = /opt/homebrew/Cellar/openjdk@21/21.0.12.1/libexec/openjdk.jdk/Contents/Home\n    java.version = 21.0.12.1\n";
@@ -168,16 +176,16 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn run_command_blocking_collects_stdout_and_stderr_verbatim() {
-        let (code, out, err) = run_command_blocking(
-            &ExecTarget::Local,
+        let run = probe_command(
+            &local_ctx(),
             "sh",
             &["-c", "echo out; echo err 1>&2; exit 7"],
             std::time::Duration::from_secs(5),
         )
-        .expect("run_command_blocking");
-        assert_eq!(code, 7);
-        assert_eq!(out, "out\n");
-        assert_eq!(err, "err\n");
+        .expect("probe_command");
+        assert_eq!(run.exit_code, 7);
+        assert_eq!(run.stdout, "out\n");
+        assert_eq!(run.stderr, "err\n");
     }
 
     /// 转发模式：逐行回调（trim 尾）拿到输出，返回退出码；与收集模式共用同一内核。
@@ -187,7 +195,7 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::<String>::new()));
         let sink = Arc::clone(&lines);
         let code = run_command_streaming(
-            &ExecTarget::Local,
+            &local_ctx(),
             "sh",
             &["-c", "echo one; echo two; exit 3"],
             move |line| sink.lock().expect("lock").push(line.to_string()),
@@ -200,8 +208,8 @@ mod tests {
     #[test]
     fn run_command_blocking_times_out_and_kills_child() {
         let started = std::time::Instant::now();
-        let result = run_command_blocking(
-            &ExecTarget::Local,
+        let result = probe_command(
+            &local_ctx(),
             "sh",
             &["-c", "sleep 30"],
             std::time::Duration::from_millis(300),
@@ -210,6 +218,138 @@ mod tests {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(10),
             "timeout did not bound the wait"
+        );
+    }
+
+    // ── 探测形态判据（design §2.2 方案 A；AC1b / AC4 / AC5）──────────────
+
+    /// 平台无关的 shell 包装（与 `core::exec` 测试同款：unix `sh -c` / windows `cmd /c`）。
+    #[cfg(unix)]
+    fn shell(script: &str) -> Vec<String> {
+        vec!["sh".into(), "-c".into(), script.into()]
+    }
+    #[cfg(windows)]
+    fn shell(script: &str) -> Vec<String> {
+        vec!["cmd".into(), "/c".into(), script.into()]
+    }
+
+    fn ctx_with_cwd(cwd: &str) -> LspExecContext {
+        LspExecContext::new(ExecTarget::Local, cwd, Vec::new())
+    }
+
+    /// AC4：探测在**上下文给定的 cwd**里执行（P2a：探测与启动同源；此前探测跑在
+    /// 应用默认目录 —— 实测绿灯，而真实启动（cwd = 项目根）必失败）。
+    #[test]
+    fn probe_runs_in_context_cwd() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().to_string_lossy().to_string();
+        #[cfg(unix)]
+        let script = "pwd";
+        #[cfg(windows)]
+        let script = "cd";
+        let argv = shell(script);
+        let args_ref: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+
+        let run = probe_command(
+            &ctx_with_cwd(&cwd),
+            &argv[0],
+            &args_ref,
+            std::time::Duration::from_secs(5),
+        )
+        .expect("probe runs");
+
+        assert_eq!(run.exit_code, 0, "stderr: {}", run.stderr);
+        // 双端 canonicalize：macOS 的 /var → /private/var 软链、Windows 的大小写/分隔符
+        // 差异都不影响「同一个目录」的判定。
+        let observed = std::fs::canonicalize(run.stdout.trim()).expect("observed cwd exists");
+        let expected = std::fs::canonicalize(dir.path()).expect("tempdir exists");
+        assert_eq!(observed, expected, "探测必须在 ctx.cwd 里执行");
+    }
+
+    /// AC5（形态表逐行）：非零 + stderr 非空 = 可执行但拒绝应答 ⇒ `Refused`
+    /// （记证据、**不**拒绝启动）；非零 + stderr 空 = `Weak`；执行不了 = `NotRunnable`；
+    /// 超时 = `Weak`（慢启动不得被误杀）。
+    #[test]
+    fn classify_probe_run_follows_shape_table() {
+        let answered = CommandRun {
+            exit_code: 0,
+            stdout: "v1.0.0\n".into(),
+            stderr: String::new(),
+        };
+        assert_eq!(classify_probe_run(&Ok(answered)), ProbeVerdict::Answered);
+
+        // 事故形态：rustup 代理「可执行但拒绝应答」。
+        let refused = CommandRun {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: "error: Unknown binary 'rust-analyzer'\n".into(),
+        };
+        assert_eq!(
+            classify_probe_run(&Ok(refused)),
+            ProbeVerdict::Refused {
+                evidence: "error: Unknown binary 'rust-analyzer'".into()
+            }
+        );
+
+        let unsupported = CommandRun {
+            exit_code: 2,
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+        assert!(matches!(
+            classify_probe_run(&Ok(unsupported)),
+            ProbeVerdict::Weak { .. }
+        ));
+        assert!(matches!(
+            classify_probe_run(&Err(CommandError::TimedOut("timed out".into()))),
+            ProbeVerdict::Weak { .. }
+        ));
+        assert!(matches!(
+            classify_probe_run(&Err(CommandError::Failed("ENOENT".into()))),
+            ProbeVerdict::NotRunnable { .. }
+        ));
+    }
+
+    /// AC1b：真实子进程的 stderr 进该键的证据（三层组合：采集 → 判据 → 记账），
+    /// 且「继续启动」的尝试不得被记为终态失败。
+    #[test]
+    fn probe_failure_evidence_lands_in_keyed_diagnostics() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path().to_string_lossy().to_string();
+        #[cfg(unix)]
+        let script = "echo 'no such binary: rust-analyzer' 1>&2; exit 1";
+        #[cfg(windows)]
+        let script = "echo no such binary: rust-analyzer 1>&2 & exit /b 1";
+        let argv = shell(script);
+        let args_ref: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
+
+        let run = probe_command(
+            &ctx_with_cwd(&cwd),
+            &argv[0],
+            &args_ref,
+            std::time::Duration::from_secs(5),
+        );
+        let verdict = classify_probe_run(&run);
+        let ProbeVerdict::Refused { evidence } = &verdict else {
+            panic!("expected Refused, got {verdict:?}");
+        };
+
+        let store = crate::lsp::attempt_diagnostics::AttemptDiagnosticsStore::new();
+        let diag = store.begin("/t/proj:go", "/t/proj");
+        diag.push_line(
+            "warn",
+            &format!("{} --version refused to answer: {evidence}", argv[0]),
+        );
+
+        assert!(
+            diag.outcome().is_none(),
+            "「继续启动」的尝试不得被记为终态失败"
+        );
+        assert!(
+            diag.snapshot_logs(0, 0)
+                .iter()
+                .any(|entry| entry.message.contains("no such binary: rust-analyzer")),
+            "stderr 行必须进入该键的证据"
         );
     }
 
@@ -288,56 +428,46 @@ impl Drop for LspProcess {
     }
 }
 
-/// Spawn an LSP server in `target` with optional project working directory.
+/// Spawn an LSP server **in the given execution context**（P2a：cwd / env 与探测同源）。
 ///
 /// Runs on a dedicated OS thread with its own Tokio runtime so it is safe to
 /// call from *any* context — including async Tauri commands (where
 /// `Handle::block_on` would panic with "cannot start a runtime from within a
 /// runtime").
-pub fn spawn_lsp_process(
-    target: &ExecTarget,
+pub(crate) fn spawn_lsp_process(
+    ctx: &LspExecContext,
     cmd: &str,
     args: &[&str],
-    current_dir: Option<&str>,
-    env: &[(&str, &str)],
 ) -> Result<LspProcess, String> {
-    let target = target.clone();
+    let ctx = ctx.clone();
     let cmd = cmd.to_string();
     let args = args.iter().copied().map(String::from).collect::<Vec<_>>();
-    let current_dir = current_dir.map(String::from);
-    let env = env
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect::<Vec<_>>();
     blocking_thread(move || {
         let runtime = AppRuntime::from_tauri();
         let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
-        let env_ref: Vec<(&str, &str)> =
-            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        runtime.handle().block_on(spawn_lsp_process_async(
-            &target,
-            &cmd,
-            &args_ref,
-            current_dir.as_deref(),
-            &env_ref,
-        ))
+        runtime
+            .handle()
+            .block_on(spawn_lsp_process_async(&ctx, &cmd, &args_ref))
     })
 }
 
 async fn spawn_lsp_process_async(
-    target: &ExecTarget,
+    ctx: &LspExecContext,
     cmd: &str,
     args: &[&str],
-    current_dir: Option<&str>,
-    env: &[(&str, &str)],
 ) -> Result<LspProcess, String> {
+    let env_ref: Vec<(&str, &str)> = ctx
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     // 声明 kill_tree：LSP 服务器常为包装器脚本 + 服务进程（jdtls → JVM），
     // 杀包装器必须连带清理后代，否则孤儿持 workspace 锁。
     let opts = SpawnOptions::new(cmd, args)
-        .with_current_dir_if(current_dir)
-        .with_env(env)
+        .with_current_dir_if(Some(ctx.cwd.as_str()))
+        .with_env(&env_ref)
         .with_kill_tree();
-    let child = create_executor(target)
+    let child = create_executor(&ctx.target)
         .spawn_with(opts)
         .await
         .map_err(|e| format!("Failed to spawn LSP process: {e}"))?;
@@ -494,6 +624,7 @@ type LineSink = Arc<parking_lot::Mutex<LineCallback>>;
 
 /// 一次命令运行的产出。**转发模式**（`capture = false`）下 `stdout`/`stderr`
 /// 恒为空 —— 调用方只要退出码。
+#[derive(Debug)]
 pub struct CommandRun {
     /// 进程退出码。
     pub exit_code: i32,
@@ -501,6 +632,73 @@ pub struct CommandRun {
     pub stdout: String,
     /// 完整 stderr（转发模式下恒为空）。
     pub stderr: String,
+}
+
+/// 命令运行的失败形态：区分「执行不了」与「超时」——探测形态判据的输入
+/// （见 `classify_probe_run`）。超时是弱信号（慢启动），不得当作不可运行。
+#[derive(Debug)]
+pub(crate) enum CommandError {
+    /// spawn 失败 / 进程管线失败（ENOENT / EACCES / target 不可达 / 管道异常）。
+    Failed(String),
+    /// 超时（子进程已按进程组杀）。
+    TimedOut(String),
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandError::Failed(message) | CommandError::TimedOut(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        CommandError::Failed(message)
+    }
+}
+
+/// 探测结果的形态判据（P2b，方案 A「分形」）。纯数据、无 I/O、无 LSP 依赖 ——
+/// 「形态」而非「语言」决定处置（红线 15：新增语言服务器零逻辑改动）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProbeVerdict {
+    /// `Ok(0)`：正常应答（解析元数据）。
+    Answered,
+    /// 执行不了（spawn / 管线失败）：真实启动会以**同一错误**失败，不必白跑一次
+    /// spawn —— 直接失败。
+    NotRunnable { reason: String },
+    /// 非零退出 + stderr 非空：可执行但拒绝应答（如版本管理器代理）——
+    /// 证据入诊断与失败消息，但**不**拒绝启动（「不支持 `--version`」的服务器
+    /// 不得被误杀，由真实 spawn + 握手兜底）。
+    Refused { evidence: String },
+    /// 非零 + stderr 空 / 超时：弱信号，仅记录，不判定任何失败。
+    Weak { note: String },
+}
+
+/// design §2.2 形态表：把一次探测运行（或失败）归类。**唯一判据点**。
+#[must_use]
+pub(crate) fn classify_probe_run(run: &Result<CommandRun, CommandError>) -> ProbeVerdict {
+    match run {
+        Err(CommandError::TimedOut(message)) => ProbeVerdict::Weak {
+            note: message.clone(),
+        },
+        Err(CommandError::Failed(reason)) => ProbeVerdict::NotRunnable {
+            reason: reason.clone(),
+        },
+        Ok(run) if run.exit_code == 0 => ProbeVerdict::Answered,
+        Ok(run) => {
+            let stderr = run.stderr.trim();
+            if stderr.is_empty() {
+                ProbeVerdict::Weak {
+                    note: format!("exited with code {} and no stderr", run.exit_code),
+                }
+            } else {
+                ProbeVerdict::Refused {
+                    evidence: stderr.to_string(),
+                }
+            }
+        }
+    }
 }
 
 /// 命令运行内核 —— [`run_command_blocking`] 与 [`run_command_streaming`] 的
@@ -516,14 +714,14 @@ pub struct CommandRun {
 /// - `capture = false`：不保留全文（安装类命令输出量大，累积无意义），仅经
 ///   `on_line` 逐行转发。
 fn run_command_core(
-    target: &ExecTarget,
+    ctx: &LspExecContext,
     cmd: &str,
     args: &[&str],
     timeout: Option<std::time::Duration>,
     capture: bool,
     on_line: Option<LineCallback>,
-) -> Result<CommandRun, String> {
-    let target = target.clone();
+) -> Result<CommandRun, CommandError> {
+    let ctx = ctx.clone();
     let cmd = cmd.to_string();
     let args = args.iter().copied().map(String::from).collect::<Vec<_>>();
     blocking_thread(move || {
@@ -556,9 +754,21 @@ fn run_command_core(
                 }
             }
 
-            let mut child = crate::core::exec::spawn(&target, &cmd, &args_ref)
+            // 在 **ctx** 里执行：cwd / env 与真实启动同源（P2a）；分发仍由
+            // `crate::common::executor` 统一承担（红线 1）。
+            let env_ref: Vec<(&str, &str)> = ctx
+                .env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let opts = SpawnOptions::new(&cmd, &args_ref)
+                .with_current_dir_if(Some(ctx.cwd.as_str()))
+                .with_env(&env_ref)
+                .with_kill_tree();
+            let mut child = create_executor(&ctx.target)
+                .spawn_with(opts)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| CommandError::Failed(e.to_string()))?;
             drop(child.stdin.take());
             let stdout = child
                 .stdout
@@ -597,14 +807,16 @@ fn run_command_core(
 
             let exit_code = match timeout {
                 Some(t) => match tokio::time::timeout(t, work).await {
-                    Ok(res) => res?,
+                    Ok(res) => res.map_err(CommandError::Failed)?,
                     Err(_) => {
                         // 超时：按进程组杀（含后代）——包装器脚本拉起的服务进程一并清理。
                         let _ = (kill_fn)().await;
-                        return Err(format!("command '{cmd}' timed out after {t:?}"));
+                        return Err(CommandError::TimedOut(format!(
+                            "command '{cmd}' timed out after {t:?}"
+                        )));
                     }
                 },
-                None => work.await?,
+                None => work.await.map_err(CommandError::Failed)?,
             };
 
             let (stdout, stderr) = if capture {
@@ -621,49 +833,55 @@ fn run_command_core(
     })
 }
 
-/// Run a command in `target` and collect its output, giving up after `timeout`
+/// Run a command in `ctx` and collect its output, giving up after `timeout`
 /// （子进程按**进程组**杀，含其后代，不留孤儿）。
 ///
 /// 动机：`LspSession::new` 用它探测 `<server> --version`，而 jdtls 的 `--version`
 /// 会启动完整 OSGi JVM 且并发探测会在 data 目录锁上互相挂死 —— 无超时它会永久
 /// 阻塞会话创建。
-pub fn run_command_blocking(
-    target: &ExecTarget,
+///
+/// **「不带 cwd / env 的探测」在类型层面不可表达**：本入口只接受
+/// [`LspExecContext`]（P2a）。
+pub(crate) fn probe_command(
+    ctx: &LspExecContext,
     cmd: &str,
     args: &[&str],
     timeout: std::time::Duration,
-) -> Result<(i32, String, String), String> {
-    run_command_core(target, cmd, args, Some(timeout), true, None)
-        .map(|run| (run.exit_code, run.stdout, run.stderr))
+) -> Result<CommandRun, CommandError> {
+    run_command_core(ctx, cmd, args, Some(timeout), true, None)
 }
 
 /// 流式执行命令：逐行把 stdout/stderr（trim 尾后非空行）转发给 `on_line`，
 /// 返回 exit code。日志的累加/节流由调用方负责（安装进度用 `InstallLog`）；
 /// 输出**不保留全文**。无超时（安装可能长时间下载）。
 ///
-/// 线程/运行时约定与 [`run_command_blocking`] 完全一致（同一 [`run_command_core`]）。
+/// 线程/运行时约定与 [`probe_command`] 完全一致（同一 [`run_command_core`]）。
 pub(crate) fn run_command_streaming(
-    target: &ExecTarget,
+    ctx: &LspExecContext,
     cmd: &str,
     args: &[&str],
     on_line: impl FnMut(&str) + Send + 'static,
-) -> Result<i32, String> {
-    run_command_core(target, cmd, args, None, false, Some(Box::new(on_line))).map(|r| r.exit_code)
+) -> Result<i32, CommandError> {
+    run_command_core(ctx, cmd, args, None, false, Some(Box::new(on_line))).map(|r| r.exit_code)
 }
 
 /// Run `func` on a dedicated OS thread with a fresh Tokio runtime, returning
 /// its result via a channel. This avoids "cannot start a runtime from within a
 /// runtime" panics when the caller is itself on a Tokio runtime thread (e.g.
 /// an async Tauri command).
-pub(crate) fn blocking_thread<F, R>(func: F) -> Result<R, String>
+///
+/// 错误类型泛化：调用方自带错误枚举（如 [`CommandError`]），线程接收失败按
+/// `From<String>` 折算成同一类型。
+pub(crate) fn blocking_thread<F, R, E>(func: F) -> Result<R, E>
 where
-    F: FnOnce() -> Result<R, String> + Send + 'static,
+    F: FnOnce() -> Result<R, E> + Send + 'static,
     R: Send + 'static,
+    E: From<String> + Send + 'static,
 {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(func());
     });
     rx.recv()
-        .map_err(|e| format!("blocking thread recv error: {e}"))?
+        .map_err(|e| E::from(format!("blocking thread recv error: {e}")))?
 }

@@ -12,11 +12,12 @@ use tauri::Emitter;
 use crate::common::runtime::AppRuntime;
 use crate::AppError;
 
+use super::attempt_diagnostics::AttemptDiagnosticsStore;
 use super::diag_bus::{DiagnosticBus, DiagnosticEvent};
 use super::plugin::{LspAutoStart, LspPlugin, LspPluginRegistry, LspSettings};
 use super::plugin_manager::LspPluginManager;
 use super::profile::detect_project_profile_with_markers;
-use super::session::{do_send_request, emit_session_error, LspSession};
+use super::session::{do_send_request, emit_session_error, LspSession, LOG_ENTRY_JSON_MAX_BYTES};
 use super::session_factory::{IpcSessionFactory, SessionBuildRequest, SessionFactory};
 use super::session_store::LspSessionStore;
 use super::transport::{IpcTransport, LspTransport};
@@ -60,6 +61,19 @@ pub const fn should_restart(current_count: u32, max_count: u32) -> bool {
 fn session_key(project_path: &str, language_id: &str) -> String {
     format!("{}:{}", project_path, language_id)
 }
+
+/// 单次 `lsp_get_server_logs` 的 **JSON 字节预算**（红线 4：序列化结果 ≤ 2MB）。
+///
+/// 条数上限（默认 500）**不能替代**字节上限：控制字符 JSON 转义最长 6×
+/// （`\x01` → `\u0001`），一条 4KB 的行最坏可放大到 ~25KB —— 只有按真实序列化
+/// 长度计账才守得住（口径与 [`crate::common::git::parsers::DIFF_PAYLOAD_MAX_BYTES`]
+/// 一致：1.5MB 预算，给命令封装留 0.5MB 余量）。超预算时丢弃**更旧**的条目；
+/// **最新一条无条件纳入**（证据下界），其单条上界见 [`LOG_ENTRY_JSON_MAX_BYTES`]。
+pub(crate) const LSP_SERVER_LOGS_MAX_BYTES: usize = 1_500_000;
+
+/// 编译期契约：IPC 预算必须 ≥ 单条最坏形态 —— 否则「最新一条无条件纳入」会让
+/// 返回载荷的绝对上界偏离预算（红线 4 的兜底由本断言钉住）。
+const _: () = assert!(LSP_SERVER_LOGS_MAX_BYTES >= LOG_ENTRY_JSON_MAX_BYTES);
 
 /// didOpen 归一决策（抽纯函数以便直接单测两条关键路径：重复 didOpen / 版本回退）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +133,9 @@ pub struct LspManager {
     session_factory: Arc<dyn SessionFactory>,
     /// Cached language profiles per project path.
     profiles: Mutex<HashMap<String, ProjectLanguageProfile>>,
+    /// 按身份键承载启动尝试的诊断证据（P1：证据宿主 = 键，不随进程存活与否变化）。
+    /// 语义上与 `session_store` 正交：它管「活着的进程」，本 store 管「发生过什么」。
+    attempt_diag: AttemptDiagnosticsStore,
     /// Generation counter per project path to cancel pending deactivate timers.
     deactivate_gens: Mutex<HashMap<String, u64>>,
     /// Seconds after deactivation before closing sessions (from settings).
@@ -160,6 +177,7 @@ impl LspManager {
             app_handle: Mutex::new(None),
             session_factory,
             profiles: Mutex::new(HashMap::new()),
+            attempt_diag: AttemptDiagnosticsStore::new(),
             deactivate_gens: Mutex::new(HashMap::new()),
             deactivate_stop_secs: Mutex::new(DEFAULT_DEACTIVATE_STOP_SECS),
             preauth: Mutex::new(super::preauth::PreauthorizedTargets::new()),
@@ -495,28 +513,51 @@ impl LspManager {
 
         // Slow path: create the session holding only the per-key gate (never
         // the sessions lock, which `is_alive`/`insert` take briefly).
-        let plugin = self
-            .plugin_manager
-            .resolve_by_language(language_id)
-            .ok_or_else(|| {
-                AppError::Lsp(format!(
+        //
+        // `begin` 只允许出现在这里（慢路径、二次 recheck 之后、插件解析之前）：
+        // fast path / 并发输家重置生代会清空活会话日志（每条 hover / didOpen /
+        // didChange 都会先调本函数）。
+        let diag = self.attempt_diag.begin(&key, project_path);
+
+        let plugin = match self.plugin_manager.resolve_by_language(language_id) {
+            Some(plugin) => plugin,
+            None => {
+                let error = AppError::Lsp(format!(
                     "No LSP plugin registered for language: {}",
                     language_id
-                ))
-            })?;
+                ));
+                diag.record_failure(&error.to_string());
+                return Err(error);
+            }
+        };
 
         // AppHandle 不再由 manager 强制：装配端口自行决定是否需要它
         //（生产实现缺失时报 "AppHandle not set"，行为与既有错误契约一致）。
-        let app_handle = self
-            .app_handle
-            .lock()
-            .map_err(|e| AppError::Lsp(e.to_string()))?
-            .clone();
+        let app_handle = match self.app_handle.lock() {
+            Ok(handle) => handle.clone(),
+            Err(e) => {
+                let error = AppError::Lsp(e.to_string());
+                diag.record_failure(&error.to_string());
+                return Err(error);
+            }
+        };
 
         let diag_bus = Arc::new(self.diag_bus.clone());
         // 先取 transport：装配失败时还要靠它把 error 事件送到前端。
-        let transport = self.session_factory.transport(app_handle.as_ref())?;
-        let exec_target = self.require_project_exec_target(project_path)?;
+        let transport = match self.session_factory.transport(app_handle.as_ref()) {
+            Ok(transport) => transport,
+            Err(e) => {
+                diag.record_failure(&e.to_string());
+                return Err(e);
+            }
+        };
+        let exec_target = match self.require_project_exec_target(project_path) {
+            Ok(target) => target,
+            Err(e) => {
+                diag.record_failure(&e.to_string());
+                return Err(e);
+            }
+        };
         // 会话根由插件数据决定（`RootScope`）：文档定根的插件（如 TS 家族）会取
         // 文档所在的最近工程目录，让 typescript-language-server 能解析到
         // `node_modules/typescript`；其余插件保持项目根。
@@ -531,12 +572,16 @@ impl LspManager {
             diag_bus,
             transport: Arc::clone(&transport),
             exec_target,
+            diagnostics: Arc::clone(&diag),
         }) {
             Ok(s) => s,
             // 创建失败（spawn / install / initialize）：`starting` 可能已发（init 失败
             // 时）也可能未发（spawn 失败时）——统一补发 `error`，前端据此展示
             // message + 重试入口（design.md M2 错误矩阵：启动异常 → failed + 重试）。
             Err(e) => {
+                // 终态单写者：装配期失败由 manager 经**本次尝试的句柄**落账
+                //（session 内部只写 log 证据，不写 outcome）。
+                diag.record_failure(&e.to_string());
                 emit_session_error(
                     transport.as_ref(),
                     project_path,
@@ -575,6 +620,7 @@ impl LspManager {
             open_count
         );
         self.session_store.insert(key.clone(), session);
+        diag.record_success();
         Ok(key)
     }
 
@@ -857,6 +903,9 @@ impl LspManager {
         if let Ok(mut profiles) = self.profiles.lock() {
             profiles.remove(project_path);
         }
+        // 确定性驱逐（与 `profiles.remove` 同一调用点，单点清理）：该项目的诊断键
+        // 全部摘除；此后旧句柄的迟到写入落进孤儿条目，不会复活键（生代隔离）。
+        self.attempt_diag.evict_project(project_path);
         log::info!(
             "[LSP] Closed all sessions for deactivated project: {}",
             project_path
@@ -1001,18 +1050,29 @@ impl LspManager {
     }
 
     /// Runtime metadata for a session.
+    ///
+    /// 纯查询：会话不存在（从未尝试 / 启动失败）时返回 `unknown` 形态 + 该键的
+    /// 最近一次尝试终态（`outcome`），**不**返回 `Err` —— 证据宿主是身份键，
+    /// 不随进程存活与否变化。
     pub fn get_server_info(
         &self,
         project_path: &str,
         language_id: &str,
     ) -> Result<LspServerInfo, AppError> {
         let key = session_key(project_path, language_id);
-        self.session_store
+        let outcome = self.attempt_diag.with(&key, |d| d.outcome()).flatten();
+        let mut info = self
+            .session_store
             .with_session(&key, |s| s.snapshot_server_info())
-            .ok_or_else(|| AppError::Lsp(format!("No LSP session for: {}", key)))
+            .unwrap_or_else(LspServerInfo::unknown);
+        info.outcome = outcome;
+        Ok(info)
     }
 
-    /// Recent stderr log lines for a session (newest last).
+    /// Recent stderr log lines for a key (newest last) —— 该键**最近一次启动尝试**
+    /// 的证据（未尝试过 → 空数组，不返回 `Err`）。
+    ///
+    /// 载荷封顶落在本入口（红线 4 的唯一落实点）：条数 + 字节双预算，超预算丢更旧的。
     pub fn get_server_logs(
         &self,
         project_path: &str,
@@ -1020,14 +1080,12 @@ impl LspManager {
         limit: Option<usize>,
     ) -> Result<Vec<LspServerLogEntry>, AppError> {
         let key = session_key(project_path, language_id);
-        self.session_store
-            .with_session(&key, |s| {
-                s.log_buffer
-                    .lock()
-                    .map(|r| r.snapshot(limit.unwrap_or(500)))
-                    .unwrap_or_default()
+        Ok(self
+            .attempt_diag
+            .with(&key, |d| {
+                d.snapshot_logs(limit.unwrap_or(500), LSP_SERVER_LOGS_MAX_BYTES)
             })
-            .ok_or_else(|| AppError::Lsp(format!("No LSP session for: {}", key)))
+            .unwrap_or_default())
     }
 
     /// Language ids of all active sessions for a project path.
@@ -1078,10 +1136,11 @@ impl Default for LspManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lsp::attempt_diagnostics::AttemptDiagnostics;
     use crate::lsp::plugin::CustomLspServerConfig;
     use crate::lsp::session::lifecycle::Lifecycle;
     use crate::lsp::session::status::LspSessionStatus;
-    use crate::lsp::session::testing::RecordingTransport;
+    use crate::lsp::session::testing::{live_stub_session, LiveReader, RecordingTransport};
 
     #[test]
     fn test_session_key() {
@@ -1537,6 +1596,199 @@ mod tests {
         );
     }
 
+    /// AC1a（事故直接复现）：「LSP 启动失败」后，状态栏「View logs」必须仍能读到
+    /// 该次尝试的证据与失败原因 —— 不再因「会话不存在」而报错。
+    ///
+    /// 事故现场文案：`No LSP session for: <project>:<lang>`（读路径把证据宿主
+    /// 挂在「成功后才有」的进程对象上）。
+    #[test]
+    fn failed_creation_keeps_diagnostics_readable() {
+        let transport = Arc::new(RecordingTransport::default());
+        let manager = manager_with_factory(Arc::new(FailingSessionFactory {
+            transport: Arc::clone(&transport),
+        }));
+
+        let result = manager.get_or_create_session(TEST_PROJECT, TEST_LANG, None);
+        assert!(matches!(result, Err(AppError::Lsp(_))));
+
+        let logs = manager
+            .get_server_logs(TEST_PROJECT, TEST_LANG, None)
+            .expect("装配失败后读取日志不得再因缺会话报错（R1）");
+        assert!(
+            logs.iter()
+                .any(|entry| entry.message.contains("Failed to spawn gopls")),
+            "失败原因必须出现在该键的诊断证据里: {logs:?}"
+        );
+
+        let info = manager
+            .get_server_info(TEST_PROJECT, TEST_LANG)
+            .expect("装配失败后读取信息不得因缺会话报错（R1）");
+        assert_eq!(
+            info.outcome.as_ref().map(|o| o.status.as_str()),
+            Some("error"),
+            "终态必须记录为 error: {info:?}"
+        );
+    }
+
+    /// AC2：从未尝试过的键是**纯查询** —— 空数组 / unknown，两者都不得返回 `Err`。
+    #[test]
+    fn never_attempted_key_reads_empty_not_error() {
+        let manager = LspManager::new_default();
+
+        let logs = manager
+            .get_server_logs(TEST_PROJECT, TEST_LANG, None)
+            .expect("未尝试的键必须返回空数组而非 Err");
+        assert!(logs.is_empty(), "未尝试的键不得有日志: {logs:?}");
+
+        let info = manager
+            .get_server_info(TEST_PROJECT, TEST_LANG)
+            .expect("未尝试的键必须返回 unknown 而非 Err");
+        assert_eq!(info, LspServerInfo::unknown());
+        assert!(info.outcome.is_none(), "未尝试的键不得有终态记录");
+    }
+
+    /// 护栏（钉死 `begin` 落点）：命中共用快路径时**不得切换生代** ——
+    /// `begin` 一旦出现在 fast path / 并发输家路径，等价的重复 `begin` 会让每条
+    /// hover / didOpen / didChange 清空活会话日志（本条即该事故的回归钉）。
+    ///
+    /// 与 `attempt_diagnostics.rs` 的生代用例互补：那里钉「谁在写」，这里钉
+    /// 「谁**不**该铸造新代」。
+    #[test]
+    fn alive_session_fast_path_does_not_reset_diagnostics() {
+        use std::sync::atomic::Ordering;
+
+        let transport = Arc::new(RecordingTransport::default());
+        let factory = Arc::new(LiveSessionFactory::new(Arc::clone(&transport)));
+        let manager = manager_with_factory(Arc::clone(&factory) as Arc<dyn SessionFactory>);
+
+        let key = manager
+            .get_or_create_session(TEST_PROJECT, TEST_LANG, None)
+            .expect("首次装配应当成功");
+        assert!(
+            manager.session_store.is_alive(&key),
+            "夹具必须是活会话（reader 存活），否则本用例退化为慢路径"
+        );
+
+        // 扮演 stderr 泵：经「本次尝试的句柄」写入证据。
+        let diag = factory
+            .diagnostics
+            .lock()
+            .expect("diagnostics lock")
+            .clone()
+            .expect("装配期必须交出诊断句柄");
+        diag.push_line("info", "live session stderr evidence");
+
+        let again = manager
+            .get_or_create_session(TEST_PROJECT, TEST_LANG, None)
+            .expect("快路径复用");
+        assert_eq!(again, key);
+        assert_eq!(
+            factory.builds.load(Ordering::SeqCst),
+            1,
+            "快路径不得再次装配（再次装配 = 切换生代 = 清空日志）"
+        );
+        let logs = manager
+            .get_server_logs(TEST_PROJECT, TEST_LANG, None)
+            .expect("日志可读");
+        assert!(
+            logs.iter()
+                .any(|e| e.message.contains("live session stderr evidence")),
+            "快路径不得清空活会话日志: {logs:?}"
+        );
+    }
+
+    /// 红线 4：单次 `lsp_get_server_logs` 的返回必须落在字节预算内 —— 条数上限
+    /// 不能替代字节上限（控制字符转义最长 6×，按内容字节近似会被击穿）。
+    ///
+    /// 证据经装配期交出的**句柄**写入（与 stderr 泵同构）——`begin` 的调用点因此
+    /// 全仓只剩 `get_or_create_session` 慢路径一处，可被 grep 直接钉死。
+    #[test]
+    fn server_logs_read_stays_within_ipc_budget() {
+        let transport = Arc::new(RecordingTransport::default());
+        let factory = Arc::new(LiveSessionFactory::new(Arc::clone(&transport)));
+        let manager = manager_with_factory(Arc::clone(&factory) as Arc<dyn SessionFactory>);
+        manager
+            .get_or_create_session(TEST_PROJECT, TEST_LANG, None)
+            .expect("装配成功后才轮到读路径");
+
+        let diag = factory
+            .diagnostics
+            .lock()
+            .expect("diagnostics lock")
+            .clone()
+            .expect("装配期必须交出诊断句柄");
+        let line = format!("{} {}", "y".repeat(1024), "x".repeat(1024));
+        for i in 0..3_000 {
+            diag.push_line("info", &format!("line {i} {line}"));
+        }
+
+        let logs = manager
+            .get_server_logs(TEST_PROJECT, TEST_LANG, None)
+            .expect("日志可读");
+        assert!(!logs.is_empty(), "预算必须至少容纳一条");
+        assert!(logs.len() < 3_000, "超预算时更旧的条目必须被丢弃");
+        let serialized: usize = logs
+            .iter()
+            .map(|e| serde_json::to_string(e).expect("serialize").len() + 1)
+            .sum();
+        assert!(
+            serialized <= LSP_SERVER_LOGS_MAX_BYTES,
+            "单次读的 JSON（{serialized}）必须落在预算（{LSP_SERVER_LOGS_MAX_BYTES}）内"
+        );
+        assert!(
+            logs.last()
+                .expect("newest")
+                .message
+                .starts_with("line 2999 "),
+            "保留的必须是最近的条目"
+        );
+    }
+
+    /// 活会话装配桩：返回 reader 存活的桩会话（快路径可命中），并把**本次尝试的
+    /// 诊断句柄**交给用例 —— 写只走句柄，用例据此扮演 stderr 泵。
+    struct LiveSessionFactory {
+        transport: Arc<RecordingTransport>,
+        diagnostics: std::sync::Mutex<Option<Arc<AttemptDiagnostics>>>,
+        /// reader 存活凭据：随工厂存活（工厂 Drop 即 reader 线程退出）。
+        _reader: std::sync::Mutex<Option<LiveReader>>,
+        builds: std::sync::atomic::AtomicUsize,
+    }
+
+    impl LiveSessionFactory {
+        fn new(transport: Arc<RecordingTransport>) -> Self {
+            Self {
+                transport,
+                diagnostics: std::sync::Mutex::new(None),
+                _reader: std::sync::Mutex::new(None),
+                builds: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl SessionFactory for LiveSessionFactory {
+        fn transport(
+            &self,
+            _: Option<&tauri::AppHandle>,
+        ) -> Result<Arc<dyn LspTransport>, AppError> {
+            Ok(Arc::clone(&self.transport) as Arc<dyn LspTransport>)
+        }
+
+        fn build(&self, request: SessionBuildRequest<'_>) -> Result<LspSession, AppError> {
+            self.builds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.diagnostics.lock().expect("diagnostics lock") =
+                Some(Arc::clone(&request.diagnostics));
+            let (session, reader) = live_stub_session(
+                Arc::clone(&self.transport) as Arc<dyn LspTransport>,
+                TEST_PROJECT,
+                TEST_LANG,
+                TEST_SERVER,
+            );
+            *self._reader.lock().expect("reader lock") = Some(reader);
+            Ok(session)
+        }
+    }
+
     /// 装配端口桩：`build` 成功返回桩会话（验证注入端口下编排语义不变）。
     struct StubSessionFactory {
         transport: Arc<RecordingTransport>,
@@ -1606,9 +1858,6 @@ mod tests {
                 child: None,
                 process_pid: None,
                 server_info: LspServerInfo::unknown(),
-                log_buffer: Arc::new(std::sync::Mutex::new(
-                    crate::lsp::session::LogRingBuffer::new(),
-                )),
                 transport,
                 in_flight_progress: Arc::new(std::sync::Mutex::new(
                     std::collections::HashSet::new(),

@@ -70,6 +70,25 @@ pub struct LspServerInfo {
     pub build_date: String,
     /// Process RSS in megabytes (snapshot at request time).
     pub memory_mb: f64,
+    /// 最近一次启动尝试的终态（`None` = 该键从未尝试过）。证据宿主是身份键
+    /// （`attempt_diagnostics`），不随进程存活与否变化。
+    #[serde(default)]
+    pub outcome: Option<LspAttemptOutcome>,
+}
+
+/// 一次 LSP 启动尝试的终态记录（前端「View logs」与子菜单的数据源之一）。
+///
+/// 失败原因**已内联证据尾部**；`status` 与 `LspSessionStatus::as_str()` 同词表
+/// （`ready` | `error`）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LspAttemptOutcome {
+    /// 与 `LspSessionStatus::as_str()` 同词表：`ready` | `error`。
+    pub status: String,
+    /// 失败原因（含 stderr 尾部 / 插件安装提示）。
+    pub message: Option<String>,
+    /// 终态时刻（与日志条目同一时间源）。
+    pub finished_at: String,
 }
 
 /// One stderr / log line captured from an LSP server process.
@@ -93,6 +112,7 @@ impl LspServerInfo {
             commit: String::new(),
             build_date: String::new(),
             memory_mb: 0.0,
+            outcome: None,
         }
     }
 }
@@ -161,6 +181,7 @@ pub fn parse_server_version_output(output: &str) -> LspServerInfo {
         commit,
         build_date,
         memory_mb: 0.0,
+        outcome: None,
     }
 }
 
@@ -236,12 +257,29 @@ mod tests {
             commit: "abc".into(),
             build_date: "2026-01-01".into(),
             memory_mb: 12.5,
+            outcome: Some(LspAttemptOutcome {
+                status: "error".into(),
+                message: Some("boom".into()),
+                finished_at: "123".into(),
+            }),
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["version"], "1.0.0");
         assert_eq!(v["buildDate"], "2026-01-01");
         assert_eq!(v["memoryMb"], 12.5);
         assert_eq!(v["commit"], "abc");
+        // outcome 是可选增量字段：序列化 camelCase，缺省（None）时不出现。
+        assert_eq!(v["outcome"]["status"], "error");
+        assert_eq!(v["outcome"]["message"], "boom");
+        assert_eq!(v["outcome"]["finishedAt"], "123");
+        let without: LspServerInfo = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
+            "commit": "",
+            "buildDate": "",
+            "memoryMb": 0.0,
+        }))
+        .unwrap();
+        assert!(without.outcome.is_none(), "缺字段必须回落 None（向后兼容）");
     }
 
     #[test]

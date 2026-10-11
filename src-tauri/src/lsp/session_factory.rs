@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::common::executor::factory::ExecTarget;
+use crate::lsp::attempt_diagnostics::AttemptDiagnostics;
 use crate::lsp::diag_bus::DiagnosticBus;
 use crate::lsp::plugin::LspPlugin;
 use crate::lsp::session::LspSession;
@@ -31,6 +32,8 @@ pub(crate) struct SessionBuildRequest<'a> {
     /// 会话事件出口。装配失败时 manager 也用它发 `error`（见 `transport`）。
     pub(crate) transport: Arc<dyn LspTransport>,
     pub(crate) exec_target: ExecTarget,
+    /// 本次尝试的诊断句柄（与 `transport` 同构：装配前先取，装配失败也要回写）。
+    pub(crate) diagnostics: Arc<AttemptDiagnostics>,
 }
 
 /// 会话装配端口。生产实现见 [`IpcSessionFactory`]。
@@ -76,10 +79,13 @@ impl SessionFactory for IpcSessionFactory {
             request.plugin,
             request.project_path,
             request.workspace_root,
-            app_handle,
-            request.diag_bus,
-            request.transport,
             request.exec_target,
+            crate::lsp::session::SessionPlumbing {
+                app_handle,
+                diag_bus: request.diag_bus,
+                transport: request.transport,
+                diagnostics: request.diagnostics,
+            },
         )
         .map_err(|e| AppError::Lsp(e.to_string()))
     }

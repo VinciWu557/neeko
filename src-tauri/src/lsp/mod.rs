@@ -1,5 +1,7 @@
 //! LSP (Language Server Protocol) integration: session management, transport, and diagnostics.
 
+/// 会话启动尝试的键控诊断证据（P1：证据宿主 = 身份键，见任务 design）。
+pub(crate) mod attempt_diagnostics;
 /// Tauri command handlers for LSP operations.
 pub mod commands;
 /// Diagnostic pub/sub event bus.
@@ -24,6 +26,8 @@ pub mod session;
 /// Session assembly port (transport + live session construction).
 pub mod session_factory;
 pub mod session_store;
+/// 「在哪执行」的唯一事实源：探测 / 启动 / 安装共用（P2a）。
+pub(crate) mod spawn_spec;
 pub mod symbol;
 pub mod transport;
 /// Serializable types for LSP IPC with the frontend.

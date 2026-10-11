@@ -220,6 +220,30 @@ describe('LspStatusSection error state (M2 / AC2)', () => {
     expect(row).toHaveTextContent('gopls');
     expect(screen.getByTestId('lsp-row-msg-go')).toHaveTextContent('gopls exited unexpectedly');
   });
+
+  it('子菜单 footer 优先展示 outcome.message（失败真因可达，R1）', async () => {
+    mockGetInfo.mockResolvedValue({
+      version: '',
+      commit: '',
+      buildDate: '',
+      memoryMb: 0,
+      outcome: {
+        status: 'error',
+        message: 'LSP initialization: no response received | server stderr: boom',
+        finishedAt: '1',
+      },
+    });
+    render(<LspStatusSection />);
+    fireEvent.click(screen.getByTestId('lsp-status-chip'));
+    fireEvent.mouseEnter(await screen.findByTestId('lsp-server-row-go'));
+
+    const footer = await screen.findByTestId('lsp-server-info-footer');
+    await waitFor(() =>
+      expect(footer).toHaveTextContent(
+        'LSP initialization: no response received | server stderr: boom',
+      ),
+    );
+  });
 });
 
 describe('LspStatusSection progress tokens', () => {

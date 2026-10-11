@@ -189,7 +189,7 @@ syntax-error（缺分号必须显示），也不让陈旧 E0425 覆盖跟随正�
 | F2 | 终端创建（配额 `MAX_TERMINAL_TABS`/ID/排序）只住 `terminal/api/taskTerminal.ts`，editor 只调端口 |
 | F3 | `aiActionRegistry` 与 `editorViews` 同构引用计数（`{handler/view, count}`），注销归零才删 |
 | F5/F7 | `lspQuickFix.ts` 只装配；渲染（`quickFixMenuRender`）vs 派发（`quickFixMenuActions`）vs popup vs gutter 单向依赖；探针纯函数住 `lspCompletionProbe.ts` |
-| 行数 | 非测试源码 <300 行；`lsp/types.rs:383` 含约 117 行内联测试（净源码约 266 行），属已知豁免；`instance.rs` 存量胖（本次 +8 行），不扩范围 |
+| 行数 | 非测试源码 <300 行；`lsp/types.rs:383` 含约 117 行内联测试（净源码约 266 行），属已知豁免；`instance.rs` 存量胖（1515 行 = 非测试源码 ~919 + 内联测试；10-10-lsp-failure-diagnostics-ownership 净 +150：诊断句柄接线 / 握手 drain / 内联证据与其用例），不扩范围 |
 | F4 | shell 选择在执行层（`platform/shell_launch` 的 `cmd /c` vs `sh -c`），拼装层只做 sh 转义并显式委托注释 |
 
 ## 4. 导入策略三态（M4：R4/AC4，传输之上的唯一产品逻辑）
@@ -294,6 +294,78 @@ syntax-error（缺分号必须显示），也不让陈旧 E0425 覆盖跟随正�
 6. **uri 必须与 didOpen 完全一致**：编辑器 quickfix 取 `useLspClient` 算出的 `fileUri`，
    不得自己再算（`tabLspDocumentUri` 对普通文件恒 `undefined`，曾致三入口静默 return）。
 
+## 失败诊断归属：证据锚定身份键（10-10-lsp-failure-diagnostics-ownership，勿回退）
+
+> 事故：项目用 `rust-toolchain.toml` 钉的 toolchain 未装 rust-analyzer 组件，rustup 代理
+> 在**项目根**报 `Unknown binary 'rust-analyzer'`；而 Neeko 的诊断证据挂在「成功后才有」的
+> 会话对象上（失败即蒸发），版本探测又跑在**应用默认目录**（同一失败拿到绿灯），
+> 失败文案只剩传输层症状「no response received」。点「View logs」得到
+> `No LSP session for: <project>:<lang>`。
+
+**原则 1（P1）：证据宿主 = 会话身份键 `(project_path, language_id)`，不是进程对象。**
+
+- `lsp/attempt_diagnostics.rs` 的 `AttemptDiagnosticsStore`（与 `profiles` 平级）承载证据。
+  **写只走句柄**（`begin` 返回 `Arc<AttemptDiagnostics>`：`push_line` / `record_failure` /
+  `record_success` / `tail_inline`），**读才走 key**（`with`，键不存在返回 `None` 不报错）。
+- `begin` **铸造新条目（新 `Arc`）**而不是原地清空：旧代句柄的迟到写入落进孤儿条目 ——
+  不混进新一次尝试（重启竞态）、不复活被驱逐的键（AC7/AC8 的结构保障）。
+  `begin` 只允许出现在 `get_or_create_session` **慢路径**（`gate.lock()` + 二次 recheck 之后、
+  插件解析之前）。放 fast path 会让每条 hover / didOpen / didChange 清空活会话日志。
+- **终态单写者**：装配期失败（插件/exec target/transport/build）由 manager 经本次尝试的
+  句柄写；运行期崩溃由 reader 线程写。session 内部只写 log 证据，**不**写 outcome；
+  失败文案随 `Err` 上抛、由 manager 一次落账（log + outcome 同源，**不得**在两处各推一遍 ——
+  否则 View logs 里同一条消息出现两次）。
+- **证据两侧都有界**（红线 4，两个边界两个手段）：**写入侧** `LogRingBuffer::push` 按
+  `LOG_LINE_MAX_BYTES`（4KB，字符边界截头 + 截断标记）封顶单条 —— 「条目有界」是环的数据
+  不变量；**读取侧** `get_server_logs` 按 `LSP_SERVER_LOGS_MAX_BYTES`（1.5MB，与
+  `DIFF_PAYLOAD_MAX_BYTES` 同口径）封顶单次载荷，超预算丢更旧的条目。
+- **度量只做一次，读路径纯算术**：JSON 字节数在 `push` 时算定并存进 `StoredEntry.json_bytes`
+  （真实序列化长度，控制字符转义最长 6×，按内容字节近似会被击穿），`snapshot` 只做加减 ——
+  序列化不再随读取次数重复发生；账目与真实序列化长度的一致性由
+  `stored_byte_accounting_matches_real_serialization` 逐一比对。
+- **最新一条是无条件下界**：`snapshot` 对最新一条**无条件纳入**（「至少给出一点证据」，
+  与 `tail_text` 对首行同规则），故返回载荷 `≤ max(预算, LOG_ENTRY_JSON_MAX_BYTES)`
+  —— 空数组与无界载荷同时不可达；`manager.rs` 用 `const _: () = assert!(…)` 在**编译期**
+  钉住「IPC 预算 ≥ 单条最坏形态」。
+- **失败消息必须内联证据尾部**：`tail_inline(TAIL_INLINE_MAX_BYTES)`（2KB 上限，红线 4）；
+  终态文案由进入终态的**写者一次合成**并存入 `Lifecycle`（capture-at-transition）——
+  `crash_message(server, tail)` 是唯一构造函数（`"{server} exited unexpectedly | stderr: …"`，
+  对齐 DAP 惯例），事件与快照投影同一份字符串，读者不得各自重建。
+- **确定性驱逐**：项目移除/停用（`close_sessions_for_project`，与 `profiles.remove` 同调用点）
+  调 `evict_project`；按条目自持的 `project_path` **精确相等**匹配（不做键字符串前缀 ——
+  路径含 `:` 也不误伤）。
+- **握手等待不得挂死**：reader 线程退出时 `drain_pending` 摘除全部在途发送端，
+  否则 sender 留在 map 里会让 `LspSession::new` 的 `blocking_recv` **永久阻塞**
+  （mode ⑤/⑥「子进程秒退」不可解释的根因，2026-10-11 实测 oneshot 语义后补修）。
+
+**原则 2（P2）：可用性判据与消费点同环境、同语义。**
+
+- `lsp/spawn_spec.rs` 的 `LspExecContext { target, cwd, env }` 是探测 / 启动 / 安装
+  **唯一**的「在哪执行」；`process.rs` 的 `probe_command` / `spawn_lsp_process` /
+  `run_command_streaming` 只接受该上下文 —— **「不带 cwd 的探测」在类型层面不可表达**。
+- 探测形态判据（方案 A「分形」，`classify_probe_run`，不按语言分支）：
+  `Err`（执行不了）→ **直接失败**（真实启动必以同一错误失败，不白跑 spawn）；
+  `非零 + stderr 非空`（可执行但拒绝应答）→ 记证据并**继续启动**（由 spawn + 握手兜底，
+  不得因「不支持 `--version`」误杀）；超时 / 无 stderr → 仅记录，不判定。
+- PATH 存在性（`check_plugin_installed`）只作为**自安装门控**；「能不能应答」由 probe +
+  真实启动回答（R4：判据的失败必须能被诊断通道解释）。
+- 探测 / 启动失败文案附插件 `install` 数据给出的修法提示（`installer::install_hint`，
+  数据驱动，红线 15）。
+
+**护栏**（违反即回退）：`manager.rs` 的 `failed_creation_keeps_diagnostics_readable` /
+`never_attempted_key_reads_empty_not_error` / `alive_session_fast_path_does_not_reset_diagnostics` /
+`server_logs_read_stays_within_ipc_budget`；
+`attempt_diagnostics.rs` 的生代隔离 / 驱逐不复活 / 精确驱逐 / 环与内联上限；
+`log_ring_buffer.rs` 的单条截断（字符边界 + 标记）/ 账目=真实序列化 / 读预算（条数 + 字节 + 最新一条下界）；
+`process.rs` 的形态表逐行 + cwd 断言 + AC1b 组合；`lifecycle.rs` 的 capture-at-transition；
+`instance.rs` 的 `await_init_response_fails_fast_when_reader_dead`。
+
+**晋升触发条件**：出现**第二个**「失败后按身份查询长证据」的消费点时，把
+`AttemptDiagnosticsStore` + `LogRingBuffer` 从 `lsp/` 提升到 `common/` —— 候选：
+① DAP `stderr_buf` 的无界 `String`（`dap/transport.rs`）；② 终端任务域（任务进程失败后的
+日志可达性）；③ 会话列表 / chip 需要失败尝试（把 `session_store` 与诊断合并为 per-key cell）。
+未命中前不动（YAGNI）。
+
 ## 语言差异必须落在插件数据（新增 LS 零逻辑改动）
 
 > 原 AGENTS.md 审查红线 15，2026-09-25 迁入本文件；索引保留在 `src-tauri/AGENTS.md`。
@@ -347,4 +419,50 @@ syntax-error（缺分号必须显示），也不让陈旧 E0425 覆盖跟随正�
   `src/features/lsp/hooks/lspCompletionResolve.ts` 兜住即可。**不要因为某次事故就把能力按语言
   切成开关**——那会违反上文「语言差异落在插件数据」。声明统一写进
   `build_client_capabilities()` 全局生效。
+
+### 冷启动就绪语义：serverStatus 与请求超时预算（勿回退）
+
+> 事故（2026-10-11 实测，`~/.neeko/neeko.log`）：RA 起来后 chip 显示 Running，但用户
+> 点击跳转「超时」，等一两分钟后正常。取证：`[perf] do_send_request textDocument/definition:
+> awaited 18.815s / 18.968s / 18.482s`，hover 最高 15.2s；热身完成后 definition 0.5–8ms。
+
+三条结论与落地：
+
+1. **`ready`/Running 的语义 = 握手完成，不是「服务器答得快」**。RA 在 initialize 之后还有
+   `Fetching → CrateGraph → Loading proc-macros → cachePriming(Indexing) → flycheck(cargo check)`
+   一串 `$/progress`（这些会让 chip 显示 Indexing），但 **token 全结束后仍有「无信号尾巴」**
+   （首次跳进标准库/依赖源码要现场加载）——这段里请求仍可达 18–19s。
+2. **就绪必须止于服务器自述**：rust 插件声明 `experimental.serverStatusNotification: true`，
+   RA 才会发 `experimental/serverStatus`（`{ health, quiescent, message }`）。消费点
+   `notify::handle_server_status_notification`（reader 分发 `SERVER_STATUS_METHOD`）把
+   `quiescent=false/true` 翻译成**合成进度 token**（复用前端「token 非空 ⇒ busy」投影，
+   前端零改动）。实测 1.99.0：不声明 0 条；声明后 `false → true` 各一条。
+   **声明与消费同 diff（红线 14）**，能力键是 `serverStatusNotification`（不是 `serverStatus`）。
+3. **请求超时预算是插件数据**：通用默认 15s 覆盖不了冷启动（实测 18–19s；**同仓库存在
+   第二个 rust-analyzer（VS Code）时实测首跳 89s**，且 `cargo metadata` 出现
+   `Blocking waiting for file lock on package cache` —— 多实例抢 cargo 包缓存 / `target/`
+   锁会成倍放大）。rust 声明 `request_timeout_ms = 120_000`（与 jdtls 同款）；同形态慢启动
+   服务器（重型 JVM / 全量索引）一律在 `LspPlugin` 上声明 —— 禁止回到前端按
+   `languageId` 判断（红线 15）。前端消费链：
+   `registry.extension_map() → applyBackendExtensionMap → lspRequestTimeoutMs →
+   new LSPClient({ timeout })`（有护栏：`plugin_request_timeout_flows_to_frontend_extension_map`、
+   `languageMap.test.ts` 的 reapply 用例）。
+4. **`quiescent` 不等于「答得快」**：89s 卡顿发生在 RA 自报 quiescent **之后**，期间零
+   progress 事件、RA 也无 `overly long loop turn` 记录（应用侧 heartbeat 准点 → 卡的是 RA
+   在等锁 / 首次按需加载，不是主循环在算）。排查「首次慢」时**先看环境里是否有第二个
+   rust-analyzer 在跑**（`ps aux | grep rust-analyzer` + `lsof -p <pid> | grep cwd`）。
+5. **首次语义请求慢 = RA 的 `hir_ty::infer` 单核爆炸（2026-10-11 定位，非环境问题）**：
+   `app.rs::run()`（248 行，体内含 `tauri::generate_handler![308 条命令]` 展开的嵌套闭包链）
+   的**一次性类型推断**实测 **95–98s、单核 100%、RSS 3.5→4.4GB**；`sample` 热栈为
+   `hir_ty::infer → infer_expr_inner → infer_method_call → check_call_arguments → infer_closure`。
+   独立探针（无 Neeko、无第二个 RA、无 cargo 进程）5 次全部复现（94.9/95.1/95.5/96.4/98.3s），
+   之后同进程同请求 ~1ms（salsa 记忆化）。
+   **廉价请求不触发它**（实测）：`documentSymbol` 0.05s、`workspace/symbol` 0.60s、
+   空白处 `hover` 0.11s、全文件 `inlayHint` 0.06s —— 所以「预热」没有可靠的通用触发器；
+   `quiescent` / progress 也都看不到它（RA 自报就绪早于此）。**结论：客户端无法预测或提前，
+   只能给足预算 + 让等待可见**（budget 见第 3 条；可见性是待办方向）。定位命令：
+   `sample <ra_pid> 8 -file /tmp/ra.txt` 抓热栈 + `ps -o %cpu=,time=,rss= -p <pid>` 看单核/内存。
+
+排查入口：`[perf] do_send_request … awaited …`（后端真实耗时）与 `[LSP] Progress begin/end`
+（服务器自述阶段）；两者对齐即可区分「服务器慢」与「客户端预算小」。
 

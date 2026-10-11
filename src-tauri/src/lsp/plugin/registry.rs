@@ -242,12 +242,13 @@ mod tests {
             .expect("mylang entry");
         assert_eq!(entry.request_timeout_ms, Some(42_000));
 
-        let rs = registry
+        // 未声明超时的插件不带该字段（rust 已声明冷启动预算，故改用 go 作反例）。
+        let go = registry
             .extension_map()
             .into_iter()
-            .find(|e| e.extension == "rs")
-            .expect("rust entry");
-        assert_eq!(rs.request_timeout_ms, None, "未声明的插件不带该字段");
+            .find(|e| e.extension == "go")
+            .expect("go entry");
+        assert_eq!(go.request_timeout_ms, None, "未声明的插件不带该字段");
     }
 
     #[test]

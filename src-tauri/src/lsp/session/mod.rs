@@ -15,8 +15,12 @@ pub(crate) mod testing;
 mod utils;
 
 // Re-export for external use
-pub(crate) use instance::{emit_session_error, LspSession};
-// 仅供 manager 测试构造可控会话（writer 存活以观察协议消息）使用。
-#[cfg(test)]
+pub(crate) use instance::{emit_session_error, LspSession, SessionPlumbing};
 pub(crate) use log_ring_buffer::LogRingBuffer;
+// 单条 JSON 上界：manager 的 IPC 预算以它为编译期下界（见 `LSP_SERVER_LOGS_MAX_BYTES`）。
+pub(crate) use log_ring_buffer::LOG_ENTRY_JSON_MAX_BYTES;
+// 环上限仅供测试断言（生产消费点经 `LogRingBuffer` 自持该常量）。
+#[cfg(test)]
+pub(crate) use log_ring_buffer::LOG_RING_MAX_BYTES;
 pub(crate) use request::do_send_request;
+pub(crate) use utils::iso_timestamp_now;

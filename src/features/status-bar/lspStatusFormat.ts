@@ -148,6 +148,11 @@ export function formatInfoFooter(
 ): string {
   const statusLabel = humanStatus(status);
   if (!info) return statusLabel;
+  // 失败态且有终态记录：展示**真因**（后端已内联 stderr 尾部 / 安装提示），
+  // 而不是「Error — v? — —」这种无信息量形态（R1：失败原因永远可达）。
+  if (status === 'error' && info.outcome?.message) {
+    return `${statusLabel} — ${info.outcome.message}`;
+  }
   const version = info.version ? `v${info.version}` : 'v?';
   const metaParts: string[] = [];
   if (info.commit) metaParts.push(info.commit);

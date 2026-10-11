@@ -13,7 +13,6 @@ use crate::lsp::transport::LspTransport;
 use crate::lsp::types::LspServerInfo;
 
 use super::lifecycle::Lifecycle;
-use super::log_ring_buffer::LogRingBuffer;
 use super::status::LspSessionStatus;
 use super::LspSession;
 
@@ -86,9 +85,40 @@ pub(crate) fn stub_session(
         child: None,
         process_pid: None,
         server_info: LspServerInfo::unknown(),
-        log_buffer: Arc::new(std::sync::Mutex::new(LogRingBuffer::new())),
         transport,
         in_flight_progress: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         lifecycle,
     }
+}
+
+/// reader 线程存活的桩会话（[`LspSession::is_alive`] 为真）。
+///
+/// 存在的理由：`is_alive` 的语义是「reader 存活」，`stub_session` 的 `reader: None`
+/// 让它恒为假 —— 编排层的**快路径**（复用活会话，不重装配、不切换生代）因此无法
+/// 受测。返回的 [`LiveReader`] 是线程存活凭据：持有它 reader 就活着，drop 后线程
+/// 自行退出（无 join、无泄漏）。
+pub(crate) fn live_stub_session(
+    transport: Arc<dyn LspTransport>,
+    project_path: &str,
+    language_id: &str,
+    server_name: &str,
+) -> (LspSession, LiveReader) {
+    let (tx, rx) = crossbeam_channel::bounded::<()>(1);
+    let mut session = stub_session(transport, project_path, language_id, server_name);
+    session.reader = Some(
+        std::thread::Builder::new()
+            .name("lsp-live-stub-reader".to_string())
+            .spawn(move || {
+                // 一直阻塞到凭据 drop（通道断开），模拟"reader 仍在读"。
+                let _ = rx.recv();
+                Ok(())
+            })
+            .expect("spawn live stub reader"),
+    );
+    (session, LiveReader { _tx: tx })
+}
+
+/// [`live_stub_session`] 的 reader 存活凭据。
+pub(crate) struct LiveReader {
+    _tx: crossbeam_channel::Sender<()>,
 }

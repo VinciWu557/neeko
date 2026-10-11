@@ -10,6 +10,7 @@ import {
   getLspLanguageId,
   resolveLspLanguageId,
   applyBackendExtensionMap,
+  lspRequestTimeoutMs,
   toFileUri,
 } from '../languageMap';
 import * as lspApi from '../lspApi';
@@ -36,6 +37,27 @@ describe('languageMap', () => {
       },
     ]);
     expect(getLspLanguageId('api/v1.proto')).toBe('protobuf');
+  });
+
+  it('should_carry_backend_declared_request_timeout_and_clear_on_reapply', () => {
+    // 后端插件数据声明的单请求超时（如 rust 冷启动 60s）必须到达客户端；
+    // 未声明的语言回落到通用默认（由 lspClientTimeout 兜底）。
+    applyBackendExtensionMap([
+      {
+        extension: 'rs',
+        languageId: 'rust',
+        serverName: 'rust-analyzer',
+        isCustom: false,
+        requestTimeoutMs: 60_000,
+      },
+      { extension: 'go', languageId: 'go', serverName: 'gopls', isCustom: false },
+    ]);
+    expect(lspRequestTimeoutMs('rust')).toBe(60_000);
+    expect(lspRequestTimeoutMs('go')).toBeUndefined();
+
+    // 重新应用（项目切换 / 注册表刷新）必须整体替换，不留旧值。
+    applyBackendExtensionMap([]);
+    expect(lspRequestTimeoutMs('rust')).toBeUndefined();
   });
 
   it('should_apply_custom_servers_from_config', () => {

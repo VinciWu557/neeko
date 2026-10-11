@@ -75,6 +75,48 @@ describe('formatInfoFooter', () => {
       'Running — v? — —',
     );
   });
+
+  it('失败态且有终态记录：footer 展示真因（含 stderr 尾部），不再是无信息量形态', () => {
+    expect(
+      formatInfoFooter('error', {
+        version: '',
+        commit: '',
+        buildDate: '',
+        memoryMb: 0,
+        outcome: {
+          status: 'error',
+          message:
+            "LSP initialization: no response received | server stderr: error: Unknown binary 'rust-analyzer'",
+          finishedAt: '1',
+        },
+      } as never),
+    ).toBe(
+      "Error — LSP initialization: no response received | server stderr: error: Unknown binary 'rust-analyzer'",
+    );
+  });
+
+  it('失败态但无 outcome（老后端 / 从未尝试）：退回既有元数据形态', () => {
+    expect(
+      formatInfoFooter('error', {
+        version: '',
+        commit: '',
+        buildDate: '',
+        memoryMb: 0,
+      } as never),
+    ).toBe('Error — v? — —');
+  });
+
+  it('非失败态即使带 outcome 也走元数据形态（outcome 只承载失败原因）', () => {
+    expect(
+      formatInfoFooter('ready', {
+        version: '1.2.3',
+        commit: '',
+        buildDate: '',
+        memoryMb: 100,
+        outcome: { status: 'ready', finishedAt: '1' },
+      } as never),
+    ).toBe('Running — v1.2.3 — 100 MB');
+  });
 });
 
 /**

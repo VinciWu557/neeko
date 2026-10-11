@@ -7,12 +7,24 @@ export interface LspSessionInfo {
   progress_pct?: number;
 }
 
+/** One start-attempt outcome for a (project, language) pair. camelCase from Rust. */
+export interface LspAttemptOutcome {
+  /** 与 `LspSessionInfo.status` 同词表：`ready` | `error`。 */
+  status: 'ready' | 'error' | string;
+  /** 失败原因（后端已内联 stderr 尾部 / 安装提示）。 */
+  message?: string;
+  /** 终态时刻（与日志条目同一时间源）。 */
+  finishedAt: string;
+}
+
 /** Runtime metadata for a language server (submenu footer). camelCase from Rust. */
 export interface LspServerInfo {
   version: string;
   commit: string;
   buildDate: string;
   memoryMb: number;
+  /** 最近一次启动尝试的终态（缺失 = 从未尝试，向后兼容 `#[serde(default)]`）。 */
+  outcome?: LspAttemptOutcome;
 }
 
 /** One stderr / log line from an LSP server process. camelCase from Rust. */

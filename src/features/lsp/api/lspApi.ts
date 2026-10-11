@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { FileContent } from '@/shared/types';
 
 import type {
+  LspAttemptOutcome,
   LspServerInfo,
   LspServerLogEntry,
   LspSessionInfo,
@@ -11,7 +12,7 @@ import type {
 
 import type { LspExtensionMapEntryDto } from './lspApiTypes';
 
-export type { LspServerInfo, LspServerLogEntry };
+export type { LspAttemptOutcome, LspServerInfo, LspServerLogEntry };
 
 export function lspRequest(
   projectPath: string,

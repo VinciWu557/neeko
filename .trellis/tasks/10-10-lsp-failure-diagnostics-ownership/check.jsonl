@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/lsp-domain.md", "reason": "核对诊断归属重构未破坏既有 LSP 不变量与 F 台账"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核对新增测试符合夹具/断言约定（红线 13）"}

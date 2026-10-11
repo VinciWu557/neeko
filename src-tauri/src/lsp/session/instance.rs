@@ -11,18 +11,27 @@ use crossbeam_channel::{Receiver, Sender};
 use lsp_server::{Message, Notification, Request, RequestId};
 use serde_json::Value;
 
+use crate::lsp::attempt_diagnostics::{AttemptDiagnostics, TAIL_INLINE_MAX_BYTES};
 use crate::lsp::diag_bus::DiagnosticBus;
 use crate::lsp::inflight::InflightRequestTracker;
 use crate::lsp::plugin::LspPlugin;
+use crate::lsp::process::{classify_probe_run, probe_command, ProbeVerdict};
+use crate::lsp::spawn_spec::LspExecContext;
 use crate::lsp::transport::LspTransport;
-use crate::lsp::types::{parse_server_version_output, LspServerInfo, LspServerLogEntry};
+use crate::lsp::types::{parse_server_version_output, LspServerInfo};
 
 use super::lifecycle::{crash_message, Lifecycle};
-use super::log_ring_buffer::LogRingBuffer;
-use super::notify::{handle_diagnostics_notification, handle_progress_notification};
+use super::notify::{
+    handle_diagnostics_notification, handle_progress_notification,
+    handle_server_status_notification, SERVER_STATUS_METHOD,
+};
 use super::request::PendingSender;
 use super::status::LspSessionStatus;
-use super::utils::{iso_timestamp_now, sample_process_memory_mb};
+use super::utils::sample_process_memory_mb;
+
+/// `<server> --version` 探测超时。重量级服务器（jdtls 的完整 OSGi JVM）由插件
+/// 数据 `tuning.version_probe=false` 直接跳过探测，不走这里。
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 pub(crate) struct LspSession {
     /// Language identifier (e.g. "rust").
@@ -53,8 +62,6 @@ pub(crate) struct LspSession {
     pub(crate) process_pid: Option<u32>,
     /// Version metadata parsed from `--version` at spawn (memory filled on demand).
     pub(crate) server_info: LspServerInfo,
-    /// Ring buffer of recent stderr lines for View Logs (max 10 MB).
-    pub(crate) log_buffer: Arc<Mutex<LogRingBuffer>>,
     /// Transport for emitting session lifecycle events to the frontend.
     pub(crate) transport: Arc<dyn LspTransport>,
     /// 在途 progress token 集合（`$/progress` 的 begin→end 生命周期）。
@@ -71,17 +78,31 @@ pub(crate) struct LspSession {
     pub(crate) lifecycle: Arc<Lifecycle>,
 }
 
+/// 会话装配的横切依赖（进程 / 事件 / 证据）：与「会话身份」参数分开传，
+/// 避免 `new` 参数表膨胀（clippy too_many_arguments），也让装配端口只组装一次。
+pub(crate) struct SessionPlumbing {
+    pub(crate) app_handle: tauri::AppHandle,
+    pub(crate) diag_bus: Arc<DiagnosticBus>,
+    pub(crate) transport: Arc<dyn LspTransport>,
+    /// 本次尝试的键控诊断句柄（写只走句柄；证据宿主是身份键，不随会话存活变化）。
+    pub(crate) diagnostics: Arc<AttemptDiagnostics>,
+}
+
 impl LspSession {
     /// Create a new LSP session: spawn server process, perform initialize handshake.
     pub(crate) fn new(
         plugin: &LspPlugin,
         project_path: &str,
         workspace_root: &Path,
-        app_handle: tauri::AppHandle,
-        diag_bus: Arc<DiagnosticBus>,
-        transport: Arc<dyn LspTransport>,
         exec_target: crate::common::executor::factory::ExecTarget,
+        plumbing: SessionPlumbing,
     ) -> Result<Self> {
+        let SessionPlumbing {
+            app_handle,
+            diag_bus,
+            transport,
+            diagnostics,
+        } = plumbing;
         let language_id = plugin.language_id.to_string();
         let server_name = plugin.server_binary.to_string();
         // Non-UTF-8 segments are lossy-mapped to `�`; this mirrors how the
@@ -94,16 +115,20 @@ impl LspSession {
         // sees — the on-disk resolution stays correct.
         let workspace_root_str = workspace_root.to_string_lossy().into_owned();
 
-        if !crate::lsp::installer::check_plugin_installed(plugin, &exec_target) {
+        // 执行上下文（P2a）：探测 / 启动 / 安装共用同一个「在哪执行」。env 由插件
+        // tuning 派生（不按语言名分支），必须在探测之前就绪。
+        let ctx = LspExecContext::for_session(plugin, workspace_root, exec_target);
+
+        if !crate::lsp::installer::check_plugin_installed(plugin, &ctx.target) {
             log::info!(
                 "[LSP] {} not found in project env, attempting auto-install for: {}",
                 server_name,
                 language_id
             );
-            match crate::lsp::installer::install_plugin_server(plugin, &app_handle, &exec_target) {
+            match crate::lsp::installer::install_plugin_server(plugin, &app_handle, &ctx) {
                 Ok(true) => {
                     log::info!("[LSP] Auto-install succeeded for {}", language_id);
-                    if !crate::lsp::installer::check_plugin_installed(plugin, &exec_target) {
+                    if !crate::lsp::installer::check_plugin_installed(plugin, &ctx.target) {
                         anyhow::bail!("{} was installed but still not found in project PATH. Try restarting Neeko.", server_name);
                     }
                 }
@@ -130,64 +155,63 @@ impl LspSession {
             language_id,
             cmd,
             project_path,
-            std::mem::discriminant(&exec_target)
+            std::mem::discriminant(&ctx.target)
         );
 
+        let args: Vec<&str> = cmd[1..].iter().map(|s| s.as_str()).collect();
+
         // 探测策略由插件自带 tuning 声明（见 plugin/builtins/java.rs 的 jdtls
-        // 调优）：跳过探测的服务器版本降级为 unknown；其余限时 3s，超时组杀后
-        // 降级为无元数据。session 层不按语言名分支。
+        // 调优）：跳过探测的服务器版本降级为 unknown。session 层不按语言名分支。
+        //
+        // 形态判据按 design §2.2（方案 A「分形」）：
+        // - 执行不了（Err）→ 真实启动必以同一错误失败，直接失败（不白跑一次 spawn）；
+        // - 可执行但拒绝应答（非零 + stderr）→ 证据入诊断与失败消息，**继续启动**
+        //   （由 spawn + 握手兜底）——「不支持 --version」的服务器不得被误杀；
+        // - 弱信号（非零无 stderr / 超时）→ 仅记录。
         let mut server_info = if !plugin.tuning.version_probe {
             LspServerInfo::unknown()
         } else {
-            match crate::lsp::process::run_command_blocking(
-                &exec_target,
-                &cmd[0],
-                &["--version"],
-                std::time::Duration::from_secs(3),
-            ) {
-                Ok((_code, stdout, stderr)) => {
+            let run = probe_command(&ctx, &cmd[0], &["--version"], PROBE_TIMEOUT);
+            match classify_probe_run(&run) {
+                ProbeVerdict::Answered => {
+                    let stdout = run.as_ref().map(|r| r.stdout.as_str()).unwrap_or("");
+                    let stderr = run.as_ref().map(|r| r.stderr.as_str()).unwrap_or("");
                     parse_server_version_output(if stdout.trim().is_empty() {
-                        &stderr
+                        stderr
                     } else {
-                        &stdout
+                        stdout
                     })
                 }
-                Err(e) => {
-                    log::debug!(
-                        "[LSP] --version failed for {}: {} (continuing without metadata)",
-                        server_name,
-                        e
+                ProbeVerdict::Refused { evidence } => {
+                    diagnostics.push_line(
+                        "warn",
+                        &format!("{server_name} --version refused to answer: {evidence}"),
                     );
                     LspServerInfo::unknown()
+                }
+                ProbeVerdict::Weak { note } => {
+                    diagnostics.push_line("info", &format!("{server_name} --version: {note}"));
+                    LspServerInfo::unknown()
+                }
+                ProbeVerdict::NotRunnable { reason } => {
+                    // 「修法」提示由插件 install 数据派生（数据驱动，红线 15）。
+                    // 终态单写者：此处只上抛，落账（log + outcome）归 manager。
+                    return Err(anyhow::anyhow!(
+                        "Failed to run {} in the session environment: {}{}",
+                        server_name,
+                        reason,
+                        crate::lsp::installer::install_hint(plugin).unwrap_or_default()
+                    ));
                 }
             }
         };
 
-        let args: Vec<&str> = cmd[1..].iter().map(|s| s.as_str()).collect();
-        // Tooling JDK 对齐（VSCode `java.jdt.ls.java.home` 语义）：由插件 tuning
-        // 声明是否需要注入（`java_home_from_path`），不再按语言名判断 —— 第二个
-        // Java 系服务器声明同一 tuning 即可，无需改此处。
-        let env: Vec<(String, String)> = if plugin.tuning.java_home_from_path {
-            crate::lsp::process::resolve_java_home(&exec_target)
-                .into_iter()
-                .map(|home| ("JAVA_HOME".to_string(), home))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let env_ref: Vec<(&str, &str)> =
-            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let mut process = crate::lsp::process::spawn_lsp_process(
-            &exec_target,
-            &cmd[0],
-            &args,
-            Some(&workspace_root_str),
-            &env_ref,
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to spawn LSP server {}: {}", server_name, e))?;
+        // Tooling JDK 对齐（VSCode `java.jdt.ls.java.home` 语义）：env 已在上面的
+        // `LspExecContext` 中派生（`java_home_from_path` 插件数据），不按语言名判断。
+        let mut process = crate::lsp::process::spawn_lsp_process(&ctx, &cmd[0], &args)
+            .map_err(|e| anyhow::anyhow!("Failed to spawn LSP server {}: {}", server_name, e))?;
 
         let process_pid = process.pid;
-        let log_buffer: Arc<Mutex<LogRingBuffer>> = Arc::new(Mutex::new(LogRingBuffer::new()));
         // 生命周期唯一真相：spawn 前建立，reader 线程与后续所有发布共用同一 Arc。
         let lifecycle = Arc::new(Lifecycle::new());
         // 生命周期起点：spawn 成功后即推 starting（此时 session 结构尚未构造，
@@ -223,7 +247,7 @@ impl LspSession {
             .map_err(|e| anyhow::anyhow!("Failed to spawn LSP writer thread: {}", e))?;
 
         let stderr_name = server_name.clone();
-        let log_buf_clone = Arc::clone(&log_buffer);
+        let diag_pump = Arc::clone(&diagnostics);
         let stderr_handle = thread::Builder::new()
             .name(format!(
                 "lsp-stderr-{}",
@@ -246,14 +270,8 @@ impl LspSession {
                             "info"
                         };
                         log::warn!("[LSP][{} stderr] {}", stderr_name, trimmed);
-                        let entry = LspServerLogEntry {
-                            timestamp: iso_timestamp_now(),
-                            level: level.into(),
-                            message: trimmed,
-                        };
-                        if let Ok(mut buf) = log_buf_clone.lock() {
-                            buf.push(entry);
-                        }
+                        // 证据写入身份键句柄（不随失败蒸发；生代隔离由句柄保证）。
+                        diag_pump.push_line(level, &trimmed);
                     }
                 }
             })
@@ -278,6 +296,7 @@ impl LspSession {
         // reader 线程是"进程何时死"的唯一观测者：它退出时把相位写进 lifecycle，
         // 快照与存活判定据此读取（不再各自轮询 JoinHandle）。session 结构持有同一 Arc。
         let lifecycle_reader = Arc::clone(&lifecycle);
+        let diag_reader = Arc::clone(&diagnostics);
 
         let reader_handle = thread::Builder::new()
             .name(format!(
@@ -333,6 +352,16 @@ impl LspSession {
                                             &*transport_clone,
                                             &progress_tokens_reader,
                                         );
+                                    } else if notif.method == SERVER_STATUS_METHOD {
+                                        // rust-analyzer 就绪语义（能力门控；消费点见
+                                        // `notify::handle_server_status_notification`，红线 14）。
+                                        handle_server_status_notification(
+                                            &notif.params,
+                                            &pp_reader,
+                                            &lang_id_clone,
+                                            &*transport_clone,
+                                            &progress_tokens_reader,
+                                        );
                                     }
                                 }
                                 Message::Request(req) => {
@@ -375,12 +404,17 @@ impl LspSession {
                         }
                     };
                     // 出口统一判定（幂等）：优雅关闭 → 静默；否则崩溃 → error + 重试。
+                    // reader 已死 ⇒ 任何在途等待（含 initialize 握手）不可能再拿到响应：
+                    // 先摘掉全部发送端，让等待方按「无响应」快速失败，而不是把 sender
+                    // 留在 pending 里永久挂死（mode ⑤/⑥ 的可解释性依赖这条）。
+                    drain_pending(&pending_clone);
                     on_reader_exit(
                         &lifecycle_reader,
                         &*transport_clone,
                         &pp_reader,
                         &lang_id_clone,
                         &server_name_reader,
+                        &diag_reader,
                     );
                     read_result
                 }));
@@ -389,17 +423,20 @@ impl LspSession {
                     Err(payload) => {
                         // 循环体内 panic：仍按崩溃发事件（状态栏可给出重试入口），
                         // 并把 panic 载荷写进日志 —— 应用无全局 panic hook，载荷若丢
-                        // 弃则只进 stderr，打包后的 GUI 里无处可查（Pillar 13 可观测性）。
+                        // 弃则只进 stderr，打包后的 GUI 里无处可查。
                         let detail = panic_payload_message(&*payload);
                         log::error!(
                             "[LSP] reader thread panicked for {pp_reader}:{lang_id_clone}: {detail}"
                         );
+                        // panic 早退同样摘发送端（锁若已中毒则退化为不做）。
+                        drain_pending(&pending_clone);
                         on_reader_exit(
                             &exit_lifecycle,
                             &*exit_transport,
                             &exit_pp,
                             &exit_lang,
                             &exit_name,
+                            &diag_reader,
                         );
                         Err(anyhow::anyhow!("LSP reader thread panicked: {detail}"))
                     }
@@ -435,9 +472,25 @@ impl LspSession {
             .send(Message::Request(init_req))
             .context("Failed to send initialize request")?;
 
-        let init_response = init_rx
-            .blocking_recv()
-            .context("LSP initialization: no response received")?;
+        let init_response = match await_init_response(init_rx, &pending, &reader_handle) {
+            Ok(response) => response,
+            Err(e) => {
+                // 子进程已退出（reader 线程结束 → init 发送端断开）。先把 stderr 泵
+                // 收敛（kill → join 收在 EOF 上），再读证据尾部 —— 内联证据的确定性
+                // 依赖此顺序（见 design「终态文案与内联证据」），否则会与泵赛跑而拿到
+                // 空尾巴，恰是本任务要修的时刻。
+                process.kill();
+                if let Some(handle) = stderr_handle {
+                    let _ = handle.join();
+                }
+                let tail = diagnostics.tail_inline(TAIL_INLINE_MAX_BYTES);
+                let message = inline_failure(&e.to_string(), tail.as_deref());
+                // 终态单写者：文案随 `Err` 上抛，由 manager 经**本次尝试的句柄**
+                // `record_failure` 一次落账（同时进 log）。此处再推一遍会让同一条
+                // 消息在 View logs 里出现两次（见 design「单写者与 begin 落点」）。
+                return Err(anyhow::anyhow!(message));
+            }
+        };
         let server_capabilities = parse_initialize_response(init_response)?;
 
         log::info!("[LSP] {} initialized, capabilities received", server_name);
@@ -478,7 +531,6 @@ impl LspSession {
             child: Some(process),
             process_pid,
             server_info,
-            log_buffer,
             transport,
             in_flight_progress,
             lifecycle,
@@ -612,15 +664,6 @@ impl LspSession {
         info
     }
 
-    /// Return the most recent stderr log lines (newest last), capped by `limit`.
-    #[allow(dead_code)]
-    pub(crate) fn snapshot_logs(&self, limit: usize) -> Vec<LspServerLogEntry> {
-        let Ok(buf) = self.log_buffer.lock() else {
-            return Vec::new();
-        };
-        buf.snapshot(limit)
-    }
-
     /// Create a session info snapshot for the status bar.
     ///
     /// 直接读生命周期相位（唯一真相）：崩溃会话不得快照为 ready —— 否则前端
@@ -688,23 +731,62 @@ pub(crate) fn emit_session_error(
 /// 优雅关闭（close 路径已先落终态）→ 静默，避免「关闭后闪错误」；
 /// 非优雅关闭（子进程提前退出，如 `kill gopls`）→ 发 `error` 供前端展示
 /// message + 重试入口。返回是否本次真的发出了崩溃事件。
+///
+/// capture-at-transition：文案在本函数**一次合成**（`crash_message` + 证据尾部），
+/// 存入 lifecycle 并写进该次尝试的键控诊断 —— 事件与快照投影同一份字符串。
 pub(crate) fn on_reader_exit(
     lifecycle: &Lifecycle,
     transport: &dyn LspTransport,
     project_path: &str,
     language_id: &str,
     server_name: &str,
+    diagnostics: &AttemptDiagnostics,
 ) -> bool {
-    if !lifecycle.on_reader_exit() {
+    let tail = diagnostics.tail_inline(TAIL_INLINE_MAX_BYTES);
+    let message = crash_message(server_name, tail.as_deref());
+    if !lifecycle.on_reader_exit(&message) {
         return false;
     }
-    emit_session_error(
-        transport,
-        project_path,
-        language_id,
-        &crash_message(server_name),
-    );
+    diagnostics.record_failure(&message);
+    emit_session_error(transport, project_path, language_id, &message);
     true
+}
+
+/// 失败文案内联证据尾部（P1a）：`{base} | server stderr: {tail}` —— 与
+/// `dap/session.rs` 的 `"{base} | adapter stderr: {detail}"` 同构。
+fn inline_failure(base: &str, tail: Option<&str>) -> String {
+    match tail.map(str::trim).filter(|tail| !tail.is_empty()) {
+        Some(tail) => format!("{base} | server stderr: {tail}"),
+        None => base.to_string(),
+    }
+}
+
+/// 摘掉全部在途等待的发送端（reader 已退出 ⇒ 响应不可能再到达，等待方应快速失败
+/// 而不是挂死）。
+fn drain_pending(pending: &Mutex<HashMap<RequestId, PendingSender>>) {
+    if let Ok(mut map) = pending.lock() {
+        map.clear();
+    }
+}
+
+/// 等待 `initialize` 响应，且**不得挂死**：reader 线程一旦退出，任何响应都不可能
+/// 再到达 —— 摘掉 pending 发送端，让 `blocking_recv` 以「无响应」失败。
+///
+/// mode ⑤/⑥（子进程启动后立即退出）的可读性依赖这条：sender 留在 map 里会把
+/// `blocking_recv` 永久阻塞，失败就永远不会产生，更谈不上「自我解释」。
+fn await_init_response(
+    init_rx: tokio::sync::oneshot::Receiver<Message>,
+    pending: &Mutex<HashMap<RequestId, PendingSender>>,
+    reader: &thread::JoinHandle<Result<()>>,
+) -> Result<Message> {
+    if reader.is_finished() {
+        // 关窗：reader 在「插入 sender」与「本检查」之间退出时，它在出口的 drain
+        // 可能已经跑过（见 reader 闭包），这里补一次。
+        drain_pending(pending);
+    }
+    init_rx
+        .blocking_recv()
+        .context("LSP initialization: no response received")
 }
 
 /// panic 载荷 → 可读文案（应用无全局 panic hook，载荷必须落进日志）。
@@ -1160,6 +1242,11 @@ mod tests {
         stub_session(transport, PROJECT, LANG, SERVER)
     }
 
+    /// 诊断句柄（经 store 铸造 —— `begin` 是唯一创建点；用例只验证写者落账）。
+    fn diag() -> Arc<AttemptDiagnostics> {
+        crate::lsp::attempt_diagnostics::AttemptDiagnosticsStore::new().begin("test:stub", PROJECT)
+    }
+
     /// 相位与事件同源：`publish_status` 必须同时推进 lifecycle 与发出事件
     /// （只做其一是"状态栏与快照不一致"的成因）。
     #[test]
@@ -1196,9 +1283,10 @@ mod tests {
         assert_eq!(events[1].4, Some(40));
     }
 
-    /// Error 相位：事件携带调用方文案，相位归一为崩溃（文案由 crash_message 单点重建）。
+    /// Error 相位：事件携带写者文案，快照逐字投影同一份（capture-at-transition ——
+    /// 唯一构造点仍是 `crash_message`，`Lifecycle` 只落账不重建）。
     #[test]
-    fn publish_status_error_emits_message_and_normalizes_phase() {
+    fn publish_status_error_emits_message_and_projects_it() {
         let transport = Arc::new(RecordingTransport::default());
         let lifecycle = Lifecycle::new();
 
@@ -1218,7 +1306,8 @@ mod tests {
         assert_eq!(events[0].3.as_deref(), Some("boom"));
         assert_eq!(
             lifecycle.status(SERVER),
-            LspSessionStatus::Error(crash_message(SERVER))
+            LspSessionStatus::Error("boom".into()),
+            "快照必须与事件投影同一份写者文案"
         );
     }
 
@@ -1250,25 +1339,89 @@ mod tests {
         assert_eq!(events[0].4, None);
     }
 
-    /// 崩溃路径（AC2：kill gopls）：运行中 reader 退出 → error + 服务器名。
+    /// mode ⑤/⑥ 回归：reader 已退出时握手必须**快速失败**为「无响应」，不得挂死。
+    /// （此前 sender 留在 `pending` 里，`blocking_recv` 永久阻塞 —— 失败永不产生，
+    /// 事故现场更不可能自我解释。）
     #[test]
-    fn on_reader_exit_emits_error_while_running() {
+    fn await_init_response_fails_fast_when_reader_dead() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Message>();
+        let pending: std::sync::Mutex<HashMap<RequestId, PendingSender>> =
+            std::sync::Mutex::new(HashMap::new());
+        let req_id = RequestId::from(1i32);
+        pending.lock().expect("lock").insert(req_id, tx);
+
+        let reader: thread::JoinHandle<Result<()>> = thread::spawn(|| Ok(()));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !reader.is_finished() && std::time::Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(reader.is_finished(), "模拟 reader 必须已退出");
+
+        let error = await_init_response(rx, &pending, &reader).expect_err("必须失败而非挂死");
+        assert!(
+            error.to_string().contains("no response received"),
+            "失败原因必须指向无响应（供内联证据合成）: {error}"
+        );
+        assert!(
+            pending.lock().expect("lock").is_empty(),
+            "在途发送端必须已被摘除（否则握手会再次挂死）"
+        );
+    }
+
+    /// 正常路径：reader 存活、响应到达 → 原样返回。
+    #[test]
+    fn await_init_response_returns_response_when_reader_alive() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<Message>();
+        let pending: std::sync::Mutex<HashMap<RequestId, PendingSender>> =
+            std::sync::Mutex::new(HashMap::new());
+        let reader: thread::JoinHandle<Result<()>> = thread::spawn(|| Ok(()));
+        // 模拟 reader 送响应（oneshot 有缓冲，先 send 后 recv 亦可）。
+        tx.send(err_response("server said no")).expect("send");
+
+        let response = await_init_response(rx, &pending, &reader).expect("response");
+
+        assert!(matches!(response, Message::Response(_)));
+    }
+
+    /// 崩溃路径（AC2：kill gopls）：运行中 reader 退出 → error + 服务器名 +
+    /// **证据尾部内联**（AC3）；同一条文案进该键的诊断日志，快照投影同一份字符串。
+    #[test]
+    fn on_reader_exit_emits_error_with_inlined_evidence() {
         let transport = Arc::new(RecordingTransport::default());
         let lifecycle = Lifecycle::new();
         lifecycle.set(&LspSessionStatus::Ready);
+        let diagnostics = diag();
+        diagnostics.push_line("error", "error: Unknown binary 'rust-analyzer'");
 
         assert!(on_reader_exit(
             &lifecycle,
             transport.as_ref(),
             PROJECT,
             "go",
-            "gopls"
+            "gopls",
+            &diagnostics
         ));
 
         let events = transport.take();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].2, "error");
-        assert_eq!(events[0].3.as_deref(), Some("gopls exited unexpectedly"));
+        let message = events[0].3.as_deref().expect("error event carries message");
+        assert!(
+            message.contains("gopls exited unexpectedly") && message.contains("Unknown binary"),
+            "崩溃文案必须内联证据尾部: {message}"
+        );
+        assert_eq!(
+            lifecycle.status("gopls"),
+            LspSessionStatus::Error(message.to_string()),
+            "快照与事件必须投影同一份写者文案"
+        );
+        assert!(
+            diagnostics
+                .snapshot_logs(0, 0)
+                .iter()
+                .any(|entry| entry.message == message),
+            "崩溃文案必须同源进该键的日志证据"
+        );
     }
 
     /// 优雅关闭（close 已先落终态）：reader 退出静默，且不覆盖 stopped。
@@ -1284,7 +1437,8 @@ mod tests {
             transport.as_ref(),
             PROJECT,
             "go",
-            "gopls"
+            "gopls",
+            &diag()
         ));
         assert!(transport.take().is_empty(), "关闭后不得再发任何事件");
         assert_eq!(lifecycle.status("gopls"), LspSessionStatus::Stopped);
@@ -1296,16 +1450,25 @@ mod tests {
         let transport = Arc::new(RecordingTransport::default());
         let lifecycle = Lifecycle::new();
         lifecycle.set(&LspSessionStatus::Ready);
+        let diagnostics = diag();
 
         assert!(on_reader_exit(
             &lifecycle,
             transport.as_ref(),
             PROJECT,
             "go",
-            "gopls"
+            "gopls",
+            &diagnostics
         ));
         assert!(
-            !on_reader_exit(&lifecycle, transport.as_ref(), PROJECT, "go", "gopls"),
+            !on_reader_exit(
+                &lifecycle,
+                transport.as_ref(),
+                PROJECT,
+                "go",
+                "gopls",
+                &diagnostics
+            ),
             "重复退出不得再判定为崩溃"
         );
         assert_eq!(transport.take().len(), 1);
@@ -1317,8 +1480,10 @@ mod tests {
     fn snapshot_reports_error_after_reader_exit() {
         let transport = Arc::new(RecordingTransport::default());
         let session = session(Arc::clone(&transport) as Arc<dyn LspTransport>);
-        // reader 线程退出时会写下崩溃相位（此处直接落相位，等价于那一刻）。
-        session.lifecycle.on_reader_exit();
+        // reader 线程退出时会写下崩溃相位与文案（此处直接落相位，等价于那一刻）。
+        session
+            .lifecycle
+            .on_reader_exit(&crash_message(SERVER, None));
 
         let info = session.snapshot();
         assert_eq!(info.status, "error");
