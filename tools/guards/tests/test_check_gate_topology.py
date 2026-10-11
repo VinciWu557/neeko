@@ -1,9 +1,11 @@
-"""拓扑护栏 —— 编排层的漂移必须被机器发现（A1 + A3）。
+"""拓扑护栏 —— 编排层的漂移必须被机器发现（A1 + A3 + A4）。
 
 A1：任何声明了 `ci` 上下文的外部命令门禁，其命令必须能在 `ci.yml` 的**指定 job** 里找到
     （支持 `pnpm <script>` 与裸命令两种形态，且带词边界）。
 A3：`lefthook.yml` 的 pre-commit / pre-push 只允许出现对护栏框架的**单次**调用，
     不得再出现手写的门禁命令，且不允许 `&&`。
+A4：证据类 job（`*-test` / `*-coverage`）的 `needs` 不得含检查类 job（`*-check`）——
+    check 红时证据信号被短路（2026-10 事故；needs 支持内联 / 流列表 / 块列表三形态）。
 
 全部夹具在 tempdir 里构造（红线 13），不碰真实 `ci.yml` / `lefthook.yml`。
 """
@@ -52,6 +54,24 @@ def ci_with_job(job: str, command: str) -> str:
         "        uses: actions/checkout@v4\n"
         "      - name: Run\n"
         f"        run: {command}\n"
+    )
+
+
+def ci_with_needs(job: str, needs_line: str) -> str:
+    """两 job 的 ci.yml：`frontend-check`（满足 A1 的 gate）+ `job`（带给定 needs 行，含缩进）。"""
+    return (
+        "jobs:\n"
+        "  frontend-check:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Run\n"
+        "        run: pnpm lint:fe\n"
+        f"  {job}:\n"
+        f"{needs_line}"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - name: Run\n"
+        "        run: pnpm test:rust\n"
     )
 
 
@@ -142,6 +162,57 @@ class CiTopologyTest(unittest.TestCase):
         )
         result = self.check([gate_entry()], ci)
         self.assertEqual(result.verdict, VIOLATION)
+
+
+class SignalIndependenceTest(unittest.TestCase):
+    """A4：门禁信号相互独立 —— 检查类 job 不得短路证据类 job（2026-10 事故）。"""
+
+    def check(self, ci):
+        return topology.check(build(self, [gate_entry()], ci))
+
+    def test_test_job_needing_a_check_job_is_a_violation(self):
+        result = self.check(ci_with_needs("backend-test", "    needs: frontend-check\n"))
+        self.assertEqual(result.verdict, VIOLATION, result.findings)
+        self.assertEqual(len(result.findings), 1, result.findings)
+        self.assertIn("backend-test", result.findings[0].message)
+        self.assertIn("frontend-check", result.findings[0].message)
+
+    def test_coverage_job_needing_a_check_job_is_a_violation(self):
+        result = self.check(ci_with_needs("backend-coverage", "    needs: frontend-check\n"))
+        self.assertEqual(result.verdict, VIOLATION, result.findings)
+
+    def test_flow_list_needs_form_is_parsed(self):
+        result = self.check(ci_with_needs("backend-test", "    needs: [frontend-check, other]\n"))
+        self.assertEqual(result.verdict, VIOLATION, result.findings)
+        self.assertIn("frontend-check", result.findings[0].message)
+
+    def test_block_list_needs_form_is_parsed(self):
+        ci = (
+            "jobs:\n"
+            "  frontend-check:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Run\n"
+            "        run: pnpm lint:fe\n"
+            "  backend-test:\n"
+            "    needs:\n"
+            "      - frontend-check\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Run\n"
+            "        run: pnpm test:rust\n"
+        )
+        result = self.check(ci)
+        self.assertEqual(result.verdict, VIOLATION, result.findings)
+
+    def test_evidence_job_needing_a_build_job_is_allowed(self):
+        # 证据类 job 依赖「产物」（build）合法：build 不是检查类信号，短路语义不成立。
+        result = self.check(ci_with_needs("e2e-test", "    needs: frontend-build\n"))
+        self.assertEqual(result.verdict, PASS, result.findings)
+
+    def test_no_needs_edges_is_pass(self):
+        result = self.check(ci_with_job("frontend-check", "pnpm lint:fe"))
+        self.assertEqual(result.verdict, PASS, result.findings)
 
 
 class LefthookTopologyTest(unittest.TestCase):

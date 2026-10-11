@@ -37,8 +37,11 @@ jobs:
       - name: Frontend static checks
         run: pnpm lint:fe
 
+  # 不 needs frontend-check：静态检查结论不构成测试的前置条件 —— check 红时测试信号仍须暴露。
+  # 2026-10 事故：backend-test 被 backend-check 短路一周（静态检查红 ⇒ 测试从未执行），
+  # 测试层 flaky 积压到修复当天才第一次现身。与 frontend-build 同理：独立并行出反馈更快、更真。
+  # 护栏 check_gate_topology 的 A4 判据钉住这条（*-test / *-coverage 的 needs 不得含 *-check）。
   frontend-test:
-    needs: frontend-check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -181,8 +184,8 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python3 tools/guards/run.py run --stage ci --suite lint --source python --format github-actions
 
+  # 不 needs backend-check：同上（2026-10 事故的原发点；A4 判据钉住）。
   backend-test:
-    needs: backend-check
     strategy:
       fail-fast: false
       matrix:
@@ -234,8 +237,8 @@ jobs:
   # 插桩是整棵依赖树的重建（本地实测 130s / 5.3GB 独立 target dir），因此这里**不挂 rust-cache**：
   # 仓库缓存预算 10GB，5.3GB 的插桩产物会挤掉另外 6 个 Rust job 的缓存。要提速再加缓存。
   # ──────────────────────────────────────────────
+  # 不 needs backend-check：覆盖率是独立证据（A4 判据钉住）—— 检查红时覆盖率地板仍须暴露。
   backend-coverage:
-    needs: backend-check
     runs-on: ubuntu-latest
     permissions:
       contents: read

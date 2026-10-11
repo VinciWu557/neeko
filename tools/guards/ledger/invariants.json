@@ -289,6 +289,69 @@
         }
       ],
       "red_line": null
+    },
+    {
+      "id": "mount-write-credential-lifetime",
+      "title": "Push 写入权随挂载失效（票号）：无有效凭证的写入必须被拒且不 emit",
+      "tier": "type",
+      "enforcement": [
+        {
+          "kind": "type",
+          "ref": "src-tauri/src/common/file/watcher/manager/core.rs",
+          "note": "MountTicket 字段私有、唯一签发方 issue_ticket ⇒ 票不可伪造；store_push_snapshot 签名强制携带 ⇒ 无凭证写入编译不过；release_one 先吊销票再删快照（compare-and-remove），MountTicketGuard 兜底 setup 失败出口"
+        },
+        {
+          "kind": "test",
+          "ref": "src-tauri/src/common/file/watcher/manager/lifecycle_tests.rs",
+          "note": "三条确定性回归：当期票写入+emit / 释放后旧票拒绝（槽位空、无 emit 增量、票已注销）/ 重挂载后旧票拒绝且新票可用"
+        }
+      ],
+      "red_line": null
+    },
+    {
+      "id": "activation-readiness-is-a-state-not-an-error",
+      "title": "就绪性是一等状态：冷窗口超时返回 Pending，不得进入错误空间",
+      "tier": "type",
+      "enforcement": [
+        {
+          "kind": "type",
+          "ref": "src-tauri/src/git/services/status.rs",
+          "note": "WorkspaceActivation{Ready|Pending}（serde tag=state）+ first_snapshot_outcome 无错误分支；有界等待（RECALC_WAIT_TIMEOUT）只是延迟优化，正确性归 git-status-snapshot 推送"
+        },
+        {
+          "kind": "test",
+          "ref": "src-tauri/src/git/services/status.rs",
+          "note": "冷窗口纯映射直测 + 「activate 冷窗口不得为错误」+ pull 分支恒 Ready"
+        },
+        {
+          "kind": "test",
+          "ref": "src/app/hooks/__tests__/useActiveWorkspaceSync.test.ts",
+          "note": "前端对偶：pending 不判死不报错、退避重试直到落地（与失败路径同一收敛模型）"
+        },
+        {
+          "kind": "test",
+          "ref": "src/features/git/hooks/__tests__/useActivateWorkspace.test.ts",
+          "note": "pending 不写槽位、不报错"
+        }
+      ],
+      "red_line": null
+    },
+    {
+      "id": "gate-check-test-signal-independence",
+      "title": "门禁信号相互独立：check 类 job 不得短路 test / coverage 类 job",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_gate_topology",
+          "note": "A4：*-test / *-coverage 的 needs 不得含 *-check（2026-10 事故：backend-check 红一周 ⇒ backend-test 从未执行 ⇒ flaky 积压）"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_gate_topology.py"
+        }
+      ],
+      "red_line": null
     }
   ]
 }

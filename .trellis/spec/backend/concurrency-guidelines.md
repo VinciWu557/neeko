@@ -154,6 +154,17 @@ stop.store(true, Ordering::Relaxed);
    （当年 4/5 失败、恢复后 5/5 绿），否则「恰好绿」抓不住回归。并发不变量尤其如此 ——
    去掉 `mount_lock` 后 `concurrent_mount_*` 用例必须（在布障同步下）稳定变红，
    否则用例只是顺序重复了一遍。
+6. **写入凭证随挂载失效（票号）**：push 生产者（worker 推送回调）活在 `watch()` 栈之外 ——
+   释放单元后仍在飞的推送若无校验，会把已作废槽位重新填上「权威数据」（2026-10 CI 竞态：
+   macOS `activate_style_release_except_keeps_only_the_target_unit`）。写权不得是「持有
+   `Arc` 克隆」（进程级有效），必须是**挂载级有效**的显式凭证：`watch()` 在创建 worker
+   **之前**签发 `MountTicket`（字段私有 + 唯一签发方 ⇒ 不可伪造），`store_push_snapshot`
+   签名强制携带它并在**同一存储临界区内**校验，`release_one` **先吊销票、再删快照**
+   （compare-and-remove：只吊销该挂载自己的票，防「并发释放 + 重挂载」误杀新票）；setup
+   失败出口由 `MountTicketGuard`（RAII）兜底吊销。为什么不是 `watchers.contains_key`：
+   冷启动首个快照**合法地**先于 handle 登记到达（按挂载状态拒写会静默丢它且变化闸门不补发），
+   且「释放 → 重挂载」后 `contains_key` 会放行旧 worker 的晚到推送（拿更大 version 覆盖新数据）。
+   契约测试：`lifecycle_tests.rs` 三条确定性用例（当期票接受 / 释放后拒绝 / 重挂载后拒绝）。
 
 **Wrong**：新建后台线程时把 `Arc<T>` clone 进线程，又把回传的 sender 存进 `T` 内部——
 环形强引用让「断开即退出」永不触发。
