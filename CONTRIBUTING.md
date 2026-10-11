@@ -61,9 +61,10 @@ pnpm tauri dev        # start the dev app (frontend on port 1420)
 | --- | --- |
 | `pnpm tauri dev` | Run the app in development mode |
 | `pnpm tauri build` | Build a release bundle |
-| `pnpm lint` | Every static check: in-process guards + `lint:fe` + `lint:rust` (no tests) |
+| `pnpm lint` | Every static check: in-process guards + `lint:fe` + `lint:rust:all-targets` (no tests) |
 | `pnpm lint:fe` | Frontend static checks (ESLint + `tsc --noEmit`) — the `lint_fe` gate's argv |
-| `pnpm lint:rust` | Rust static checks (`cargo fmt --check` + `clippy -D warnings`) |
+| `pnpm lint:rust` | Rust static checks, lib-only (`cargo fmt --check` + `clippy -D warnings`) — the commit-tier fast path |
+| `pnpm lint:rust:all-targets` | Rust static checks incl. test targets (`cargo fmt --check` + `clippy --all-targets -D warnings`) — the tier `pnpm lint` / push / CI use |
 | `pnpm lint:fix` | Write-back fixes: `cargo fmt` (Rust) + ESLint `--fix` (frontend) |
 | `pnpm type-check` | TypeScript type check only |
 | `pnpm test` | All test gates: `test:fe` + `test:rust` + `test:host` |
@@ -191,12 +192,16 @@ guard framework** — which gates run in which context is declared once in
 | --- | --- | --- |
 | `pre-commit` | every commit | `pnpm guards run --stage commit --staged` |
 | `commit-msg` | every commit | `pnpm commitlint` |
-| `pre-push` | every push | `pnpm guards run --stage push --changed {push_files} --jobs 3` |
+| `pre-push` | every push | `pnpm guards run --stage push --changed {push_files} --jobs 4` |
 
-The tests and the host self-check run at push, not at commit: commit stays a static
-gate (~10s warm), push pays for the tests. Skipping now comes from each gate's
-declared `scopes` (not from hand-written `lefthook.yml` globs), so a file that can
-change a gate's verdict is covered by that gate's own declaration.
+The tests, the host self-check and the full-target lint run at push, not at commit:
+commit stays a fast static gate (`lint_fe` + lib-only `lint_rust`, ~10s warm), push pays
+for the minutes-scale work. `lint_rust_all_targets`（`fmt + clippy --all-targets`）is the
+only Rust static check outside the commit tier — it covers the lib (so `lint_rust` need
+not repeat in CI) and, in CI, it is the only lint landing zone for platform-specific test
+code. Skipping comes from each gate's declared `scopes` (not from hand-written
+`lefthook.yml` globs), so a file that can change a gate's verdict is covered by that gate's
+own declaration.
 
 ### Adding a gate
 

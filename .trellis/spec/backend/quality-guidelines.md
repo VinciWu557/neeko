@@ -6,8 +6,10 @@
 
 ## 概述
 
-后端的质量门禁是 **`cargo check`**（在 CI 中三平台运行）与 **`pnpm lint:rust`**（= `cargo fmt --all -- --check` + `cargo clippy -- -D warnings`，本地 commit 档与 CI 共用同一条命令）。
-测试是 **`pnpm test:rust`**（本地 push 档与 CI 共用）。
+后端的质量门禁是 **`cargo check`**（CI 三平台）与 **`pnpm lint:rust:all-targets`**
+（= `cargo fmt --all -- --check` + `cargo clippy --all-targets -- -D warnings`，local / push / CI 三档共用同一条命令）。
+提交档另有一条 lib-only 的快检查 `pnpm lint:rust`（`fmt + clippy lib`，暖缓存 ~10s）——它不再进 CI：
+全目标口径已覆盖 lib，重复跑只增延迟。测试是 **`pnpm test:rust`**（本地 push 档与 CI 共用）。
 
 质量门禁配置：
 - Clippy lint 级别在 `src-tauri/Cargo.toml` 的 `[lints.clippy]` 和 `[lints.rust]` 段定义
@@ -503,7 +505,7 @@ pub fn reorder(&self, ids: &[String]) -> Result<()> {
 
 在 push/PR 到 `main` 时运行：
 - `cargo check`（Windows、macOS、Linux 三平台矩阵，平台编译问题专用）
-- `pnpm lint:rust` + `pnpm test:rust`（三平台矩阵；与本地 commit / push 档同一条命令）
+- `pnpm lint:rust:all-targets` + `pnpm test:rust`（三平台矩阵；与本地 local / push 档同一条命令）
 - `pnpm test:rust:coverage`（`backend-coverage`，仅 ubuntu、仅当 PR 动了 `src-tauri/**` 或
   `package.json`；job 常驻而重活条件化，避免 required check 被 skip 卡住合并）
 - `pnpm guards run --stage ci`（`ubuntu-latest` 上跑全部护栏；本地 `pnpm lint` 跑 `--stage local`，

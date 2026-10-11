@@ -700,7 +700,7 @@ let output = tokio::time::timeout(
 
 **超时策略（2026-10 起）**：读类命令保留 30s 上界（`LOCAL_GIT_TIMEOUT`）；长操作
 （push / fetch / pull / commit）**不设墙钟** —— 耗时由 hook 与网络决定、没有上界，
-墙钟会把「正常慢」误判成失败（pre-push 跑两套测试是分钟级）。判据单点在
+墙钟会把「正常慢」误判成失败（pre-push 跑分钟级门禁：三套测试 + 全目标静态检查）。判据单点在
 `transport::git_command_timeout(args)`；挂死防护走取消通道（`GitSyncSlots` 按
 `WorkspaceRef::key()` 分槽：同Workspace串行、异单元并行 + `cancel_git_sync(console_run_id)`
 按 run id 匹配 + `kill_tree` 树杀（kill 确认有界 5s，防远端不收敛永久占槽））。长操作的 stdout/stderr 经

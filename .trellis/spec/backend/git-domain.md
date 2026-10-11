@@ -497,7 +497,7 @@ poke 打对单元、编辑即推送、未挂载兄弟单元零泄漏、pull 不�
 ## 13. 长操作超时策略与 Console 可见性（push / fetch / pull / commit）
 
 **判据**：墙钟超时的正当用途是防「卡死」，而 push / fetch / pull / commit 的耗时由
-pre-push/pre-commit hook 与网络决定、**没有上界**（pre-push 在本仓跑两套测试，分钟级）。
+pre-push/pre-commit hook 与网络决定、**没有上界**（pre-push 在本仓是分钟级：三套测试 + 全目标静态检查）。
 用墙钟兜它们必然把「正常慢」误判成失败 —— 2026-10-01 事故：push 的 hook 约 3 分钟，
 应用 30s 上限先弹失败，而 git 进程并未被终止（超时只停止等待），远端状态未知。
 对齐 VS Code 的模型：**无墙钟 + 可取消 + 进度可见**（clone 早已是这条路线：

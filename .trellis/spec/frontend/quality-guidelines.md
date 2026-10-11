@@ -327,7 +327,7 @@ pnpm tauri dev    # 启动完整的 Tauri 开发环境
 ### 质量门禁
 
 ```bash
-pnpm lint           # 全部静态检查：lint:fe（eslint + tsc）+ lint:rust（cargo fmt + clippy）+ 护栏
+pnpm lint           # 全部静态检查：lint:fe（eslint + tsc）+ lint:rust:all-targets（cargo fmt + clippy 全目标）+ 护栏
 pnpm lint:fe        # 仅前端静态检查（pre-commit 与 CI 跑的就是这条）
 pnpm type-check     # 仅 TypeScript 类型检查
 pnpm lint:fix       # 写回修复：cargo fmt（Rust）+ eslint --fix（前端）
@@ -351,7 +351,7 @@ pnpm check          # 本地全量：lint + 两套单元测试 + host 自检
 - `frontend-check`：`pnpm lint:fe`（eslint + tsc，无平台差异 ⇒ 单平台）
 - `frontend-test`：`pnpm test:fe:coverage`（测试 + 覆盖率地板）
 - `frontend-build`：`pnpm build`（生产打包门 —— bundle 期问题不再延迟到发版 tag 才暴露）
-- `backend-check`：`cargo check`（三平台矩阵）+ `pnpm lint:rust` + `pnpm guards run --stage ci`
+- `backend-check`：`cargo check`（三平台矩阵）+ `pnpm lint:rust:all-targets` + `pnpm guards run --stage ci`
 - `backend-test`：`pnpm test:rust`（三平台矩阵）
 - `backend-coverage`：`pnpm test:rust:coverage`（仅 ubuntu，按路径过滤；见后端 spec 的覆盖率要求）
 - `java-host-check`：`pnpm build:host`（内含 `pnpm test:host` 的同一份自检）

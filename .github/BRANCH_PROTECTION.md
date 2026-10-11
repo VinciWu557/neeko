@@ -53,8 +53,8 @@ java-host-check
 - 开发者不能直接 push 到 main，必须通过 PR
 - PR 必须通过 CI 的 required jobs 才能合并：前端静态检查与单元测试 + 覆盖率地板、
   `frontend-build` 的生产打包（`pnpm build`，bundle 期问题不再溜到发版才炸）、三平台
-  `cargo check` + `pnpm lint:rust` + `pnpm test:rust`（命令定义见 `package.json`，与本地
-  commit/push 档同源）、`backend-coverage` 的 Rust 行覆盖率地板、`java-host-check` 的
+  `cargo check` + `pnpm lint:rust:all-targets` + `pnpm test:rust`（命令定义见 `package.json`，与本地
+  local/push 档同源）、`backend-coverage` 的 Rust 行覆盖率地板、`java-host-check` 的
   java host 编译与自检
 - **本清单必须与 GitHub 实际保护规则逐字核对**：文档里列了、后台没加的，等于没有门
   （清单自身就出现过漏 `java-host-check` / `frontend-build` 而「效果」段照称的漂移，

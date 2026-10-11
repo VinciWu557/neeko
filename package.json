@@ -12,6 +12,7 @@
     "lint:fe": "eslint src/ --cache && pnpm type-check",
     "lint:fix": "cargo fmt --manifest-path src-tauri/Cargo.toml --all && eslint src/ --cache --fix",
     "lint:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings",
+    "lint:rust:all-targets": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "type-check": "tsc --noEmit",
     "guards": "python3 tools/guards/run.py",
     "test": "python3 tools/guards/run.py run --stage local --suite test",

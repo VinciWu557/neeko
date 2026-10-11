@@ -136,7 +136,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rust 门禁经 package.json 的脚本名调用（`pnpm lint:rust` / `pnpm test:rust`），
+      # Rust 门禁经 package.json 的脚本名调用（`pnpm lint:rust:all-targets`），
       # 因此需要 pnpm；脚本自带 --manifest-path，不需要 node_modules。
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -168,11 +168,12 @@ jobs:
         run: cargo check
         working-directory: ./src-tauri
 
-      # 与本地 commit 档**同一条命令**（静态检查的定义单点在 package.json）：
-      # fmt + clippy(-D warnings)。此前这两条只在本地 `pnpm lint` 里跑、CI 各自手写，
-      # 于是同一个门有两份定义。
-      - name: Rust static checks
-        run: pnpm lint:rust
+      # Rust 静态检查的**唯一步骤** = fmt + clippy --all-targets（含 lib 与测试目标）：
+      # 它覆盖了旧的 lib-only `pnpm lint:rust`，因此后者不再在 CI 重复跑（提交档仍是它，
+      # 保持 ~10s 暖缓存的快反馈）。
+      # 对非 macOS 平台，这一步同时是「平台专属测试码」的唯一 lint 落点。
+      - name: Rust static checks (all targets)
+        run: pnpm lint:rust:all-targets
 
       # 护栏清单 = tools/guards/checks/ 目录本身；这里只声明「在哪个 stage 跑」，
       # 不再逐条列脚本（三份手写清单正是本地与 CI 门禁集漂移的根因）。
@@ -192,7 +193,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Rust 门禁经 package.json 的脚本名调用（`pnpm lint:rust` / `pnpm test:rust`），
+      # Rust 门禁经 package.json 的脚本名调用（`pnpm test:rust`），
       # 因此需要 pnpm；脚本自带 --manifest-path，不需要 node_modules。
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

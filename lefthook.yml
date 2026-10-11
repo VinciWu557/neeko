@@ -1,9 +1,9 @@
 # Git hooks managed by lefthook (https://github.com/evilmartians/lefthook)
 # Install hooks with: pnpm lefthook install
 #
-# 阶段边界按**延迟预算**划，不按语言划：commit 是静态检查（fmt / clippy / eslint / tsc /
-# 提交信息，暖缓存 ~10s），push 是两套分钟级单元测试（前端 ~50s、Rust ~3min），
-# CI 是三平台终审。
+# 阶段边界按**延迟预算**划，不按语言划：commit 是快静态检查（fmt / clippy lib-only /
+# eslint / tsc / 提交信息，暖缓存 ~10s），push 是全目标静态检查 + 三套分钟级门禁
+# （Rust 全目标 lint / 前端测试 / Rust 测试 / java host 自检），CI 是三平台终审。
 #
 # 每个 hook 只声明**一次**「在什么场合跑什么」——具体跑哪些门禁由各门禁自报的 stage
 # 决定（工具链在 `tools/guards/ledger/gates.json` 声明），命令在 pre-commit/pre-push 里
@@ -22,10 +22,12 @@ commit-msg:
     commitlint:
       run: pnpm commitlint --edit {1}
 
-# push 档：**两套单元测试 + java host 自检都只在这里跑** —— commit 档只做静态检查。
+# push 档：**全目标静态检查 + 两套单元测试 + java host 自检都只在这里跑** ——
+# commit 档只做快静态检查（lib-only）。`lint_rust_all_targets` 虽属 lint，但要编译测试
+# 目标（分钟级），故按**延迟预算**（而非 lint/test 的名义）落在本档。
 pre-push:
   commands:
-    # stage=push 的门禁恰好是 test_fe / test_rust / test_host（三条）。现状是三者并行
-    # （墙钟 ≈ 3min），`--jobs 3` 保持并发；--changed 用 push 文件集做增量跳过。
+    # stage=push 的门禁恰好是 lint_rust_all_targets / test_fe / test_rust / test_host（四条）。
+    # `--jobs 4` 保持并发；--changed 用 push 文件集做增量跳过。
     gates:
-      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs 3
+      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs 4

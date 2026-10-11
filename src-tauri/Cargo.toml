@@ -76,7 +76,19 @@ objc2 = "0.6"
 objc2-web-kit = "0.3"
 
 [lints.clippy]
-# --- 正确性（Phase 4 完成：production unwrap 已消除，warn 保留给测试代码）---
+# --- 正确性（Phase 4 完成：production unwrap 已消除）---
+# 测试码豁免：`src/lib.rs` 与 `tests/unit.rs` 的 crate 根各有一条
+# `#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]`
+# —— 生产码仍是 deny（常规门禁的 clippy 构建不带 cfg(test)），测试断言不再顶红
+# `cargo clippy --all-targets -D warnings`。必须用 `allow`：源码里的 `warn`
+# 挡不住命令行 `-D warnings`（实测）。
+# 全目标口径（2026-10-11 已清零并接入门禁）：`--all-targets` 下的 43 处既有 lint 已全部修复
+# （cast 截断 → `try_from().expect()`、needless clone → `slice::from_ref`、测试模块挪到
+# 文件末、常量断言提升为 `const _: ()` 等），当前 `cargo clippy --all-targets -- -D warnings`
+# 在全仓全目标下 0 诊断。该命令 + fmt 已作为 gate `lint_rust_all_targets` 接入
+# **local / push / ci** 三档（声明单源 `tools/guards/ledger/gates.json`；CI 步骤落在
+# backend-check job）。commit 档保留 lib-only 的 `lint_rust`（暖缓存 ~10s 的快反馈），
+# 它不再进 CI —— 全目标口径已覆盖 lib，避免同一判据跑两遍。
 unwrap_used = "deny"
 expect_used = "deny"
 cast_possible_truncation = "deny"

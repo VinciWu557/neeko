@@ -20,17 +20,30 @@
     },
     {
       "id": "lint_rust",
-      "title": "cargo fmt --check + clippy -D warnings（Rust 静态检查）",
+      "title": "cargo fmt --check + clippy -D warnings（Rust 静态检查 · 提交档快检查）",
       "argv": ["pnpm", "lint:rust"],
       "kind": "lint",
-      "stages": ["local", "commit", "ci"],
-      "ci_job": "backend-check",
+      "stages": ["commit"],
       "budget_ms": 600000,
       "scopes": [
         "src-tauri/*.rs", "src-tauri/**/*.rs",
         "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/build.rs"
       ],
       "fix_hint": "cargo fmt 写回格式化；clippy 警告按提示修复，不得用 allow 压掉"
+    },
+    {
+      "id": "lint_rust_all_targets",
+      "title": "cargo fmt --check + clippy --all-targets -D warnings（Rust 全目标静态检查）",
+      "argv": ["pnpm", "lint:rust:all-targets"],
+      "kind": "lint",
+      "stages": ["local", "push", "ci"],
+      "ci_job": "backend-check",
+      "budget_ms": 600000,
+      "scopes": [
+        "src-tauri/*.rs", "src-tauri/**/*.rs",
+        "src-tauri/Cargo.toml", "src-tauri/Cargo.lock", "src-tauri/build.rs"
+      ],
+      "fix_hint": "按提示修测试码（try_from().expect() / std::slice::from_ref / 测试模块移到文件末 等）；确属有意行为时加**就地** #[allow] + 理由，禁止整模块压制"
     },
     {
       "id": "rust_check",

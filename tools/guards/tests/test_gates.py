@@ -165,8 +165,15 @@ EXPECTED_GATES = {
         ("pnpm", "lint:fe"), "lint", ("local", "commit", "ci"),
         "frontend-check", ("linux", "macos", "windows"), 180_000,
     ),
+    # 提交档的 Rust 快检查（lib-only，暖缓存 ~10s）；全目标口径在 local/push/ci。
     "lint_rust": (
-        ("pnpm", "lint:rust"), "lint", ("local", "commit", "ci"),
+        ("pnpm", "lint:rust"), "lint", ("commit",),
+        "", ("linux", "macos", "windows"), 600_000,
+    ),
+    # 全目标静态检查（fmt + clippy --all-targets）：要编译测试目标（分钟级），
+    # 按**延迟预算**不进 commit 档；它在 ci 档是平台专属测试码的唯一 lint 落点。
+    "lint_rust_all_targets": (
+        ("pnpm", "lint:rust:all-targets"), "lint", ("local", "push", "ci"),
         "backend-check", ("linux", "macos", "windows"), 600_000,
     ),
     "rust_check": (
@@ -270,6 +277,7 @@ class ScopeCoverageTest(unittest.TestCase):
         "test_fe": FRONTEND,
         "test_fe_coverage": FRONTEND,
         "lint_rust": RUST,
+        "lint_rust_all_targets": RUST,
         "rust_check": RUST,
         "test_rust": RUST,
         "test_rust_coverage": RUST + ("package.json",),
@@ -300,7 +308,7 @@ class ContextCommandSetTest(unittest.TestCase):
     """AC13：改造前后「同一上下文实际跑的命令集合」逐条对得上。
 
     对照表就是 design §2 的「目标态映射」；这里把它变成可执行断言，防止 stages/kind
-    的声明日后静默漂移（那会让 pre-push 多跑 lint、或让 `pnpm test` 不再只跑测试）。
+    的声明日后静默漂移（那会让 pre-push 多跑无关门禁、或让 `pnpm test` 不再只跑测试）。
     """
 
     @classmethod
@@ -317,7 +325,10 @@ class ContextCommandSetTest(unittest.TestCase):
         return sum(1 for r in self.selected(stage, suite, source) if r.check is not None)
 
     def test_pnpm_lint_is_the_lint_suite_at_local(self):
-        self.assertEqual(self.command_ids("local", suite="lint"), ["lint_fe", "lint_rust"])
+        # 契约（CONTRIBUTING）：`pnpm lint` = **every** static check —— 含全目标口径的那条。
+        self.assertEqual(
+            self.command_ids("local", suite="lint"), ["lint_fe", "lint_rust_all_targets"]
+        )
 
     def test_pnpm_test_is_the_test_suite_at_local(self):
         self.assertEqual(
@@ -327,7 +338,7 @@ class ContextCommandSetTest(unittest.TestCase):
     def test_pnpm_check_is_the_union_at_local(self):
         self.assertEqual(
             self.command_ids("local"),
-            ["lint_fe", "lint_rust", "test_fe", "test_host", "test_rust"],
+            ["lint_fe", "lint_rust_all_targets", "test_fe", "test_host", "test_rust"],
         )
         # 16 条既有进程内判据 + check_nondeterministic_event_assertions + check_file_io_scope
         self.assertEqual(self.in_process_count("local"), 18)
@@ -337,9 +348,16 @@ class ContextCommandSetTest(unittest.TestCase):
             self.command_ids("manual"), ["test_fe_coverage", "test_rust_coverage"]
         )
 
-    def test_pre_push_stays_the_three_test_commands(self):
+    def test_pre_push_carries_the_tests_plus_all_targets_lint(self):
+        """push 档 = 3 条测试门禁 + 1 条测试码 lint。
+
+        `lint_rust_all_targets` 虽属 lint，但要编译测试目标（分钟级），按**延迟预算**
+        落在 push 档（commit 档只做低延迟静态检查）；它在 ci 档同时是**非 macOS 平台**
+        测试码的唯一 lint 落点。
+        """
         self.assertEqual(
-            self.command_ids("push"), ["test_fe", "test_host", "test_rust"]
+            self.command_ids("push"),
+            ["lint_rust_all_targets", "test_fe", "test_host", "test_rust"],
         )
 
     def test_pre_commit_runs_the_lint_gates(self):
