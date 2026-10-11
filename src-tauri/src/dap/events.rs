@@ -1,12 +1,12 @@
 //! DAP → frontend 事件出口：事件名常量 + 投递端口 + Tauri 实现。
 //!
 //! 前端镜像：`src/shared/events.ts`（`DAP_EVENT` / `DAP_SESSION_STATUS_EVENT`）。
-//! 禁止在业务代码中硬编码事件字符串（AGENTS.md 规则 #5 / #12）。
+//! 禁止在业务代码中硬编码事件字符串（红线 5：事件名双端同源，见 `AGENTS.md` 索引）。
 //!
-//! **本模块是 DAP 域内唯一允许引用 `tauri` 的模块**（neeko-check Pillar 2：业务层
-//! 不得强耦合 `AppHandle`）。`session` / `manager` 只依赖 [`DapEventSink`] 端口，
-//! 因此可以在 `#[cfg(test)]` 里注入记录器（见 `dap/testing.rs`）验证事件语义，
-//! 而不需要常驻 Tauri 运行时。
+//! **本模块是 DAP 域内唯一允许引用 `tauri` 的模块**（架构基本原则 · 依赖倒置：
+//! 业务层只依赖端口，不耦合 `AppHandle`）。`session` / `manager` 只依赖
+//! [`DapEventSink`] 端口，因此可以在 `#[cfg(test)]` 里注入记录器（见
+//! `dap/testing.rs`）验证事件语义，而不需要常驻 Tauri 运行时。
 
 use tauri::{AppHandle, Emitter};
 

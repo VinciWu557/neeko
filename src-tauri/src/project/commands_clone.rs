@@ -37,7 +37,7 @@ pub async fn clone_git_project(
     clone::validate_git_url(&url).map_err(AppError::InvalidInput)?;
     let name = clone::sanitize_project_name(&name).map_err(AppError::InvalidInput)?;
     // `ensure_target_available` touches the filesystem (`canonicalize` + `exists`);
-    // off-load it from the async driver thread (Pillar 7: Tokio 阻塞隔离).
+    // off-load it from the async driver thread (红线 3：阻塞 I/O 隔离).
     let dest_parent_for_check = dest_parent.clone();
     let name_for_check = name.clone();
     let dest = tokio::task::spawn_blocking(move || {

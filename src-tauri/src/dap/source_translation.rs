@@ -75,7 +75,8 @@ pub(crate) async fn translated_source_path(
 /// 身份 → 适配器路径（带 per-call 缓存），并汇报**一次性**诊断。
 ///
 /// 抽成函数有两个目的：
-/// 1. 拍平 `adapter_breakpoints` 里 `for → match → if let` 的三层解构（Pillar 11 量化红线）；
+/// 1. 拍平 `adapter_breakpoints` 里 `for → match → if let` 的三层解构（红线 7：
+///    连续 3 层解构拍平为单层）；
 /// 2. 把"同一身份只翻译一次 / 只报一次"的缓存语义收在一处（调用点无法绕过它）。
 async fn resolve_cached(
     backend: Option<&dyn LanguageBackend>,

@@ -1,6 +1,6 @@
 //! DAP 测试支撑：事件记录器 + 假适配器（TCP DAP 服务器）。
 //!
-//! 存在的理由（neeko-check Pillar 2 / 80% 覆盖率红线）：会话与编排链路原先强耦合
+//! 存在的理由（架构基本原则 · 依赖倒置 + TDD 覆盖率门）：会话与编排链路原先强耦合
 //! `tauri::AppHandle` 与真实适配器进程，`launch_session` / `set_breakpoints` 的
 //! 下发路径 / mute 同步 / 外部源码授权全部无法单测。抽出 [`DapEventSink`] 端口后，
 //! 事件出口可以换成 [`RecordingSink`]；再加上一个说 DAP 帧协议的
@@ -34,7 +34,7 @@ pub use crate::common::testing::{isolated_state, plain_project_state};
 
 /// **用例模块级别**的夹具：就地装配四个协作者 + `DapContext`。
 ///
-/// 存在的理由（Pillar 2 的口径是"核心 service 能**单独**测试"）：`launch` /
+/// 存在的理由（架构基本原则的口径是「核心 service 能**单独**测试」）：`launch` /
 /// `breakpoints::service` 的测试不该经 `DapManager` 门面 —— 那会让门面为了可测性
 /// 长出测试专用 API，也让断言绑在转调层而不是被测算例上。用它之后：
 /// `let out = launch::start_language_debug(&f.ctx(), sink, request).await;`
