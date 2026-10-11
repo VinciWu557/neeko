@@ -8,6 +8,9 @@
 # 升级流程：改下面 channel → 重新 `pnpm install` 无关，直接跑 `pnpm check` → 单独提交，
 # 不要与功能改动混在同一提交里。components 带 llvm-tools-preview 是覆盖率门
 # `pnpm test:rust:coverage` 的前置条件。
+# components 带 rust-analyzer：本项目自身的 LSP 消费点（在 Neeko 里打开本仓库的 .rs 文件）
+# 要求该组件随 toolchain 一并安装 —— 否则 `rust-analyzer --version` 在项目根报
+# "Unknown binary"（唯一版本源必须覆盖消费点所需组件）。
 [toolchain]
 channel = "1.99.0"
-components = ["clippy", "rustfmt", "llvm-tools-preview"]
+components = ["clippy", "rustfmt", "llvm-tools-preview", "rust-analyzer"]
