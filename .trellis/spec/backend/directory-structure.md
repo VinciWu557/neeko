@@ -30,7 +30,7 @@ src-tauri/
 └── src/
     ├── main.rs               # 二进制入口（极简，调用 lib::run）
     ├── lib.rs                # 模块导出入口（仅声明和 re-export）
-    ├── app.rs                # 应用启动逻辑：Tauri Builder、setup、事件监听、命令注册
+    ├── app/                  # 组合根：Tauri Builder 组装（boot）· 关闭协议（close）· 生命周期命令（commands）
     ├── app_state.rs          # AppStateWrapper —— 运行时状态组装
     ├── core/                 # 核心基础设施
     │   ├── mod.rs
@@ -177,15 +177,31 @@ pub use app_state::AppStateWrapper;
 pub use core::error::AppError;
 ```
 
-### `app.rs` 的职责
+### `app/` 的职责
 
-`app.rs` 承担应用启动的中枢职责：
+`app/` 是**组合根**：只回答「按什么顺序调用谁」与「失败怎么办」，不持有任何业务规则。
 
-- `run()` 函数
-- Tauri Builder 配置
-- `.setup()` 闭包（会话恢复、配置加载、Watcher 启动）
-- `.on_window_event()`（窗口销毁时的清理）
-- `invoke_handler`（命令注册表）
+| 文件 | 职责 |
+|------|------|
+| `app/mod.rs` | 门面：`mod` 声明 + `pub use`（红线 9，极薄） |
+| `app/boot.rs` | `run()`：进程前置 → Builder 组装 → `setup` 启动序列（各域 `boot` 的顺序） |
+| `app/close.rs` | 关闭协议：`CloseRequested` 决策（纯函数）+ 窗口事件处理 + `Destroyed` 清理 |
+| `app/commands.rs` | 生命周期命令（`confirm_app_exit`）—— 与其它域同款「命令住 `commands.rs`」 |
+
+**边界（硬性）**：判据与 `app_state.rs` 相同 —— 写进来的是「**组装**」还是「**规则**」？
+规则一律下沉到拥有它的领域模块，且**每个域在启动期只暴露一个 `boot` 入口**
+（组合根只负责顺序与失败策略；新域照此加一行）：
+
+| 启动期规则 | 归属 |
+|------------|------|
+| 会话 → 工作区恢复（激活 id 校验、单体失败跳过、损坏会话不阻断启动） | `session/boot.rs` |
+| 运行时句柄注入 + 持久化设置应用（顺序不可交换） | `lsp/boot.rs` |
+| 自定义 agent 装载 + 历史 `agentSkillPathOverrides` 迁移 | `agent/boot.rs` |
+| 默认 Tag Group 存在性（幂等） | `library/boot.rs` |
+| 关闭标签页 vs 关闭窗口的判别（macOS Cmd+W 双通道） | `platform/close_tab/`（红线 10） |
+
+新增启动步骤的扩展点：在对应领域加一个 `boot.rs` 函数（自带单测），在
+`app/boot.rs::on_setup` 按顺序加一行调用 —— 不引入第二套机制（YAGNI）。
 
 ### `app_state.rs` 的职责
 
@@ -228,7 +244,7 @@ pub struct AppStateWrapper {
 
 ### 命令的职责和分布
 
-所有 `#[tauri::command]` 函数按领域拆分到各领域的 `commands.rs` 中。所有命令通过 `lib.rs` 中的 `neeko_invoke_handler!` 宏集中注册（不再使用 `app.rs` 内的 `generate_handler!`）：
+所有 `#[tauri::command]` 函数按领域拆分到各领域的 `commands.rs` 中。所有命令通过 `lib.rs` 中的 `neeko_invoke_handler!` 宏集中注册（不再使用各模块内的 `generate_handler!`）：
 
 | 领域模块 | 命令文件 | 职责 |
 |----------|----------|------|
@@ -352,7 +368,7 @@ pub fn get_task_configs(...) -> Result<Vec<TaskConfig>, AppError> {
 - **命令委派 services**：`src-tauri/src/connection/commands.rs` —— `get_wsl_distros` 命令直接委派给 `connection/services.rs`，无需访问 State
 - **类型定义**：`src-tauri/src/project/types.rs` —— 共享数据模型按领域拆分到 `types.rs` 或 `model.rs`
 - **命令分布**：`src-tauri/src/git/commands/` —— 按主题分文件（`branch` / `commit` / `index` / `query` / `sync` / `history` / `worktree` / `pr`），`mod.rs` 只做 `mod` + `pub use`
-- **中枢模式**：`src-tauri/src/app.rs` —— Tauri Builder + 命令注册表 + setup 闭包
+- **组合根**：`src-tauri/src/app/` —— `boot.rs`（Tauri Builder 组装 + 启动序列）+ `close.rs`（关闭协议）+ `commands.rs`（生命周期命令）
 - **状态组装**：`src-tauri/src/app_state.rs` —— `AppStateWrapper` 定义，组装所有 Manager
 - **命令注册**：`src-tauri/src/lib.rs` —— `neeko_invoke_handler!` 宏维护完整命令清单
 - **SSH 认证统一**：`src-tauri/src/common/executor/ssh_auth.rs` —— `connect_and_authenticate()` 函数

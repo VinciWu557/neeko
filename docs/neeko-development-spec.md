@@ -44,7 +44,7 @@ my-tauri-app/
 │   │   ├── connection/             # 仅命令 + services（命令入口，连接业务逻辑）
 │   │   ├── file/                   # 仅命令入口
 │   │   ├── core/                   # [预留] 跨域业务编排（暂空）
-│   │   ├── app.rs                  # Tauri 应用组装
+│   │   ├── app/                    # 组合根（boot 组装 / close 关闭协议 / commands 生命周期命令）
 │   │   ├── app_state.rs            # 组合根（关联各模块 Manager/Store）
 │   │   ├── lib.rs                  # crate 根，neeko_invoke_handler!
 │   │   └── main.rs                 # 🚀 总入口

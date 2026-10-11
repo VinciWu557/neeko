@@ -65,18 +65,23 @@ impl AgentManager {
     /// Register an agent.
     ///
     /// 内置 id → 原位替换（覆盖，不产生重复条目，`is_builtin` 身份保留）；
-    /// 自定义 id → 去重后追加。
-    pub fn add_agent(&mut self, agent: AgentConfig) {
+    /// 自定义 id → 去重后追加，且**强制清零** `is_builtin`。
+    ///
+    /// 清零在**唯一入口**做，而不是每个调用方各做一遍：`is_builtin` 是「仅由后端
+    /// 填写、前端绝不可写」的信任标识（`.trellis/spec/backend/type-safety.md`
+    /// 「防御契约」）。所有进入 `AgentManager` 的路径（Tauri 命令 / 启动反序列化
+    /// 持久化文件 / 未来的新入口）都经本函数，伪造值在此被统一消解。
+    pub fn add_agent(&mut self, mut agent: AgentConfig) {
         if let Some(slot) = self
             .agents
             .iter_mut()
             .find(|a| a.id == agent.id && a.is_builtin)
         {
-            let mut applied = agent;
-            applied.is_builtin = true;
-            *slot = applied;
+            agent.is_builtin = true;
+            *slot = agent;
             return;
         }
+        agent.is_builtin = false;
         self.agents.retain(|a| a.id != agent.id);
         self.agents.push(agent);
     }
@@ -217,6 +222,49 @@ mod tests {
         manager.add_agent(custom);
         assert_eq!(manager.get_agents().len(), before + 1);
         assert!(manager.get_agent("custom").is_some());
+    }
+
+    /// 信任标识入口归一：自定义 id 携带伪造的 `is_builtin: true` 一律被清零
+    /// （契约见 `.trellis/spec/backend/type-safety.md`「防御契约」）。
+    #[test]
+    fn should_strip_forged_builtin_flag_on_custom_id() {
+        let mut manager = AgentManager::new();
+        manager.add_agent(AgentConfig {
+            id: "custom:forged".into(),
+            name: "Forged".into(),
+            command: "forged".into(),
+            is_builtin: true, // 伪造：前端可构造 / 持久化文件可手改
+            ..Default::default()
+        });
+
+        let stored = manager.get_agent("custom:forged").expect("registered");
+        assert!(!stored.is_builtin, "自定义 id 的信任标识必须清零");
+        assert!(!manager.is_builtin_id("custom:forged"));
+    }
+
+    /// 内置 id 的覆盖仍保留内置身份（清零只作用于非内置分支）。
+    #[test]
+    fn should_keep_builtin_identity_on_builtin_id_override() {
+        let mut manager = AgentManager::new();
+        let builtin_id = manager
+            .get_agents()
+            .iter()
+            .find(|a| a.is_builtin)
+            .expect("a builtin agent")
+            .id
+            .clone();
+
+        manager.add_agent(AgentConfig {
+            id: builtin_id.clone(),
+            name: "Overridden".into(),
+            command: "overridden".into(),
+            is_builtin: false, // 覆盖层不带身份，身份由 Manager 决定
+            ..Default::default()
+        });
+
+        let stored = manager.get_agent(&builtin_id).expect("present");
+        assert!(stored.is_builtin, "内置 id 的身份不得被覆盖层清零");
+        assert_eq!(stored.name, "Overridden");
     }
 
     #[test]

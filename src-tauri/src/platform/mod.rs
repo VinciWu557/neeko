@@ -25,7 +25,9 @@
 //! | `path_identity` | `portable_render` / `posix_render` | `common/git/checkout_path.rs` |
 //! | `watch_backend` | `watch_backend` / `create_file_watcher` / `PlatformWatcher` | `common/file/watcher/registration/strategy.rs` + `manager/core.rs` |
 //! | `fonts` | `get_system_fonts` | `common/utils/fonts.rs` |
+//! | `close_tab` | `CloseTabFlag`（`mark` / `take`） | `app/close.rs` |
 
+pub mod close_tab;
 pub mod devtools;
 pub mod file_url;
 pub mod fonts;

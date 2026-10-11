@@ -79,7 +79,7 @@
 > | --- | --- |
 > | (a) 内存 `Project` / `ViewMode` | `src-tauri/src/core/project.rs` |
 > | (a) 三处 session struct（`ProjectSession` / `WSLProjectSession` / `RemoteProjectSession`） | `src-tauri/src/session/types.rs`（`model.rs` 是同样的类型定义，⚠️ 双份定义待收敛） |
-> | (b) 保存 / 加载 | `src-tauri/src/session/manager.rs`（`save_session`）、`src-tauri/src/project/manager.rs`（`add_project_from_session`）、`src-tauri/src/app.rs` |
+> | (b) 保存 / 加载 | `src-tauri/src/session/manager.rs`（`save_session`）、`src-tauri/src/project/manager.rs`（`add_project_from_session`）、`src-tauri/src/session/boot.rs`（启动恢复编排，由 `src-tauri/src/app/boot.rs` 调用） |
 > | (c) 对称 setter | `src-tauri/src/project/manager.rs`（如 `set_avatar_color`）+ `project/commands*.rs`，且必须在 `src-tauri/src/lib.rs` 的 `neeko_invoke_handler!` 注册 |
 > | (d) 前端类型 / UI | `src/shared/types/project.ts`、`src/shared/types/connection.ts`；组件在 `src/features/*/components/` |
 
@@ -103,7 +103,7 @@ pub struct ProjectSession {
 这一步最容易漏。本仓库的项目状态有两条数据路径：
 
 - **保存路径**：`session::manager::save_session(...)` 把内存 `Project[]` 转成 `ProjectSession[]` 落盘——必须 clone 新字段
-- **加载路径**：`src-tauri/src/app.rs` / `project::manager::add_project_from_session(...)` 把 `ProjectSession` 还原回内存 `Project`——必须读出新字段
+- **加载路径**：`src-tauri/src/session/boot.rs::restore_workspace` / `project::manager::add_project_from_session(...)` 把 `ProjectSession` 还原回内存 `Project`——必须读出新字段
 
 只补一边的话，"保存了但启动后丢失"或反之。
 
@@ -142,7 +142,7 @@ pub struct ProjectSession {
 ### 实例参考
 
 `avatar_color` 完整改动横跨（路径已按当前目录更新）：
-- 后端：`src-tauri/src/project/types.rs`、`src-tauri/src/session/types.rs`、`src-tauri/src/project/manager.rs`、`src-tauri/src/session/manager.rs`、`src-tauri/src/app.rs`、`src-tauri/src/project/commands*.rs` / `src-tauri/src/connection/` 下的对应命令
+- 后端：`src-tauri/src/project/types.rs`、`src-tauri/src/session/types.rs`、`src-tauri/src/project/manager.rs`、`src-tauri/src/session/manager.rs`、`src-tauri/src/session/boot.rs`（启动恢复）、`src-tauri/src/project/commands*.rs` / `src-tauri/src/connection/` 下的对应命令
 - 前端：`src/shared/types/project.ts`、`src/shared/types/connection.ts`、`src/shared/utils/projectAvatar.ts`、`src/features/project/components/ProjectGroup.tsx`、`src/features/settings/components/ProjectPanel.tsx`、`src/features/project/hooks/useLocalProjects.ts`、`src/features/connection/components/{WSLDialog,RemoteDialog}.tsx`
 
 ### 检查清单

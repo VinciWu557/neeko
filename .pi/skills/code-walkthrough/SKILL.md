@@ -61,7 +61,7 @@ Neeko 是基于 **Tauri 2 + React 18** 的桌面应用。代码分为三个域�
 ├── Layer 2: 存储层（storage.rs）            -- JSON 持久化
 ├── Layer 3: Manager（terminal.rs, project.rs, agent.rs 等） -- 业务逻辑核心
 ├── Layer 4: 命令层（commands/）             -- Tauri IPC 入口，参数校验 + 错误转换
-└── Layer 5: 应用组装（app.rs, app_state.rs） -- 依赖注入 + 命令注册
+└── Layer 5: 应用组装（app/, app_state.rs）  -- 依赖注入 + 命令注册
 
 域 2: 跨端桥接
 ├── Layer 6: 类型契约（models/ ↔ types.ts）  -- 结构体/接口对齐

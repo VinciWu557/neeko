@@ -8,7 +8,7 @@
 
 `src-tauri/src/` 按域分模块，每个域是 `commands.rs`（或 `commands/`）+ `services.rs`/`manager.rs` + `mod.rs`：
 
-`src-tauri/src/main.rs`（入口）· `lib.rs`（模块聚合 + `neeko_invoke_handler!`）· `app.rs`（Builder 组装）·
+`src-tauri/src/main.rs`（入口）· `lib.rs`（模块聚合 + `neeko_invoke_handler!`）· `app/`（组合根：Builder 组装 + 启动序列 + 关闭协议）·
 `app_state.rs`（`AppStateWrapper`）· `common/`（error/logger/executor/utils…）· `core/`（exec/runtime/project）·
 `platform/`（平台适配器集中层）；其余按域分目录，清单以 `ls src-tauri/src` 为准 ——
 **2026-09-25 核对**：旧副本列的 `skill/` 已不存在，`about/` `library/` `search/` 未在列，故删除副本。
@@ -17,10 +17,12 @@
 
 ## 主链路
 
-`main.rs` → `neeko_lib::run` → `app.rs` 组装：初始化日志与 PATH → 注入 `SkillStore` 与
-`AppStateWrapper` → setup 阶段恢复 session、启动 watcher、加载自定义 agent → 注册命令处理器。
+`main.rs` → `neeko_lib::run` → `app/` 组装（`boot.rs` 启动序列）：初始化日志与 PATH → 注入 `LibraryStore` 与
+`AppStateWrapper` → setup 阶段恢复 session（`session::boot`）、接线 LSP（`lsp::boot`）、加载并迁移自定义 agent
+（`agent::boot`）、补齐默认 Tag Group（`library::boot`）→ 注册命令处理器。
+**每个域在启动期只暴露一个 `boot` 入口**（`session`/`agent`/`library`/`lsp` 四域对称），组合根只负责顺序与失败策略。
 
-命令注册单一事实源是 `lib.rs` 的 `neeko_invoke_handler!`；`app.rs` 保持
+命令注册单一事实源是 `lib.rs` 的 `neeko_invoke_handler!`；`app/boot.rs` 保持
 `.invoke_handler(crate::neeko_invoke_handler!())` 固定调用。
 
 ## 架构要点（终端 / SSH / 持久化 / Git 仓库单元）

@@ -35,7 +35,7 @@ Each domain has independent lifecycle and constraints. The three are connected o
 src-tauri/src/
 ├── main.rs                  # Tauri app entry
 ├── lib.rs                   # Module declarations + neeko_invoke_handler! macro
-├── app.rs                   # Tauri Builder assembly (run())
+├── app/                     # Composition root: Builder assembly (boot) · close protocol · lifecycle commands
 ├── app_state.rs             # AppStateWrapper — manager composition root
 │
 ├── common/                  # 🔧 Infrastructure layer (no Tauri commands)

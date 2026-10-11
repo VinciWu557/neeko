@@ -24,11 +24,13 @@ Cmd+W / Ctrl+W
 ### 三层协作
 
 ```
-┌── Rust (app.rs) ──────────────────────────────────────┐
-│                                                         │
-│  .menu(CmdOrCtrl+W)  →  on_menu_event → emit "close-tab"│
-│  CloseRequested     →  #[cfg(macos)] prevent_close()   │
-│                                                         │
+┌── Rust (app/close.rs + app_menu.rs) ────────────────────┐
+│                                                          │
+│  .menu(CmdOrCtrl+W)  →  on_menu_event → emit "close-tab" │
+│                         （CloseTabFlag::mark 置位）       │
+│  CloseRequested     →  platform::close_tab 判别 →        │
+│                         prevent_close()（静默/询问二选一）│
+│                                                          │
 ├── Frontend (useAppShell.ts) ───────────────────────────┤
 │                                                         │
 │  listen("close-tab") → handleCloseTab(tabId)           │
@@ -112,10 +114,10 @@ CloseRequested → prevent_close() + emit "close-window"
 
 ## 修改本逻辑时的检查清单
 
-- [ ] `app.rs` 中 `CloseRequested` 对 macOS 调用了 `prevent_close()`？
+- [ ] `app/close.rs` 中 `CloseRequested` 无条件 `prevent_close()`，判别走 `platform::close_tab`（平台差异不得回到业务文件）？
 - [ ] `WindowControls.tsx` 使用的是 `.destroy()` 而非 `.close()`？
 - [ ] 前端 `close-tab` 监听**永远不会**调用 `getCurrentWindow().destroy()`？
-- [ ] 菜单项 `CmdOrCtrl+W` 加速器已注册？
+- [ ] 菜单项 `CmdOrCtrl+W` 加速器已注册（`app_menu.rs`）？
 - [ ] 新增关闭路径无需额外标记来区分来源？
 
 ---
@@ -126,7 +128,7 @@ CloseRequested → prevent_close() + emit "close-window"
 
 **经验**：
 1. 排查此类"dev 正常 / build 失效"问题时，先加三处临时诊断日志确认断点，再决定是否改动代码：
-   - `app.rs` `on_menu_event` 内 `log::info!`
+   - `app_menu.rs` `handle_menu_event` 内 `log::info!`
    - `useAppShell.ts` `close-tab` 监听内 `console.log`
    - `useKeyboardShortcuts.ts` `closeTab` case 内 `console.log`
 2. macOS 菜单 accelerator 与 webview keydown 的双路径兜底设计有效：即使菜单路径在异常情况下失效，前端 `Ctrl+W→⌘` 映射（`shortcutRegistry.ts` `modifiersMatch`）仍是可靠第二路径。

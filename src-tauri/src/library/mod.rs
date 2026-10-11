@@ -5,6 +5,7 @@
 //! conflicts (both modules used to share `skills.db` with overlapping
 //! `user_version` ranges).
 
+pub mod boot;
 pub mod db;
 pub mod migrations;
 pub mod store;

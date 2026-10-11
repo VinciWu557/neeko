@@ -6,7 +6,7 @@
 
 ## 概述
 
-所有 `#[tauri::command]` 函数按领域拆分到模块中。`app.rs` 通过 `crate::neeko_invoke_handler!()` 统一注册命令，完整清单维护在 `commands/mod.rs` 的 `neeko_invoke_handler!` 宏内。
+所有 `#[tauri::command]` 函数按领域拆分到模块中。完整清单维护在 `lib.rs` 的 `neeko_invoke_handler!` 宏内，由 `app/boot.rs` 以 `.invoke_handler(...)` 挂载。
 
 ---
 
@@ -257,7 +257,7 @@ macro_rules! neeko_invoke_handler {
 }
 ```
 
-`app.rs` 保持 `.invoke_handler(crate::neeko_invoke_handler!())` 固定调用。
+`app/boot.rs` 保持 `.invoke_handler(crate::neeko_invoke_handler!())` 固定调用。
 
 ---
 
@@ -456,7 +456,7 @@ fn some_wsl_command() -> Result<(), AppError> {
 
 ```rust
 // commands/mod.rs
-pub use project::*;  // 必须显式导出，否则 app.rs 无法引用
+pub use project::*;  // 必须显式导出，否则命令注册宏无法引用
 ```
 
 ---

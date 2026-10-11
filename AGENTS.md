@@ -150,7 +150,7 @@ Tauri Event 字符串（如 `terminal-output-{id}`、`git-status-diff`）禁止�
 | 文件 | 作用（导航摘要；契约定义见落点文件） |
 | --- | --- |
 | `src-tauri/src/lib.rs` | 后端模块聚合与命令注册入口 |
-| `src-tauri/src/app.rs` | Tauri 启动与命令注册入口 |
+| `src-tauri/src/app/` | 组合根（`boot` Builder 组装 · `close` 关闭协议 · `commands` 生命周期命令） |
 | `src-tauri/src/app_state.rs` | `AppStateWrapper` 组装中心 |
 | `src-tauri/src/common/error.rs` | `AppError` 定义与错误转换 |
 | `src/app/App.tsx` · `src/app/hooks/useAppShell.ts` | 前端组合根组件 · 主协调 hook |

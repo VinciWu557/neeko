@@ -2,6 +2,8 @@
 
 /// 会话启动尝试的键控诊断证据（P1：证据宿主 = 身份键，见任务 design）。
 pub(crate) mod attempt_diagnostics;
+/// 启动期接线（句柄注入 + 设置应用）：组合根只调这一个入口。
+pub mod boot;
 /// Tauri command handlers for LSP operations.
 pub mod commands;
 /// Diagnostic pub/sub event bus.

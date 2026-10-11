@@ -1,10 +1,10 @@
 //! 应用菜单构建与菜单事件转发（Cmd+W 关闭标签页 / macOS Edit 命令原生处理）。
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, MenuItemKind, SubmenuBuilder};
 use tauri::{Emitter, Manager};
 
 use crate::app_state::AppStateWrapper;
+use crate::platform::close_tab::CloseTabFlag;
 
 /// File 菜单「关闭标签页」项 id（菜单构建与事件分发共用）。
 const MENU_CLOSE_TAB_ID: &str = "close_tab";
@@ -121,9 +121,12 @@ fn open_main_devtools(app: &tauri::AppHandle) {
 /// macOS Edit 命令（Cut/Copy/Paste/Select All）**不经过这里**：它们由
 /// `PredefinedMenuItem` 标准角色经 NSResponder chain 原生派发给聚焦的 webview
 /// （见 `crate::platform::menu::build_edit_submenu`），无需手动转发。
-pub fn handle_menu_event(app: &tauri::AppHandle, id: &str, cmd_w_flag: &AtomicBool) {
+///
+/// 关闭标签页时先 [`CloseTabFlag::mark`]（窗口关闭路径据此把随之而来的
+/// `CloseRequested` 判为「关闭标签页」而非「关闭窗口」），再转发 `close-tab` 事件。
+pub fn handle_menu_event(app: &tauri::AppHandle, id: &str, close_tab: &CloseTabFlag) {
     if id == MENU_CLOSE_TAB_ID {
-        cmd_w_flag.store(true, Ordering::SeqCst);
+        close_tab.mark();
         emit_close_tab(app);
         return;
     }
@@ -141,6 +144,19 @@ pub fn handle_menu_event(app: &tauri::AppHandle, id: &str, cmd_w_flag: &AtomicBo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 事件名双端同源（红线 5）：Cmd+W 转发的事件名必须逐字出现在前端镜像
+    /// `src/shared/events.ts`（`CLOSE_TAB_EVENT`）。
+    #[test]
+    fn close_tab_event_name_matches_frontend_mirror() {
+        const FRONTEND_EVENTS: &str = include_str!("../../src/shared/events.ts");
+        assert_eq!(CLOSE_TAB_EVENT, "close-tab");
+        let needle = format!("'{CLOSE_TAB_EVENT}'");
+        assert!(
+            FRONTEND_EVENTS.contains(&needle),
+            "前端 events.ts 缺少 {needle}（改动事件名必须双端同步）"
+        );
+    }
 
     #[test]
     fn devtools_gate_defaults_off_when_key_missing() {

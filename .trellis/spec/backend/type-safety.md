@@ -224,45 +224,41 @@ let data: MyStruct = serde_json::from_str(&json)?;
 
 ### 适用场景
 
-某些结构体字段属于"由后端单方面填写、用于权限/分类判断"的元数据，前端可见但绝不能被用户直接写入。例如：
+某些结构体字段属于"由后端单方面填写、用于权限/分类判断"的元数据，前端可见但绝不能被用户直接写入：
 
-- `AgentConfig.is_builtin: bool` —— 区分内置 agent 与用户自定义 agent
-- `AgentConfig.default_skill_path: Option<String>` —— 内置 agent 的默认 skill 路径，仅由 `add_default_agents()` 填写
+- `AgentConfig.is_builtin: bool` —— 区分内置 agent 与用户自定义 agent（当前唯一在用的信任标识）
 
-**反面案例**：如果不加防御，前端可以构造 `is_builtin: true` 的 JSON 调用 `add_agent`，让用户自定义 agent 伪装成内置 agent 出现在内置区块。同样，旧持久化文件如果手工编辑也能注入伪造字段。
+> 历史示例 `default_skill_path` 已随 schema 演进移除；模式对当前及未来的信任标识字段同样适用。
 
-### 防御契约
+**反面案例**：如果不加防御，前端可以构造 `is_builtin: true` 的 JSON 调用 `add_agent`，让用户自定义 agent 伪装成内置 agent 出现在内置区块。同样，持久化文件（`~/.neeko/config.json`）如果被手工编辑也能注入伪造字段。
 
-对每个信任标识字段，**所有进入 AgentManager（或其他注册表）的入口都必须清零**：
+### 防御契约（入口归一）
+
+对每个信任标识字段，清零**只允许有一个实现点**：注册的唯一入口
+`AgentManager::add_agent`（`agent/manager.rs`）的非内置分支强制 `agent.is_builtin = false`；
+内置 id 分支则强制 `true`（身份由 Manager 决定、不由调用方携带）。
 
 | 入口 | 清零位置 | 为什么 |
 |------|---------|--------|
-| Tauri 命令 (`add_agent`) | 反序列化 → **强制覆盖为 false/None** → push | 防止前端构造 JSON 伪造身份 |
-| 启动时反序列化 customAgents | 反序列化 → **强制覆盖为 false/None** → push | 防止用户手工编辑持久化文件 |
+| Tauri 命令 (`agent/commands.rs::add_agent`) | 经唯一入口归一（调用方**不**自行清零） | 防止前端构造 JSON 伪造身份 |
+| 启动时反序列化 customAgents（`agent/boot.rs::load_custom_agents`） | 经唯一入口归一 | 防止用户手工编辑持久化文件 |
+
+**为什么落在入口而不是各调用方**：分散清零要求每个新增入口都记得写一遍，漏一个就漏一条越权路径；
+收口到唯一入口后，契约由结构保证（新入口自动受约束），调用方保持朴素。
 
 ### 正确实现
 
 ```rust
-// commands/agent.rs
-#[tauri::command]
-pub fn add_agent(mut agent: AgentConfig, state: State<AppStateWrapper>) -> Result<(), AppError> {
-    // 用户自定义 agent 不允许携带 builtin 元数据
-    agent.is_builtin = false;
-    agent.default_skill_path = None;
-
-    // 之后再 push 进 AgentManager 与持久化
-    ...
-}
-```
-
-```rust
-// app.rs（启动时加载 customAgents JSON）
-for agent_json in custom_agents {
-    if let Ok(mut agent) = serde_json::from_value::<AgentConfig>(agent_json.clone()) {
-        agent.is_builtin = false;
-        agent.default_skill_path = None;
-        agent_manager.push(agent);
+// agent/manager.rs —— 唯一入口做归一
+pub fn add_agent(&mut self, mut agent: AgentConfig) {
+    if let Some(slot) = self.agents.iter_mut().find(|a| a.id == agent.id && a.is_builtin) {
+        agent.is_builtin = true;      // 内置 id：身份由 Manager 决定
+        *slot = agent;
+        return;
     }
+    agent.is_builtin = false;         // 自定义 id：信任标识一律清零
+    self.agents.retain(|a| a.id != agent.id);
+    self.agents.push(agent);
 }
 ```
 
@@ -281,14 +277,18 @@ pub fn add_agent(mut agent: AgentConfig, ...) -> Result<(), AppError> {
     agent.is_builtin = false;        // 这里清零了
     state.agent_manager.push(agent);
 }
-// 但 app.rs 启动加载 customAgents 时没清零，旧用户的伪造数据仍可绕过
+// 但启动加载 customAgents（agent/boot.rs）时没清零，手工编辑过的持久化数据仍可绕过
 ```
 
 ### 测试要求
 
-- 单测：构造一个 `is_builtin: true` 的伪造 AgentConfig 调 `add_agent`，断言入库后 `is_builtin == false`
-- 单测：构造一份带伪造字段的 customAgents JSON 字符串，触发启动加载，断言反序列化后 `is_builtin == false`
-- 集成：`get_agents()` 返回列表中，只有 `add_default_agents()` 注册的 agent 满足 `is_builtin == true`
+- 单测：构造 `is_builtin: true` 的伪造 AgentConfig 调 `add_agent`，断言入库后 `is_builtin == false`
+  —— `agent/manager.rs::should_strip_forged_builtin_flag_on_custom_id`
+- 单测：内置 id 的覆盖保留内置身份 —— `agent/manager.rs::should_keep_builtin_identity_on_builtin_id_override`
+- 单测：带伪造字段的 customAgents JSON 触发启动加载，断言注册后 `is_builtin == false`
+  —— `agent/boot.rs::strips_forged_builtin_flag_from_persisted_custom_agents`
+- 集成：`get_agents()` 返回列表中，只有内置集合的 agent 满足 `is_builtin == true`
+  —— `agent/manager.rs::should_mark_all_default_agents_as_builtin_with_skill_path`
 
 ---
 
