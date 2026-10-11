@@ -140,7 +140,7 @@ fn worker_loop(
     sync: Arc<RecalcSync>,
 ) {
     // 上一次 emit 的快照（整体比较；含 entries / branch / ahead / behind）。
-    // 候选快照的 `version` 传 0 占位：注册表 `store_snapshot` 会重新盖章（见 `manager/core.rs`），
+    // 候选快照的 `version` 传 0 占位：注册表 `store_push_snapshot` 会重新盖章（见 `manager/core.rs`），
     // 故 version 不参与比较、也不作数 —— 号源只有注册表一个。
     //
     // **有意的代价**：相比旧的一组标量局部变量，这里多持有一份 entries（≤ `MAX_STATUS_ENTRIES`）。
@@ -442,7 +442,7 @@ mod tests {
         let first = emit_rx
             .try_recv()
             .expect("first recalc emits the baseline snapshot");
-        // version 由注册表（store_snapshot）统一盖章，worker 侧恒为占位 0：
+        // version 由注册表（store_push_snapshot）统一盖章，worker 侧恒为占位 0：
         // 本用例只关心「首轮 emit、次轮不 emit」，故断言快照内容而非 version。
         assert!(first.entries.is_empty(), "clean repo has no changes");
 
@@ -823,7 +823,7 @@ mod tests {
         let second = emit_rx
             .recv_timeout(Duration::from_secs(5))
             .expect("纯 ref 变化必须 emit（change gate 必须纳入 ahead/behind）");
-        // version 由注册表（store_snapshot）统一盖章，worker 侧快照恒为占位 0：
+        // version 由注册表（store_push_snapshot）统一盖章，worker 侧快照恒为占位 0：
         // 本用例的判据是「纯 ref 变化确实产出了一份新快照」+ ahead/behind 正确。
         assert_eq!((second.ahead, second.behind), (0, 1));
     }

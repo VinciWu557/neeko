@@ -31,7 +31,7 @@ use std::sync::mpsc;
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -61,6 +61,18 @@ pub struct WatcherManager {
     /// 手测日志：13 次推送全是 v1）。仅在**项目本身被移除**时回收（[`Self::unwatch_project`]），
     /// 规模因此以「项目 × 该项目的单元数」为界。
     version_floors: Arc<Mutex<HashMap<String, u64>>>,
+    /// 挂载票号登记表（类型化写入凭证 [`MountTicket`] 的在册记录）：单元 key → 当前有效票号。
+    ///
+    /// 为什么需要：push 生产者（worker 线程）的生命周期比挂载长半拍 —— 释放后仍在飞的
+    /// 回调若无人校验，会把已作废的槽位重新填上「权威数据」（2026-10 CI 竞态：macOS
+    /// `activate_style_release_except_keeps_only_the_target_unit`）。写权的载体由此从
+    /// 隐式（持有 `Arc` 克隆就能写 = 进程级有效）收紧为显式（持有效票 = 挂载级有效）：
+    /// `watch()` 在创建 worker **之前**签发，`release_one` / 挂载中止使其失效，
+    /// [`store_push_snapshot`] 在写入临界区内校验。Pull（未挂载单元的现算）不经此闸门
+    /// —— 它是显式同步调用，调用方自带写入意图。
+    mount_tickets: Arc<Mutex<HashMap<String, u64>>>,
+    /// 票号发号器（全局单调递增）：票号只需唯一，校验按单元 key 查登记表比对。
+    ticket_serial: Arc<AtomicU64>,
     /// 挂载临界区（D-B 不变量）：`release_except` 与 `watch` 必须成对原子发生，
     /// 否则并发 `activate` 能交错出两套挂载（见 [`Self::mount_only`] 的说明）。
     mount_lock: Arc<Mutex<()>>,
@@ -88,6 +100,8 @@ impl WatcherManager {
             watchers: Arc::new(Mutex::new(HashMap::new())),
             snapshots: Arc::new(Mutex::new(HashMap::new())),
             version_floors: Arc::new(Mutex::new(HashMap::new())),
+            mount_tickets: Arc::new(Mutex::new(HashMap::new())),
+            ticket_serial: Arc::new(AtomicU64::default()),
             mount_lock: Arc::new(Mutex::new(())),
             watcher_excludes_provider: Arc::new(Vec::new),
             #[cfg(test)]
@@ -117,6 +131,39 @@ impl WatcherManager {
     #[cfg(test)]
     pub(crate) fn watcher_set_creations(&self) -> usize {
         self.watcher_set_creations.load(Ordering::Relaxed)
+    }
+
+    /// 测试观测口：当前在册的挂载票（未挂载 / 已释放 → `None`）。
+    #[cfg(test)]
+    pub(crate) fn current_ticket(&self, workspace: &str) -> Option<MountTicket> {
+        self.mount_tickets
+            .lock()
+            .ok()?
+            .get(workspace)
+            .map(|seq| MountTicket {
+                key: workspace.to_string(),
+                seq: *seq,
+            })
+    }
+
+    /// 测试观测口：以给定票号走完整的 Push 投递（与 worker 回调**同一条**
+    /// [`deliver_push`]）—— 「写入 + emit 的取舍」因此可被确定性断言，不依赖线程时序。
+    /// 返回 `None` = 凭证已失效（拒绝写入且未 emit）。
+    #[cfg(test)]
+    pub(crate) fn deliver_push_with_ticket(
+        &self,
+        sink: Arc<dyn WatcherEventSink>,
+        ticket: &MountTicket,
+        snapshot: GitStatusSnapshot,
+    ) -> Option<Arc<GitStatusSnapshot>> {
+        deliver_push(
+            &sink,
+            &self.snapshots,
+            &self.version_floors,
+            &self.mount_tickets,
+            ticket,
+            snapshot,
+        )
     }
 
     /// 该单元的 git 语义忽略过滤器（S5：读目录层复用做读前剪枝 + ignored 标记；
@@ -182,7 +229,7 @@ impl WatcherManager {
     /// 生产者的差别（push vs pull）只影响**新鲜度**，不再影响**寻址与竞态**。
     ///
     /// **例外：挂载中且 worker 已产出过快照 ⇒ 本次 pull 必然更旧**（pull 期间 worker 随时
-    /// 可能推送更新的数据），此时回读槽位、不写入。该裁决在 [`store_snapshot`] 的**同一
+    /// 可能推送更新的数据），此时回读槽位、不写入。该裁决在 [`store_pull_snapshot`] 的**同一
     /// 临界区内**完成 —— 守卫若留在锁外就是 check-then-act：pull 的 git 子进程耗时以百毫秒
     /// 计，worker 完全可能在守卫通过后、写入前推完一整轮，晚到的 pull 拿着注册表盖的更大
     /// 号覆盖更新的 push（前端 version 闸门对这份旧数据只能放行）。
@@ -192,11 +239,10 @@ impl WatcherManager {
     pub fn record_computed(&self, mut snapshot: GitStatusSnapshot) -> Arc<GitStatusSnapshot> {
         // 上限的唯一实现（与 worker 共用，禁止各写一份）。
         snapshot.enforce_entry_cap();
-        store_snapshot(
+        store_pull_snapshot(
             &self.snapshots,
             &self.version_floors,
             &self.watchers,
-            SnapshotSource::Pull,
             snapshot,
         )
     }
@@ -234,24 +280,28 @@ impl WatcherManager {
         // 1. 创建 GitStatusWorker —— status 的 push 生产者（D1）。
         // 每次实质变化产出**完整 versioned 快照**：写共享注册表（invoke 读接口
         // 的数据源，D2 收编）+ 发 v2 事件整体通知（D3）。
-        let (worker, scheduler) = if git_repo {
+        //
+        // 写入凭证（`MountTicket`）**先于 worker 创建**签发：首个快照可能在本函数登记
+        // handle 之前就到达，凭证必须在那之前已在册（见 `store_push_snapshot` 的闸门说明）。
+        // setup 失败出口（watcher 创建失败 / 锁中毒）由 `ticket_guard` 兜底吊销。
+        let (worker, scheduler, mount_ticket) = if git_repo {
+            let ticket = self.issue_ticket(&workspace);
             let snapshots_store = self.snapshots.clone();
             let floors_store = self.version_floors.clone();
-            let watchers_store = self.watchers.clone();
-            let unit_for_cb = workspace.clone();
+            let tickets_store = self.mount_tickets.clone();
+            let ticket_for_cb = ticket.clone();
             let worker = GitStatusWorker::start(repo.clone(), move |snapshot| {
-                // 写共享快照：读接口与事件同源同版本（key 由快照自带，不再二次赋值）
-                debug_assert_eq!(snapshot.workspace_key, unit_for_cb);
+                // 凭证有效 → 盖章写入 + emit；失效（已释放 / 被重挂载取代）→ 丢弃且不 emit。
                 // version 由注册表盖章后**再**推送：事件里的 version 必须与槽位里的一致，
-                // 否则前端的乱序闸门会拿两套序号互比（见 `store_snapshot`）。
-                let stamped = store_snapshot(
+                // 否则前端的乱序闸门会拿两套序号互比（见 `deliver_push`）。
+                let _ = deliver_push(
+                    &sink_for_diff,
                     &snapshots_store,
                     &floors_store,
-                    &watchers_store,
-                    SnapshotSource::Push,
+                    &tickets_store,
+                    &ticket_for_cb,
                     snapshot,
                 );
-                sink_for_diff.emit(WatcherEvent::StatusSnapshot(&stamped));
             });
 
             // 2. 创建 ThrottleScheduler -- 合并 notify 事件，驱动 worker.check()
@@ -263,15 +313,20 @@ impl WatcherManager {
             // 立即触发一次 git status 检查，获取初始状态（首个快照由 worker 线程异步产出）
             worker.check();
 
-            (Some(worker), Some(scheduler))
+            (Some(worker), Some(scheduler), Some(ticket))
         } else {
             log::info!(
                 "[Watcher] Skipping git status worker for non-git workspace {} at {}",
                 workspace,
                 path.display()
             );
-            (None, None)
+            (None, None, None)
         };
+        // 挂载中止 ⇒ 凭证失效（Drop 兜底，compare-and-remove 不误杀并发重挂载的新票）；
+        // 挂载成立（下方 handle 登记成功）时 `commit`，凭证转交 handle 管理。
+        let mut ticket_guard = mount_ticket
+            .as_ref()
+            .map(|ticket| MountTicketGuard::arm(&self.mount_tickets, ticket));
 
         // 3. 创建 file-changed debounce sender
         let debounce = DebounceSender::new(repo.clone(), Arc::clone(&sink));
@@ -541,6 +596,7 @@ impl WatcherManager {
                     _maintenance_tx: Some(maintenance_tx),
                     _scheduler: scheduler,
                     worker,
+                    mount_ticket,
                     _head_watcher: head_watcher,
                     _debounce: debounce,
                     _tree_debounce: tree_debounce,
@@ -552,6 +608,11 @@ impl WatcherManager {
             // 套数计数在 insert 成功处自增（一套完整资源真正落地）
             #[cfg(test)]
             self.watcher_set_creations.fetch_add(1, Ordering::Relaxed);
+            // 挂载成立：凭证转交 handle（Drop 不再吊销；释放路径见 `release_one`）。
+            // 锁中毒走到不了这里 ⇒ guard 保持未 commit，函数退出时兜底吊销。
+            if let Some(guard) = ticket_guard.as_mut() {
+                guard.commit();
+            }
         }
     }
 
@@ -651,11 +712,25 @@ impl WatcherManager {
     ///
     /// **只作废数据，不作废号段**（`version_floors` 保留）：释放的语义是「该单元当前没有权威
     /// 数据」，不是「该单元从未被看过」。
+    ///
+    /// **票号先于快照作废**（顺序契约，勿动）：晚到推送的凭证校验与快照写入在同一临界区
+    /// （见 [`store_push_snapshot`]），先删快照再吊销票会留下「校验通过 → 把刚删的槽位插回来」
+    /// 的窗口 —— 正是 2026-10 CI 竞态。吊销只针对**该挂载自己的票**（compare-and-remove）：
+    /// 并发「释放 + 重挂载」交错时，无条件删除会误杀新挂载刚签发的票（新挂载此后收不到任何
+    /// 数据，比漏杀一票隐蔽得多）。
     fn release_one(&self, workspace: &str) {
-        if let Ok(mut watchers) = self.watchers.lock() {
-            if let Some(handle) = watchers.remove(workspace) {
-                handle.stop_signal.store(true, Ordering::Relaxed);
-                log::debug!("[Watcher] released workspace {workspace}");
+        let released = {
+            let mut watchers = self
+                .watchers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            watchers.remove(workspace)
+        };
+        if let Some(handle) = released {
+            handle.stop_signal.store(true, Ordering::Relaxed);
+            log::debug!("[Watcher] released workspace {workspace}");
+            if let Some(ticket) = &handle.mount_ticket {
+                revoke_ticket_if(&self.mount_tickets, &ticket.key, ticket.seq);
             }
         }
         drop_snapshot_if_present(&self.snapshots, workspace);
@@ -678,6 +753,23 @@ impl WatcherManager {
             .unwrap_or_default()
     }
 
+    /// 签发票号：登记 `workspace → seq` 并使它成为该单元**唯一有效**的写入凭证
+    /// （后签发的票自然使先前的失效，见 [`store_push_snapshot`] 的比对语义）。
+    ///
+    /// 调用时机是硬契约：必须在 `GitStatusWorker` 创建**之前** —— 首个快照可能先于
+    /// handle 登记到达，凭证必须在那之前已在册。
+    fn issue_ticket(&self, workspace: &str) -> MountTicket {
+        let seq = self.ticket_serial.fetch_add(1, Ordering::Relaxed) + 1;
+        self.mount_tickets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(workspace.to_string(), seq);
+        MountTicket {
+            key: workspace.to_string(),
+            seq,
+        }
+    }
+
     /// Stop all active file watchers.
     pub fn stop_all(&self) {
         log::info!("[Watcher] Stopping all watchers...");
@@ -698,6 +790,12 @@ impl WatcherManager {
         for (_unit, project_id) in stopped {
             crate::common::file::services::invalidate_remote_ignored_cache(&project_id);
         }
+        // 票号一并清空：所有挂载已停止 ⇒ 在册票全部失效（晚到推送一律被拒）。
+        // 与 release 的「票先死」同向；全停场景无「误杀新票」可能，直接 clear。
+        self.mount_tickets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
         log::info!("[Watcher] All watchers stopped");
     }
 }
@@ -712,15 +810,75 @@ fn drop_snapshot_if_present(
     }
 }
 
-/// 快照的生产者形态：决定 push / pull 共用槽位时的裁决规则（见 [`store_snapshot`]）。
-enum SnapshotSource {
-    /// 挂载中单元的 worker 线程（该槽位的权威数据所有者）。
-    Push,
-    /// 未挂载单元的现算（[`WatcherManager::record_computed`]）。
-    Pull,
+/// 一次挂载的**写入凭证**（类型化票号）。
+///
+/// 写权的载体：worker 的推送回调（Push）活在 `watch()` 栈之外，释放单元后仍会触发 ——
+/// 晚到的推送若无人校验，会把已作废的槽位重新填上「权威数据」（2026-10 CI 竞态：macOS
+/// `activate_style_release_except_keeps_only_the_target_unit`）。凭证把写权从隐式
+/// （持有 `Arc` 克隆就能写 = 进程级有效）收紧为显式且可失效（= 挂载级有效）：
+/// - 只能由 [`WatcherManager::issue_ticket`] 构造（字段私有，全仓无第二签发方）；
+/// - `release_one` / 挂载中止使其失效；[`store_push_snapshot`] 在写入临界区内校验。
+///
+/// 为什么带 `key`：票是**单元专属**的 —— 校验按 key 查登记表比对 seq，一张票不能给
+/// 别的单元写数据（`store_push_snapshot` 以 `debug_assert` 钉住票与快照同单元）。
+#[derive(Clone, Debug)]
+pub(crate) struct MountTicket {
+    key: String,
+    seq: u64,
 }
 
-/// 登记一轮生产者产出，并由**注册表**统一给 `version` 盖章（= 该单元号段水位 + 1）。
+/// 挂载凭证的作用域守卫：`watch()` 的 setup 失败出口（watcher 创建失败 / 锁中毒）必须
+/// 使票号失效 —— 由 Drop 兜底，不靠「每个出口记得回收」。
+///
+/// 只在挂载成立（handle 已登记）时 [`commit`](Self::commit)：此后凭证归该挂载所有，
+/// 生命周期转由 `release_one`（经 `WatcherHandle::mount_ticket`）管理。
+struct MountTicketGuard {
+    tickets: Arc<Mutex<HashMap<String, u64>>>,
+    key: String,
+    seq: u64,
+    committed: bool,
+}
+
+impl MountTicketGuard {
+    fn arm(tickets: &Arc<Mutex<HashMap<String, u64>>>, ticket: &MountTicket) -> Self {
+        Self {
+            tickets: Arc::clone(tickets),
+            key: ticket.key.clone(),
+            seq: ticket.seq,
+            committed: false,
+        }
+    }
+
+    /// 挂载成立：凭证转交 handle，守卫退役（Drop 不再吊销）。
+    const fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for MountTicketGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            revoke_ticket_if(&self.tickets, &self.key, self.seq);
+        }
+    }
+}
+
+/// 吊销「在册且 seq 匹配」的票号（compare-and-remove）。
+///
+/// 为什么不是无条件 `remove`：并发「释放 + 重挂载」交错时，无条件删除会把新挂载刚签发的
+/// 票一起杀掉 —— 新挂载此后收不到任何数据（worker 推一次被拒一次），比漏杀一票隐蔽得多。
+fn revoke_ticket_if(tickets: &Arc<Mutex<HashMap<String, u64>>>, key: &str, seq: u64) {
+    let mut tickets = tickets
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if tickets.get(key) == Some(&seq) {
+        tickets.remove(key);
+    }
+}
+
+/// 快照登记内核：号段推进 + `version` 盖章 + 插槽。**调用方必须已持有 `store` 锁**
+/// （签名强制「闸门/守卫 + 取号 + 插入同临界区」的原子性契约 —— 分成多次持锁时，并发
+/// 生产者能交错出「取小号却后插入」，槽位回退到旧数据而号段已前进，前端无从察觉）。
 ///
 /// 号段取自 `version_floors` 而非槽位里那份快照：槽位数据会随挂载释放作废，号段不能跟着退。
 /// 若只看槽位，「切走 → 释放 → 切回」后第一份快照永远从 1 起号，而前端槽位里可能还留着
@@ -732,50 +890,25 @@ enum SnapshotSource {
 /// 注册表里 —— 两套序号交错必然出现平手或回退，而前端按 version 做单元内乱序闸门
 /// （`version <= prev` 直接丢弃）。被丢弃的那一次正是「数据已经新了、界面还留着旧的」。
 ///
-/// 因此：**寻址与竞态只看注册表**，生产者的差别只影响新鲜度。`snapshot.version` 在此被覆盖，
-/// 生产者传什么都不作数（保留字段只为让 worker 自身的迭代测试可断言）。
+/// 因此：**寻址与竞态只看注册表**，生产者的差别只影响新鲜度与闸门（见两个调用入口）。
+/// `snapshot.version` 在此被覆盖，生产者传什么都不作数（保留字段只为让 worker 自身的
+/// 迭代测试可断言）。
 ///
-/// **原子性契约**（锁纪律，改动前必读）：
-/// - 守卫（pull 不得覆盖 push）、取号（`version_floors`）、插入（`store`）必须在**同一次
-///   `store` 持锁**内完成。分成多次持锁时，并发生产者能交错出「取小号却后插入」——槽位
-///   回退到旧数据而号段已前进，前端无从察觉；pull 的锁外守卫则是 check-then-act，慢 pull
-///   能带着更大的号覆盖 worker 刚推的新数据（R2.4 要防的正是这个）。
-/// - 嵌套锁序固定为 `store → watchers`、`store → floors`。全仓不存在反向嵌套
-///   （`release_one` / `watch` / `poke_status_worker_and_wait` 对 watchers 与 store 都是
-///   先释放再取的另一把，`mount_lock` 只在最外层），因此无死锁环。新增代码不得引入
-///   `watchers → store` 或 `floors → store` 的持锁嵌套。
-/// - Push **不做**「仍在挂载中」守卫：`watch()` 在把 handle 插进 watchers 之前就已启动
-///   worker（冷启动首个快照可能先于插入到达），按挂载状态拒写会静默丢掉它且 worker 的
-///   变化闸门不会补发。释放后在飞 emit 复活槽位的窗口由读路径自愈（未挂载 ⇒ 读必现算并
-///   覆盖）与重挂载的 `drop_snapshot_if_present` 兜底。
+/// **锁纪律**（改动前必读）：嵌套锁序固定为 `store → watchers`、`store → floors`、
+/// `store → tickets`。全仓不存在反向嵌套（`release_one` / `watch` / `poke_status_worker_and_wait`
+/// 对 watchers 与 store 都是先释放再取的另一把，`mount_lock` 只在最外层），因此无死锁环。
+/// 新增代码不得引入 `watchers → store` / `floors → store` / `tickets → store` 的持锁嵌套。
 ///
-/// **锁中毒不中止**：三把锁一律按本文件既有策略恢复（`release_except` / `mount_only`
-/// 同样是 `unwrap_or_else(PoisonError::into_inner)`）。快照登记是「读接口的数据源」，
+/// **锁中毒不中止**：登记路径的锁一律按本文件既有策略恢复
+/// （`unwrap_or_else(PoisonError::into_inner)`）。快照登记是「读接口的数据源」，
 /// 一次中毒（任一持锁线程 panic）若让登记失败，轻则读命令拿不到数据、重则把整条命令
 /// 升级成进程 abort —— 本应用的底线是不闪退，登记失败必须退化成可用状态。
-fn store_snapshot(
-    store: &Arc<Mutex<HashMap<String, Arc<GitStatusSnapshot>>>>,
+fn stamp_and_insert(
+    store: &mut HashMap<String, Arc<GitStatusSnapshot>>,
     floors: &Arc<Mutex<HashMap<String, u64>>>,
-    watchers: &Arc<Mutex<HashMap<String, WatcherHandle>>>,
-    source: SnapshotSource,
     mut snapshot: GitStatusSnapshot,
 ) -> Arc<GitStatusSnapshot> {
     let key = snapshot.workspace_key.clone();
-    let mut store = store
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    // R2.4 裁决（pull 不得覆盖挂载中单元的 push 数据）——与写入同一临界区，见上方原子性契约。
-    if let SnapshotSource::Pull = source {
-        let watched = watchers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(&key);
-        if watched {
-            if let Some(authoritative) = store.get(&key) {
-                return authoritative.clone();
-            }
-        }
-    }
     // 槽位当前 version 只作下界校验用（持锁不变量下它必然 ≤ 水位）
     let in_slot = store.get(&key).map_or(0, |s| s.version);
     // 号段推进与取号在同一次持锁里完成：并发盖章既不会撞号，也不会「小号后插入」
@@ -791,4 +924,93 @@ fn store_snapshot(
     let arc = Arc::new(snapshot);
     store.insert(key, arc.clone());
     arc
+}
+
+/// Pull 登记（未挂载单元的现算，[`WatcherManager::record_computed`]）：**无凭证闸门** ——
+/// pull 是显式同步调用，调用方自带写入意图，无所谓「凭证过期」。
+///
+/// R2.4 裁决（pull 不得覆盖挂载中单元的 push 数据）与写入在**同一临界区**内完成 ——
+/// 守卫若留在锁外就是 check-then-act：pull 的 git 子进程耗时以百毫秒计，worker 完全可能
+/// 在守卫通过后、写入前推完一整轮，晚到的 pull 拿着注册表盖的更大号覆盖更新的 push
+/// （前端 version 闸门对这份旧数据只能放行）。挂载中但尚无快照（冷启动窗口）仍然登记：
+/// 那正是 pull 存在的意义，且 worker 首个推送会拿到更大的号自然接管。
+fn store_pull_snapshot(
+    store: &Arc<Mutex<HashMap<String, Arc<GitStatusSnapshot>>>>,
+    floors: &Arc<Mutex<HashMap<String, u64>>>,
+    watchers: &Arc<Mutex<HashMap<String, WatcherHandle>>>,
+    snapshot: GitStatusSnapshot,
+) -> Arc<GitStatusSnapshot> {
+    let key = snapshot.workspace_key.clone();
+    let mut store = store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let watched = watchers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains_key(&key);
+    if watched {
+        if let Some(authoritative) = store.get(&key) {
+            return authoritative.clone();
+        }
+    }
+    stamp_and_insert(&mut store, floors, snapshot)
+}
+
+/// Push 登记（挂载中 worker 的产出）：**凭证闸门**与写入在同一 `store` 临界区内。
+///
+/// 返回 `None` = 票号已失效（该次挂载已被释放 / 已被重挂载取代）——调用方必须丢弃写入
+/// 且不得 emit：晚到推送把已作废槽位重新填上「权威数据」正是 2026-10 CI 竞态
+/// （macOS `activate_style_release_except_keeps_only_the_target_unit`）的形态。
+///
+/// 为什么闸门是票号而不是 `watchers.contains_key`：
+/// 1. `watch()` 在创建 worker 前签发票号、在 watcher 建好后才登记 handle —— 冷启动首个
+///    快照**合法地**先于 handle 登记到达，按挂载状态拒写会静默丢掉它（且 worker 的变化
+///    闸门不会补发）；
+/// 2. 「释放 → 重挂载」后旧 worker 的晚到推送会被 `contains_key` 放行（新挂载在册），
+///    拿到更大 version 覆盖新数据 —— 比亡羊补牢更隐蔽的变体，票号一并拒掉；
+/// 3. 闸门与插入同临界区，且 `release_one` **先吊销票再删快照** —— 两件事共同排除
+///    「校验通过 → 释放发生 → 晚到插入复活槽位」的窗口。
+fn store_push_snapshot(
+    store: &Arc<Mutex<HashMap<String, Arc<GitStatusSnapshot>>>>,
+    floors: &Arc<Mutex<HashMap<String, u64>>>,
+    tickets: &Arc<Mutex<HashMap<String, u64>>>,
+    ticket: &MountTicket,
+    snapshot: GitStatusSnapshot,
+) -> Option<Arc<GitStatusSnapshot>> {
+    let key = snapshot.workspace_key.clone();
+    debug_assert_eq!(ticket.key, key, "票是单元专属的，必须与快照同单元");
+    let mut store = store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let current = tickets
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+        .copied();
+    if current != Some(ticket.seq) {
+        return None;
+    }
+    Some(stamp_and_insert(&mut store, floors, snapshot))
+}
+
+/// Push 投递的完整决策（worker 回调与确定性测试**共用同一实现**）：
+/// 凭证有效 → 盖章写入 + emit；失效 → 丢弃写入且 **不 emit**（禁止陈旧事件复活已释放单元）。
+/// 返回 `Some(已盖章快照)` = 已写入并已 emit。
+fn deliver_push(
+    sink: &Arc<dyn WatcherEventSink>,
+    snapshots: &Arc<Mutex<HashMap<String, Arc<GitStatusSnapshot>>>>,
+    floors: &Arc<Mutex<HashMap<String, u64>>>,
+    tickets: &Arc<Mutex<HashMap<String, u64>>>,
+    ticket: &MountTicket,
+    snapshot: GitStatusSnapshot,
+) -> Option<Arc<GitStatusSnapshot>> {
+    let Some(stamped) = store_push_snapshot(snapshots, floors, tickets, ticket, snapshot) else {
+        log::debug!(
+            "[Watcher] dropped late push for released workspace {}",
+            ticket.key
+        );
+        return None;
+    };
+    sink.emit(WatcherEvent::StatusSnapshot(&stamped));
+    Some(stamped)
 }

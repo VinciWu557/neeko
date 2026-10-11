@@ -945,6 +945,158 @@ fn activate_style_release_except_keeps_only_the_target_unit() {
     );
 }
 
+/// **凭证闸门 · 正当路径**：挂载在册 ⇒ 当期票号的 Push 必须写入且 emit。
+///
+/// 闸门的第一半是「不得误杀合法推送」—— worker 冷启动的首个快照在 handle 登记之前就
+/// 可能到达（`watch()` 的设计），票号因此先于 worker 签发。本测试用与 worker 回调
+/// **同一条** `deliver_push` 显式投递，不依赖线程时序。
+#[test]
+fn push_with_current_ticket_is_written_and_emitted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    git2::Repository::init(&root).expect("init git repo");
+
+    let unit = main_unit(&root);
+    let sink = CollectingSink::new();
+    let manager = WatcherManager::new();
+    manager.watch(unit.clone(), sink.clone());
+    assert!(
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "夹具前提：首轮重算落地（此后 worker 空闲 ⇒ 本次投递是唯一事件源）"
+    );
+
+    let ticket = manager
+        .current_ticket(&unit.key())
+        .expect("挂载在册 ⇒ 有票");
+    let baseline = sink.count(GIT_STATUS_SNAPSHOT_EVENT);
+    let stamped = manager
+        .deliver_push_with_ticket(
+            sink.clone(),
+            &ticket,
+            pull_snapshot(&unit, parse_porcelain("?? held.txt")),
+        )
+        .expect("当期票号的推送必须被接受");
+    assert!(
+        paths_of(&stamped.entries).contains(&Path::new("held.txt")),
+        "写入槽位的必须就是这份快照"
+    );
+    assert!(
+        sink.count(GIT_STATUS_SNAPSHOT_EVENT) > baseline,
+        "接受即伴随一次快照事件（worker 空闲 ⇒ 增量只能来自本次投递）"
+    );
+    assert_eq!(
+        manager.snapshot(&unit).expect("槽位已写入").version,
+        stamped.version,
+        "事件与槽位同版本（注册表统一盖章）"
+    );
+}
+
+/// **凭证闸门 · 释放后**：旧票的晚到推送必须被拒 —— 不写槽位、不 emit、票号已注销。
+///
+/// 这是 2026-10 CI 竞态（macOS `activate_style_release_except_keeps_only_the_target_unit`）
+/// 的确定性复现：worker 的推送回调活在 `watch()` 栈之外，释放后仍可能在飞；此前没有任何
+/// 校验，晚到推送会把已作废的槽位重新填上权威数据（概率性暴露 ⇒ 只在慢机 CI 偶发）。
+#[test]
+fn push_after_release_with_stale_ticket_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    git2::Repository::init(&root).expect("init git repo");
+
+    let unit = main_unit(&root);
+    let sink = CollectingSink::new();
+    let manager = WatcherManager::new();
+    manager.watch(unit.clone(), sink.clone());
+    assert!(
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "夹具前提：首轮重算落地（此后 worker 空闲，不存在第三方事件源）"
+    );
+    let stale = manager
+        .current_ticket(&unit.key())
+        .expect("挂载在册 ⇒ 有票");
+
+    manager.unwatch(&unit);
+    assert!(
+        manager.current_ticket(&unit.key()).is_none(),
+        "释放必须注销票号"
+    );
+    assert!(manager.snapshot(&unit).is_none(), "释放必须作废槽位");
+
+    let baseline = sink.count(GIT_STATUS_SNAPSHOT_EVENT);
+    let rejected = manager.deliver_push_with_ticket(
+        sink.clone(),
+        &stale,
+        pull_snapshot(&unit, parse_porcelain("?? late.txt")),
+    );
+    assert!(rejected.is_none(), "释放后旧票号的推送必须被拒");
+    assert!(manager.snapshot(&unit).is_none(), "被拒的推送不得复活槽位");
+    assert_eq!(
+        sink.count(GIT_STATUS_SNAPSHOT_EVENT),
+        baseline,
+        "被拒的推送不得 emit（陈旧事件会把已释放单元重新画到界面上）"
+    );
+}
+
+/// **凭证闸门 · 释放 → 重挂载**：旧挂载的晚到推送不得写进新挂载的槽位。
+///
+/// `watchers.contains_key` 形态的守卫会放行这种更隐蔽的变体（新挂载在册、但数据属于旧
+/// worker，还会拿到更大 version 覆盖新数据）；票号以「单元 key + 序号」双重比对拒掉。
+#[test]
+fn remount_rejects_previous_mounts_late_push() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    git2::Repository::init(&root).expect("init git repo");
+
+    let unit = main_unit(&root);
+    let sink = CollectingSink::new();
+    let manager = WatcherManager::new();
+    manager.watch(unit.clone(), sink.clone());
+    assert!(
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "夹具前提：首挂载首轮重算落地"
+    );
+    let stale = manager.current_ticket(&unit.key()).expect("首挂载有票");
+
+    manager.unwatch(&unit);
+    manager.watch(unit.clone(), sink.clone());
+    assert!(
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "夹具前提：重挂载首轮重算落地（此后 worker 空闲）"
+    );
+    let fresh = manager.current_ticket(&unit.key()).expect("重挂载有新票");
+    let before = manager.snapshot(&unit).expect("重挂载后槽位有权威数据");
+
+    let rejected = manager.deliver_push_with_ticket(
+        sink.clone(),
+        &stale,
+        pull_snapshot(&unit, parse_porcelain("?? from-stale-mount.txt")),
+    );
+    assert!(rejected.is_none(), "旧挂载的晚到推送必须被拒");
+    let after = manager.snapshot(&unit).expect("槽位仍在");
+    assert_eq!(
+        after.version, before.version,
+        "被拒的写入不得动槽位（version 不得推进）"
+    );
+    assert!(
+        !paths_of(&after.entries).contains(&Path::new("from-stale-mount.txt")),
+        "旧 worker 的数据不得出现"
+    );
+
+    let stamped = manager
+        .deliver_push_with_ticket(
+            sink.clone(),
+            &fresh,
+            pull_snapshot(&unit, parse_porcelain("?? from-fresh-mount.txt")),
+        )
+        .expect("重挂载的新票必须可用");
+    assert!(
+        paths_of(&stamped.entries).contains(&Path::new("from-fresh-mount.txt")),
+        "新票的写入必须生效"
+    );
+}
+
 /// **R2.4 的另一半**：未挂载单元（WSL / SSH / 侧栏要为每个 worktree 取计数）多次 pull 之间
 /// 也必须单调 —— 号源只有注册表这一个，读接口因此不需要区分「这次是 push 还是 pull」。
 #[test]
@@ -1089,7 +1241,7 @@ const PUSH_LATENCY_ROUNDS: usize = 20;
 /// 采 `rounds` 轮「单元内新增一个文件 → 该单元快照 version 前进」的耗时。
 ///
 /// `unit_dir == root` 即主仓单元，否则同一项目的 linked worktree 单元。两条链路是**同一条**
-/// 生产代码（notify → ThrottleScheduler → `worker.check()` → `store_snapshot` → `sink.emit`），
+/// 生产代码（notify → ThrottleScheduler → `worker.check()` → `deliver_push` → `sink.emit`），
 /// 因此两者的差值就是「worktree 单元有没有被特殊地拖慢」—— 这正是 AC4 要的对比。
 ///
 /// 起表点取 `fs::write` 返回之后：编辑动作到面板更新的用户体感里，编辑器落盘之前的时间
@@ -1347,7 +1499,7 @@ fn mount_only_reasserting_same_unit_is_a_noop() {
 /// 钉住的竞态形态：旧实现里取号（`version_floors` 锁）与槽位插入（`store` 锁）是两次
 /// 独立持锁，并发生产者能交错出「取小号却后插入」—— 槽位回退到旧数据而号段已前进，
 /// 下一份快照无缝接号，前端 version 闸门对这段陈旧窗口毫无感知。修法是守卫+取号+插入
-/// 同一次 `store` 持锁（见 `store_snapshot` 的原子性契约）。
+/// 同一次 `store` 持锁（见 `stamp_and_insert` 的锁纪律）。
 #[test]
 fn concurrent_pulls_on_one_unit_never_regress_the_slot() {
     let tmp = tempfile::tempdir().unwrap();

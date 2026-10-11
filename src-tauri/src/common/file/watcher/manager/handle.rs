@@ -4,6 +4,7 @@ use super::super::debounce::{DebounceSender, TreeChangeDebounceSender};
 use super::super::git_meta::GitMetaWatcherHandle;
 use super::super::gitignore::GitIgnoreFilter;
 use super::super::registration::WatchRegistration;
+use super::core::MountTicket;
 use crate::common::git::status_worker::GitStatusWorker;
 use crate::platform::watch_backend::PlatformWatcher;
 use std::sync::mpsc;
@@ -23,6 +24,10 @@ pub(in crate::common::file::watcher) struct WatcherHandle {
     /// 落地（写操作后必须戳一下，否则 `snapshot()` 会停留在写前状态）。
     /// 字段自身仍需在 drop 时保持存活。
     pub(super) worker: Option<GitStatusWorker>,
+    /// 本次挂载的写入凭证（仅 git 单元有 push 生产者；非 git 单元为 None）。
+    /// `release_one` 据此 compare-and-remove 吊销票号 —— 只吊销「这次挂载」的票，
+    /// 并发重挂载已签发新票时不得误杀（误杀 = 新挂载此后收不到任何数据）。
+    pub(super) mount_ticket: Option<MountTicket>,
     // .git 元数据监听器（HEAD 分支切换 + index 暂存/取消暂存 + worktree HEAD），
     pub(super) _head_watcher: Option<GitMetaWatcherHandle>,
     // file-changed debounce sender（drop 时关闭 channel，结束 debounce 线程）
