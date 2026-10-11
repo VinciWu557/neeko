@@ -74,6 +74,27 @@
       "red_line": 10
     },
     {
+      "id": "test-platform-cfg-item-scoped",
+      "title": "测试域的平台 cfg 只许挂 item 声明（门控粒度 ≥ 作用域粒度；fragment 级门控 = unused 温床）",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_platform_cfg_placement"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_platform_cfg_placement.py"
+        },
+        {
+          "kind": "test",
+          "ref": "src-tauri/src/file/commands.rs",
+          "note": "整测试化样板：平台断言按平台命名（平台维度上移测试名），见批 A 迁移"
+        }
+      ],
+      "red_line": 10
+    },
+    {
       "id": "worktree-byte-assertion-ban",
       "title": "禁止对工作区换行做字节级断言、禁止注入 core.autocrlf",
       "tier": "guard",
