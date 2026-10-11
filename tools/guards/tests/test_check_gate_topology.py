@@ -186,6 +186,32 @@ class SignalIndependenceTest(unittest.TestCase):
         self.assertEqual(result.verdict, VIOLATION, result.findings)
         self.assertIn("frontend-check", result.findings[0].message)
 
+    def test_inline_comment_is_not_part_of_the_dependency_name(self):
+        result = self.check(
+            ci_with_needs("backend-test", "    needs: frontend-check  # 短路线（须被识别）\n")
+        )
+        self.assertEqual(result.verdict, VIOLATION, result.findings)
+        self.assertIn("frontend-check", result.findings[0].message)
+
+    def test_block_list_item_with_inline_comment_is_parsed(self):
+        ci = (
+            "jobs:\n"
+            "  frontend-check:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Run\n"
+            "        run: pnpm lint:fe\n"
+            "  backend-test:\n"
+            "    needs:\n"
+            "      - frontend-check  # why\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - name: Run\n"
+            "        run: pnpm test:rust\n"
+        )
+        result = self.check(ci)
+        self.assertEqual(result.verdict, VIOLATION, result.findings)
+
     def test_block_list_needs_form_is_parsed(self):
         ci = (
             "jobs:\n"

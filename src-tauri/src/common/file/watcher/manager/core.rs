@@ -283,9 +283,11 @@ impl WatcherManager {
         //
         // 写入凭证（`MountTicket`）**先于 worker 创建**签发：首个快照可能在本函数登记
         // handle 之前就到达，凭证必须在那之前已在册（见 `store_push_snapshot` 的闸门说明）。
-        // setup 失败出口（watcher 创建失败 / 锁中毒）由 `ticket_guard` 兜底吊销。
-        let (worker, scheduler, mount_ticket) = if git_repo {
+        // 签发后**立刻 arm** `ticket_guard`：此后任何 setup 失败出口（watcher 创建失败 /
+        // 锁中毒 / worker 线程创建 panic 的 unwind）都由 Drop 兜底吊销 —— 不靠每个出口记得回收。
+        let (worker, scheduler, mount_ticket, mut ticket_guard) = if git_repo {
             let ticket = self.issue_ticket(&workspace);
+            let guard = MountTicketGuard::arm(&self.mount_tickets, &ticket);
             let snapshots_store = self.snapshots.clone();
             let floors_store = self.version_floors.clone();
             let tickets_store = self.mount_tickets.clone();
@@ -313,20 +315,17 @@ impl WatcherManager {
             // 立即触发一次 git status 检查，获取初始状态（首个快照由 worker 线程异步产出）
             worker.check();
 
-            (Some(worker), Some(scheduler), Some(ticket))
+            // 挂载中止（下方任意 setup 失败出口）⇒ guard 未 commit，Drop 时吊销票号
+            // （compare-and-remove，不误杀并发重挂载的新票）。
+            (Some(worker), Some(scheduler), Some(ticket), Some(guard))
         } else {
             log::info!(
                 "[Watcher] Skipping git status worker for non-git workspace {} at {}",
                 workspace,
                 path.display()
             );
-            (None, None, None)
+            (None, None, None, None)
         };
-        // 挂载中止 ⇒ 凭证失效（Drop 兜底，compare-and-remove 不误杀并发重挂载的新票）；
-        // 挂载成立（下方 handle 登记成功）时 `commit`，凭证转交 handle 管理。
-        let mut ticket_guard = mount_ticket
-            .as_ref()
-            .map(|ticket| MountTicketGuard::arm(&self.mount_tickets, ticket));
 
         // 3. 创建 file-changed debounce sender
         let debounce = DebounceSender::new(repo.clone(), Arc::clone(&sink));

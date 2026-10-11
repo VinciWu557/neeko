@@ -310,13 +310,13 @@
     },
     {
       "id": "activation-readiness-is-a-state-not-an-error",
-      "title": "就绪性是一等状态：冷窗口超时返回 Pending，不得进入错误空间",
+      "title": "激活命令的就绪性是一等状态：冷窗口超时返回 Pending，不得进入错误空间",
       "tier": "type",
       "enforcement": [
         {
           "kind": "type",
           "ref": "src-tauri/src/git/services/status.rs",
-          "note": "WorkspaceActivation{Ready|Pending}（serde tag=state）+ first_snapshot_outcome 无错误分支；有界等待（RECALC_WAIT_TIMEOUT）只是延迟优化，正确性归 git-status-snapshot 推送"
+          "note": "范围 = 激活命令（set_active_workspace）：WorkspaceActivation{Ready|Pending}（serde tag=state）+ first_snapshot_outcome 无错误分支；有界等待（RECALC_WAIT_TIMEOUT）只是延迟优化，正确性归 git-status-snapshot 推送。读命令（get_workspace_status）冷窗口仍返回 Err(NotFound) —— 消费方按「未知」收敛（catch→null），如需同化另行评估"
         },
         {
           "kind": "test",

@@ -47,13 +47,18 @@ export function useActivateWorkspace(
       const key = WorkspaceSession.of(projectId, path ?? null).key;
       try {
         const outcome = await activateWorkspace(projectId, path);
-        // 冷窗口（挂载已成立、首轮重算在途）：不写槽位、不报错 —— 收敛交给调用方的
-        // 「槽位为空 ⇒ 继续重试」与 push 事件；此处没有数据可应用，也没有路径可归一。
-        if (outcome.state === 'pending') return 'pending';
-        const snapshot = outcome.snapshot;
-        // 快照自带 workspace_key；只接受仍然指向当前视图的结果（切换竞态下丢弃迟到响应）
+        // 迟到的响应一律先过 staleness 守卫（结局只描述那次请求，与当前视图无关）——
+        // ready 与 pending 共用：两种形态都自带后端 canonical 的 workspace_key。
         const latest = activeWorkspaceKeyOf(projectId);
-        if (latest !== key && snapshot.workspace_key !== latest) return 'stale';
+        const respondedKey =
+          outcome.state === 'pending' ? outcome.workspace_key : outcome.snapshot.workspace_key;
+        if (latest !== key && respondedKey !== latest) return 'stale';
+        if (outcome.state === 'pending') {
+          // 冷窗口（挂载已成立、首轮重算在途）：不写槽位、不报错 —— 收敛交给调用方的
+          // 「槽位为空 ⇒ 继续重试」与 push 事件；没有数据可应用，也没有路径可归一。
+          return 'pending';
+        }
+        const snapshot = outcome.snapshot;
         store.applyStatus(snapshot);
         const canonical = snapshot.worktree_path ?? null;
         if (canonical !== (path ?? null)) {

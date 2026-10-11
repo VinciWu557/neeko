@@ -17,8 +17,8 @@
   门禁的价值 = 暴露频率 × 信号独立度（`frontend-build` 早已不 needs check，同理）。
 
 只解析行（stdlib，无 YAML 解析器）：`ci.yml` 认 `jobs:` → 2 空格 job → 任意缩进的
-`run:` 与 `needs:`（needs 支持 `needs: x` / `needs: [a, b]` / 块列表三形态，引号剥除）；
-`lefthook.yml` 认顶层 hook 段 → 段内 `run:`。文件缺失/为空、或解析出 0 个
+`run:` 与 `needs:`（needs 支持 `needs: x` / `needs: [a, b]` / 块列表三形态，引号与
+行内注释剥除）；`lefthook.yml` 认顶层 hook 段 → 段内 `run:`。文件缺失/为空、或解析出 0 个
 job/hook，一律判**护栏失效（ERROR）**，绝不报 PASS（否则改坏 YAML 结构会静默失效）；
 两个 ci 解析器（run / needs）解析出的 job 集不一致同样判失效（防解析口径漂移）。
 
@@ -126,6 +126,8 @@ def _parse_ci_needs(text: str) -> dict[str, list[str]]:
             continue
         if stripped.startswith("needs:"):
             value = stripped[len("needs:") :].strip()
+            # YAML 行内注释（` #` 起）不属于依赖名：`needs: x  # why` 否则会因带注释尾而漏判
+            value = value.split(" #", 1)[0].strip()
             if value:
                 needs[current] = [
                     item.strip().strip("'\"")
@@ -138,7 +140,7 @@ def _parse_ci_needs(text: str) -> dict[str, list[str]]:
             continue
         if collecting is not None:
             if stripped.startswith("- "):
-                item = stripped[2:].strip().strip("'\"")
+                item = stripped[2:].split(" #", 1)[0].strip().strip("'\"")
                 if item:
                     needs[collecting].append(item)
             else:

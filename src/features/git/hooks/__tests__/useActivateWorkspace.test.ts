@@ -165,6 +165,21 @@ describe('useActivateWorkspace —— 后端只挂当前视图单元（决策 D-
     expect(useProjectStore.getState().statuses[WT_A]).toBeUndefined();
   });
 
+  it('视图已切走时迟到的 pending 也被丢弃（staleness 守卫覆盖两种形态）', async () => {
+    // 期间用户已切到 /wt/b，而 /wt/a 的 pending 响应才到 ⇒ 结局不描述当前视图
+    useWorkspaceStore.setState({
+      byProject: { p1: { activePath: '/wt/b', activeBranch: 'b', opened: [] } },
+    });
+    invokeSpy.mockResolvedValueOnce({ state: 'pending', workspace_key: WT_A });
+    const { result } = renderHook(() => useActivateWorkspace('p1'));
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = await result.current('/wt/a');
+    });
+
+    expect(outcome).toBe('stale');
+  });
+
   it('非 git 项目不发任何 git 命令', async () => {
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'P1', path: '/repo/p1', git_info: null } as never],
