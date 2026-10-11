@@ -1,50 +1,71 @@
-"""平台专属 import 必须与使用点同 cfg 门控。
+"""平台 cfg 独占消费者护栏（`use` 引入名 / 局部 `let` 绑定）。
 
-背景：`src-tauri/src/common/utils/fonts.rs` 曾把 `BTreeSet` / `Path` 无条件 `use` 在文件
-顶部，却只在 `#[cfg(target_os = "macos")]` 分支里用 —— Linux/Windows 上 `clippy
--D warnings` 报 unused_imports，而宿主机（macOS）的单平台 clippy 看不见，只能靠 CI 三平台
-矩阵兜底。本护栏让它在 macOS 本机就暴露。
+两代事故，同一类：定义在平台 cfg 之外，全部使用点却被某个平台的编译配置排除 →
+该平台上 rustc 报 unused_imports / unused_variables，被 clippy `-D warnings` 升级为编译
+错误；而宿主机（macOS）的单平台 clippy 看不见，只能靠 CI 三平台矩阵兜底。本护栏让它在
+macOS 本机就暴露。
 
-判据（不变）：无 cfg 门控的 `use`，其引入符号在文件内的**所有**出现都落在平台 cfg 块内
-→ 违规。符号完全未使用则放行（交给 unused_imports 本身，避免两处口径重复）。
+- `common/utils/fonts.rs`（2026-09）：`BTreeSet` / `Path` 无条件 `use` 在文件顶部，却只在
+  `#[cfg(target_os = "macos")]` 分支里用 → Linux/Windows 红。
+- 2026-10 三平台 CI 红的三处变体（旧版判据对它们全数漏报：只查无门控 `use`，且跳过
+  `#[cfg(test)]` 模块）：
+  - `file/commands.rs`：`let args` 只被 windows / macos 两个断言块消费 → Linux 报
+    unused_variables；
+  - `common/executor/factory.rs`：`use ExecError` 只被 `#[cfg(not(target_os = "windows"))]`
+    的**测试**消费 → Windows 报 unused_imports；
+  - `lsp/session/instance.rs`：`let info` 只被 `#[cfg(not(target_os = "windows"))]` 的
+    **多行 assert!** 消费 → Windows 报 unused_variables。
+
+判据：
+- 定义 = 自身无平台门控的 `use` 引入名，或自身无平台门控的简单 `let` 绑定名
+  （`let NAME` / `let mut NAME`，后随 `:` / `=` / `;`）；
+- 使用点 = 作用域内的同名出现（`use` 为整个文件，`let` 为定义所在块），字段/路径访问
+  （`self.x`、`a::x`）不算，注释与字符串里的出现不算；
+- 对 linux / macos / windows 逐平台求值：**存在一个平台**使全部使用点都被编译掉 → 违规。
+  成对门控（如 `#[cfg(unix)]` 与 `#[cfg(windows)]` 各消费一次）因此不会误报。
+- 门控范围识别覆盖 `#[cfg]` + item、`#[cfg]` + 裸 `{` 块、`#[cfg]` + 多行非块语句
+  （`assert!(...)` 这类 attr 贴语句的形态）。
+- 符号完全未使用则放行（交给 unused_imports / unused_variables 本身，避免两处口径重复）。
+
+已知未覆盖（一律走保守方向，宁可少报 —— 误报会让人把整条护栏关掉，漏报有 CI 三平台矩阵
+兜底）：函数参数与 for 绑定、解构模式绑定、嵌套 cfg 的内层条件、同一块内同名遮蔽
+（使用点会并集）、解析不了的 cfg 条件（`feature` 等）。
+
+语法表层（正则、块 / 语句 / item 范围、cfg 谓词求值）已抽到 `guards.core.rust_cfg`，
+与 `check_platform_cfg_placement`（附着位置判据）共用同一份表示。
 """
 from __future__ import annotations
 
 import re
 
 from guards.core.contract import Context, Finding, Guard, GuardResult
+from guards.core.rust_cfg import (
+    build_identifier_index,
+    enclosing_block_end,
+    find_cfg_gated_ranges,
+    has_cfg_gate,
+    inside_ranges,
+    is_platform_cfg,
+    occurrences,
+    some_platform_drops_all,
+    strip_noise,
+)
 
 SCOPE = "src-tauri/src/**/*.rs"
 
-CFG_PLATFORM_RE = re.compile(r"#\s*\[\s*cfg\s*\([^]]*target_os[^]]*\)")
-CFG_PLATFORM_ALT_RE = re.compile(r"#\s*\[\s*cfg\s*\([^]]*\b(unix|windows)\b[^]]*\)")
-CFG_TEST_RE = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)")
 USE_RE = re.compile(r"^\s*use\s+([^;]+);")
-BLOCK_PREFIXES = (
-    "fn ",
-    "pub fn ",
-    "async fn ",
-    "pub async fn ",
-    "mod ",
-    "pub mod ",
-    "impl ",
-    "struct ",
-    "pub struct ",
-    "enum ",
-    "pub enum ",
-    "pub(crate) mod ",
-    "pub(super) mod ",
-)
+LET_RE = re.compile(r"^\s*let\s+(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[:=;]")
 
 GUARD = Guard(
     id="check_platform_imports",
-    title="平台专属 `use` 必须带同条件 #[cfg]，或抽入 src-tauri/src/platform/<theme>/",
+    title="平台 cfg 独占消费者（`use` / `let`）必须把定义收进同条件 #[cfg]，或抽入 src-tauri/src/platform/<theme>/",
     scopes=(SCOPE,),
     red_lines=(10,),
     docs=".trellis/spec/backend/quality-guidelines.md",
     fix_hint=(
-        '给 `use` 加同条件的 #[cfg(target_os = "...")]，或把该段代码抽入 '
-        "src-tauri/src/platform/<theme>/（红线 10：平台差异集中化）"
+        "把定义收进它的唯一消费者所在作用域（`use` 加同条件 #[cfg]，或在被门控的测试函数内 "
+        "局部 `use`；`let` 挪进平台块、或给每个平台补一条判据），或把该段代码抽入 "
+        "src-tauri/src/platform/<theme>/（红线 10）"
     ),
 )
 
@@ -67,72 +88,47 @@ def extract_imported_names(use_body: str) -> list:
     return [last] if last and last not in ("self", "super", "crate") else []
 
 
-def has_cfg_gate(lines: list, idx: int) -> bool:
-    for j in range(max(0, idx - 3), idx):
-        if CFG_PLATFORM_RE.search(lines[j]) or CFG_PLATFORM_ALT_RE.search(lines[j]):
-            return True
-    return False
-
-
-def is_platform_cfg(line: str) -> bool:
-    return bool(CFG_PLATFORM_RE.search(line) or CFG_PLATFORM_ALT_RE.search(line))
-
-
-def find_cfg_gated_ranges(lines: list, pattern=None) -> list:
-    """所有平台 cfg 门控的块范围 [start, end)。pattern 用于复用同一段解析跑 test 块。"""
-
-    def gate(line: str) -> bool:
-        return bool(pattern.search(line)) if pattern else is_platform_cfg(line)
-
-    ranges: list[tuple[int, int]] = []
-    n = len(lines)
-    i = 0
-    while i < n:
-        if not gate(lines[i]):
-            i += 1
+def scan_uses(lines: list, noise_free: list, ranges: list, index: dict):
+    findings = []
+    for idx, line in enumerate(noise_free):
+        match = USE_RE.match(line)
+        if not match:
             continue
-        j = i + 1
-        while j < n and not lines[j].strip():
-            j += 1
-        while j < n and lines[j].strip().startswith("#["):
-            j += 1
-            while j < n and not lines[j].strip():
-                j += 1
-        if j >= n:
-            i += 1
+        if inside_ranges(idx, ranges) or has_cfg_gate(lines, idx):
             continue
-        item_line = lines[j].strip()
-        is_block_item = any(item_line.startswith(p) for p in BLOCK_PREFIXES) or (
-            " fn " in item_line and "{" in item_line
-        )
-        if not (is_block_item and "{" in "".join(lines[j : j + 3])):
-            ranges.append((i, j + 1))
-            i += 1
-            continue
-        brace_start = j
-        # 上面已要求 lines[j:j+3] 里含 `{`，因此这里必然能找到，无需再防越界。
-        while "{" not in lines[brace_start]:
-            brace_start += 1
-        depth = 0
-        end = brace_start
-        for k in range(brace_start, n):
-            for ch in lines[k]:
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end = k
-                        break
-            if depth == 0 and k >= brace_start:
+        for name in extract_imported_names(match.group(1)):
+            usages = [
+                u
+                for u in occurrences(index, noise_free, name, 0, len(noise_free) - 1)
+                if u != idx  # 定义行自身不算使用点
+            ]
+            if usages and some_platform_drops_all(usages, ranges):
+                findings.append(
+                    (
+                        f"无条件 `use` 的 `{name}` 在某个平台上的全部使用点都会被编译掉",
+                        idx + 1,
+                    )
+                )
                 break
-        ranges.append((i, end + 1))
-        i = end + 1
-    return ranges
+    return findings
 
 
-def is_inside_ranges(line_no: int, ranges: list) -> bool:
-    return any(start <= line_no < end for start, end in ranges)
+def scan_lets(noise_free: list, ranges: list, index: dict):
+    findings = []
+    for idx, line in enumerate(noise_free):
+        match = LET_RE.match(line)
+        if not match:
+            continue
+        name = match.group(1)
+        if name.startswith("_") or inside_ranges(idx, ranges):
+            continue
+        scope_end = enclosing_block_end(noise_free, idx)
+        usages = occurrences(index, noise_free, name, idx + 1, scope_end)
+        if usages and some_platform_drops_all(usages, ranges):
+            findings.append(
+                (f"`let {name}` 在某个平台上的全部使用点都会被编译掉", idx + 1)
+            )
+    return findings
 
 
 def scan_file(ctx: Context, path) -> list:
@@ -141,35 +137,18 @@ def scan_file(ctx: Context, path) -> list:
     except OSError:
         return []
     lines = text.splitlines()
-    if not any(is_platform_cfg(ln) for ln in lines):
+    if not any(is_platform_cfg(ln) and not ln.lstrip().startswith("//") for ln in lines):
         return []
 
-    cfg_ranges = find_cfg_gated_ranges(lines)
-    test_ranges = find_cfg_gated_ranges(lines, CFG_TEST_RE)
-    findings: list[Finding] = []
+    noise_free = [strip_noise(ln) for ln in lines]
+    ranges = find_cfg_gated_ranges(lines, noise_free)
+    index = build_identifier_index(noise_free)
 
-    for idx, line in enumerate(lines):
-        match = USE_RE.match(line)
-        if not match:
-            continue
-        if is_inside_ranges(idx, cfg_ranges) or is_inside_ranges(idx, test_ranges):
-            continue
-        if has_cfg_gate(lines, idx) or line.strip().startswith("//"):
-            continue
-        names = extract_imported_names(match.group(1))
-        for name in names:
-            usages = [
-                j for j, ln in enumerate(lines) if j != idx and re.search(rf"\b{re.escape(name)}\b", ln)
-            ]
-            if usages and all(is_inside_ranges(u, cfg_ranges) for u in usages):
-                findings.append(
-                    Finding(
-                        f"无条件 `use` 的 `{name}` 只在平台 #[cfg] 块内使用",
-                        ctx.rel(path),
-                        idx + 1,
-                    )
-                )
-                break
+    findings: list[Finding] = []
+    for message, line_no in scan_uses(lines, noise_free, ranges, index) + scan_lets(
+        noise_free, ranges, index
+    ):
+        findings.append(Finding(message, ctx.rel(path), line_no))
     return findings
 
 
@@ -179,7 +158,7 @@ def check(ctx: Context) -> GuardResult:
     for rs_file in files:
         findings.extend(scan_file(ctx, rs_file))
 
-    metrics = f"{len(files)} 个 .rs / {len(findings)} 处未门控"
+    metrics = f"{len(files)} 个 .rs / {len(findings)} 处独占消费者"
     if findings:
         return GuardResult.violated(len(files), findings, metrics=metrics)
     return GuardResult.passed(len(files), metrics=metrics)
