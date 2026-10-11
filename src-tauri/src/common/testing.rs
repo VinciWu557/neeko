@@ -61,3 +61,39 @@ pub fn init_git_repo(dir: &std::path::Path) {
     repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
         .expect("fixture: initial commit");
 }
+
+/// 让脚本文件具备可执行位（Unix 语义）；无腿平台给空 stub，调用点保持无条件。
+///
+/// 收在这里的理由与本文档头一致：同一段 9 行 chmod 原先在 `core/exec.rs`、`core/exec_env.rs`、
+/// `common/utils/command/local.rs`（×2）各写一份（4 份 ⇒ 越过「重复 ≥3 必须抽象」的线）。
+/// 平台差异按门控粒度纪律落在 **item 级**（`#[cfg]` 挂在函数上，而不是测试体内的裸块，
+/// 见红线 10 与 `check_platform_cfg_placement`）。
+#[cfg(unix)]
+pub fn make_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mut perm = std::fs::metadata(path)
+        .expect("fixture: metadata")
+        .permissions();
+    perm.set_mode(0o755);
+    std::fs::set_permissions(path, perm).expect("fixture: chmod");
+}
+
+/// Windows stub：无 POSIX 可执行位概念（保持调用点无条件）。
+#[cfg(not(unix))]
+pub fn make_executable(_path: &std::path::Path) {}
+
+/// 建一个**目录**符号链接（两平台各有真实实现：unix `symlink` / windows `symlink_dir`）。
+///
+/// 收在这里的理由同 [`make_executable`]：同一段两平台各一行的夹具原先在
+/// `common/git/{checkout_path,path_guard,workspace_ref}.rs` 各写一份（3 份 ⇒ 越过 DRY 线）。
+/// 平台差异只允许出现在 **item 级**门控上（红线 10；`check_platform_cfg_placement`）。
+#[cfg(unix)]
+pub fn symlink_dir(real: &std::path::Path, link: &std::path::Path) {
+    std::os::unix::fs::symlink(real, link).unwrap();
+}
+
+/// Windows 实现：`symlink_dir`（与 unix 的 `symlink` 语义对齐为目录链接）。
+#[cfg(windows)]
+pub fn symlink_dir(real: &std::path::Path, link: &std::path::Path) {
+    std::os::windows::fs::symlink_dir(real, link).unwrap();
+}

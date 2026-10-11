@@ -286,6 +286,7 @@ mod tests {
 
     #[test]
     fn command_exists_on_path_finds_fake_binary_in_temp_dir() {
+        use crate::common::testing::make_executable;
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_name = if cfg!(target_os = "windows") {
             "fake_cmd.exe"
@@ -294,15 +295,7 @@ mod tests {
         };
         let bin_path = dir.path().join(bin_name);
         std::fs::write(&bin_path, b"#!/bin/sh\necho hi").expect("write fake bin");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perm = std::fs::metadata(&bin_path)
-                .expect("metadata")
-                .permissions();
-            perm.set_mode(0o755);
-            std::fs::set_permissions(&bin_path, perm).expect("chmod");
-        }
+        make_executable(&bin_path);
         let fake_name = if cfg!(target_os = "windows") {
             "fake_cmd.exe"
         } else {
@@ -337,6 +330,7 @@ mod tests {
 
     #[test]
     fn resolve_command_path_respects_explicit_path() {
+        use crate::common::testing::make_executable;
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_name = if cfg!(target_os = "windows") {
             "mytool.exe"
@@ -345,15 +339,7 @@ mod tests {
         };
         let bin_path = dir.path().join(bin_name);
         std::fs::write(&bin_path, b"bin").expect("write");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perm = std::fs::metadata(&bin_path)
-                .expect("metadata")
-                .permissions();
-            perm.set_mode(0o755);
-            std::fs::set_permissions(&bin_path, perm).expect("chmod");
-        }
+        make_executable(&bin_path);
         let resolved = resolve_command_path(bin_name, &dir.path().to_string_lossy());
         assert!(
             resolved.contains("mytool"),

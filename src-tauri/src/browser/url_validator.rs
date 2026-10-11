@@ -222,14 +222,19 @@ mod tests {
         assert!(resolve_allowed_file_root(&state, "other-label").is_none());
     }
 
+    /// Windows：盘符路径是绝对路径（`/tmp` 在 Windows 上是根相对路径，必须用 `C:\` 形态取样）。
+    #[cfg(windows)]
     #[test]
-    fn test_file_path_helpers() {
-        // fileUrlToFilePath 对应逻辑在 TS 侧;此处验证 Rust 侧路径拼接假设
-        // Windows 上 `/tmp` 是无盘符的根相对路径,is_absolute() 为 false,按平台取绝对路径样例
-        #[cfg(windows)]
-        let absolute = std::path::Path::new(r"C:\tmp");
-        #[cfg(not(windows))]
-        let absolute = std::path::Path::new("/tmp");
-        assert!(absolute.is_absolute());
+    fn windows_drive_path_is_absolute() {
+        // fileUrlToFilePath 对应逻辑在 TS 侧；此处验证 Rust 侧路径拼接假设。
+        assert!(std::path::Path::new(r"C:\tmp").is_absolute());
+    }
+
+    /// Unix：POSIX 绝对路径。
+    #[cfg(not(windows))]
+    #[test]
+    fn posix_path_is_absolute() {
+        // fileUrlToFilePath 对应逻辑在 TS 侧；此处验证 Rust 侧路径拼接假设。
+        assert!(std::path::Path::new("/tmp").is_absolute());
     }
 }

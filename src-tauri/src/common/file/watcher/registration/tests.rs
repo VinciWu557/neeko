@@ -328,20 +328,19 @@ fn on_dir_added_degrades_when_already_at_cap() {
     assert_eq!(watcher.watched_recursive_count(), 1);
 }
 
-/// 维护路径：on_rules_changed 先解除全部已注册目录，再按新计划重注册。
-#[test]
-fn on_rules_changed_unwatches_all_then_reregisters() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
-    std::fs::create_dir_all(root.join("pkg/src")).unwrap();
-    std::fs::write(
-        root.join(".gitignore"),
-        "unused
-",
-    )
-    .unwrap();
-    let filter = GitIgnoreFilter::new(root.to_path_buf());
+/// 建「`pkg/src` + `.gitignore(unused)`」的最小仓库树，返回仓库根（路径由 tempdir 推导，红线 13）。
+fn prepare_rules_change_repo(dir: &Path) -> PathBuf {
+    std::fs::create_dir_all(dir.join("pkg/src")).unwrap();
+    std::fs::write(dir.join(".gitignore"), "unused\n").unwrap();
+    dir.to_path_buf()
+}
 
+/// 共享流程：选择性注册 → 触发 `on_rules_changed`，返回 (watcher, reg, 注册前集合大小)。
+///
+/// 平台差异只在断言侧（见下面两个整测试）：Linux = drain 全部 + 重注册；
+/// Recursive 平台 = 维护 no-op（整树注册本就无视规则分层）。
+fn register_then_change_rules(root: &Path) -> (FailureWatch, WatchRegistration, usize) {
+    let filter = GitIgnoreFilter::new(root.to_path_buf());
     let mut watcher = FailureWatch::new(&[]);
     let mut reg = WatchRegistration::default();
     // 手动走 Selective（在 macOS/Windows 上绕过平台分派，专注状态机）
@@ -352,26 +351,37 @@ fn on_rules_changed_unwatches_all_then_reregisters() {
         registered_before >= 2,
         "根 + pkg + pkg/src 至少 3（根自身在 registered）"
     );
-
-    // 规则变化：Selective 平台（Linux）→ drain 全部 + 重注册；
-    // Recursive 平台（macOS/Windows）→ 策略性 no-op（整树注册本就无视规则分层）。
-    // 用 cfg 断言两端语义，编译期各平台只编译自己那条。
     reg.on_rules_changed(&mut watcher, root, Some(&filter));
-    #[cfg(target_os = "linux")]
-    {
-        assert!(
-            watcher.unwatched.lock().unwrap().len() >= registered_before,
-            "Linux 重算应解除全部已注册目录"
-        );
-        assert_eq!(reg.registered.len(), registered_before, "重注册后集合恢复");
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        assert_eq!(
-            watcher.unwatched.lock().unwrap().len(),
-            0,
-            "Recursive 平台维护 no-op（整树注册与规则无关）"
-        );
-        assert_eq!(reg.registered.len(), registered_before, "集合不变");
-    }
+    (watcher, reg, registered_before)
+}
+
+/// 维护路径（Linux / Selective）：`on_rules_changed` 先解除全部已注册目录，再按新计划重注册。
+#[cfg(target_os = "linux")]
+#[test]
+fn on_rules_changed_unwatches_all_then_reregisters() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = prepare_rules_change_repo(tmp.path());
+
+    let (watcher, reg, registered_before) = register_then_change_rules(&root);
+    assert!(
+        watcher.unwatched.lock().unwrap().len() >= registered_before,
+        "Linux 重算应解除全部已注册目录"
+    );
+    assert_eq!(reg.registered.len(), registered_before, "重注册后集合恢复");
+}
+
+/// 维护路径（Recursive 平台）：整树注册与规则分层无关 → 维护是策略性 no-op。
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn on_rules_changed_is_noop_for_recursive_platforms() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = prepare_rules_change_repo(tmp.path());
+
+    let (watcher, reg, registered_before) = register_then_change_rules(&root);
+    assert_eq!(
+        watcher.unwatched.lock().unwrap().len(),
+        0,
+        "Recursive 平台维护 no-op（整树注册与规则无关）"
+    );
+    assert_eq!(reg.registered.len(), registered_before, "集合不变");
 }

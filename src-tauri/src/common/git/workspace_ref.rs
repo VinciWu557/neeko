@@ -382,10 +382,7 @@ mod tests {
         let root = existing(&tmp, "repo");
         let real_wt = existing(&tmp, "real-wt");
         let link = tmp.path().join("link-wt");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&real_wt, &link).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&real_wt, &link).unwrap();
+        crate::common::testing::symlink_dir(&real_wt, &link);
 
         let t = ExecTarget::Local;
         let via_real = WorkspaceRef::resolve(

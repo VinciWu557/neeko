@@ -53,21 +53,30 @@ mod tests {
         assert!(!WatchBackend::RecursiveFilterOnly.registers_selectively());
     }
 
-    /// 平台分派与预期一致（Linux/Windows 与 W0 前 `watch_selectively()` 等价；
-    /// macOS 升级为 `SubtreeExclusion`）。
+    /// 平台分派（Linux）：与 W0 前的 `watch_selectively()` 等价 —— 注册式。
+    #[cfg(target_os = "linux")]
     #[test]
-    fn watch_backend_matches_platform() {
-        #[cfg(target_os = "linux")]
+    fn watch_backend_is_selective_registration_on_linux() {
         assert_eq!(
             super::super::watch_backend(),
             WatchBackend::SelectiveRegistration
         );
-        #[cfg(target_os = "macos")]
+    }
+
+    /// 平台分派（macOS）：升级为 `SubtreeExclusion`（物理排除）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn watch_backend_is_subtree_exclusion_on_macos() {
         assert_eq!(
             super::super::watch_backend(),
             WatchBackend::SubtreeExclusion
         );
-        #[cfg(target_os = "windows")]
+    }
+
+    /// 平台分派（Windows）：整树过滤式（`RecursiveFilterOnly`）。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn watch_backend_is_recursive_filter_only_on_windows() {
         assert_eq!(
             super::super::watch_backend(),
             WatchBackend::RecursiveFilterOnly

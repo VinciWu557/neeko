@@ -201,36 +201,111 @@ mod tests {
     use crate::platform::reveal::normalize_path;
     use std::fs;
 
+    // ── 平台专属整测试：平台维度在测试名上（fragment 级平台门控被
+    //    check_platform_cfg_placement 禁止；见红线 10）────────────────────────
+
+    /// Windows 路径规范化：正 / 反斜杠统一为反斜杠。
+    #[cfg(target_os = "windows")]
     #[test]
-    fn test_normalize_path_windows() {
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(
-                normalize_path("C:/Users/test/file.rs"),
-                "C:\\Users\\test\\file.rs"
-            );
-            assert_eq!(
-                normalize_path("C:\\Users\\test\\file.rs"),
-                "C:\\Users\\test\\file.rs"
-            );
-            assert_eq!(normalize_path("./src/main.rs"), ".\\src\\main.rs");
-        }
+    fn normalize_path_windows_uses_backslashes() {
+        assert_eq!(
+            normalize_path("C:/Users/test/file.rs"),
+            "C:\\Users\\test\\file.rs"
+        );
+        assert_eq!(
+            normalize_path("C:\\Users\\test\\file.rs"),
+            "C:\\Users\\test\\file.rs"
+        );
+        assert_eq!(normalize_path("./src/main.rs"), ".\\src\\main.rs");
+    }
+
+    /// reveal 一个**文件**（Windows）：`explorer /select,<path>`。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reveal_file_uses_select_prefix() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = reveal_fixture_file(dir.path(), "cmd_target.txt");
+        let cmd = reveal_command_for(&temp);
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(cmd.get_program(), "explorer");
+        assert_eq!(args.len(), 1);
+        assert!(args[0].to_string_lossy().starts_with("/select,"));
+    }
+
+    /// reveal 一个**文件**（macOS）：`open -R <path>`（`-R` 才是「选中文件」）。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reveal_file_uses_open_reveal_flag() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = reveal_fixture_file(dir.path(), "cmd_target.txt");
+        let cmd = reveal_command_for(&temp);
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(cmd.get_program(), "open");
+        assert_eq!(args[0], "-R");
+    }
+
+    /// reveal 一个**文件**（Linux）：无「选中文件」语义 → 打开其父目录（`xdg-open <parent>`）。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reveal_file_opens_parent_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = reveal_fixture_file(dir.path(), "cmd_target.txt");
+        let cmd = reveal_command_for(&temp);
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(cmd.get_program(), "xdg-open");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], temp.parent().unwrap().as_os_str());
+    }
+
+    /// reveal 一个**目录**（Windows）：`explorer <dir>`。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reveal_dir_uses_explorer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = reveal_fixture_dir(dir.path(), "cmd_target_dir");
+        let cmd = reveal_command_for(&temp);
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(cmd.get_program(), "explorer");
+        assert_eq!(args.len(), 1);
+    }
+
+    /// reveal 一个**目录**（macOS）：`open <dir>`。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reveal_dir_uses_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = reveal_fixture_dir(dir.path(), "cmd_target_dir");
+        let cmd = reveal_command_for(&temp);
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(cmd.get_program(), "open");
+        assert_eq!(args.len(), 1);
+    }
+
+    /// reveal 一个**目录**（Linux）：`xdg-open <dir>`。
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reveal_dir_uses_xdg_open() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = reveal_fixture_dir(dir.path(), "cmd_target_dir");
+        let cmd = reveal_command_for(&temp);
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(cmd.get_program(), "xdg-open");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], temp.as_os_str());
     }
 
     #[test]
     fn test_is_directory_with_existing_dir() {
-        let temp = std::env::temp_dir().join("neeko_test_is_dir");
-        let _ = fs::create_dir_all(&temp);
-        assert!(std::path::Path::new(temp.to_str().unwrap()).is_dir());
-        let _ = fs::remove_dir(&temp);
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(Path::new(dir.path().to_str().unwrap()).is_dir());
     }
 
     #[test]
     fn test_is_directory_with_file() {
-        let temp = std::env::temp_dir().join("neeko_test_is_dir_file.txt");
-        let _ = fs::write(&temp, "test");
-        assert!(!std::path::Path::new(temp.to_str().unwrap()).is_dir());
-        let _ = fs::remove_file(&temp);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = dir.path().join("marker.txt");
+        fs::write(&temp, "test").unwrap();
+        assert!(!Path::new(temp.to_str().unwrap()).is_dir());
     }
 
     #[test]
@@ -243,69 +318,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_reveal_command_for_file() {
-        let temp = std::env::temp_dir().join("neeko_test_build_cmd_file.txt");
+    // ── 夹具（item 级、无平台 cfg：平台差异只允许出现在测试函数上）────────────
+
+    /// 在给定临时目录下建一个**文件**夹具并返回其路径（路径由 `tempdir()` 派生，红线 13）。
+    fn reveal_fixture_file(dir: &Path, name: &str) -> std::path::PathBuf {
+        let temp = dir.join(name);
         fs::write(&temp, "test").unwrap();
-
-        let cmd = build_reveal_command(Path::new(temp.to_str().unwrap()));
-        assert!(cmd.is_some());
-
-        let cmd = cmd.unwrap();
-        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(cmd.get_program(), "explorer");
-            assert_eq!(args.len(), 1);
-            assert!(args[0].to_string_lossy().starts_with("/select,"));
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            assert_eq!(cmd.get_program(), "open");
-            assert_eq!(args[0], "-R");
-        }
-
-        let _ = fs::remove_file(&temp);
+        temp
     }
 
-    #[test]
-    fn test_build_reveal_command_for_dir() {
-        let temp = std::env::temp_dir().join("neeko_test_build_cmd_dir");
-        let _ = fs::create_dir_all(&temp);
-
-        let cmd = build_reveal_command(Path::new(temp.to_str().unwrap()));
-        assert!(cmd.is_some());
-
-        let cmd = cmd.unwrap();
-        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(cmd.get_program(), "explorer");
-            assert_eq!(args.len(), 1);
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            assert_eq!(cmd.get_program(), "open");
-            assert_eq!(args.len(), 1);
-        }
-
-        let _ = fs::remove_dir(&temp);
+    /// 在给定临时目录下建一个**目录**夹具并返回其路径。
+    fn reveal_fixture_dir(dir: &Path, name: &str) -> std::path::PathBuf {
+        let temp = dir.join(name);
+        fs::create_dir_all(&temp).unwrap();
+        temp
     }
+
+    /// 现存的路径必须能构造出 reveal 命令（等价于原 `assert!(cmd.is_some())`）。
+    fn reveal_command_for(path: &Path) -> std::process::Command {
+        build_reveal_command(path).expect("existing path must yield a reveal command")
+    }
+
+    // ── 平台无关测试 ─────────────────────────────────────────────────────
 
     #[test]
     fn test_file_exists() {
-        let temp = std::env::temp_dir().join("neeko_test_file_exists_marker");
-        let _ = fs::remove_file(&temp);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let temp = dir.path().join("marker");
         assert!(!file_exists(temp.to_str().unwrap().to_string()).unwrap());
 
         fs::write(&temp, b"x").unwrap();
         assert!(file_exists(temp.to_str().unwrap().to_string()).unwrap());
-
-        let _ = fs::remove_file(&temp);
     }
 
     #[test]

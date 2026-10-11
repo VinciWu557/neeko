@@ -505,6 +505,7 @@ mod tests {
 
     #[test]
     fn command_exists_hermetic_via_explicit_path() {
+        use crate::common::testing::make_executable;
         use crate::common::utils::command::local::command_exists_on_path;
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_name = if cfg!(target_os = "windows") {
@@ -514,15 +515,7 @@ mod tests {
         };
         let bin_path = dir.path().join(bin_name);
         std::fs::write(&bin_path, b"#!/bin/sh\necho hi").expect("write");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perm = std::fs::metadata(&bin_path)
-                .expect("metadata")
-                .permissions();
-            perm.set_mode(0o755);
-            std::fs::set_permissions(&bin_path, perm).expect("chmod");
-        }
+        make_executable(&bin_path);
         let path = dir.path().to_string_lossy().to_string();
         // 显式 PATH 隔离：与全局 PATH / 是否装 sh/opencode 无关
         assert!(command_exists_on_path(bin_name, &path));
@@ -603,15 +596,16 @@ mod tests {
         );
     }
 
+    /// 非零退出并写 stderr 的脚本（`sh -c` / `cmd /c` 两套语法各一条真实腿）。
+    #[cfg(unix)]
+    const BOOM_SCRIPT: &str = "echo boom >&2; exit 3";
+    #[cfg(windows)]
+    const BOOM_SCRIPT: &str = "echo boom 1>&2 & exit /b 3";
+
     /// 非零退出码与 stderr 必须原样保留（`collect_script` 不把非零当错误）。
     #[tokio::test]
     async fn collect_script_local_propagates_nonzero_exit_and_stderr() {
-        #[cfg(unix)]
-        let script = "echo boom >&2; exit 3";
-        #[cfg(windows)]
-        let script = "echo boom 1>&2 & exit /b 3";
-
-        let output = collect_script(&ExecTarget::Local, script, None, &[])
+        let output = collect_script(&ExecTarget::Local, BOOM_SCRIPT, None, &[])
             .await
             .unwrap();
         assert_eq!(output.exit_code, 3);
@@ -621,6 +615,12 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+
+    /// 打印 cwd 与测试环境变量的脚本（`pwd` / `cd` 两套语法各一条真实腿）。
+    #[cfg(unix)]
+    const CWD_ENV_SCRIPT: &str = "pwd; echo \"$NEEKO_TEST_ENV\"";
+    #[cfg(windows)]
+    const CWD_ENV_SCRIPT: &str = "cd & echo %NEEKO_TEST_ENV%";
 
     /// `current_dir` 与 `env` 必须经 `SpawnOptions` 送达脚本进程（不拼 `cd` / env 前缀）。
     #[tokio::test]
@@ -633,14 +633,9 @@ mod tests {
             .to_string_lossy()
             .into_owned();
 
-        #[cfg(unix)]
-        let script = "pwd; echo \"$NEEKO_TEST_ENV\"";
-        #[cfg(windows)]
-        let script = "cd & echo %NEEKO_TEST_ENV%";
-
         let output = collect_script(
             &ExecTarget::Local,
-            script,
+            CWD_ENV_SCRIPT,
             Some(dir.path().to_str().unwrap()),
             &[("NEEKO_TEST_ENV", "42")],
         )
@@ -665,15 +660,18 @@ mod tests {
         assert_eq!(out, "neeko-run");
     }
 
+    /// 立即以退出码 3 结束的脚本（两套语法各一条真实腿）。
+    #[cfg(unix)]
+    const EXIT3_SCRIPT: &str = "exit 3";
+    #[cfg(windows)]
+    const EXIT3_SCRIPT: &str = "exit /b 3";
+
     /// `run_script` 失败路径：非零退出收敛为结构化 `CommandFailed`。
     #[tokio::test]
     async fn run_script_returns_command_failed_on_nonzero_exit() {
-        #[cfg(unix)]
-        let script = "exit 3";
-        #[cfg(windows)]
-        let script = "exit /b 3";
-
-        let err = run_script(&ExecTarget::Local, script).await.unwrap_err();
+        let err = run_script(&ExecTarget::Local, EXIT3_SCRIPT)
+            .await
+            .unwrap_err();
         match err {
             ExecError::CommandFailed { code, .. } => assert_eq!(code, 3),
             other => panic!("expected CommandFailed, got {other:?}"),

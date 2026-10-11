@@ -203,10 +203,8 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
 
         // src/link -> outside：词法合法但 canonical 层应拒绝
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&outside, root.join("src/link")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside, root.join("src/link")).unwrap();
+        let outside_link = root.join("src/link");
+        crate::common::testing::symlink_dir(&outside, &outside_link);
 
         let err = validate_repo_relative_path(&t, root.to_str().unwrap(), "src/link/evil.txt")
             .unwrap_err();

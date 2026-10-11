@@ -237,17 +237,19 @@ mod tests {
         LspExecContext::new(ExecTarget::Local, cwd, Vec::new())
     }
 
+    /// 打印 cwd 的脚本（`sh -c` / `cmd /c` 两套语法各一条真实腿）。
+    #[cfg(unix)]
+    const CWD_SCRIPT: &str = "pwd";
+    #[cfg(windows)]
+    const CWD_SCRIPT: &str = "cd";
+
     /// AC4：探测在**上下文给定的 cwd**里执行（P2a：探测与启动同源；此前探测跑在
     /// 应用默认目录 —— 实测绿灯，而真实启动（cwd = 项目根）必失败）。
     #[test]
     fn probe_runs_in_context_cwd() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cwd = dir.path().to_string_lossy().to_string();
-        #[cfg(unix)]
-        let script = "pwd";
-        #[cfg(windows)]
-        let script = "cd";
-        let argv = shell(script);
+        let argv = shell(CWD_SCRIPT);
         let args_ref: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
 
         let run = probe_command(
@@ -310,17 +312,19 @@ mod tests {
         ));
     }
 
+    /// 模拟「二进制不存在」的脚本：写 stderr 并以非零退出（两套语法各一条真实腿）。
+    #[cfg(unix)]
+    const NO_SUCH_BINARY_SCRIPT: &str = "echo 'no such binary: rust-analyzer' 1>&2; exit 1";
+    #[cfg(windows)]
+    const NO_SUCH_BINARY_SCRIPT: &str = "echo no such binary: rust-analyzer 1>&2 & exit /b 1";
+
     /// AC1b：真实子进程的 stderr 进该键的证据（三层组合：采集 → 判据 → 记账），
     /// 且「继续启动」的尝试不得被记为终态失败。
     #[test]
     fn probe_failure_evidence_lands_in_keyed_diagnostics() {
         let dir = tempfile::tempdir().expect("tempdir");
         let cwd = dir.path().to_string_lossy().to_string();
-        #[cfg(unix)]
-        let script = "echo 'no such binary: rust-analyzer' 1>&2; exit 1";
-        #[cfg(windows)]
-        let script = "echo no such binary: rust-analyzer 1>&2 & exit /b 1";
-        let argv = shell(script);
+        let argv = shell(NO_SUCH_BINARY_SCRIPT);
         let args_ref: Vec<&str> = argv[1..].iter().map(String::as_str).collect();
 
         let run = probe_command(

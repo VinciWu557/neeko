@@ -96,11 +96,17 @@ mod tests {
         assert!(!local_command_exists("nonexistent_command_xyz_12345"));
     }
 
+    /// Windows：系统 shell `cmd` 必须可发现。
+    #[cfg(windows)]
     #[test]
-    fn should_report_true_for_common_shell() {
-        #[cfg(windows)]
+    fn should_report_true_for_cmd_on_windows() {
         assert!(local_command_exists("cmd"));
-        #[cfg(not(windows))]
+    }
+
+    /// Unix：至少一个 POSIX shell 必须可发现。
+    #[cfg(not(windows))]
+    #[test]
+    fn should_report_true_for_a_posix_shell() {
         assert!(local_command_exists("sh") || local_command_exists("bash"));
     }
 
@@ -108,6 +114,7 @@ mod tests {
 
     #[test]
     fn hermetic_command_exists_on_path_with_temp_binary() {
+        use crate::common::testing::make_executable;
         use crate::common::utils::command::local::command_exists_on_path;
         let dir = tempfile::tempdir().expect("tempdir");
         let bin_name = if cfg!(target_os = "windows") {
@@ -117,15 +124,7 @@ mod tests {
         };
         let bin_path = dir.path().join(bin_name);
         std::fs::write(&bin_path, b"#!/bin/sh\necho hi").expect("write");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perm = std::fs::metadata(&bin_path)
-                .expect("metadata")
-                .permissions();
-            perm.set_mode(0o755);
-            std::fs::set_permissions(&bin_path, perm).expect("chmod");
-        }
+        make_executable(&bin_path);
         let path = dir.path().to_string_lossy().to_string();
         assert!(command_exists_on_path(bin_name, &path));
         assert!(!command_exists_on_path(bin_name, ""));

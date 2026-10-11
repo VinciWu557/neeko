@@ -283,10 +283,7 @@ mod tests {
         let (_d, real) = fixture("real");
         std::fs::create_dir_all(&real).unwrap();
         let link = real.with_file_name("link");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&real, &link).unwrap();
+        crate::common::testing::symlink_dir(&real, &link);
 
         let via_link = CheckoutPath::resolve(&local(), &link.to_string_lossy()).unwrap();
         let via_real = CheckoutPath::resolve(&local(), &real.to_string_lossy()).unwrap();

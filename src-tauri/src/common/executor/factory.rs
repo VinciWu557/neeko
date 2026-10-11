@@ -77,8 +77,6 @@ pub fn create_executor(target: &ExecTarget) -> Box<dyn CommandExecutor> {
 mod tests {
     use super::*;
 
-    use crate::common::executor::ExecError;
-
     /// 缓存键必须按环境区分：Local / WSL distro / SSH 端点互不相同，
     /// 否则跨环境缓存（如 PATH `java` 探测）会串味。
     #[test]
@@ -113,6 +111,8 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn wsl_target_spawn_returns_wsl_error() {
+        use crate::common::executor::ExecError;
+
         let target = ExecTarget::Wsl {
             distro: "Ubuntu".to_string(),
         };

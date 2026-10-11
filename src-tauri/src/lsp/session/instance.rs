@@ -1175,24 +1175,38 @@ mod tests {
         fn push_diagnostics(&self, _: &str, _: &str, _: serde_json::Value, _: Option<i64>) {}
     }
 
-    /// Regression: `snapshot_server_info` must sample live RSS, not return the
-    /// static spawn-time metadata (`memory_mb` was always 0.0 before the fix).
-    #[test]
-    fn snapshot_server_info_refreshes_live_memory() {
-        let session = LspSession {
-            // Our own test process is alive, so RSS sampling must succeed.
+    /// 以本测试进程为 pid 的会话：进程活着 ⇒ 内存采样（非 Windows）必然成功。
+    ///
+    /// 两个平台整测试共用这一处构造（平台差异只在断言侧；门控挂在 item 级，
+    /// 见红线 10 的门控粒度要求）。
+    fn live_process_session() -> LspSession {
+        LspSession {
             process_pid: Some(std::process::id()),
             ..stub_session(Arc::new(NoopTransport), PROJECT, LANG, SERVER)
-        };
+        }
+    }
 
-        let info = session.snapshot_server_info();
-        // Windows stub returns None by design (v1 skips memory sampling there).
-        #[cfg(not(target_os = "windows"))]
+    /// Regression: `snapshot_server_info` must sample live RSS, not return the
+    /// static spawn-time metadata (`memory_mb` was always 0.0 before the fix).
+    /// 本测试进程活着 ⇒ 采样必须成功。
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn snapshot_server_info_refreshes_live_memory() {
+        let info = live_process_session().snapshot_server_info();
         assert!(
             info.memory_mb > 0.0,
             "expected live RSS sample, got {}",
             info.memory_mb
         );
+    }
+
+    /// Windows：内存采样按设计跳过（`platform/process_memory/windows.rs` 返回 `None`）
+    /// → `memory_mb` 必须恒为 0.0。这条断言把该契约钉在 Windows 侧。
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn snapshot_server_info_memory_is_zero_on_windows() {
+        let info = live_process_session().snapshot_server_info();
+        assert_eq!(info.memory_mb, 0.0);
     }
 
     // ── plugin 专属 client capabilities 合并（P1：rust-analyzer runnables）──
