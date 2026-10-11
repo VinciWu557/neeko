@@ -16,6 +16,7 @@ import type {
   StashActionResult,
   StashEntry,
   GitStatusSnapshot,
+  WorkspaceActivation,
 } from '../types';
 export type { PushOutcome };
 
@@ -278,14 +279,16 @@ export function getWorkspaceStatus(
 /**
  * 激活一个Workspace（决策 D-B：后端只挂当前视图所在的那一个单元）。
  *
- * 后端会释放该项目下其它单元的挂载、挂载本单元并等待首个快照。
+ * 后端会释放该项目下其它单元的挂载、挂载本单元，并**尽力**取回首个快照：
+ * `ready` 携带快照，`pending` = 挂载已成立、首轮重算在途（冷窗口，不是错误 ——
+ * 由推送事件与重试环收敛，见 `WorkspaceActivation`）。
  * 唯一调用方是 `useActivateWorkspace`（前端「当前视图」的唯一派生点）。
  */
 export function activateWorkspace(
   projectId: ProjectId,
   worktreePath?: string | null,
-): Promise<GitStatusSnapshot> {
-  return invoke<GitStatusSnapshot>('set_active_workspace', { projectId, worktreePath });
+): Promise<WorkspaceActivation> {
+  return invoke<WorkspaceActivation>('set_active_workspace', { projectId, worktreePath });
 }
 
 /**

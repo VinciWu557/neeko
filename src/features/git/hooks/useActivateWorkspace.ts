@@ -6,8 +6,11 @@ import { ProjectId, WorkspaceSession, workspaceKeyLabel } from '@/shared/utils/w
 
 import { activateWorkspace } from '../api/gitApi';
 
-/** 挂载结果，供唯一发起点决定下一步（不要把语义藏在 resolve(void) 里）。 */
-export type ActivateOutcome = 'mounted' | 'stale' | 'skipped' | 'failed';
+/** 挂载结果，供唯一发起点决定下一步（不要把语义藏在 resolve(void) 里）。
+ *
+ * `pending` = 挂载已成立、首个快照尚未算出（后端冷窗口）：**不是失败** ——
+ * 唯一发起点按「槽位为空」继续收敛（重试环 / push 事件），无需任何错误处理。 */
+export type ActivateOutcome = 'mounted' | 'pending' | 'stale' | 'skipped' | 'failed';
 
 /**
  * 请后端把某Workspace挂为「当前单元」并取回首个快照（决策 D-B：后端只挂当前视图所在的那一个单元）。
@@ -22,11 +25,14 @@ export type ActivateOutcome = 'mounted' | 'stale' | 'skipped' | 'failed';
  * 前端自己猜归一必然与后端漂移，而「激活态与槽位 key 不同形」正是 worktree 视图串数据的根。
  *
  * 失败语义：该单元置为「未知」（槽位缺失），调用方渲染空态/加载态 —— 绝不沿用上一个
- * 单元的数据。非 git 项目（`git_info === null`）不发任何 git 命令。
+ * 单元的数据。**冷窗口不是失败**：后端返回 `pending` 时不写槽位、不报错、返回 `pending`，
+ * 收敛交给调用方（判据是「槽位为空」）与推送事件。非 git 项目（`git_info === null`）
+ * 不发任何 git 命令。
  *
  * **一次失败不是事故**：调用方（唯一发起点）会按有界预算重试，并在放弃时上报一次。因此这里
- * 只落一条 dev 侧诊断（带错误对象），不弹提示、不升级为用户可见错误 —— 首个快照未落地是冷启动
- * 的正常窗口。日志里的单元身份走 `workspaceKeyLabel`：`String(workspaceKey)` 会把分隔符 NUL 带进日志，
+ * 只落一条 dev 侧诊断（带错误对象），不弹提示、不升级为用户可见错误 —— 真失败（解析不了
+ * 该单元等）与「首个快照未落地」在前端是两条路径：后者根本不产生错误。日志里的单元身份走
+ * `workspaceKeyLabel`：`String(workspaceKey)` 会把分隔符 NUL 带进日志，
  * 让日志文件被判成二进制（实测过）。
  */
 export function useActivateWorkspace(
@@ -40,7 +46,11 @@ export function useActivateWorkspace(
       if (!project || project.git_info === null) return 'skipped';
       const key = WorkspaceSession.of(projectId, path ?? null).key;
       try {
-        const snapshot = await activateWorkspace(projectId, path);
+        const outcome = await activateWorkspace(projectId, path);
+        // 冷窗口（挂载已成立、首轮重算在途）：不写槽位、不报错 —— 收敛交给调用方的
+        // 「槽位为空 ⇒ 继续重试」与 push 事件；此处没有数据可应用，也没有路径可归一。
+        if (outcome.state === 'pending') return 'pending';
+        const snapshot = outcome.snapshot;
         // 快照自带 workspace_key；只接受仍然指向当前视图的结果（切换竞态下丢弃迟到响应）
         const latest = activeWorkspaceKeyOf(projectId);
         if (latest !== key && snapshot.workspace_key !== latest) return 'stale';

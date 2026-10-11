@@ -31,10 +31,13 @@ function snapshotFor(worktreePath: string | null, version = 1): GitStatusSnapsho
   };
 }
 
-/** 让 `invoke('set_active_workspace')` 按 worktreePath 返回对应单元的快照。 */
+/** 让 `invoke('set_active_workspace')` 按 worktreePath 返回对应单元的 ready 信封。 */
 function resolveSnapshotsFrom(version = 1): void {
   invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-    Promise.resolve(snapshotFor(args?.worktreePath ?? null, version)),
+    Promise.resolve({
+      state: 'ready',
+      snapshot: snapshotFor(args?.worktreePath ?? null, version),
+    }),
   );
 }
 
@@ -167,7 +170,10 @@ describe('useActiveWorkspaceSync —— 首快照未落地时的有界自愈', (
       .mockRejectedValueOnce(new Error('status for workspace is not available yet'));
     // 第三次落地（号段跨挂载单调，见后端 version_floors）
     invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-      Promise.resolve(snapshotFor(args?.worktreePath ?? null, 7)),
+      Promise.resolve({
+        state: 'ready',
+        snapshot: snapshotFor(args?.worktreePath ?? null, 7),
+      }),
     );
 
     renderHook(() => useActiveWorkspaceSync());
@@ -184,6 +190,45 @@ describe('useActiveWorkspaceSync —— 首快照未落地时的有界自愈', (
     expect(mountCallCount()).toBe(1);
 
     // 退避窗内收敛
+    await advanceVirtualTime(2000);
+    expect(useProjectStore.getState().statuses[key]?.version).toBe(7);
+
+    // 收敛后不再发命令（有界：自愈不得变成轮询）
+    const settled = mountCallCount();
+    await advanceVirtualTime(60_000);
+    expect(mountCallCount()).toBe(settled);
+  });
+
+  /**
+   * 回归契约（2026-10 CI 事故的前端对偶）：**冷窗口是 `pending`，不是错误**。
+   *
+   * 后端「挂载已成立、首轮重算在途」时返回 `pending` —— 它不得产生失败上报、不得写
+   * 空槽位；收敛判据与失败路径共用同一条「槽位为空 ⇒ 退避重试」，因此 pending 与
+   * ready 的时序差被同一条环吸收（后端不再把环境延迟升级成错误）。
+   */
+  it('冷窗口返回 pending ⇒ 不判死不报错，退避重试直到快照落地', async () => {
+    vi.useFakeTimers();
+    const key = String(WorkspaceSession.of('p1', '/wt/a').key);
+    useWorkspaceStore.getState().setActiveWorkspace('p1', '/wt/a', 'feat-a');
+    // 前两次：冷窗口（挂载已成立、首快照在途，不是失败）；之后就绪
+    invokeSpy
+      .mockResolvedValueOnce({ state: 'pending', workspace_key: key })
+      .mockResolvedValueOnce({ state: 'pending', workspace_key: key });
+    invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
+      Promise.resolve({
+        state: 'ready',
+        snapshot: snapshotFor(args?.worktreePath ?? null, 7),
+      }),
+    );
+
+    renderHook(() => useActiveWorkspaceSync());
+    await advanceVirtualTime(25);
+    expect(mountCallCount()).toBe(1);
+    // pending 不写槽位（「未知」≠「干净」），也不产生失败上报
+    expect(useProjectStore.getState().statuses[key]).toBeUndefined();
+    expect(invokeSpy.mock.calls.filter(([cmd]) => cmd === 'log_frontend_error')).toHaveLength(0);
+
+    // 退避窗内由重试收敛（与失败路径同一个收敛模型：判据是槽位为空）
     await advanceVirtualTime(2000);
     expect(useProjectStore.getState().statuses[key]?.version).toBe(7);
 
@@ -267,7 +312,10 @@ describe('useActiveWorkspaceSync —— 首快照未落地时的有界自愈', (
 
     // 切到另一个单元：新意图拿到完整预算（4 次），而不是继承耗尽的计数
     invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-      Promise.resolve(snapshotFor(args?.worktreePath ?? null, 2)),
+      Promise.resolve({
+        state: 'ready',
+        snapshot: snapshotFor(args?.worktreePath ?? null, 2),
+      }),
     );
     act(() => {
       useWorkspaceStore.getState().setActiveWorkspace('p1', '/wt/b', 'b');

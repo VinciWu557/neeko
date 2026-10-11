@@ -60,15 +60,18 @@ pub async fn get_workspace_status(
 
 /// 激活一个Workspace（决策 D-B：只挂当前视图所在的那个单元）。
 ///
-/// 释放该项目下其它单元 → 挂载本单元 → 有界等待首个快照。「当前视图」在前端只有一个
-/// 派生函数，它是本命令的唯一调用方；编排逻辑见 `git::services::status::activate`。
+/// 释放该项目下其它单元 → 挂载本单元 → 取首个快照。结果是二值状态：
+/// `ready`（快照就绪）或 `pending`（挂载已成立、首轮重算在途，由推送/重试收敛）——
+/// **冷窗口不是错误**（2026-10 CI 事故：慢机上超时被当成失败）。
+/// 「当前视图」在前端只有一个派生函数，它是本命令的唯一调用方；
+/// 编排逻辑见 `git::services::status::activate`。
 #[tauri::command]
 pub async fn set_active_workspace(
     project_id: String,
     worktree_path: Option<String>,
     app: tauri::AppHandle,
     state: State<'_, AppStateWrapper>,
-) -> Result<GitStatusSnapshot, AppError> {
+) -> Result<crate::git::services::status::WorkspaceActivation, AppError> {
     let (_t, repo) = state
         .resolve_workspace(&project_id, worktree_path.as_deref())
         .await?;

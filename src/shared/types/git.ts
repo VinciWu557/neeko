@@ -276,6 +276,19 @@ export interface GitStatusSnapshot {
   behind: number;
 }
 
+/**
+ * `set_active_workspace` 的结果：**「未就绪」是一等状态，不是错误**（与 Rust
+ * `WorkspaceActivation` 同形，serde tag = `state`）。
+ *
+ * `pending` = 挂载已成立、首个快照尚未算出（push 生产者的冷窗口）。慢环境（CI 冷 FS）
+ * 上首轮重算必然超过任何固定预算 —— 把超时当错误会让正确性依赖环境延迟。收敛有两条
+ * 通道：`useActiveWorkspaceSync` 的重试环（判据 = 槽位为空）+ `git-status-snapshot`
+ * 推送事件。`ready` 之外的一切都是真失败（项目解析失败 / 非 git 库），仍走错误空间。
+ */
+export type WorkspaceActivation =
+  | { state: 'ready'; snapshot: GitStatusSnapshot }
+  | { state: 'pending'; workspace_key: string };
+
 /** `git-changed` 事件载荷：某单元的 git 元数据（HEAD 等）变了 → 「该重查了」的提示。
  * 事实本身由 `git-status-snapshot` 携带；旧形态是裸 project_id 字符串（缺单元维度）。 */
 export interface GitChangedEvent {

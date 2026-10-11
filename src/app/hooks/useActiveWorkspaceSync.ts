@@ -23,7 +23,8 @@ const ACTIVATION_RETRY: RetryPolicy = { maxAttempts: 4, baseDelayMs: 250, maxDel
  * 「当前视图是哪个Workspace」→ 后端挂载 的唯一同步点（决策 D-B 的落地点）。
  *
  * **形态是 reconciliation，不是事件响应**：收敛目标是「当前视图单元此刻有权威快照」这一个
- * 状态，而不是「某次请求返回了什么」。`mounted` / `stale` / `failed` 都只描述那一次请求，
+ * 状态，而不是「某次请求返回了什么」。`mounted` / `pending` / `stale` / `failed` 都只描述
+ * 那一次请求（`pending` = 后端冷窗口：挂载已成立、首快照在途，**不是错误**），
  * 而失败与「槽位被别的写者作废」之后意图可以完全没变 —— 旧实现正是在这里失败：它按结局分支，
  * 而失败时只把一个 ref 置回 null，ref 不参与渲染 ⇒ 没有任何东西会再发起一次，界面永久停在
  * `Loading changes…`。

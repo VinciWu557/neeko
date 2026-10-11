@@ -30,4 +30,5 @@ export type {
   StashEntry,
   StashActionResult,
   GitStatusSnapshot,
+  WorkspaceActivation,
 } from '@/shared/types/git';

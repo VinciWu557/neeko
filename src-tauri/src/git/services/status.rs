@@ -11,8 +11,10 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+
 use crate::common::executor::factory::ExecTarget;
-use crate::common::file::watcher::WatcherEventSink;
+use crate::common::file::watcher::{WatcherEventSink, WatcherManager};
 use crate::common::git::status_worker::{GitStatusSnapshot, RECALC_WAIT_TIMEOUT};
 use crate::common::git::transport::GitTransport;
 use crate::common::git::WorkspaceRef;
@@ -82,18 +84,8 @@ pub async fn read_workspace_status(
 ) -> Result<GitStatusSnapshot, AppError> {
     let manager = state.watcher_manager.clone();
     if manager.is_watched(repo) {
-        if let Some(snap) = manager.snapshot(repo) {
-            return Ok((*snap).clone());
-        }
-        // 情形 2：Condvar 等待是阻塞原语 → 经 run_blocking 隔离（红线 3）
-        let waiter = state.watcher_manager.clone();
-        let wait_repo = repo.clone();
-        let _ = run_blocking(move || {
-            waiter.poke_status_worker_and_wait(&wait_repo, RECALC_WAIT_TIMEOUT)
-        })
-        .await;
-        if let Some(snap) = manager.snapshot(repo) {
-            return Ok((*snap).clone());
+        if let Some(snap) = read_mounted_snapshot(&manager, repo).await {
+            return Ok(Arc::unwrap_or_clone(snap));
         }
         return Err(AppError::NotFound(format!(
             "status for workspace {} is not available yet",
@@ -103,6 +95,29 @@ pub async fn read_workspace_status(
     // 情形 3：没有 push 生产者，缓存不可信 ⇒ 每次读都经 transport 现算
     let (target, _) = state.resolve_project(repo.project_id())?;
     compute_and_record(state, repo, &target).await
+}
+
+/// 读取**挂载中**单元的权威快照：冷窗口内有界等待一轮重算落地后重读。
+///
+/// 有界等待是**延迟优化**（多数情况毫秒级就绪，避免首屏闪加载态），不是正确性判据 ——
+/// 等待本身是事件驱动的（`poke` 主动触发一轮重算 + Condvar 谓词命中即返，预算只防死锁）。
+/// 返回 `None` = 预算内未就绪，**语义由调用方定义**（读命令视为「暂不可用」，激活命令
+/// 视为 [`WorkspaceActivation::Pending`]）—— 本函数不判错：错误空间只留调用方自己的前置
+/// 校验，环境延迟不得升级成错误（2026-10 CI 事故的根因）。
+async fn read_mounted_snapshot(
+    manager: &WatcherManager,
+    repo: &WorkspaceRef,
+) -> Option<Arc<GitStatusSnapshot>> {
+    if let Some(snap) = manager.snapshot(repo) {
+        return Some(snap);
+    }
+    // Condvar 等待是阻塞原语 → 经 run_blocking 隔离（红线 3）
+    let waiter = manager.clone();
+    let wait_repo = repo.clone();
+    let _ =
+        run_blocking(move || waiter.poke_status_worker_and_wait(&wait_repo, RECALC_WAIT_TIMEOUT))
+            .await;
+    manager.snapshot(repo)
 }
 
 /// 现算一次并登记（pull 生产者）。WSL / SSH / 未挂载单元专用。
@@ -153,16 +168,55 @@ pub const fn supports_push_producer(target: &ExecTarget) -> bool {
     matches!(target, ExecTarget::Local)
 }
 
-/// 激活一个Workspace：释放其它单元的挂载 → 挂载本单元 → 有界等待首个快照。
+/// Workspace 激活命令的结果：**「未就绪」是一等状态，不是错误**。
+///
+/// 冷启动窗口（挂载已成立、worker 首轮重算尚未落地）在慢环境（CI 冷 FS / Windows
+/// Defender）上必然超过任何固定预算 —— 把超时当错误，正确性就依赖环境延迟
+/// （2026-10 CI 事故：`activate_*` 在 windows-latest 上超时 panic）。
+/// `Pending` 的收敛通道有两条且都已存在：前端 reconciliation 环重试 + `git-status-snapshot`
+/// 推送事件。错误空间只留：项目解析失败、非 git 库、任务 join 失败。
+#[derive(Debug, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum WorkspaceActivation {
+    /// 权威快照已就绪（push 冷窗口内就绪，或 pull 分支现算完成 —— pull 恒 `Ready`）。
+    Ready {
+        /// 权威快照（与 `git-status-snapshot` 事件同源同版本）。
+        snapshot: GitStatusSnapshot,
+    },
+    /// 挂载已成立，首个快照尚未算出（仅 push 生产者的冷窗口）。
+    Pending {
+        /// 被激活单元的 key（供调用方核对迟到的 Pending 属于哪次激活）。
+        workspace_key: String,
+    },
+}
+
+/// 冷窗口裁决（纯映射，便于直测）：预算内等不到首份快照是**合法结局** —— 挂载已成立、
+/// 数据在途（worker 首轮重算），由推送事件与重试环收敛，**绝不进入错误空间**。
+fn first_snapshot_outcome(
+    snapshot: Option<Arc<GitStatusSnapshot>>,
+    workspace_key: &str,
+) -> WorkspaceActivation {
+    match snapshot {
+        Some(snap) => WorkspaceActivation::Ready {
+            snapshot: Arc::unwrap_or_clone(snap),
+        },
+        None => WorkspaceActivation::Pending {
+            workspace_key: workspace_key.to_string(),
+        },
+    }
+}
+
+/// 激活一个Workspace：释放其它单元的挂载 → 挂载本单元 → 取首个快照。
 ///
 /// **为什么由前端显式驱动**：决策 D-B 是「只挂当前视图所在的那个单元」，每项目常驻
 /// 至多一套资源。挂载/释放因此必须有一个唯一入口 —— 否则「谁在看」又会散落到各处，
 /// 与本次要删除的那些「读全局镜像猜身份」的路径同构。
 ///
 /// 副作用说明：挂载后立刻作废该单元此前可能残留的快照（见 `WatcherManager::watch`），
-/// 因此本命令返回的必然是**挂载后重算**的结果，不是切走前的旧数据。
+/// 因此结果必然是**挂载后重算**的，不是切走前的旧数据。
 ///
-/// 远端（WSL / SSH）不挂载，但仍然收口（释放上一个本地项目的挂载）后立刻 pull 一次。
+/// 远端（WSL / SSH）不挂载，但仍然收口（释放上一个本地项目的挂载）后立刻 pull 一次，
+/// 恒返回 [`WorkspaceActivation::Ready`]。
 ///
 /// **依赖倒置**：挂载所需的事件出口以端口 [`WatcherEventSink`] 注入，本函数不再接收
 /// `tauri::AppHandle`、也不自己 `new AppHandleSink` —— 交付适配器的构造属于命令边界
@@ -172,7 +226,7 @@ pub async fn activate(
     state: &AppStateWrapper,
     sink: Arc<dyn WatcherEventSink>,
     repo: &WorkspaceRef,
-) -> Result<GitStatusSnapshot, AppError> {
+) -> Result<WorkspaceActivation, AppError> {
     let (target, _) = state.resolve_project(repo.project_id())?;
     activate_with(state, sink, repo, &target, supports_push_producer(&target)).await
 }
@@ -188,7 +242,7 @@ async fn activate_with(
     repo: &WorkspaceRef,
     transport: &dyn GitTransport,
     has_push_producer: bool,
-) -> Result<GitStatusSnapshot, AppError> {
+) -> Result<WorkspaceActivation, AppError> {
     // 仓库存在性由 transport 判定（本地 fs 判定会误杀 WSL / SSH 单元）
     if !transport.is_git_repo(repo.root()).await {
         return Err(AppError::NotFound(format!(
@@ -204,7 +258,8 @@ async fn activate_with(
         let manager = state.watcher_manager.clone();
         let keep = repo.key();
         let _ = run_blocking(move || manager.release_except(&keep)).await;
-        return compute_and_record(state, repo, transport).await;
+        let snapshot = compute_and_record(state, repo, transport).await?;
+        return Ok(WorkspaceActivation::Ready { snapshot });
     }
     let manager = state.watcher_manager.clone();
     let watch_repo = repo.clone();
@@ -221,17 +276,70 @@ async fn activate_with(
         );
     }
 
-    read_workspace_status(state, repo).await
+    // 挂载未成立（`mount_only` 内部的 setup 失败已记录告警、没有 push 生产者）⇒ 退化为
+    // 一次性 pull：与旧读路径同语义 —— 至少给出数据，槽位有权威值可渲染。
+    if !state.watcher_manager.is_watched(repo) {
+        let snapshot = compute_and_record(state, repo, transport).await?;
+        return Ok(WorkspaceActivation::Ready { snapshot });
+    }
+    // 挂载已成立：取首份快照。预算内未就绪（冷窗口）⇒ `Pending`：挂载已成立、数据在途，
+    // 由推送事件与前端重试环收敛 —— 这里**绝不返回 Err**（见 `WorkspaceActivation` 的说明）。
+    Ok(first_snapshot_outcome(
+        read_mounted_snapshot(&state.watcher_manager, repo).await,
+        &repo.key(),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::time::{Duration, Instant};
 
-    use super::{activate, activate_with, read_workspace_status, supports_push_producer};
+    use super::{
+        activate, activate_with, first_snapshot_outcome, read_workspace_status,
+        supports_push_producer, WorkspaceActivation,
+    };
     use crate::common::executor::factory::ExecTarget;
     use crate::common::file::watcher::CollectingSink;
     use crate::common::testing::{init_git_repo, plain_project_state};
+
+    /// 首份快照事件的宽容上限（git 项目要等 worker 起 git 子进程；慢机兜底）。
+    const FIRST_EVENT_TIMEOUT: Duration = Duration::from_secs(8);
+
+    /// 有界等待注入端口收到首个 watcher 事件。
+    ///
+    /// 事件驱动（非 sleep 定论）：冷窗口语义下**事件是收敛的唯一保证**，测试因此断言
+    /// 「最终到达」（`≥`），不依赖任何一次读接口的预算内就绪。
+    async fn wait_for_sink_event(sink: &CollectingSink, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if !sink.event_names().is_empty() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        false
+    }
+
+    /// **冷窗口裁决（本批核心语义）**：预算内等不到首份快照 ⇒ `Pending`（挂载成立、
+    /// 数据在途），**不是错误**。
+    ///
+    /// 直测纯映射而非真实时序：超时是否发生由环境决定（不可控），但**归宿**必须恒为
+    /// `Ready | Pending` 两态之一 —— 2026-10 CI 事故正是慢机上的超时被映射进了 `Err`。
+    /// 入参 key 用占位串（不构造真 key 形态）：本函数只做透传，`WorkspaceRef::key()`
+    /// 的单点约束见 `check_workspace_identity`。
+    #[test]
+    fn cold_window_maps_to_pending_never_to_error() {
+        let outcome = first_snapshot_outcome(None, "cold-window-unit");
+        match outcome {
+            WorkspaceActivation::Pending { workspace_key } => {
+                assert_eq!(workspace_key, "cold-window-unit");
+            }
+            WorkspaceActivation::Ready { .. } => {
+                panic!("None 不得映射为 Ready（无数据可携带）")
+            }
+        }
+    }
 
     /// **AC13 的分叉点**：远端单元没有 push 生产者，因此 `activate` 必须绕开挂载去 pull。
     /// 若这条判据写反（例如误把 WSL 也当 Local 挂上 watcher），远端项目的 Changes 面板
@@ -264,7 +372,8 @@ mod tests {
     }
 
     /// 服务层编排可被**注入端口**驱动（旧签名收 `&AppHandle` ⇒ 本用例根本无法编译）。
-    /// 这条同时钉住：Local 单元走挂载、首份快照经注入的 sink 投递、返回权威快照。
+    /// 这条同时钉住：Local 单元走挂载、首份快照**最终**经注入的 sink 投递（`≥` 断言）、
+    /// 冷窗口不进入错误空间（2026-10 CI 事故的回归契约）。
     #[tokio::test]
     async fn activate_mounts_the_unit_and_emits_to_the_injected_sink() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -276,16 +385,21 @@ mod tests {
             .await
             .expect("resolve repo");
         let sink = CollectingSink::new();
-        let snapshot = activate(&state, sink.clone(), &repo)
+        let outcome = activate(&state, sink.clone(), &repo)
             .await
-            .expect("activate local workspace");
+            .expect("冷窗口必须是合法结局（Ready/Pending），不得是错误");
 
-        assert_eq!(snapshot.workspace_key, repo.key());
         assert!(state.watcher_manager.is_watched(&repo));
+        // 收敛走**事件通道**（冷窗口语义下事件是唯一保证）：
+        // 无论结果就绪与否，首份快照都必须经注入的端口投递。
         assert!(
-            !sink.event_names().is_empty(),
+            wait_for_sink_event(&sink, FIRST_EVENT_TIMEOUT).await,
             "首份快照应经注入的端口投递（服务层不依赖交付机制）"
         );
+        // 就绪分支的载荷身份必须是被激活单元（Pending 无数据可查，由上面的事件断言兜住）
+        if let WorkspaceActivation::Ready { snapshot } = outcome {
+            assert_eq!(snapshot.workspace_key, repo.key());
+        }
     }
 
     /// D-B「至多一套挂载」在**编排层**成立：激活新单元必须释放旧单元。
@@ -308,12 +422,12 @@ mod tests {
 
         activate(&state, CollectingSink::new(), &repo_a)
             .await
-            .expect("activate a");
+            .expect("activate a（冷窗口不得为错误）");
         assert!(state.watcher_manager.is_watched(&repo_a));
 
         activate(&state, CollectingSink::new(), &repo_b)
             .await
-            .expect("activate b");
+            .expect("activate b（冷窗口不得为错误）");
         assert!(state.watcher_manager.is_watched(&repo_b));
         assert!(
             !state.watcher_manager.is_watched(&repo_a),
@@ -344,14 +458,21 @@ mod tests {
         // A 按 Local 正常挂载（有 push 生产者）
         activate(&state, CollectingSink::new(), &repo_a)
             .await
-            .expect("mount a");
+            .expect("mount a（冷窗口不得为错误）");
         assert!(state.watcher_manager.is_watched(&repo_a));
 
         // B 走「远端形态」：本地 transport + 无 push 生产者
         let sink = CollectingSink::new();
-        let snapshot = activate_with(&state, sink.clone(), &repo_b, &ExecTarget::Local, false)
+        let outcome = activate_with(&state, sink.clone(), &repo_b, &ExecTarget::Local, false)
             .await
             .expect("pull b");
+        // pull 分支是**同步现算**：不存在冷窗口，必返 Ready（Pending 只属于 push 生产者）。
+        let snapshot = match outcome {
+            WorkspaceActivation::Ready { snapshot } => snapshot,
+            WorkspaceActivation::Pending { .. } => {
+                panic!("pull 分支（现算）必返 Ready —— Pending 只属于 push 生产者的冷窗口")
+            }
+        };
 
         assert_eq!(snapshot.workspace_key, repo_b.key());
         assert!(

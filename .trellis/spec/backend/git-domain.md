@@ -392,7 +392,11 @@ golden 测试钉住（`golden_key_format_matches_frontend_contract` ↔ `workspa
   冷挂载窗口（已挂载、尚无快照）仍然登记 —— 那正是 pull 存在的意义。
 
 **挂载唯一入口（已被护栏钉住）**：`set_active_workspace` → `git/services/status.rs::activate`，语义 =
-释放该项目下其它单元 → 挂载目标单元 → 有界等待首个快照；生产代码里 `WatcherManager::watch` 的调用点由护栏第 5 类判据限定为**只有** `activate`（实测破过一次：`app.rs` 启动恢复与 `set_active_project` 各按项目预挂主仓单元，于是每次启动都有两个发起点，日志报 `already watched`）。每项目同时**至多一套**挂载资源
+释放该项目下其它单元 → 挂载目标单元 → 取首个快照，返回二值状态 `WorkspaceActivation`（serde tag = `state`）：
+`ready`（快照就绪）| `pending`（挂载已成立、首轮重算在途 —— **冷窗口不是错误**，由
+`git-status-snapshot` 推送与前端 `useActiveWorkspaceSync` 的重试环收敛；错误空间只留解析失败 /
+非 git 库；pull 分支（WSL / SSH）恒 `ready`）。有界等待（`RECALC_WAIT_TIMEOUT`）只是延迟优化，
+不是正确性判据（2026-10 CI 事故：慢机上超时曾被当成错误）。生产代码里 `WatcherManager::watch` 的调用点由护栏第 5 类判据限定为**只有** `activate`（实测破过一次：`app.rs` 启动恢复与 `set_active_project` 各按项目预挂主仓单元，于是每次启动都有两个发起点，日志报 `already watched`）。每项目同时**至多一套**挂载资源
 （用户决策 D-B）。前端唯一发起点是 `app/hooks/useActiveWorkspaceSync.ts`；用户动作（点
 worktree、切回主仓）只写激活态，不直接发命令 —— 挂载/释放必须与「当前视图」严格一致，两个
 发起点就有时序差。

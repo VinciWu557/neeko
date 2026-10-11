@@ -11,7 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { useActivateWorkspace } from '@/features/git/hooks/useActivateWorkspace';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
-import type { GitStatusSnapshot } from '@/shared/types';
+import type { GitStatusSnapshot, WorkspaceActivation } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 const MAIN_KEY = WorkspaceSession.of('p1', null).key;
@@ -32,10 +32,15 @@ function snapshotFor(key: string, version: number): GitStatusSnapshot {
   };
 }
 
+/** 后端 `set_active_workspace` 的 ready 信封（与 Rust `WorkspaceActivation` 同形）。 */
+function ready(snapshot: GitStatusSnapshot): WorkspaceActivation {
+  return { state: 'ready', snapshot };
+}
+
 function setActive() {
   invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
     Promise.resolve(
-      snapshotFor(WorkspaceSession.of('p1', args?.worktreePath ?? null ?? null).key, 1),
+      ready(snapshotFor(WorkspaceSession.of('p1', args?.worktreePath ?? null ?? null).key, 1)),
     ),
   );
 }
@@ -103,7 +108,7 @@ describe('useActivateWorkspace —— 后端只挂当前视图单元（决策 D-
   });
 
   it('视图已切走的迟到响应被丢弃（切换竞态）', async () => {
-    let resolveLate: (v: GitStatusSnapshot) => void = () => {};
+    let resolveLate: (v: WorkspaceActivation) => void = () => {};
     invokeSpy.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -119,12 +124,12 @@ describe('useActivateWorkspace —— 后端只挂当前视图单元（决策 D-
     useWorkspaceStore.setState({
       byProject: { p1: { activePath: '/wt/b', activeBranch: 'b', opened: [] } },
     });
-    invokeSpy.mockResolvedValueOnce(snapshotFor(WT_B, 2));
+    invokeSpy.mockResolvedValueOnce(ready(snapshotFor(WT_B, 2)));
     await act(async () => {
       await result.current('/wt/b');
     });
 
-    resolveLate(snapshotFor(WT_A, 99));
+    resolveLate(ready(snapshotFor(WT_A, 99)));
     await pending;
 
     const store = useProjectStore.getState();
@@ -136,11 +141,27 @@ describe('useActivateWorkspace —— 后端只挂当前视图单元（决策 D-
     useWorkspaceStore.setState({
       byProject: { p1: { activePath: '/wt/b', activeBranch: 'b', opened: [] } },
     });
-    invokeSpy.mockResolvedValueOnce(snapshotFor(WT_A, 5));
+    invokeSpy.mockResolvedValueOnce(ready(snapshotFor(WT_A, 5)));
     const { result } = renderHook(() => useActivateWorkspace('p1'));
     await act(async () => {
       await result.current('/wt/a');
     });
+    expect(useProjectStore.getState().statuses[WT_A]).toBeUndefined();
+  });
+
+  it('冷窗口返回 pending ⇒ 不写槽位、不报错（收敛交给重试环与推送事件）', async () => {
+    useWorkspaceStore.setState({
+      byProject: { p1: { activePath: '/wt/a', activeBranch: 'a', opened: [] } },
+    });
+    invokeSpy.mockResolvedValueOnce({ state: 'pending', workspace_key: WT_A });
+    const { result } = renderHook(() => useActivateWorkspace('p1'));
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = await result.current('/wt/a');
+    });
+
+    expect(outcome).toBe('pending');
+    // 「未知」≠「干净」：不写空列表；也没有失败语义（不是 failed）
     expect(useProjectStore.getState().statuses[WT_A]).toBeUndefined();
   });
 
@@ -169,7 +190,7 @@ describe('useActivateWorkspace —— 后端是路径身份的唯一归一点（
     const canonical = '/private/tmp/x/wt-a';
     useWorkspaceStore.getState().setActiveWorkspace('p1', hint, 'feat-a');
     invokeSpy.mockImplementation(() =>
-      Promise.resolve(snapshotFor(WorkspaceSession.of('p1', canonical ?? null).key, 1)),
+      Promise.resolve(ready(snapshotFor(WorkspaceSession.of('p1', canonical ?? null).key, 1))),
     );
 
     const { result } = renderHook(() => useActivateWorkspace('p1'));
