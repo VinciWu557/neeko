@@ -200,9 +200,10 @@ mod tests {
         child.kill().await.expect("kill");
 
         // 后代必须死亡:kill(pid, 0) 返回 ESRCH(孙进程被孤儿化后由 launchd 收割)。
+        let pid = i32::try_from(grandchild).expect("grandchild pid fits i32");
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let alive = unsafe { libc::kill(grandchild as i32, 0) } == 0;
+            let alive = unsafe { libc::kill(pid, 0) } == 0;
             if !alive {
                 break;
             }

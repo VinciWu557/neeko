@@ -1037,6 +1037,7 @@ mod tests {
     ///   - jdtls 1.61.0：不声明 → 33 项全部内联；声明 → 改走 resolve
     ///     （resolve 返回 `import java.awt.List;`）
     ///   - gopls v0.23.0：恒内联，对此声明无感
+    ///
     /// 三种策略由**同一套**通用 resolver 兜住，故能力声明不带语言差异。
     #[test]
     fn client_capabilities_advertise_additional_text_edits_resolve() {

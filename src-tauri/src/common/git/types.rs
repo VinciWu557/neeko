@@ -88,7 +88,7 @@ mod tests {
             } => {
                 assert_eq!(remote_url, "https://github.com/user/repo");
                 assert_eq!(username_hint, Some("alice".to_string()));
-                assert_eq!(ssh, false);
+                assert!(!ssh);
             }
             _ => panic!("deserialized incorrectly"),
         }

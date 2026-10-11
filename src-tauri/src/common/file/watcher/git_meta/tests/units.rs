@@ -168,14 +168,14 @@ fn classify_refs_paths_as_refs_changed() {
         PathBuf::from("git/refs/tags/v1.0.4"),
     ] {
         assert_eq!(
-            classify_git_meta_event(&[p.clone()], &head, &index, &refs, &packed),
+            classify_git_meta_event(std::slice::from_ref(&p), &head, &index, &refs, &packed),
             GitMetaChange::RefsChanged,
             "refs 路径必须归类为 RefsChanged: {}",
             p.display()
         );
     }
     assert_eq!(
-        classify_git_meta_event(&[packed.clone()], &head, &index, &refs, &packed),
+        classify_git_meta_event(std::slice::from_ref(&packed), &head, &index, &refs, &packed),
         GitMetaChange::RefsChanged,
         "packed-refs（gc 打包后的 refs）必须归类为 RefsChanged"
     );

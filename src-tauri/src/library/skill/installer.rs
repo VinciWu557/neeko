@@ -239,43 +239,6 @@ fn copy_skill_dir(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::tempdir;
-
-    #[test]
-    fn unique_dest_returns_base_when_free() {
-        let tmp = tempdir().unwrap();
-        let dest = unique_skill_dest(tmp.path(), "my-skill", "my-skill");
-        assert_eq!(dest, tmp.path().join("my-skill"));
-    }
-
-    #[test]
-    fn unique_dest_uses_suffix_for_collision() {
-        let tmp = tempdir().unwrap();
-        let dir = tmp.path().join("my-skill");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("SKILL.md"), "---\nname: different\n---\n").unwrap();
-        let dest = unique_skill_dest(tmp.path(), "my-skill", "my-skill");
-        assert_eq!(dest, tmp.path().join("my-skill-2"));
-    }
-
-    #[test]
-    fn copy_skill_dir_skips_git() {
-        let tmp = tempdir().unwrap();
-        let src = tmp.path().join("src");
-        fs::create_dir_all(src.join(".git")).unwrap();
-        fs::write(src.join(".git/config"), "git").unwrap();
-        fs::write(src.join("SKILL.md"), "content").unwrap();
-        let dst = tmp.path().join("dst");
-        copy_skill_dir(&src, &dst).unwrap();
-        assert!(dst.join("SKILL.md").exists());
-        assert!(!dst.join(".git").exists());
-    }
-}
-
 /// Clone a git repository to a temp directory and list available skills.
 pub fn preview_git_install(
     clone_url: &str,
@@ -695,4 +658,41 @@ pub fn update_skill(skill: &super::types::SkillRecord) -> Result<super::types::S
         created_at: skill.created_at,
         updated_at: now,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn unique_dest_returns_base_when_free() {
+        let tmp = tempdir().unwrap();
+        let dest = unique_skill_dest(tmp.path(), "my-skill", "my-skill");
+        assert_eq!(dest, tmp.path().join("my-skill"));
+    }
+
+    #[test]
+    fn unique_dest_uses_suffix_for_collision() {
+        let tmp = tempdir().unwrap();
+        let dir = tmp.path().join("my-skill");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "---\nname: different\n---\n").unwrap();
+        let dest = unique_skill_dest(tmp.path(), "my-skill", "my-skill");
+        assert_eq!(dest, tmp.path().join("my-skill-2"));
+    }
+
+    #[test]
+    fn copy_skill_dir_skips_git() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::write(src.join(".git/config"), "git").unwrap();
+        fs::write(src.join("SKILL.md"), "content").unwrap();
+        let dst = tmp.path().join("dst");
+        copy_skill_dir(&src, &dst).unwrap();
+        assert!(dst.join("SKILL.md").exists());
+        assert!(!dst.join(".git").exists());
+    }
 }

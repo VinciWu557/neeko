@@ -349,7 +349,7 @@ mod tests {
         let rust = registry
             .resolve_by_language("rust")
             .expect("rust plugin exists");
-        let hint = install_hint(&rust).expect("rust 插件有安装配方");
+        let hint = install_hint(rust).expect("rust 插件有安装配方");
         assert!(hint.contains("`rustup`"), "提示必须点名安装工具: {hint}");
         assert!(hint.contains("needs:"), "提示必须带前置条件说明: {hint}");
     }

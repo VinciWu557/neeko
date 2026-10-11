@@ -32,7 +32,7 @@ pub(crate) struct DrainBuffer {
 
 impl DrainBuffer {
     #[cfg(test)]
-    fn new(max_capacity: usize) -> Self {
+    const fn new(max_capacity: usize) -> Self {
         Self {
             data: Vec::new(),
             max_capacity,
@@ -399,6 +399,10 @@ mod tests {
 
         const TOTAL: usize = 50_000;
         const CHUNK: usize = 97;
+        // 字节样本：`i % 251 < 251` 恒可进 u8（单点转换，生产/断言两处复用）。
+        fn sample_byte(i: usize) -> u8 {
+            u8::try_from(i % 251).expect("mod 251 fits u8")
+        }
         let drain = Arc::new(SessionDrain::with_capacity(1024));
         let wakes = Arc::new(AU::new(0));
 
@@ -409,7 +413,7 @@ mod tests {
                 let mut sent = 0usize;
                 while sent < TOTAL {
                     let end = (sent + CHUNK).min(TOTAL);
-                    let bytes: Vec<u8> = (sent..end).map(|i| (i % 251) as u8).collect();
+                    let bytes: Vec<u8> = (sent..end).map(sample_byte).collect();
                     // Retry on saturation — same contract as OutputPump.
                     while !drain.push(&bytes, {
                         let wakes = wakes.clone();
@@ -443,12 +447,11 @@ mod tests {
             })
         };
 
-        let sent_handle = producer.join().expect("producer panicked");
+        producer.join().expect("producer panicked");
         let received = consumer.join().expect("consumer panicked");
-        assert_eq!(sent_handle, ());
         assert_eq!(received.len(), TOTAL);
         for (i, b) in received.iter().enumerate() {
-            assert_eq!(*b, (i % 251) as u8, "byte order preserved at {i}");
+            assert_eq!(*b, sample_byte(i), "byte order preserved at {i}");
         }
         assert!(wakes.load(Ordering::Relaxed) >= 1);
     }

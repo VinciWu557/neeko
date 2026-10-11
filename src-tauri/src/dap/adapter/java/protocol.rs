@@ -521,7 +521,7 @@ mod tests {
             "\"--reports-dir=/tmp/my proj/.neeko\""
         );
         assert_eq!(join_launch_args(&["a\"b".into()]), "\"a\\\"b\"");
-        assert_eq!(join_launch_args(&["".into()]), "\"\"");
+        assert_eq!(join_launch_args(&[String::new()]), "\"\"");
         assert_eq!(join_launch_args(&[]), "");
     }
 

@@ -997,18 +997,20 @@ mod tests {
 
     #[test]
     fn parse_source_content_rejects_over_limit_instead_of_truncating() {
-        let over = "x".repeat(MAX_SOURCE_BYTES as usize + 1);
+        // 夹具尺寸：`MAX_SOURCE_BYTES` 是 u64，测试按 usize 使用（单次转换，三处复用）。
+        let limit = usize::try_from(MAX_SOURCE_BYTES).expect("source limit fits usize");
+        let over = "x".repeat(limit + 1);
         assert!(matches!(
             parse_source_content(&json!({ "content": over })),
             Err(AppError::Dap(_))
         ));
         // 恰好等于上限 → 放行（边界）
-        let exact = "x".repeat(MAX_SOURCE_BYTES as usize);
+        let exact = "x".repeat(limit);
         assert_eq!(
             parse_source_content(&json!({ "content": exact }))
                 .expect("exact limit")
                 .len(),
-            MAX_SOURCE_BYTES as usize
+            limit
         );
     }
 

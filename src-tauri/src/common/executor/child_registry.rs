@@ -122,6 +122,7 @@ mod tests {
 
         // 只驱动「构造 KILL future」这一步（调用动作），不 await —— recorder 在动作调用时置位。
         dispatch(&kills, &|kill| {
+            #[allow(clippy::let_underscore_future)] // 有意丢弃 future：动作副作用已发生
             let _ = kill();
         });
 
@@ -132,6 +133,7 @@ mod tests {
     fn dispatch_on_empty_is_noop() {
         let kills: Vec<KillFn> = Vec::new();
         dispatch(&kills, &|kill| {
+            #[allow(clippy::let_underscore_future)] // 空动作表：仅为覆盖「不做任何事」分支
             let _ = kill();
         });
     }

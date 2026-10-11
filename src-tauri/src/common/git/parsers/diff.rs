@@ -9,6 +9,10 @@ pub const DIFF_FULL_MAX_FILE_BYTES: u64 = 400_000;
 /// 超大文件全量模式回退的上下文行数（仍远大于折叠模式的 3 行）。
 pub const DIFF_FULL_FALLBACK_CONTEXT_LINES: u32 = 500;
 
+/// 编译期契约：回退上下文必须仍远大于折叠模式的 3 行 —— 原来这条判据写在单测里
+/// （对常量做运行期断言），常量改了却没人跑测试时挡不住；提到编译期后改错即编译失败。
+const _: () = assert!(DIFF_FULL_FALLBACK_CONTEXT_LINES > 3);
+
 /// 根据单文件字节数决定全量上下文行数：小文件完整上下文，超大文件受限上下文。
 #[must_use]
 pub const fn full_diff_context_lines(file_bytes: u64) -> u32 {
@@ -343,8 +347,7 @@ mod diff_context_guard_tests {
             full_diff_context_arg(DIFF_FULL_MAX_FILE_BYTES + 1),
             format!("-U{DIFF_FULL_FALLBACK_CONTEXT_LINES}")
         );
-        // 回退上下文仍远大于折叠模式的 3 行
-        assert!(DIFF_FULL_FALLBACK_CONTEXT_LINES > 3);
+        // 「回退上下文 > 3 行」已提升为编译期契约（见文件头 `const _: ()`）。
     }
 }
 
@@ -361,7 +364,7 @@ mod diff_payload_cap_tests {
             old_start: 0,
             old_lines: 0,
             new_start: 1,
-            new_lines: count as u32,
+            new_lines: u32::try_from(count).expect("hunk line count fits u32"),
             lines: (0..count)
                 .map(|_| DiffLine::Added(content.to_string()))
                 .collect(),

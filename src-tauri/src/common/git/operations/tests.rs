@@ -1341,8 +1341,11 @@ async fn get_commit_log_scoped_to_head_excludes_isolated_tool_refs() {
 
 // ── commit_files：输出实时进 Console（on_output 流式）────────────────────
 
-fn collecting_sink() -> (ExecChunkSink, Arc<Mutex<Vec<(ExecStream, String)>>>) {
-    let calls: Arc<Mutex<Vec<(ExecStream, String)>>> = Arc::new(Mutex::new(Vec::new()));
+/// `commit_files` 流式输出的记录槽：`(stream, text)` 序列（调用点据此断言实时性）。
+type RecordedChunks = Arc<Mutex<Vec<(ExecStream, String)>>>;
+
+fn collecting_sink() -> (ExecChunkSink, RecordedChunks) {
+    let calls: RecordedChunks = Arc::new(Mutex::new(Vec::new()));
     let sink: ExecChunkSink = {
         let calls = Arc::clone(&calls);
         Arc::new(move |stream: ExecStream, text: &str| {

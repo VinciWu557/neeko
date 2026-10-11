@@ -447,21 +447,25 @@ pnpm guards run --stage local   # 只跑护栏
 
 部分 deny 级别的 lint（如 `cast_possible_truncation`、`wildcard_imports`）在现有代码中存在大量违反，当前使用 `#[allow(...)]` 逐处豁免。新代码应避免引入新违规。
 
-#### `unwrap_used` 治理状态
+#### `unwrap_used` / `expect_used` 治理状态
 
-`clippy::unwrap_used` 已纳入 `src-tauri/src/lib.rs` 的 `#![deny(...)]` 属性，在 crate 级强制执行。`Cargo.toml` 保留 `unwrap_used = "warn"` 作为默认级别，`lib.rs` 的 `deny` 属性覆盖之。
+两者都在 `Cargo.toml` 的 `[lints.clippy]` 段声明为 **`deny`**：生产码在任何构建里都不允许
+`.unwrap()` / `.expect()`（由常规门禁的 clippy 构建保证 —— 它不带 `cfg(test)`，因此看不到测试码）。
 
 | 来源 | 级别 | 说明 |
 |------|------|------|
-| `Cargo.toml` 默认 | `warn` | 作为 fallback 级别 |
-| `lib.rs #![deny(...)]` | `deny` | 覆盖 Cargo.toml，在 crate 范围内强制执行 |
-| 状态 | ✅ drift 已解决 | 新代码不得引入新的 `.unwrap()`；使用 `.expect("infallible: ...")` 或 `?` 传播 |
+| `Cargo.toml [lints.clippy]` | `deny` | **生产码的唯一强制点**（`unwrap_used` + `expect_used`） |
+| `src/lib.rs` 的 `#![cfg_attr(test, allow(...))]` | `allow`（仅 test 构建） | 测试断言天然需要 expect/unwrap；显式豁免使 `cargo clippy --all-targets` 可用（见 gate `lint_rust_all_targets`） |
+| `tests/unit.rs` 顶部同名属性 | `allow`（同一口径） | 集成测试是**独立 crate**，`#![deny]` 与豁免都要各自声明 |
+| 状态 | ✅ | 生产码新代码不得引入 `.unwrap()`；测试码可用，但确属有意行为时才就地 `#[allow]` + 理由 |
+
+必须用 `allow` 而非 `warn`：源码里的 `warn` 挡不住命令行 `-D warnings`（2026-10-11 实测）。
 
 注意：`missing_docs` 是 rustc lint，必须放在 `[lints.rust]` 而非 `[lints.clippy]` 段。
 
 ### `#![deny(...)]` 属性
 
-在 `src-tauri/src/lib.rs` 顶部声明的 deny 属性覆盖 Cargo.toml 的 warn 级别，强制执行关键 lints：
+在 `src-tauri/src/lib.rs` 顶部声明的 deny 属性（与 `Cargo.toml [lints.clippy]` 的 deny 互补，两者**都**生效）：
 
 ```rust
 #![deny(
@@ -469,9 +473,10 @@ pnpm guards run --stage local   # 只跑护栏
     clippy::todo,
     clippy::print_stdout,
     clippy::wildcard_imports,
-    clippy::unwrap_used,
     unused_must_use
 )]
+// 测试码豁免：生产码仍由 Cargo.toml 的 deny 保证（见上表）
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 ```
 
 未能纳入 deny 的 lints（当前保留为 `warn`）：

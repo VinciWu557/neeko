@@ -111,7 +111,6 @@ impl Watcher for PlatformWatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use notify::Watcher as _;
 
     /// `Native` 后端没有物理排除能力：`set_exclusion_paths` 必须 no-op 并返回 false。
     #[test]

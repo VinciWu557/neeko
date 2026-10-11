@@ -350,7 +350,7 @@ mod tests {
         let class_ok = json!([[], ["/cp/target/classes"]]);
         match decide_classpath(Some(("w", Ok(empty_candidate))), Ok(class_ok)) {
             ClasspathOutcome::ResolvedByClass { class_paths, .. } => {
-                assert_eq!(class_paths.len(), 1)
+                assert_eq!(class_paths.len(), 1);
             }
             other => panic!("expected ResolvedByClass, got {other:?}"),
         }

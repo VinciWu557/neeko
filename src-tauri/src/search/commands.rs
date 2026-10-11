@@ -120,8 +120,10 @@ mod tests {
 
     #[test]
     fn options_file_name_mode_serializes() {
-        let mut opts = SearchOptions::default();
-        opts.mode = SearchMode::FileName;
+        let opts = SearchOptions {
+            mode: SearchMode::FileName,
+            ..Default::default()
+        };
         let json = serde_json::to_string(&opts).unwrap();
         assert!(json.contains("\"mode\":\"FileName\""));
     }

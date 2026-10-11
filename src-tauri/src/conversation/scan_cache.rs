@@ -451,7 +451,8 @@ mod tests {
         reset_scan_parse_cache_for_tests();
         let mut tmp = NamedTempFile::new().unwrap();
         // One complete line + incomplete trailing payload without newline.
-        write!(tmp, "{}\n{}", r#"{"n":1}"#, r#"{"n":2"#).unwrap();
+        tmp.write_all(concat!(r#"{"n":1}"#, "\n", r#"{"n":2"#).as_bytes())
+            .unwrap();
         tmp.flush().unwrap();
 
         let (entries, consumed) = read_jsonl_from_offset(tmp.path(), 0).unwrap();
@@ -459,7 +460,7 @@ mod tests {
         // consumed should stop after the first line's newline, not include trailing junk.
         let content = std::fs::read(tmp.path()).unwrap();
         assert_eq!(
-            consumed as usize,
+            usize::try_from(consumed).expect("consumed offset fits usize"),
             content.iter().position(|&b| b == b'\n').unwrap() + 1
         );
 

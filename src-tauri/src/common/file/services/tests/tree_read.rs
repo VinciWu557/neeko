@@ -296,8 +296,7 @@ async fn flatten_join_result_degrades_to_none_on_join_failure() {
     // join 失败：panic 的 blocking 任务 join 返回 Err(JoinError)
     let join_err = tokio::task::spawn_blocking(|| panic!("simulated blocking panic"))
         .await
-        .err()
-        .expect("panic 的 blocking 任务 join 必须返回 Err");
+        .expect_err("panic 的 blocking 任务 join 必须返回 Err");
     let err_result: Result<Option<Arc<GitIgnoreFilter>>, _> = Err(join_err);
     assert!(
         flatten_join_result(err_result).is_none(),

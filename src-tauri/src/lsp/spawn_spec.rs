@@ -65,7 +65,7 @@ mod tests {
         let root = tempfile::tempdir().expect("tempdir");
         let root_str = root.path().to_string_lossy().to_string();
 
-        let ctx = LspExecContext::for_session(&plugin, root.path(), ExecTarget::Local);
+        let ctx = LspExecContext::for_session(plugin, root.path(), ExecTarget::Local);
 
         assert_eq!(ctx.cwd, root_str);
         assert!(

@@ -250,7 +250,7 @@ mod tests {
         );
         match classify_start_debug_error("Internal error: command handler crashed") {
             JavaDebugUnavailable::ProbeFailed(m) => {
-                assert_eq!(m, "Internal error: command handler crashed")
+                assert_eq!(m, "Internal error: command handler crashed");
             }
             other => panic!("expected ProbeFailed, got {other:?}"),
         }

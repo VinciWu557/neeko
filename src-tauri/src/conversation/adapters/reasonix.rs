@@ -932,11 +932,12 @@ mod tests {
             .filter_map(|e| e.ok())
         {
             let p = entry.path();
-            if p.is_file() && is_main_reasonix_session(p) {
-                if std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) > 5000 {
-                    found = Some(p.to_path_buf());
-                    break;
-                }
+            if p.is_file()
+                && is_main_reasonix_session(p)
+                && std::fs::metadata(p).map(|m| m.len()).unwrap_or(0) > 5000
+            {
+                found = Some(p.to_path_buf());
+                break;
             }
         }
         let Some(path) = found else {

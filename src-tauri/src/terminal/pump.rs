@@ -368,7 +368,7 @@ mod tests {
             },
             sink.with_rejections(1).into_flush_fn(),
         );
-        assert!(log.lock().unwrap().len() >= 1);
+        assert!(!log.lock().unwrap().is_empty());
         assert_eq!(joined(&log), b"one-two-three");
         assert_eq!(
             outcome.stats.bytes, 13,

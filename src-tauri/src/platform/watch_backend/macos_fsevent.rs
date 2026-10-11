@@ -770,8 +770,8 @@ mod tests {
         std::fs::create_dir_all(&visible).unwrap();
 
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-        let mut watcher =
-            MacFseventWatcher::with_exclusions(tx, &[excluded.clone()]).expect("construct watcher");
+        let mut watcher = MacFseventWatcher::with_exclusions(tx, std::slice::from_ref(&excluded))
+            .expect("construct watcher");
         watcher
             .watch(root, RecursiveMode::Recursive)
             .expect("watch root");

@@ -458,9 +458,7 @@ mod tests {
     #[test]
     fn unknown_type_rejected() {
         let bad = r#"{"type":"nonexistent_event","session_id":"s1"}"#;
-        serde_json::from_str::<StreamEvent>(bad)
-            .err()
-            .expect("should reject unknown type");
+        serde_json::from_str::<StreamEvent>(bad).expect_err("should reject unknown type");
     }
 }
 

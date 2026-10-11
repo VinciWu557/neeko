@@ -177,10 +177,12 @@ mod tests {
 
     #[test]
     fn build_grep_args_literal_with_globs() {
-        let mut opts = SearchOptions::default();
-        opts.include = Some(vec!["*.rs".into()]);
-        opts.exclude = Some(vec!["node_modules/**".into()]);
-        opts.whole_word = true;
+        let opts = SearchOptions {
+            include: Some(vec!["*.rs".into()]),
+            exclude: Some(vec!["node_modules/**".into()]),
+            whole_word: true,
+            ..Default::default()
+        };
         let args = build_grep_args("foo", &opts, "/proj");
         assert!(args.contains(&"-F".to_string()));
         assert!(args.contains(&"-w".to_string()));
@@ -194,8 +196,10 @@ mod tests {
 
     #[test]
     fn build_grep_args_regex_without_f() {
-        let mut opts = SearchOptions::default();
-        opts.regex = true;
+        let opts = SearchOptions {
+            regex: true,
+            ..Default::default()
+        };
         let args = build_grep_args(r"f\w+", &opts, "/proj");
         assert!(!args.contains(&"-F".to_string()));
     }

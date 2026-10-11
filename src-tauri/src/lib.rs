@@ -7,6 +7,11 @@
     clippy::wildcard_imports,
     unused_must_use
 )]
+// 测试码豁免口径：`AppError`/锁中毒等断言天然需要 expect/unwrap，而 `[lints.clippy]` 的
+// `deny` 面向**生产码**（见 Cargo.toml 注释）。在 crate 根显式降级为 warn，让
+// `cargo clippy --all-targets -D warnings`（更强口径）不再被全仓测试码顶红；
+// 生产码仍是 deny（cfg(test) 为假时本属性不生效）。
+#![cfg_attr(test, allow(clippy::expect_used, clippy::unwrap_used))]
 // Notes on lints omitted from this deny block:
 // - missing_docs: set to "warn" in Cargo.toml [lints.rust] instead; too many
 //   undocumented public items for a blanket deny — needs a dedicated doc sprint.

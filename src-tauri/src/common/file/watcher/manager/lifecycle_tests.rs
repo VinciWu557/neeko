@@ -1145,7 +1145,8 @@ fn measure_push_latency(root: &Path, unit_dir: &Path, rounds: usize) -> Vec<Dura
 fn percentile(samples: &[Duration], pct: usize) -> Duration {
     let mut sorted = samples.to_vec();
     sorted.sort_unstable();
-    let rank = ((sorted.len() - 1) as f64 * pct as f64 / 100.0).ceil() as usize;
+    // 整数 ceil 除法：`ceil((n-1)·pct/100)`，与浮点写法等价但无 `as` 截断/符号风险。
+    let rank = ((sorted.len() - 1) * pct).div_ceil(100);
     sorted[rank]
 }
 

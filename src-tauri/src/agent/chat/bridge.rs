@@ -143,11 +143,14 @@ mod tests {
         }
     }
 
+    /// 合帧回调收到的批次记录（每次 emit 一批）。
+    type EmittedBatches = Arc<Mutex<Vec<Vec<SequencedEvent>>>>;
+
     fn collector() -> (
-        Arc<Mutex<Vec<Vec<SequencedEvent>>>>,
+        EmittedBatches,
         impl Fn(Vec<SequencedEvent>) + Send + 'static,
     ) {
-        let emitted: Arc<Mutex<Vec<Vec<SequencedEvent>>>> = Arc::new(Mutex::new(Vec::new()));
+        let emitted: EmittedBatches = Arc::new(Mutex::new(Vec::new()));
         let clone = emitted.clone();
         (emitted, move |batch| {
             clone.lock().unwrap().push(batch);

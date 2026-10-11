@@ -204,6 +204,11 @@ pub fn existing_bundle_at(path: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// 夹具体量：略超体积下限（`MIN_BUNDLE_BYTES` 是 u64，测试按 usize 使用）。
+    fn over_min_bundle_bytes() -> usize {
+        usize::try_from(MIN_BUNDLE_BYTES + 1).expect("bundle size fits usize")
+    }
+
     fn write(path: &Path, bytes: &[u8]) {
         std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
         std::fs::write(path, bytes).expect("write");
@@ -277,11 +282,11 @@ mod tests {
         );
 
         let not_zip = tmp.path().join("plain.jar");
-        write(&not_zip, &vec![b'x'; (MIN_BUNDLE_BYTES + 1) as usize]);
+        write(&not_zip, &vec![b'x'; over_min_bundle_bytes()]);
         assert!(verify_bundle(&not_zip).is_err(), "非 zip 必须被拒");
 
         let no_plugin_xml = tmp.path().join("other.jar");
-        let mut body = vec![b'y'; (MIN_BUNDLE_BYTES + 1) as usize];
+        let mut body = vec![b'y'; over_min_bundle_bytes()];
         body[..4].copy_from_slice(b"PK\x03\x04");
         write(&no_plugin_xml, &body);
         assert!(
@@ -290,7 +295,7 @@ mod tests {
         );
 
         let ok = tmp.path().join("ok.jar");
-        let mut good = vec![b'z'; (MIN_BUNDLE_BYTES + 1) as usize];
+        let mut good = vec![b'z'; over_min_bundle_bytes()];
         good[..4].copy_from_slice(b"PK\x03\x04");
         good[100..110].copy_from_slice(b"plugin.xml");
         write(&ok, &good);
@@ -312,7 +317,7 @@ mod tests {
         assert!(existing_bundle_at(&bad).is_none());
 
         let good = tmp.path().join("good.jar");
-        let mut body = vec![b'z'; (MIN_BUNDLE_BYTES + 1) as usize];
+        let mut body = vec![b'z'; over_min_bundle_bytes()];
         body[..4].copy_from_slice(b"PK\x04");
         body[100..110].copy_from_slice(b"plugin.xml");
         write(&good, &body);

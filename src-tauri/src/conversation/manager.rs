@@ -914,7 +914,7 @@ mod tests {
             }
         }
 
-        fn read_jsonl_entries(&self, path: &Path) -> Result<Vec<serde_json::Value>> {
+        fn read_jsonl_entries(path: &Path) -> Result<Vec<serde_json::Value>> {
             let content = std::fs::read_to_string(path)?;
             let mut entries = Vec::new();
             for line in content.lines() {
@@ -944,7 +944,7 @@ mod tests {
         }
 
         fn parse_meta(&self, file_path: &Path) -> Result<ParsedMeta> {
-            let entries = self.read_jsonl_entries(file_path)?;
+            let entries = Self::read_jsonl_entries(file_path)?;
             let first = entries.first().context("Empty file")?;
 
             let native_session_id = file_path
@@ -966,7 +966,7 @@ mod tests {
                 .and_then(|t| t.as_i64())
                 .unwrap_or(started_at);
 
-            let message_count = entries.len() as u32;
+            let message_count = u32::try_from(entries.len()).expect("entry count fits u32");
 
             let project_path = first
                 .get("project_path")
@@ -987,7 +987,7 @@ mod tests {
         }
 
         fn parse_messages(&self, file_path: &Path) -> Result<Vec<ParsedMessage>> {
-            let entries = self.read_jsonl_entries(file_path)?;
+            let entries = Self::read_jsonl_entries(file_path)?;
             let mut messages = Vec::new();
             for (seq, entry) in entries.iter().enumerate() {
                 let role = entry
@@ -1001,10 +1001,11 @@ mod tests {
                     .unwrap_or("")
                     .to_string();
                 let timestamp = entry.get("timestamp").and_then(|t| t.as_i64()).unwrap_or(0);
-                let seq_value = entry
+                let raw_seq = entry
                     .get("seq")
                     .and_then(|s| s.as_u64())
-                    .unwrap_or(seq as u64) as u32;
+                    .unwrap_or(seq as u64);
+                let seq_value = u32::try_from(raw_seq).expect("seq fits u32");
                 messages.push(ParsedMessage {
                     role,
                     content,

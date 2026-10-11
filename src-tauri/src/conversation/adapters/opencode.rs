@@ -964,7 +964,11 @@ mod tests {
             conn.execute(
                 "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
                  VALUES (?1, 'ma', 'ses-parts', ?2, ?2, ?3)",
-                rusqlite::params![pid, 1736935202000 + i as i64, data],
+                rusqlite::params![
+                    pid,
+                    1736935202000 + i64::try_from(i).expect("part index fits i64"),
+                    data
+                ],
             )
             .expect("insert part");
         }

@@ -62,6 +62,30 @@ fn dedupe_path(path: &str, sep: char) -> String {
         .join(&sep.to_string())
 }
 
+/// Unix：把 Neeko 自管工具目录（`~/.neeko/bin`）置顶到 PATH —— 下载式安装
+///（如 jdtls 官方发行版生成的 `jdtls` 包装脚本）依赖其被 `command_exists` 解析。
+#[must_use]
+pub fn prepend_neeko_bin(path: &str) -> String {
+    prepend_bin(std::env::var("HOME").ok().as_deref(), path)
+}
+
+/// 纯逻辑：把 `<home>/.neeko/bin` 置顶到 `path`。
+///
+/// `home` 缺失/空白 → 原样返回 `path`：绝不注入 `/.neeko/bin` 这种伪路径
+///（HOME 未设时旧实现会拼出 `/.neeko/bin` 并写进进程 PATH）。
+#[must_use]
+fn prepend_bin(home: Option<&str>, path: &str) -> String {
+    let Some(home) = home.map(str::trim).filter(|h| !h.is_empty()) else {
+        return path.to_string();
+    };
+    let neeko_bin = format!("{home}/.neeko/bin");
+    if path.trim().is_empty() {
+        neeko_bin
+    } else {
+        format!("{neeko_bin}:{path}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,29 +114,5 @@ mod tests {
         assert_eq!(prepend_bin(None, "/usr/bin:/bin"), "/usr/bin:/bin");
         assert_eq!(prepend_bin(Some(""), "/usr/bin"), "/usr/bin");
         assert_eq!(prepend_bin(Some("   "), "/usr/bin"), "/usr/bin");
-    }
-}
-
-/// Unix：把 Neeko 自管工具目录（`~/.neeko/bin`）置顶到 PATH —— 下载式安装
-///（如 jdtls 官方发行版生成的 `jdtls` 包装脚本）依赖其被 `command_exists` 解析。
-#[must_use]
-pub fn prepend_neeko_bin(path: &str) -> String {
-    prepend_bin(std::env::var("HOME").ok().as_deref(), path)
-}
-
-/// 纯逻辑：把 `<home>/.neeko/bin` 置顶到 `path`。
-///
-/// `home` 缺失/空白 → 原样返回 `path`：绝不注入 `/.neeko/bin` 这种伪路径
-///（HOME 未设时旧实现会拼出 `/.neeko/bin` 并写进进程 PATH）。
-#[must_use]
-fn prepend_bin(home: Option<&str>, path: &str) -> String {
-    let Some(home) = home.map(str::trim).filter(|h| !h.is_empty()) else {
-        return path.to_string();
-    };
-    let neeko_bin = format!("{home}/.neeko/bin");
-    if path.trim().is_empty() {
-        neeko_bin
-    } else {
-        format!("{neeko_bin}:{path}")
     }
 }
