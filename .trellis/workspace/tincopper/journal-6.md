@@ -433,3 +433,87 @@ neeko-check 增量（22 文件）：批 1（票号）/ 批 2（Pending）/ 批 3
 ### Next Steps
 
 - None - task complete
+
+
+## Session 271: 收尾 10-07 统一命令执行：核验全部 AC 并归档
+
+**Date**: 2026-10-12
+**Task**: 收尾 10-07 统一命令执行：核验全部 AC 并归档
+**Branch**: `main`
+
+### Summary
+
+核验 10-07-unify-command-execution 的 6 条 AC 全部达成（含 Windows CI），勾选 AC1、P5 最后一项，修正两处计数偏差，归档任务。
+
+### Main Changes
+
+## 会话性质
+
+只读核验 + 任务收尾，未改任何功能代码（除勾选 AC 复选框与计数修正外）。
+
+## 核验过程与证据
+
+逐项对照 `implement.md` 的 P0–P6 与 PRD 的 AC1–AC6，用可执行判据而非文档自述：
+
+| 判据 | 命令 | 结果 |
+|---|---|---|
+| 护栏 0 违规 | `guards run --only check_command_execution` | 351 文件 / 0 违规 |
+| 护栏负例测试 | `python3 -m unittest guards.tests.test_check_command_execution` | 10 条 OK |
+| git 行为冻结 | `cargo test --lib -- git::transport` | 24 passed（含 golden argv） |
+| Windows 回归 | CI run 38135300006 | backend-test win/mac/ubuntu 三平台全绿 |
+| 全量 lib 测试 | `cargo test --lib` | 1555 passed / 0 failed |
+| 全量门禁 | `guards run --stage local` | 24 条护栏全过 |
+
+代码落点抽样确认：`run_shell_streaming` → `run_spawn_streaming(SpawnOptions, …)` 三端合一；
+`transport/{local,wsl,ssh}.rs` 已无 `fn run_git`；`shell_quote`/`safe_path` 在 transport 下零命中；
+`common/file/services/shell_cmd.rs` 已删除；`platform/fonts/{macos,windows,linux,default}.rs` 走
+`collect_blocking`；`dap/process.rs` 与 `dap/build.rs` 走 `collect_script`；
+`theme/common.rs` 抽出 6 个 WSL helper 收敛 pi/opencode 重复。
+
+## AC1 闭合方式
+
+原 PRD 把 Windows 判据留给 CI，`gh run view` 确认最新绿 run（38135300006 @ 286cdff5）
+既包含 10-07 全部迁移提交（`93b8bff5` 是其祖先），其后又无触及 10-07 文件范围的新提交 ——
+故该次 CI 绿等价于「当前代码状态三平台全绿」，判据闭合而非「某次曾绿」。
+
+## 偏差修正
+
+- implement.md 称护栏 9 例负例 → 实际 10 条（含 `test_facade_is_scanned_not_exempt`）
+- implement.md / PRD 称 338 个生产文件 → 实际 351（文件数自然增长）
+
+## 归档
+
+`task.py archive 10-07-unify-command-execution` → `archive/2026-10/`。
+
+## 待留意（非本任务范围）
+
+`guards run --stage ci` 中 `rust_check` FAIL：`could not find Cargo.toml` —— `cargo check`
+需在 `src-tauri/` 下执行，属 CI job 的配置问题（`lint_rust_all_targets` 同 stage 通过，故未
+影响实际判定）。留待后续处理。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `60ebbed1` | (see git log) |
+| `c41902ae` | (see git log) |
+| `a1241401` | (see git log) |
+| `f9467699` | (see git log) |
+| `d6726ea0` | (see git log) |
+| `62cf8f7e` | (see git log) |
+| `b3b08ce1` | (see git log) |
+| `a0d33d94` | (see git log) |
+| `93b8bff5` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
