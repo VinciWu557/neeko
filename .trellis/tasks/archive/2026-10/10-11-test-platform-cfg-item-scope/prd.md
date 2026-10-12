@@ -62,13 +62,13 @@
 
 ## Acceptance Criteria
 
-- [ ] 新护栏单测全绿，覆盖：附着形态矩阵（item 允许 × N、语句 / 裸块 / 块语句 / arm / 字段 init 违规）、
+- [x] 新护栏单测全绿，覆盖：附着形态矩阵（item 允许 × N、语句 / 裸块 / 块语句 / arm / 字段 init 违规）、
       三种测试域识别、基线 ratchet（只许减小）、未登记文件零容忍、台账缺失 → 护栏失效（退出码 2）；
-- [ ] `pnpm lint` 全绿（新护栏在 local stage 生效、既有护栏不回归）；
-- [ ] 38 处迁移完成；`ledger/platform_test_cfg.json` 基线清零并**删除**（零容忍生效，护栏退化为纯结构判据）；
-- [ ] `pnpm test:rust` 全绿；迁移涉及文件的断言数不减；逐处语义对照表作为评审材料产出；
-- [ ] `file/commands.rs` / `instance.rs` 的上一轮 fragment 修复已被整测试化（R4）；
-- [ ] spec 两处更新；Trellis 会话记录已写；改动停在**未提交**状态（是否提交由开发者决定）。
+- [x] `pnpm lint` 全绿（新护栏在 local stage 生效、既有护栏不回归）；
+- [x] 38 处迁移完成；`ledger/platform_test_cfg.json` 基线清零并**删除**（零容忍生效，护栏退化为纯结构判据）；
+- [x] `pnpm test:rust` 全绿；迁移涉及文件的断言数不减；逐处语义对照表作为评审材料产出；
+- [x] `file/commands.rs` / `instance.rs` 的上一轮 fragment 修复已被整测试化（R4）；
+- [x] spec 两处更新；Trellis 会话记录已写；改动停在**未提交**状态（是否提交由开发者决定）。
 
 ## Notes
 
