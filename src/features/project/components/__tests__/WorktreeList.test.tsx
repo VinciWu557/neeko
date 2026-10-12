@@ -185,7 +185,11 @@ describe('WorktreeList — 单元生命周期收口（R2.4 / I1-b）', () => {
     api.getWorkspaceStatus.mockResolvedValue(snapshot(1));
 
     const { unmount } = renderList();
-    await waitFor(() => expect(api.getWorkspaceStatus).toHaveBeenCalledWith(PROJECT_ID, WT_PATH));
+    await waitFor(() =>
+      expect(api.getWorkspaceStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: PROJECT_ID, worktreePath: WT_PATH }),
+      ),
+    );
     await waitFor(() => expect(useProjectStore.getState().statuses[WT_KEY]).toBeDefined());
     unmount();
 

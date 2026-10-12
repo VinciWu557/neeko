@@ -38,10 +38,12 @@ function ready(snapshot: GitStatusSnapshot): WorkspaceActivation {
 }
 
 function setActive() {
-  invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-    Promise.resolve(
-      ready(snapshotFor(WorkspaceSession.of('p1', args?.worktreePath ?? null ?? null).key, 1)),
-    ),
+  // 命令地址是一个 `workspace` 值对象（不再是平铺 worktreePath）
+  invokeSpy.mockImplementation(
+    (_cmd: string, args: { workspace?: { worktreePath?: string | null } }) =>
+      Promise.resolve(
+        ready(snapshotFor(WorkspaceSession.of('p1', args?.workspace?.worktreePath ?? null).key, 1)),
+      ),
   );
 }
 
@@ -81,8 +83,7 @@ describe('useActivateWorkspace —— 后端只挂当前视图单元（决策 D-
 
     await waitFor(() =>
       expect(invokeSpy).toHaveBeenCalledWith('set_active_workspace', {
-        projectId: 'p1',
-        worktreePath: '/wt/a',
+        workspace: { projectId: 'p1', worktreePath: '/wt/a' },
       }),
     );
     expect(useProjectStore.getState().statuses[WT_A]?.entries[0]?.path).toBe('file-1.ts');

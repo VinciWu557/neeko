@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::common::git::WorkspaceSession;
 use crate::project::types::{
     PRComment, PRCommit, PRFileChange, PRInfo, PRListItem, PRMergeResult, PRReviewComment, PrLabel,
 };
@@ -32,13 +33,13 @@ pub async fn is_gh_authenticated_command() -> bool {
 /// List pull requests.
 #[tauri::command]
 pub async fn list_prs_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     state: String,
     limit: usize,
     state_w: State<'_, AppStateWrapper>,
 ) -> Result<Vec<PRListItem>, AppError> {
-    let (t, wd) = state_w.resolve_project(&project_id)?;
-    crate::git::list_prs(Path::new(&wd), &t, &state, limit)
+    let (t, repo) = state_w.resolve_workspace_target(&workspace).await?;
+    crate::git::list_prs(Path::new(repo.root()), &t, &state, limit)
         .await
         .map_err(map_git_err)
 }
@@ -46,11 +47,11 @@ pub async fn list_prs_command(
 /// List repository labels.
 #[tauri::command]
 pub async fn list_repo_labels_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<PrLabel>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::list_repo_labels(Path::new(&wd), &t)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::list_repo_labels(Path::new(repo.root()), &t)
         .await
         .map_err(map_git_err)
 }
@@ -58,11 +59,11 @@ pub async fn list_repo_labels_command(
 /// List repository authors.
 #[tauri::command]
 pub async fn list_repo_authors_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<String>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::list_repo_authors(Path::new(&wd), &t)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::list_repo_authors(Path::new(repo.root()), &t)
         .await
         .map_err(map_git_err)
 }
@@ -70,12 +71,12 @@ pub async fn list_repo_authors_command(
 /// View pull request details.
 #[tauri::command]
 pub async fn view_pr_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     state: State<'_, AppStateWrapper>,
 ) -> Result<PRInfo, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::view_pr(Path::new(&wd), &t, pr_number)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::view_pr(Path::new(repo.root()), &t, pr_number)
         .await
         .map_err(map_git_err)
 }
@@ -83,29 +84,36 @@ pub async fn view_pr_command(
 /// Create a pull request.
 #[tauri::command]
 pub async fn create_pr_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     title: String,
     body: String,
     base: Option<String>,
     draft: bool,
     state: State<'_, AppStateWrapper>,
 ) -> Result<u64, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::create_pr(Path::new(&wd), &t, &title, &body, base.as_deref(), draft)
-        .await
-        .map_err(map_git_err)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::create_pr(
+        Path::new(repo.root()),
+        &t,
+        &title,
+        &body,
+        base.as_deref(),
+        draft,
+    )
+    .await
+    .map_err(map_git_err)
 }
 
 /// Merge a pull request.
 #[tauri::command]
 pub async fn merge_pr_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     method: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<PRMergeResult, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::merge_pr(Path::new(&wd), &t, pr_number, &method)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::merge_pr(Path::new(repo.root()), &t, pr_number, &method)
         .await
         .map_err(map_git_err)
 }
@@ -113,12 +121,12 @@ pub async fn merge_pr_command(
 /// Close a pull request.
 #[tauri::command]
 pub async fn close_pr_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     state: State<'_, AppStateWrapper>,
 ) -> Result<(), AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::close_pr(Path::new(&wd), &t, pr_number)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::close_pr(Path::new(repo.root()), &t, pr_number)
         .await
         .map_err(map_git_err)
 }
@@ -126,12 +134,12 @@ pub async fn close_pr_command(
 /// List files changed in a pull request.
 #[tauri::command]
 pub async fn list_pr_files_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<PRFileChange>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::list_pr_files(Path::new(&wd), &t, pr_number)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::list_pr_files(Path::new(repo.root()), &t, pr_number)
         .await
         .map_err(map_git_err)
 }
@@ -139,12 +147,12 @@ pub async fn list_pr_files_command(
 /// List commits in a pull request.
 #[tauri::command]
 pub async fn list_pr_commits_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<PRCommit>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::list_pr_commits(Path::new(&wd), &t, pr_number)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::list_pr_commits(Path::new(repo.root()), &t, pr_number)
         .await
         .map_err(map_git_err)
 }
@@ -152,7 +160,7 @@ pub async fn list_pr_commits_command(
 /// Add a review comment on a pull request.
 #[tauri::command]
 pub async fn add_pr_review_comment_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     body: String,
     file_path: String,
@@ -160,9 +168,9 @@ pub async fn add_pr_review_comment_command(
     side: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<PRReviewComment, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     crate::git::add_pr_review_comment(
-        Path::new(&wd),
+        Path::new(repo.root()),
         &t,
         pr_number,
         &body,
@@ -177,13 +185,13 @@ pub async fn add_pr_review_comment_command(
 /// List review comments on a pull request.
 #[tauri::command]
 pub async fn list_pr_review_comments_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<PRReviewComment>, AppError> {
     let t0 = std::time::Instant::now();
-    let (t, wd) = state.resolve_project(&project_id)?;
-    let result = crate::git::list_pr_review_comments(Path::new(&wd), &t, pr_number)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    let result = crate::git::list_pr_review_comments(Path::new(repo.root()), &t, pr_number)
         .await
         .map_err(map_git_err)?;
     log::debug!(
@@ -197,12 +205,12 @@ pub async fn list_pr_review_comments_command(
 /// List comments on a pull request.
 #[tauri::command]
 pub async fn list_pr_comments_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<PRComment>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::list_pr_comments(Path::new(&wd), &t, pr_number)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::list_pr_comments(Path::new(repo.root()), &t, pr_number)
         .await
         .map_err(map_git_err)
 }
@@ -210,13 +218,13 @@ pub async fn list_pr_comments_command(
 /// Add a comment to a pull request.
 #[tauri::command]
 pub async fn add_pr_comment_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     body: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<PRComment, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::add_pr_comment(Path::new(&wd), &t, pr_number, &body)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::add_pr_comment(Path::new(repo.root()), &t, pr_number, &body)
         .await
         .map_err(map_git_err)
 }
@@ -224,14 +232,14 @@ pub async fn add_pr_comment_command(
 /// Edit a comment on a pull request.
 #[tauri::command]
 pub async fn edit_pr_comment_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     comment_id: String,
     body: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<PRComment, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::edit_pr_comment(Path::new(&wd), &t, pr_number, &comment_id, &body)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::edit_pr_comment(Path::new(repo.root()), &t, pr_number, &comment_id, &body)
         .await
         .map_err(map_git_err)
 }
@@ -239,13 +247,13 @@ pub async fn edit_pr_comment_command(
 /// Delete a comment on a pull request.
 #[tauri::command]
 pub async fn delete_pr_comment_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     comment_id: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<(), AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::delete_pr_comment(Path::new(&wd), &t, pr_number, &comment_id)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::delete_pr_comment(Path::new(repo.root()), &t, pr_number, &comment_id)
         .await
         .map_err(map_git_err)
 }
@@ -253,14 +261,14 @@ pub async fn delete_pr_comment_command(
 /// Add a reaction to a comment.
 #[tauri::command]
 pub async fn add_comment_reaction_command(
-    project_id: String,
+    workspace: WorkspaceSession,
     pr_number: u64,
     comment_id: String,
     emoji: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<(), AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    crate::git::add_comment_reaction(Path::new(&wd), &t, pr_number, &comment_id, &emoji)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    crate::git::add_comment_reaction(Path::new(repo.root()), &t, pr_number, &comment_id, &emoji)
         .await
         .map_err(map_git_err)
 }

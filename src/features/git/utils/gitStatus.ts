@@ -21,9 +21,8 @@ import { getWorkspaceStatus } from '../api/gitApi';
  * 提示），绝不写入「空列表」——空列表是一个断言，不是错误。
  */
 export async function refreshWorkspaceStatus(workspaceKey: WorkspaceKey | string): Promise<void> {
-  const { projectId, worktreePath } = WorkspaceSession.fromKeyOrId(String(workspaceKey));
   try {
-    const snapshot = await getWorkspaceStatus(projectId, worktreePath);
+    const snapshot = await getWorkspaceStatus(WorkspaceSession.fromKeyOrId(String(workspaceKey)));
     useProjectStore.getState().applyStatus(snapshot);
   } catch (e) {
     console.error(

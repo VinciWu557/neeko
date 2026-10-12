@@ -72,7 +72,7 @@ export function useSessionBootstrap(deps: {
           // 主仓单元 status：走同一写入口（applyStatus 内含 version gate），侧栏
           // 变更计数因此有数据来源；激活单元由 useActiveWorkspaceSync 负责挂载与刷新。
           if (!selectHasStatus(useProjectStore.getState(), mainKey)) {
-            getWorkspaceStatus(p.id, null)
+            getWorkspaceStatus(WorkspaceSession.of(p.id, null))
               .then((snapshot) => {
                 if (snapshot.workspace_key !== mainKey) return;
                 useProjectStore.getState().applyStatus(snapshot);
@@ -80,7 +80,7 @@ export function useSessionBootstrap(deps: {
               .catch((err) => reportFrontendError('session.gitStatus', err));
           }
 
-          getGitBranchInfo(p.id)
+          getGitBranchInfo(WorkspaceSession.of(p.id, null))
             .then((branchInfo) => {
               // 只写 per-project 元数据；current_branch 的唯一写者是 applyStatus
               // （主仓单元投影），bootstrap 不再各自覆盖它。
@@ -148,7 +148,7 @@ export function useSessionBootstrap(deps: {
             // 不在这里拉 status：激活哪个单元由下面的恢复流程决定，
             // 统一由 useActiveWorkspaceSync 挂载 + 取首个快照（避免旧实现里
             // 「先按主仓拉一次、随后才恢复 worktree」导致首屏显示主仓内容）。
-            getGitBranchInfo(activeId)
+            getGitBranchInfo(WorkspaceSession.of(activeId, null))
               .then(async (branchInfo) => {
                 patchGitInfo({
                   branches: branchInfo.branches,

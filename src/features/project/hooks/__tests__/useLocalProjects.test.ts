@@ -448,8 +448,10 @@ describe('useLocalProjects', () => {
       });
       useGitStore.setState({ aheadBehind: {}, truncatedByRepo: {} });
       mockInvoke.mockImplementation(async (cmd: string, args?: Record<string, unknown>) => {
-        const projectId = String(args?.projectId ?? '');
-        const worktreePath = (args?.worktreePath ?? null) as string | null;
+        // 地址是一个 `workspace` 值对象（不再有 projectId / worktreePath 两个独立字段）
+        const ws = (args?.workspace ?? {}) as { projectId?: string; worktreePath?: string | null };
+        const projectId = String(ws.projectId ?? '');
+        const worktreePath = ws.worktreePath ?? null;
         if (cmd === 'get_workspace_status') return snapshotFor(projectId, worktreePath);
         if (cmd === 'get_git_branch_info') {
           return { current_branch: 'main', branches: ['main'], worktrees: [] };
@@ -469,12 +471,10 @@ describe('useLocalProjects', () => {
       await refreshGit('p1');
 
       expect(mockInvoke).toHaveBeenCalledWith('get_workspace_status', {
-        projectId: 'p1',
-        worktreePath: null,
+        workspace: { projectId: 'p1', worktreePath: null },
       });
       expect(mockInvoke).toHaveBeenCalledWith('get_git_branch_info', {
-        projectId: 'p1',
-        worktreePath: null,
+        workspace: { projectId: 'p1', worktreePath: null },
       });
       // ahead/behind 不再独立 pull：它随权威快照单通道携带（R2.2 / Fix 2）
       expect(mockInvoke).not.toHaveBeenCalledWith('get_ahead_behind', expect.anything());
@@ -492,8 +492,7 @@ describe('useLocalProjects', () => {
       await refreshGit('p1');
 
       expect(mockInvoke).toHaveBeenCalledWith('get_workspace_status', {
-        projectId: 'p1',
-        worktreePath: WT_A,
+        workspace: { projectId: 'p1', worktreePath: WT_A },
       });
       expect(mockInvoke).not.toHaveBeenCalledWith('get_ahead_behind', expect.anything());
       expect(
@@ -520,7 +519,7 @@ describe('useLocalProjects', () => {
       const statusCalls = mockInvoke.mock.calls
         .filter((call) => call[0] === 'get_workspace_status')
         .map((call) => call[1]);
-      expect(statusCalls).toEqual([{ projectId: 'p2', worktreePath: null }]);
+      expect(statusCalls).toEqual([{ workspace: { projectId: 'p2', worktreePath: null } }]);
       expect(
         useProjectStore.getState().statuses[WorkspaceSession.of('p1', WT_A ?? null).key],
       ).toBeUndefined();
@@ -535,12 +534,10 @@ describe('useLocalProjects', () => {
       await refreshGit('p2');
 
       expect(mockInvoke).toHaveBeenCalledWith('get_workspace_status', {
-        projectId: 'p2',
-        worktreePath: WT_B,
+        workspace: { projectId: 'p2', worktreePath: WT_B },
       });
       expect(mockInvoke).not.toHaveBeenCalledWith('get_workspace_status', {
-        projectId: 'p2',
-        worktreePath: WT_A,
+        workspace: { projectId: 'p2', worktreePath: WT_A },
       });
     });
 

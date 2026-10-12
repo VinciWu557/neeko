@@ -45,6 +45,20 @@ pub struct WorkspaceSession {
     pub worktree_path: Option<String>,
 }
 
+impl WorkspaceSession {
+    /// 从「项目 + 身份渲染的 worktree 路径」构造地址（与前端 `WorkspaceSession.of` 对称）。
+    ///
+    /// 主要服务于**后端内部**需要地址去解析 `WorkspaceRef` 的场景（如 worktree 操作命令
+    /// 在为「被操作的单元」解析身份以便释放挂载时）—— 使 git 域的解析入口始终只有
+    /// [`crate::AppStateWrapper::resolve_workspace_target`] 一个。
+    pub fn of(project_id: impl Into<String>, worktree_path: Option<String>) -> Self {
+        Self {
+            project_id: project_id.into(),
+            worktree_path,
+        }
+    }
+}
+
 /// 一个仓库工作树的引用。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Checkout {

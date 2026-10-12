@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 
 import { cn } from '@/lib/utils';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession, type ProjectId } from '@/shared/utils/workspaceRef';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/ui/Dialog';
@@ -90,14 +90,14 @@ const GitDialog: React.FC<GitDialogProps> = ({
     try {
       const src = dialog.source;
       if (src?.type === 'wsl') {
-        await createBranch(src.projectId, branchName.trim());
+        await createBranch(WorkspaceSession.of(src.projectId, null), branchName.trim());
         onRefreshAfterWslSsh?.();
       } else if (src?.type === 'remote') {
         setError('SSH branch creation not yet supported');
         setSubmitting(false);
         return;
       } else {
-        await createBranch(dialog.projectId, branchName.trim());
+        await createBranch(WorkspaceSession.of(dialog.projectId, null), branchName.trim());
         onRefreshGit(dialog.projectId);
       }
       onClose();

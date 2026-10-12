@@ -8,6 +8,7 @@ import type { FileChangedEvent, GitStatusSnapshot } from '@/shared/types';
 import type { ProjectCommands } from '@/shared/types/activeProject';
 import { safeUnlisten } from '@/shared/utils/safeUnlisten';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import type { DiffResult, DiffSource, DiffLine } from './types';
 
@@ -50,7 +51,12 @@ export function useDiffData({
         }
         if (!pid) throw new Error('[useDiffData] no project context for commit diff');
         const { getCommitFileDiff } = await import('../../api/gitApi');
-        return getCommitFileDiff(pid, rev.commitHash, filePath, collapseMode);
+        return getCommitFileDiff(
+          WorkspaceSession.of(pid, null),
+          rev.commitHash,
+          filePath,
+          collapseMode,
+        );
       }
       if (rev?.type === 'stash') {
         if (commands) {
@@ -58,15 +64,23 @@ export function useDiffData({
         }
         if (!pid) throw new Error('[useDiffData] no project context for stash diff');
         const { getStashFileDiff } = await import('../../api/gitApi');
-        return getStashFileDiff(pid, rev.selector, filePath, collapseMode);
+        return getStashFileDiff(
+          WorkspaceSession.of(pid, null),
+          rev.selector,
+          filePath,
+          collapseMode,
+        );
       }
       if (commands) {
         return commands.getFileDiff(filePath, collapseMode);
       }
       if (!pid) throw new Error('[useDiffData] no project context for worktree diff');
       const { getFileDiff } = await import('../../api/gitApi');
-      const wt = ds?.workspace.worktreePath ?? undefined;
-      return getFileDiff(pid, filePath, wt, collapseMode);
+      return getFileDiff(
+        WorkspaceSession.of(pid, ds?.workspace.worktreePath ?? null),
+        filePath,
+        collapseMode,
+      );
     },
     [projectId, diffSource, filePath, commands],
   );

@@ -1,6 +1,7 @@
 use crate::common::executor::factory::ExecTarget;
 use crate::common::git::checkout_path::CheckoutPath;
 use crate::common::git::operations;
+use crate::common::git::workspace_ref::WorkspaceSession;
 use crate::AppError;
 use crate::AppStateWrapper;
 use tauri::State;
@@ -50,7 +51,10 @@ pub async fn remove_worktree(
     // 祖先锚定形态，在符号链接根上（macOS `/var` ↔ `/private/var`）会算出与挂载时不同的 key，
     // 于是释放请求打在不存在的挂载上、真正的挂载继续泄漏。
     let workspace = state
-        .resolve_workspace(&project_id, Some(worktree_path.identity()))
+        .resolve_workspace_target(&WorkspaceSession::of(
+            &project_id,
+            Some(worktree_path.identity().to_string()),
+        ))
         .await?
         .1;
     operations::remove_worktree(&t, &wd, worktree_path.exec())
@@ -75,7 +79,10 @@ pub async fn rename_worktree(
     // 同 remove：旧路径的身份要在改名前解析。改名后旧 key 指向的目录已不存在，
     // 继续持有 = 一份永不更新却仍可被渲染的快照。
     let old_workspace = state
-        .resolve_workspace(&project_id, Some(old_path_unit.identity()))
+        .resolve_workspace_target(&WorkspaceSession::of(
+            &project_id,
+            Some(old_path_unit.identity().to_string()),
+        ))
         .await?
         .1;
     operations::rename_worktree(&t, &wd, old_path_unit.exec(), new_path_unit.exec())

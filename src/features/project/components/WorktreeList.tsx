@@ -7,6 +7,7 @@ import { useWorktreeChangeStats } from '@/shared/hooks/useWorktreeChangeStats';
 import { useActiveWorkspace } from '@/shared/store/workspaceStore';
 import { Worktree } from '@/shared/types';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { getWorkspaceStatus } from '../../git/api/gitApi';
 import { useWorktreeListActions } from '../hooks/useWorktreeListActions';
@@ -53,7 +54,8 @@ const WorktreeList: React.FC<WorktreeListProps> = ({
   // 每个工作树的 chip 读**自己单元**的 status：订阅 + 挂载级新鲜度守卫收在共享 hook 里
   // （与 WSL/SSH 侧栏同款），拉不到保持「未知」（chip 不显示），绝不写 0/0 假装干净。
   const fetchStatus = useCallback(
-    (worktreePath: string) => getWorkspaceStatus(projectId, worktreePath).catch(() => null),
+    (worktreePath: string) =>
+      getWorkspaceStatus(WorkspaceSession.of(projectId, worktreePath)).catch(() => null),
     [projectId],
   );
   const changeStats = useWorktreeChangeStats(projectId, filteredWorktrees, fetchStatus);

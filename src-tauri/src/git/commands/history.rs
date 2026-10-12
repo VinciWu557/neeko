@@ -1,6 +1,7 @@
 use crate::common::git::operations;
 use crate::common::git::path_guard::validate_repo_relative_path;
 use crate::common::git::types::DiffResult;
+use crate::common::git::WorkspaceSession;
 use crate::project::types::{
     AheadBehind, CommitDetail, CommitEntry, CommitFileChange, StashActionResult, StashEntry,
 };
@@ -11,13 +12,13 @@ use tauri::State;
 /// Get the commit log.
 #[tauri::command]
 pub async fn get_commit_log(
-    project_id: String,
+    workspace: WorkspaceSession,
     count: usize,
     skip: Option<usize>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<CommitEntry>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    operations::get_commit_log(&t, &wd, count, skip.unwrap_or(0))
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    operations::get_commit_log(&t, repo.root(), count, skip.unwrap_or(0))
         .await
         .map_err(AppError::from)
 }
@@ -25,12 +26,12 @@ pub async fn get_commit_log(
 /// Get details for a specific commit.
 #[tauri::command]
 pub async fn get_commit_detail(
-    project_id: String,
+    workspace: WorkspaceSession,
     commit_hash: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<CommitDetail, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    operations::get_commit_detail(&t, &wd, &commit_hash)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    operations::get_commit_detail(&t, repo.root(), &commit_hash)
         .await
         .map_err(AppError::from)
 }
@@ -38,12 +39,12 @@ pub async fn get_commit_detail(
 /// Get files changed in a commit.
 #[tauri::command]
 pub async fn get_commit_files(
-    project_id: String,
+    workspace: WorkspaceSession,
     commit_hash: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<CommitFileChange>, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    operations::get_commit_files(&t, &wd, &commit_hash)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    operations::get_commit_files(&t, repo.root(), &commit_hash)
         .await
         .map_err(AppError::from)
 }
@@ -51,13 +52,10 @@ pub async fn get_commit_files(
 /// List stash entries.
 #[tauri::command]
 pub async fn get_stash_list(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<StashEntry>, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     operations::get_stash_list(&t, repo_path)
         .await
@@ -67,14 +65,11 @@ pub async fn get_stash_list(
 /// Get files changed in a stash entry.
 #[tauri::command]
 pub async fn get_stash_files(
-    project_id: String,
+    workspace: WorkspaceSession,
     selector: String,
-    worktree_path: Option<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<CommitFileChange>, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     operations::get_stash_files(&t, repo_path, &selector)
         .await
@@ -84,16 +79,13 @@ pub async fn get_stash_files(
 /// Get the diff for a single file in a stash entry.
 #[tauri::command]
 pub async fn get_stash_file_diff(
-    project_id: String,
+    workspace: WorkspaceSession,
     selector: String,
     file_path: String,
     collapse: Option<bool>,
-    worktree_path: Option<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<DiffResult, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     operations::get_stash_file_diff(
         &t,
@@ -109,19 +101,16 @@ pub async fn get_stash_file_diff(
 /// Apply a stash entry to the working tree.
 #[tauri::command]
 pub async fn stash_apply(
-    project_id: String,
+    workspace: WorkspaceSession,
     selector: String,
-    worktree_path: Option<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<StashActionResult, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let outcome = operations::stash_apply(&t, repo_path, &selector)
         .await
         .map_err(AppError::from)?;
-    // stash 落回工作树 ⇒ 该单元 status 变了。本命令已带 worktree_path，戳的就是被写的单元。
+    // stash 落回工作树 ⇒ 该单元 status 变了。本命令按 WorkspaceSession 寻址，戳的就是被写的单元。
     crate::git::services::status::wait_status_fresh(&state, &repo).await;
     Ok(outcome)
 }
@@ -129,19 +118,16 @@ pub async fn stash_apply(
 /// Pop (apply + drop) a stash entry.
 #[tauri::command]
 pub async fn stash_pop(
-    project_id: String,
+    workspace: WorkspaceSession,
     selector: String,
-    worktree_path: Option<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<StashActionResult, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let outcome = operations::stash_pop(&t, repo_path, &selector)
         .await
         .map_err(AppError::from)?;
-    // stash 落回工作树 ⇒ 该单元 status 变了。本命令已带 worktree_path，戳的就是被写的单元。
+    // stash 落回工作树 ⇒ 该单元 status 变了。本命令按 WorkspaceSession 寻址，戳的就是被写的单元。
     crate::git::services::status::wait_status_fresh(&state, &repo).await;
     Ok(outcome)
 }
@@ -149,29 +135,32 @@ pub async fn stash_pop(
 /// Get the diff for a file in a commit.
 #[tauri::command]
 pub async fn get_commit_file_diff(
-    project_id: String,
+    workspace: WorkspaceSession,
     commit_hash: String,
     file_path: String,
     collapse: Option<bool>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<DiffResult, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    validate_repo_relative_path(&t, &wd, &file_path)?;
-    operations::get_commit_file_diff(&t, &wd, &commit_hash, &file_path, collapse.unwrap_or(true))
-        .await
-        .map_err(AppError::from)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    validate_repo_relative_path(&t, repo.root(), &file_path)?;
+    operations::get_commit_file_diff(
+        &t,
+        repo.root(),
+        &commit_hash,
+        &file_path,
+        collapse.unwrap_or(true),
+    )
+    .await
+    .map_err(AppError::from)
 }
 
 /// Get ahead/behind counts for the current branch.
 #[tauri::command]
 pub async fn get_ahead_behind(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<AheadBehind, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     operations::get_ahead_behind(&t, repo_path)
         .await
@@ -181,11 +170,11 @@ pub async fn get_ahead_behind(
 /// Get the default branch name.
 #[tauri::command]
 pub async fn default_branch(
-    project_id: String,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<String, AppError> {
-    let (t, wd) = state.resolve_project(&project_id)?;
-    operations::default_branch(&t, &wd)
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    operations::default_branch(&t, repo.root())
         .await
         .map_err(AppError::from)
 }

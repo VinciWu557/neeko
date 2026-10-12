@@ -102,14 +102,13 @@ describe('useGitStatusEventsSync — 事件按Workspace定址', () => {
 
     await waitFor(() =>
       expect(invokeSpy).toHaveBeenCalledWith('get_workspace_status', {
-        projectId: 'p1',
-        worktreePath: '/wt/a',
+        workspace: { projectId: 'p1', worktreePath: '/wt/a' },
       }),
     );
     // 回归：旧实现在此处传 ''（主仓），把主仓的变更列表写进 worktree 视图
     expect(invokeSpy).not.toHaveBeenCalledWith(
       'get_workspace_status',
-      expect.objectContaining({ worktreePath: null }),
+      expect.objectContaining({ workspace: expect.objectContaining({ worktreePath: null }) }),
     );
   });
 
@@ -184,15 +183,13 @@ describe('useGitStatusEventsSync — 事件按Workspace定址', () => {
 
     await waitFor(() =>
       expect(invokeSpy).toHaveBeenCalledWith('get_workspace_status', {
-        projectId: 'p1',
-        worktreePath: null,
+        workspace: { projectId: 'p1', worktreePath: null },
       }),
     );
     // 回归：旧实现从全局镜像取 worktree 路径 → 主仓的元数据变化会去刷 worktree，
     // 反之亦然（「列表不动」与「串数据」的共同根因）
     expect(invokeSpy).not.toHaveBeenCalledWith('get_workspace_status', {
-      projectId: 'p1',
-      worktreePath: '/wt/a',
+      workspace: { projectId: 'p1', worktreePath: '/wt/a' },
     });
   });
 
@@ -280,20 +277,22 @@ describe('useGitStatusEventsSync — 失焦/聚焦连击下单元不串（AC1 �
       useWorkspaceStore.setState({
         byProject: { p1: { activePath: '/wt/a', activeBranch: 'feat-a', opened: [] } },
       });
-      invokeSpy.mockImplementation((cmd: string, args?: { worktreePath?: string | null }) => {
-        if (cmd === 'get_workspace_status') {
-          const wt = args?.worktreePath ?? null;
-          return Promise.resolve(
-            snapshot({
-              workspace_key: wt ? WT_KEY : MAIN_KEY,
-              worktree_path: wt,
-              version: 5,
-              entries: [{ path: wt ? 'only-in-wt.ts' : 'only-in-main.ts' }],
-            }),
-          );
-        }
-        return Promise.resolve(null);
-      });
+      invokeSpy.mockImplementation(
+        (cmd: string, args?: { workspace?: { worktreePath?: string | null } }) => {
+          if (cmd === 'get_workspace_status') {
+            const wt = args?.workspace?.worktreePath ?? null;
+            return Promise.resolve(
+              snapshot({
+                workspace_key: wt ? WT_KEY : MAIN_KEY,
+                worktree_path: wt,
+                version: 5,
+                entries: [{ path: wt ? 'only-in-wt.ts' : 'only-in-main.ts' }],
+              }),
+            );
+          }
+          return Promise.resolve(null);
+        },
+      );
       renderHook(() => useGitStatusEventsSync());
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);

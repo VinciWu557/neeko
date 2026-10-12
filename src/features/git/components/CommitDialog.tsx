@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 import { useImeSpaceGuard } from '@/shared/hooks/useImeSpaceGuard';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { selectActiveCheckoutPath, useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { FileChange } from '@/shared/types';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession, type ProjectId } from '@/shared/utils/workspaceRef';
 import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/ui/Dialog';
@@ -30,7 +30,9 @@ interface CommitDialogProps {
 function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeCheckoutPath = useWorkspaceStore((s) => selectActiveCheckoutPath(s, activeProjectId));
-  const worktreePath = activeProjectId === projectId ? activeCheckoutPath : null;
+  // 本对话框所属项目的 Workspace（memo 化：of 每调产出新对象，直进 deps 会每 render 重拉）
+  const wt = activeProjectId === projectId ? activeCheckoutPath : null;
+  const workspace = useMemo(() => WorkspaceSession.of(projectId, wt), [projectId, wt]);
   const projectPath = useProjectStore(
     (s) => s.projects.find((p) => p.id === projectId)?.path ?? '',
   );
@@ -52,7 +54,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
   }, [amend]);
 
   useEffect(() => {
-    getWorkspaceStatus(projectId, worktreePath)
+    getWorkspaceStatus(workspace)
       .then((snapshot) => {
         const untracked = snapshot.entries.filter((f) => f.status === 'Untracked');
         setUntrackedCount(untracked.length);
@@ -60,16 +62,16 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
       })
       .catch((e) => setError(String(e)))
       .finally(() => setFilesLoading(false));
-  }, [projectId, worktreePath]);
+  }, [workspace]);
 
   useEffect(() => {
     if (!amend) return;
-    getCommitLog(projectId, 1)
+    getCommitLog(workspace, 1)
       .then((entries) => {
         if (entries.length > 0) setMessage(entries[0].message);
       })
       .catch((err) => reportFrontendError('git.commitLog', err));
-  }, [amend, projectId]);
+  }, [amend, workspace]);
 
   /** Convert a PushOutcome into an error message string if it's AuthRequired, or return undefined for Success. */
   function pushOutcomeMsg(outcome: PushOutcome): string | undefined {
@@ -106,8 +108,8 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
       setSubmitting(true);
       try {
         if (consoleRun) {
-          await commitFiles(projectId, filePaths, message.trim(), worktreePath, consoleRun.runId);
-          const outcome = await push(projectId, false, worktreePath, consoleRun.runId);
+          await commitFiles(workspace, filePaths, message.trim(), consoleRun.runId);
+          const outcome = await push(workspace, false, consoleRun.runId);
           if ('AuthRequired' in outcome) {
             consoleRun.awaitAuth();
             setError(pushOutcomeMsg(outcome) ?? 'Authentication required.');
@@ -119,7 +121,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
             header: 'git commit',
             projectId,
             projectPath,
-            run: (runId) => commitFiles(projectId, filePaths, message.trim(), worktreePath, runId),
+            run: (runId) => commitFiles(workspace, filePaths, message.trim(), runId),
           });
           if (result.status === 'busy') {
             setError(GIT_BUSY_MESSAGE);
@@ -136,7 +138,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
         setSubmitting(false);
       }
     },
-    [projectId, projectPath, worktreePath, message, files, onRefreshGit, onClose],
+    [projectId, projectPath, workspace, message, files, onRefreshGit, onClose],
   );
 
   const handlePush = useCallback(async () => {
@@ -147,7 +149,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
         header: 'git push',
         projectId,
         projectPath,
-        run: (runId) => push(projectId, false, worktreePath, runId),
+        run: (runId) => push(workspace, false, runId),
         isAuthRequired: (o) => 'AuthRequired' in o,
       });
       if (result.status === 'busy') {
@@ -167,7 +169,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
     } finally {
       setSubmitting(false);
     }
-  }, [projectId, projectPath, worktreePath, onRefreshGit, onClose]);
+  }, [projectId, projectPath, workspace, onRefreshGit, onClose]);
 
   const handlePull = useCallback(async () => {
     setSubmitting(true);
@@ -177,7 +179,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
         header: 'git pull',
         projectId,
         projectPath,
-        run: (runId) => pull(projectId, worktreePath, runId),
+        run: (runId) => pull(workspace, runId),
         isAuthRequired: (o) => 'AuthRequired' in o,
       });
       if (result.status === 'busy') {
@@ -197,7 +199,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
     } finally {
       setSubmitting(false);
     }
-  }, [projectId, projectPath, worktreePath, onRefreshGit, onClose]);
+  }, [projectId, projectPath, workspace, onRefreshGit, onClose]);
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -266,9 +268,7 @@ function CommitDialog({ projectId, onClose, onRefreshGit }: CommitDialogProps) {
               handleCommit(false);
             }
           }}
-          onCompositionEnd={(e) => {
-            guard.onCompositionEnd(e);
-          }}
+          onCompositionEnd={guard.onCompositionEnd}
         />
 
         {error && (

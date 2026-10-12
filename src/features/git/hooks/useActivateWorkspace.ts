@@ -46,7 +46,7 @@ export function useActivateWorkspace(
       if (!project || project.git_info === null) return 'skipped';
       const key = WorkspaceSession.of(projectId, path ?? null).key;
       try {
-        const outcome = await activateWorkspace(projectId, path);
+        const outcome = await activateWorkspace(WorkspaceSession.of(projectId, path ?? null));
         // 迟到的响应一律先过 staleness 守卫（结局只描述那次请求，与当前视图无关）——
         // ready 与 pending 共用：两种形态都自带后端 canonical 的 workspace_key。
         const latest = activeWorkspaceKeyOf(projectId);

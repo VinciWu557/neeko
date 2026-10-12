@@ -62,7 +62,10 @@ async function loadChanges(
   isStale: () => boolean,
 ): Promise<readonly FileLineChange[] | null> {
   try {
-    const changes = await loadFileLineChanges(projectId, filePath, worktreePath);
+    const changes = await loadFileLineChanges(
+      WorkspaceSession.of(projectId, worktreePath ?? null),
+      filePath,
+    );
     if (isStale()) return null;
     return changes;
   } catch {

@@ -83,7 +83,9 @@ describe('refreshWorkspaceStatus — status 的唯一显式刷新入口', () => 
 
     await refreshWorkspaceStatus(WorkspaceSession.of('p1', null).key);
 
-    expect(mockGetWorkspaceStatus).toHaveBeenCalledWith('p1', null);
+    expect(mockGetWorkspaceStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: null }),
+    );
   });
 
   it('worktree 单元解析出 canonical 路径并按该路径查询', async () => {
@@ -91,7 +93,9 @@ describe('refreshWorkspaceStatus — status 的唯一显式刷新入口', () => 
 
     await refreshWorkspaceStatus(WorkspaceSession.of('p1', '/wt/a').key);
 
-    expect(mockGetWorkspaceStatus).toHaveBeenCalledWith('p1', '/wt/a');
+    expect(mockGetWorkspaceStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: '/wt/a' }),
+    );
   });
 
   it('无分隔符的裸 projectId（防御旧形态载荷）按主仓单元处理', async () => {
@@ -99,7 +103,9 @@ describe('refreshWorkspaceStatus — status 的唯一显式刷新入口', () => 
 
     await refreshWorkspaceStatus('p1');
 
-    expect(mockGetWorkspaceStatus).toHaveBeenCalledWith('p1', null);
+    expect(mockGetWorkspaceStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: null }),
+    );
     expect(slotOf(WorkspaceSession.of('p1', null).key)?.version).toBe(1);
   });
 

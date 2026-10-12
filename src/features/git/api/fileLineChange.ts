@@ -1,5 +1,5 @@
 import type { FileLineChange } from '@/shared/types/git';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { deriveFileLineChanges } from '../utils/lineChange';
 
@@ -12,10 +12,9 @@ import { getFileDiff } from './gitApi';
  * 失败与陈旧响应由调用方（`useGitChangeEditor`）处理。
  */
 export async function loadFileLineChanges(
-  projectId: ProjectId,
+  workspace: WorkspaceSession,
   filePath: string,
-  worktreePath?: string | null,
 ): Promise<FileLineChange[]> {
-  const diff = await getFileDiff(projectId, filePath, worktreePath, false);
+  const diff = await getFileDiff(workspace, filePath, false);
   return deriveFileLineChanges(diff);
 }

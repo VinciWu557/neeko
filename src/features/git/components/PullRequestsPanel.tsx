@@ -10,6 +10,7 @@ import type { PRListItem } from '@/shared/types';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import {
   closePr,
@@ -114,7 +115,11 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const prs = await listPrs(projectId, filter === 'all' ? 'all' : filter, 50);
+      const prs = await listPrs(
+        WorkspaceSession.of(projectId, null),
+        filter === 'all' ? 'all' : filter,
+        50,
+      );
       console.log('[PullRequestsPanel] PRs loaded:', prs.length, 'items');
       if (prs.length > 0) {
         console.log('[PullRequestsPanel] First PR data:', JSON.stringify(prs[0], null, 2));
@@ -139,10 +144,10 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
   // Load full repo labels and authors list (separate from current PR list)
   useEffect(() => {
     if (!ghInstalled || !ghAuthenticated) return;
-    listRepoLabels(projectId)
+    listRepoLabels(WorkspaceSession.of(projectId, null))
       .then(setRepoLabels)
       .catch((err) => reportFrontendError('git.repoLabels', err));
-    listRepoAuthors(projectId)
+    listRepoAuthors(WorkspaceSession.of(projectId, null))
       .then(setRepoAuthors)
       .catch((err) => reportFrontendError('git.repoAuthors', err));
   }, [projectId, ghInstalled, ghAuthenticated]);
@@ -238,7 +243,7 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
     async (number: number) => {
       setLoading(true);
       try {
-        const result = await mergePr(projectId, number, 'squash');
+        const result = await mergePr(WorkspaceSession.of(projectId, null), number, 'squash');
         onShowToast?.(result.message, 'info');
         loadPRs();
         onRefreshGit(projectId);
@@ -255,7 +260,7 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
     async (number: number) => {
       setLoading(true);
       try {
-        await closePr(projectId, number);
+        await closePr(WorkspaceSession.of(projectId, null), number);
         onShowToast?.('PR closed', 'info');
         loadPRs();
       } catch (e: unknown) {

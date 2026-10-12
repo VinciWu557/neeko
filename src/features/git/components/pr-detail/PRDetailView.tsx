@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 import { cn } from '@/lib/utils';
 import { SplitPane } from '@/shared/components';
 import { FileDiff, GitCommitHorizontal, MessageSquare } from '@/shared/components/icons';
 import { useAppContext } from '@/shared/contexts/AppContext';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession, type ProjectId } from '@/shared/utils/workspaceRef';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/Tabs';
 
 import {
@@ -95,7 +95,7 @@ const PRDetailView: React.FC<PRDetailViewProps> = ({
   }, [resource]);
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-
+  const ws = useMemo(() => WorkspaceSession.of(projectId, null), [projectId]);
   const handleFileClick = useCallback((filePath: string) => {
     setSelectedFile(filePath);
   }, []);
@@ -107,50 +107,50 @@ const PRDetailView: React.FC<PRDetailViewProps> = ({
   const handleAddComment = useCallback(
     async (body: string) => {
       try {
-        const c = await addPrComment(projectId, prNumber, body);
+        const c = await addPrComment(ws, prNumber, body);
         setComments((prev) => [...prev, c]);
       } catch (err) {
         console.error('[PRDetail] add comment:', err);
       }
     },
-    [projectId, prNumber],
+    [ws, prNumber],
   );
 
   const handleEditComment = useCallback(
     async (id: string, body: string) => {
       try {
-        const c = await editPrComment(projectId, prNumber, id, body);
+        const c = await editPrComment(ws, prNumber, id, body);
         setComments((prev) => prev.map((x) => (x.id === id ? c : x)));
       } catch (err) {
         console.error('[PRDetail] edit comment:', err);
       }
     },
-    [projectId, prNumber],
+    [ws, prNumber],
   );
 
   const handleDeleteComment = useCallback(
     async (id: string) => {
       try {
-        await deletePrComment(projectId, prNumber, id);
+        await deletePrComment(ws, prNumber, id);
         setComments((prev) => prev.filter((x) => x.id !== id));
       } catch (err) {
         console.error('[PRDetail] delete comment:', err);
       }
     },
-    [projectId, prNumber],
+    [ws, prNumber],
   );
 
   const handleReaction = useCallback(
     async (id: string, emoji: string) => {
       try {
-        await addCommentReaction(projectId, prNumber, id, emoji);
-        const updated = await listPrComments(projectId, prNumber);
+        await addCommentReaction(ws, prNumber, id, emoji);
+        const updated = await listPrComments(ws, prNumber);
         setComments(updated);
       } catch (err) {
         console.error('[PRDetail] reaction:', err);
       }
     },
-    [projectId, prNumber],
+    [ws, prNumber],
   );
 
   if (!resource) {

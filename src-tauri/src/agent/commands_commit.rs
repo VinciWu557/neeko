@@ -2,6 +2,7 @@
 
 use crate::common::agent::services::commit as ai_svc;
 use crate::common::executor::factory::ExecTarget;
+use crate::common::git::WorkspaceSession;
 use crate::AppError;
 use crate::AppStateWrapper;
 use tauri::State;
@@ -9,20 +10,17 @@ use tauri::State;
 /// Generate a commit message using an AI agent.
 #[tauri::command]
 pub async fn generate_commit_message(
-    project_id: String,
+    workspace: WorkspaceSession,
     agent_id: String,
     agent_command_override: Option<String>,
     file_paths: Vec<String>,
-    worktree_path: Option<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<String, AppError> {
     let _ = agent_command_override;
 
     let (agent_cmd, prompt_args, post_prompt_args) = resolve_agent_for_remote(&state, &agent_id);
     let prompt = ai_svc::build_simple_commit_prompt(&file_paths);
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root().to_string();
 
     let output = match &t {

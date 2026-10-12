@@ -28,6 +28,7 @@ import { useActiveCheckoutPath } from '@/shared/store/workspaceStore';
 import { getDistroIcon } from '@/shared/utils/distros';
 import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import serverIcon from '../../../assets/server.svg';
 import { push, pull, type PushOutcome } from '../../git/api/gitApi';
@@ -143,7 +144,7 @@ const ProjectsPanel: React.FC = () => {
           header: 'git push',
           projectId,
           projectPath,
-          run: (runId) => push(projectId, false, worktreePath, runId),
+          run: (runId) => push(WorkspaceSession.of(projectId, worktreePath), false, runId),
           isAuthRequired: (o) => 'AuthRequired' in o,
         });
         if (result.status === 'busy') {
@@ -173,7 +174,7 @@ const ProjectsPanel: React.FC = () => {
           header: 'git pull',
           projectId,
           projectPath,
-          run: (runId) => pull(projectId, worktreePath, runId),
+          run: (runId) => pull(WorkspaceSession.of(projectId, worktreePath), runId),
           isAuthRequired: (o) => 'AuthRequired' in o,
         });
         if (result.status === 'busy') {

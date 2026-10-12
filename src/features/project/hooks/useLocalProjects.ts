@@ -263,7 +263,7 @@ export function useLocalProjects() {
       const checkoutPath = selectActiveCheckoutPath(useWorkspaceStore.getState(), projectId);
       await refreshWorkspaceStatus(WorkspaceSession.of(projectId, checkoutPath ?? null).key);
 
-      getGitBranchInfo(projectId, checkoutPath)
+      getGitBranchInfo(WorkspaceSession.of(projectId, checkoutPath ?? null))
         .then((branchInfo) => {
           // 只合并 per-project 元数据（分支清单 / 工作树清单）。
           // `current_branch` **不在这里写**：它是「某个Workspace的 HEAD」，唯一写者是

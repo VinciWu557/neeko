@@ -17,8 +17,10 @@ describe('createProjectCommands (Local)', () => {
   const projectId = 'proj-123';
   const commands = createProjectCommands({ projectId, worktreePath: null });
   const mockInvoke = vi.mocked(invoke);
-  const payload = () => ({ projectId });
-  const wtPayload = () => ({ projectId, worktreePath: null });
+  // wire 载荷：地址是一个 `workspace` 值对象（`WorkspaceSession` 的 JSON 投影），
+  // 与 file 域同形 —— 不再有 projectId / worktreePath 两个独立字段。
+  const payload = () => ({ workspace: { projectId, worktreePath: null } });
+  const wtPayload = () => ({ workspace: { projectId, worktreePath: null } });
   /** 长操作带 Console 流式透传参数（无 runId 时显式 null）。 */
   const streamPayload = () => ({ ...wtPayload(), consoleRunId: null });
 
@@ -211,7 +213,10 @@ describe('createProjectCommands (Local)', () => {
     await commands.createTag('v1.0');
     expect(mockInvoke).toHaveBeenCalledWith('create_tag', {
       ...payload(),
-      tagName: 'v1.0',
+      // 后端字段名是 `name`（create_tag(workspace, name, message)）
+      name: 'v1.0',
+      // ProjectCommands.createTag 的 message 可选；缺省时落空串（后端 message 必填）
+      message: '',
     });
   });
 
@@ -237,10 +242,9 @@ describe('createProjectCommands with worktreePath', () => {
   it('commitFiles should pass worktreePath', async () => {
     await commands.commitFiles(['src/foo.ts'], 'feat: foo');
     expect(mockInvoke).toHaveBeenCalledWith('commit_files', {
-      projectId,
+      workspace: { projectId, worktreePath },
       filePaths: ['src/foo.ts'],
       message: 'feat: foo',
-      worktreePath,
       consoleRunId: null,
     });
   });
@@ -248,27 +252,24 @@ describe('createProjectCommands with worktreePath', () => {
   it('stageFiles should pass worktreePath', async () => {
     await commands.stageFiles(['src/foo.ts']);
     expect(mockInvoke).toHaveBeenCalledWith('stage_files', {
-      projectId,
+      workspace: { projectId, worktreePath },
       filePaths: ['src/foo.ts'],
-      worktreePath,
     });
   });
 
   it('discardFiles should pass worktreePath', async () => {
     await commands.discardFiles(['src/foo.ts']);
     expect(mockInvoke).toHaveBeenCalledWith('discard_files', {
-      projectId,
+      workspace: { projectId, worktreePath },
       filePaths: ['src/foo.ts'],
-      worktreePath,
     });
   });
 
   it('push should pass worktreePath', async () => {
     await commands.push(true);
     expect(mockInvoke).toHaveBeenCalledWith('push', {
-      projectId,
+      workspace: { projectId, worktreePath },
       setUpstream: true,
-      worktreePath,
       consoleRunId: null,
     });
   });
@@ -276,11 +277,10 @@ describe('createProjectCommands with worktreePath', () => {
   it('generateCommitMessage should pass worktreePath', async () => {
     await commands.generateCommitMessage('opencode', ['src/foo.ts'], null);
     expect(mockInvoke).toHaveBeenCalledWith('generate_commit_message', {
-      projectId,
+      workspace: { projectId, worktreePath },
       agentId: 'opencode',
       agentCommandOverride: null,
       filePaths: ['src/foo.ts'],
-      worktreePath,
     });
   });
 });

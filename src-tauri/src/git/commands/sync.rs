@@ -2,6 +2,7 @@ use crate::common::git::operations;
 use crate::common::git::transport::{GitRunHooks, GitSyncGuard};
 use crate::common::git::types::PushOutcome;
 use crate::common::git::WorkspaceRef;
+use crate::common::git::WorkspaceSession;
 use crate::git::events;
 use crate::AppError;
 use crate::AppStateWrapper;
@@ -49,15 +50,12 @@ pub async fn cancel_git_sync(
 /// Fetch from remote.
 #[tauri::command]
 pub async fn fetch(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     console_run_id: Option<String>,
     state: State<'_, AppStateWrapper>,
     app_handle: AppHandle,
 ) -> Result<PushOutcome, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let (hooks, _slot) = begin_git_run(&state, &repo, &app_handle, console_run_id.as_deref())?;
     operations::fetch(&t, repo_path, hooks)
@@ -68,15 +66,12 @@ pub async fn fetch(
 /// Pull from remote.
 #[tauri::command]
 pub async fn pull(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     console_run_id: Option<String>,
     state: State<'_, AppStateWrapper>,
     app_handle: AppHandle,
 ) -> Result<PushOutcome, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let (hooks, _slot) = begin_git_run(&state, &repo, &app_handle, console_run_id.as_deref())?;
     let outcome = operations::pull(&t, repo_path, hooks)
@@ -90,16 +85,13 @@ pub async fn pull(
 /// Push to remote.
 #[tauri::command]
 pub async fn push(
-    project_id: String,
+    workspace: WorkspaceSession,
     set_upstream: Option<bool>,
-    worktree_path: Option<String>,
     console_run_id: Option<String>,
     state: State<'_, AppStateWrapper>,
     app_handle: AppHandle,
 ) -> Result<PushOutcome, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let (hooks, _slot) = begin_git_run(&state, &repo, &app_handle, console_run_id.as_deref())?;
     operations::push(&t, repo_path, set_upstream.unwrap_or(false), hooks)
@@ -110,17 +102,14 @@ pub async fn push(
 /// Fetch from remote with authentication.
 #[tauri::command]
 pub async fn fetch_with_credentials(
-    project_id: String,
+    workspace: WorkspaceSession,
     username: String,
     password: String,
-    worktree_path: Option<String>,
     console_run_id: Option<String>,
     state: State<'_, AppStateWrapper>,
     app_handle: AppHandle,
 ) -> Result<PushOutcome, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let (hooks, _slot) = begin_git_run(&state, &repo, &app_handle, console_run_id.as_deref())?;
     operations::fetch_with_credentials(&t, repo_path, &username, &password, hooks)
@@ -131,17 +120,14 @@ pub async fn fetch_with_credentials(
 /// Pull from remote with authentication.
 #[tauri::command]
 pub async fn pull_with_credentials(
-    project_id: String,
+    workspace: WorkspaceSession,
     username: String,
     password: String,
-    worktree_path: Option<String>,
     console_run_id: Option<String>,
     state: State<'_, AppStateWrapper>,
     app_handle: AppHandle,
 ) -> Result<PushOutcome, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let (hooks, _slot) = begin_git_run(&state, &repo, &app_handle, console_run_id.as_deref())?;
     let outcome = operations::pull_with_credentials(&t, repo_path, &username, &password, hooks)
@@ -156,18 +142,15 @@ pub async fn pull_with_credentials(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // 参数构成 invoke 契约（分组会改变前端 payload 形状）
 pub async fn push_with_credentials(
-    project_id: String,
+    workspace: WorkspaceSession,
     set_upstream: Option<bool>,
     username: String,
     password: String,
-    worktree_path: Option<String>,
     console_run_id: Option<String>,
     state: State<'_, AppStateWrapper>,
     app_handle: AppHandle,
 ) -> Result<PushOutcome, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root();
     let (hooks, _slot) = begin_git_run(&state, &repo, &app_handle, console_run_id.as_deref())?;
     operations::push_with_credentials(

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { viewPr, listPrFiles, listPrCommits, listPrComments } from '../../api/gitApi';
 import type { PRInfo, PRFileChange, PRCommit } from '../../types';
@@ -44,13 +45,13 @@ export function usePRResource(projectId: ProjectId, prNumber: number, enabled: b
     const timer = setTimeout(() => {
       if (cancelled) return;
       Promise.all([
-        viewPr(projectId, prNumber).catch((err: unknown) => {
+        viewPr(WorkspaceSession.of(projectId, null), prNumber).catch((err: unknown) => {
           console.error('[usePRResource] viewPr failed:', err);
           throw err; // re-throw so Promise.all still rejects
         }),
-        listPrFiles(projectId, prNumber).catch((): PRFileChange[] => []),
-        listPrCommits(projectId, prNumber).catch((): PRCommit[] => []),
-        listPrComments(projectId, prNumber).catch((): PRComment[] => []),
+        listPrFiles(WorkspaceSession.of(projectId, null), prNumber).catch((): PRFileChange[] => []),
+        listPrCommits(WorkspaceSession.of(projectId, null), prNumber).catch((): PRCommit[] => []),
+        listPrComments(WorkspaceSession.of(projectId, null), prNumber).catch((): PRComment[] => []),
       ])
         .then(([info, files, commits, comments]) => {
           if (!cancelled) {

@@ -158,7 +158,11 @@ describe('useGitChangeEditor', () => {
 
     await waitFor(() => {
       // 绝对 tab.filePath 必须剥根为仓库相对路径（get_file_diff path_guard 拒绝绝对路径）
-      expect(mocks.getFileDiff).toHaveBeenCalledWith(PROJECT_ID, REPO_REL_PATH, WORKTREE, false);
+      expect(mocks.getFileDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: PROJECT_ID, worktreePath: WORKTREE }),
+        REPO_REL_PATH,
+        false,
+      );
     });
     // 首拉完成但 view 为 null → 数据缓存在 hook 内
     await waitFor(() => {
@@ -198,7 +202,11 @@ describe('useGitChangeEditor', () => {
       }),
     );
     await waitFor(() => {
-      expect(mocks.getFileDiff).toHaveBeenCalledWith(PROJECT_ID, REPO_REL_PATH, wt, false);
+      expect(mocks.getFileDiff).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: PROJECT_ID, worktreePath: wt }),
+        REPO_REL_PATH,
+        false,
+      );
     });
   });
 

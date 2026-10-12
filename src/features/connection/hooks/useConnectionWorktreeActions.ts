@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 
 import type { GitStatusSnapshot } from '@/shared/types';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import {
   getWorkspaceStatus,
@@ -42,7 +43,7 @@ export function useConnectionWorktreeActions(projectId: ProjectId, logTag: strin
   const fetchStatus = useCallback(
     (worktreePath: string): Promise<GitStatusSnapshot | null> =>
       // 失败 = 该单元状态未知（由调用方按「无 chip」渲染并允许重试），绝不返回空数组假装「干净」。
-      getWorkspaceStatus(projectId, worktreePath).catch(() => null),
+      getWorkspaceStatus(WorkspaceSession.of(projectId, worktreePath)).catch(() => null),
     [projectId],
   );
 

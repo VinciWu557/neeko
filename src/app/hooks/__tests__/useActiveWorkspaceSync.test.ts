@@ -33,11 +33,12 @@ function snapshotFor(worktreePath: string | null, version = 1): GitStatusSnapsho
 
 /** 让 `invoke('set_active_workspace')` 按 worktreePath 返回对应单元的 ready 信封。 */
 function resolveSnapshotsFrom(version = 1): void {
-  invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-    Promise.resolve({
-      state: 'ready',
-      snapshot: snapshotFor(args?.worktreePath ?? null, version),
-    }),
+  invokeSpy.mockImplementation(
+    (_cmd: string, args: { workspace?: { worktreePath?: string | null } }) =>
+      Promise.resolve({
+        state: 'ready',
+        snapshot: snapshotFor(args?.workspace?.worktreePath ?? null, version),
+      }),
   );
 }
 
@@ -110,7 +111,9 @@ describe('useActiveWorkspaceSync —— 挂载唯一发起点', () => {
     await waitFor(() => expect(mountCallCount()).toBe(2));
     expect(invokeSpy).toHaveBeenLastCalledWith(
       'set_active_workspace',
-      expect.objectContaining({ worktreePath: '/wt/b' }),
+      expect.objectContaining({
+        workspace: expect.objectContaining({ worktreePath: '/wt/b' }),
+      }),
     );
   });
 
@@ -169,11 +172,12 @@ describe('useActiveWorkspaceSync —— 首快照未落地时的有界自愈', (
       .mockRejectedValueOnce(new Error('status for workspace is not available yet'))
       .mockRejectedValueOnce(new Error('status for workspace is not available yet'));
     // 第三次落地（号段跨挂载单调，见后端 version_floors）
-    invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-      Promise.resolve({
-        state: 'ready',
-        snapshot: snapshotFor(args?.worktreePath ?? null, 7),
-      }),
+    invokeSpy.mockImplementation(
+      (_cmd: string, args: { workspace?: { worktreePath?: string | null } }) =>
+        Promise.resolve({
+          state: 'ready',
+          snapshot: snapshotFor(args?.workspace?.worktreePath ?? null, 7),
+        }),
     );
 
     renderHook(() => useActiveWorkspaceSync());
@@ -214,11 +218,12 @@ describe('useActiveWorkspaceSync —— 首快照未落地时的有界自愈', (
     invokeSpy
       .mockResolvedValueOnce({ state: 'pending', workspace_key: key })
       .mockResolvedValueOnce({ state: 'pending', workspace_key: key });
-    invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-      Promise.resolve({
-        state: 'ready',
-        snapshot: snapshotFor(args?.worktreePath ?? null, 7),
-      }),
+    invokeSpy.mockImplementation(
+      (_cmd: string, args: { workspace?: { worktreePath?: string | null } }) =>
+        Promise.resolve({
+          state: 'ready',
+          snapshot: snapshotFor(args?.workspace?.worktreePath ?? null, 7),
+        }),
     );
 
     renderHook(() => useActiveWorkspaceSync());
@@ -311,11 +316,12 @@ describe('useActiveWorkspaceSync —— 首快照未落地时的有界自愈', (
     expect(mountCallCount()).toBe(4); // /wt/dead 的预算耗尽
 
     // 切到另一个单元：新意图拿到完整预算（4 次），而不是继承耗尽的计数
-    invokeSpy.mockImplementation((_cmd: string, args: { worktreePath?: string | null }) =>
-      Promise.resolve({
-        state: 'ready',
-        snapshot: snapshotFor(args?.worktreePath ?? null, 2),
-      }),
+    invokeSpy.mockImplementation(
+      (_cmd: string, args: { workspace?: { worktreePath?: string | null } }) =>
+        Promise.resolve({
+          state: 'ready',
+          snapshot: snapshotFor(args?.workspace?.worktreePath ?? null, 2),
+        }),
     );
     act(() => {
       useWorkspaceStore.getState().setActiveWorkspace('p1', '/wt/b', 'b');

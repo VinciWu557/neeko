@@ -45,7 +45,8 @@ function fetchReviewComments(projectId: ProjectId, prNumber: number): Promise<PR
   if (cached) return Promise.resolve(cached);
   const inflight = reviewCommentsCache.get(key);
   if (inflight) return inflight;
-  const promise = listPrReviewComments(projectId, prNumber).then((all) => {
+  const ws = WorkspaceSession.of(projectId, null);
+  const promise = listPrReviewComments(ws, prNumber).then((all) => {
     reviewCommentsResult.set(key, all);
     reviewCommentsCache.delete(key);
     return all;
@@ -78,9 +79,8 @@ const PRFilesChangedPanel: React.FC<PRFilesChangedPanelProps> = ({
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
+        if (entry.isIntersecting)
           setLoadedCount((prev) => Math.min(prev + PAGE_SIZE, files.length));
-        }
       },
       { rootMargin: '400px' },
     );
@@ -102,9 +102,7 @@ const PRFilesChangedPanel: React.FC<PRFilesChangedPanelProps> = ({
   useEffect(() => {
     if (!scrollToFile) return;
     const el = fileRefs.current.get(scrollToFile);
-    if (el) {
-      el.scrollIntoView({ behavior: 'auto', block: 'start' });
-    }
+    if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
   }, [scrollToFile, files, loadedCount]);
 
   const visibleFiles = useMemo(() => files.slice(0, loadedCount), [files, loadedCount]);
@@ -453,7 +451,7 @@ const DiffBody: React.FC<DiffBodyProps> = ({
     setSubmitting(true);
     try {
       const created = await addPrReviewComment(
-        projectId,
+        WorkspaceSession.of(projectId, null),
         prNumber,
         commentText.trim(),
         filePath,

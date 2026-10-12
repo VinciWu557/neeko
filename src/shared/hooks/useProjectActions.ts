@@ -12,7 +12,7 @@ import {
 } from '@/shared/store/workspaceStore';
 import type { AgentConfig, AppConfig, RemoteEntrySession, Tab } from '@/shared/types';
 import { updateProjectInEntries } from '@/shared/utils/entryUpdates';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession, type ProjectId } from '@/shared/utils/workspaceRef';
 
 // eslint-disable-next-line import/no-restricted-paths -- shared hook depends on git API for git info refresh
 import { getGitInfo } from '../../features/git/api/gitApi';
@@ -106,7 +106,7 @@ export function useProjectActions({
     const handler = async (_connectionId: string, projectId: ProjectId): Promise<void> => {
       // 单元归属按被刷新的 projectId 取（旧实现读全局镜像 → 跨项目刷新会串到别的工作树）
       const worktreePath = selectActiveCheckoutPath(useWorkspaceStore.getState(), projectId);
-      const gitInfo = await getGitInfo(projectId, worktreePath).catch((e) => {
+      const gitInfo = await getGitInfo(WorkspaceSession.of(projectId, worktreePath)).catch((e) => {
         console.error(`[${isWsl ? 'WSL' : 'SSH'}] Failed to refresh git info:`, e);
         return null;
       });

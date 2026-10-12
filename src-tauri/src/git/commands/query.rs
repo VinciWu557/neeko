@@ -3,6 +3,7 @@ use crate::common::git::path_guard::validate_repo_relative_path;
 use crate::common::git::status_worker::GitStatusSnapshot;
 use crate::common::git::transport::GitTransport;
 use crate::common::git::types::DiffResult;
+use crate::common::git::WorkspaceSession;
 use crate::project::types::{FileDiffStats, GitBranchInfo, GitInfo};
 use crate::AppError;
 use crate::AppStateWrapper;
@@ -14,13 +15,10 @@ use tauri::State;
 /// 走 [`get_workspace_status`]。把它塞进 per-project 结构正是 worktree 视图串主仓内容的结构成因。
 #[tauri::command]
 pub async fn get_git_info(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<GitInfo, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     operations::get_git_info(&t, repo.root())
         .await
         .map_err(AppError::from)
@@ -29,13 +27,10 @@ pub async fn get_git_info(
 /// Get branch information.
 #[tauri::command]
 pub async fn get_git_branch_info(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<GitBranchInfo, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     operations::get_git_branch_info(&t, repo.root())
         .await
         .map_err(AppError::from)
@@ -48,13 +43,10 @@ pub async fn get_git_branch_info(
 /// —— worktree 视图串主仓内容的直接成因。
 #[tauri::command]
 pub async fn get_workspace_status(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<GitStatusSnapshot, AppError> {
-    let (_t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (_t, repo) = state.resolve_workspace_target(&workspace).await?;
     crate::git::services::status::read_workspace_status(&state, &repo).await
 }
 
@@ -67,14 +59,11 @@ pub async fn get_workspace_status(
 /// 编排逻辑见 `git::services::status::activate`。
 #[tauri::command]
 pub async fn set_active_workspace(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     app: tauri::AppHandle,
     state: State<'_, AppStateWrapper>,
 ) -> Result<crate::git::services::status::WorkspaceActivation, AppError> {
-    let (_t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (_t, repo) = state.resolve_workspace_target(&workspace).await?;
     // 交付适配器只在此处构造（服务层只认端口，见 `common/file/watcher/sink.rs`）。
     let sink: std::sync::Arc<dyn crate::common::file::watcher::WatcherEventSink> =
         std::sync::Arc::new(crate::common::file::watcher::AppHandleSink::new(app));
@@ -108,14 +97,11 @@ pub async fn canonical_worktree_path(
 /// git repository; the UI expand handler catches it.
 #[tauri::command]
 pub async fn get_untracked_files(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     dir_path: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<String>, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     validate_repo_relative_path(&t, repo.root(), &dir_path).map_err(AppError::from)?;
     operations::get_untracked_files(&t, repo.root(), &dir_path)
         .await
@@ -125,13 +111,10 @@ pub async fn get_untracked_files(
 /// Get diff statistics for changed files.
 #[tauri::command]
 pub async fn get_changed_files_diff_stats(
-    project_id: String,
-    worktree_path: Option<String>,
+    workspace: WorkspaceSession,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<FileDiffStats>, AppError> {
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     operations::get_changed_files_diff_stats(&t, repo.root())
         .await
         .map_err(AppError::from)
@@ -140,16 +123,13 @@ pub async fn get_changed_files_diff_stats(
 /// Get the diff for a specific file.
 #[tauri::command]
 pub async fn get_file_diff(
-    project_id: String,
+    workspace: WorkspaceSession,
     file_path: String,
-    worktree_path: Option<String>,
     collapse: Option<bool>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<DiffResult, AppError> {
     let t0 = std::time::Instant::now();
-    let (t, repo) = state
-        .resolve_workspace(&project_id, worktree_path.as_deref())
-        .await?;
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     validate_repo_relative_path(&t, repo.root(), &file_path)?;
     let collapse = collapse.unwrap_or(true);
     let result = operations::get_file_diff(&t, repo.root(), &file_path, collapse)

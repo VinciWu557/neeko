@@ -21,7 +21,7 @@ function refreshUnitBranchInfo(workspaceKey: string): void {
   const project = store.projects.find((p) => p.id === projectId);
   if (!project || project.git_info === null) return;
 
-  getGitBranchInfo(projectId, worktreePath)
+  getGitBranchInfo(WorkspaceSession.of(projectId, worktreePath))
     .then((branchInfo) => {
       // branches / worktrees 是 per-project（同一仓库共享 refs 与 worktree 清单）；
       // 当前分支不再从这里写 —— 它是 per 单元 的事实，唯一写者是 applyStatus

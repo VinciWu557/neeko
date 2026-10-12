@@ -139,7 +139,9 @@ describe('useSessionBootstrap — git-changed 按事件自带的Workspace刷新'
     });
 
     // 回归①：空字符串会被 Rust 端当字面路径 → 必须 null（→ Rust None → 项目根）。
-    expect(mockGetGitBranchInfo).toHaveBeenCalledWith('p1', null);
+    expect(mockGetGitBranchInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: null }),
+    );
     // ahead/behind 随权威快照 `git-status-snapshot` 单通道投递，事件刷新不再单独拉。
     expect(mockGetAheadBehind).not.toHaveBeenCalled();
   });
@@ -156,7 +158,9 @@ describe('useSessionBootstrap — git-changed 按事件自带的Workspace刷新'
       await vi.advanceTimersByTimeAsync(600);
     });
 
-    expect(mockGetGitBranchInfo).toHaveBeenCalledWith('p1', '/repo/wt/Test');
+    expect(mockGetGitBranchInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: '/repo/wt/Test' }),
+    );
     expect(mockGetAheadBehind).not.toHaveBeenCalled();
   });
 
@@ -176,8 +180,12 @@ describe('useSessionBootstrap — git-changed 按事件自带的Workspace刷新'
       await vi.advanceTimersByTimeAsync(600);
     });
 
-    expect(mockGetGitBranchInfo).toHaveBeenCalledWith('p1', null);
-    expect(mockGetGitBranchInfo).not.toHaveBeenCalledWith('p1', '/repo/wt/Test');
+    expect(mockGetGitBranchInfo).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: null }),
+    );
+    expect(mockGetGitBranchInfo).not.toHaveBeenCalledWith(
+      expect.objectContaining({ worktreePath: '/repo/wt/Test' }),
+    );
   });
 });
 

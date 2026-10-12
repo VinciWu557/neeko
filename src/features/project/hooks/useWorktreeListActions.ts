@@ -92,7 +92,7 @@ export function useWorktreeListActions(
         }
         let branchError: string | null = null;
         try {
-          await deleteBranch(projectId, branch, false);
+          await deleteBranch(WorkspaceSession.of(projectId, null), branch, false);
         } catch (e: unknown) {
           branchError = String(e);
         }
