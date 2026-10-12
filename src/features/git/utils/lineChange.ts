@@ -98,7 +98,11 @@ function contentOf(line: DiffLine): string {
   return '';
 }
 
-/** 解析 `N unmodified lines` 折叠占位文本中的行数（与 diffViewUtils 同语义）。 */
+/**
+ * 解析 `N unmodified lines` 折叠占位文本中的行数。
+ * 与 components/diff 的 `diffCollapsedSections.parseCollapsedCount` 同语义的**刻意副本** ——
+ * 本模块（utils 层）不上探 components 内部实现（层级方向），两者独立演进。
+ */
 function parseCollapsedCount(text: string): number {
   const m = text.match(/^(\d+)\s+unmodified lines?$/);
   return m ? Number(m[1]) : 0;

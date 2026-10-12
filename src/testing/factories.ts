@@ -2,6 +2,7 @@ import type { StackFrameDto } from '@/features/runner/types';
 import type {
   Project,
   AgentConfig,
+  FileChange,
   ManagedSkillDto,
   TagGroup,
   DiscoveredSkillDto,
@@ -88,6 +89,13 @@ export function createDiscoveredSkill(overrides?: Partial<DiscoveredSkillDto>): 
     name_guess: 'discovered-skill',
     ...overrides,
   };
+}
+
+/** 变更行夹具（`path` 必填，其余取中性默认；git 状态过滤测试与列表渲染共用）。 */
+export function createFileChange(
+  overrides: Partial<FileChange> & Pick<FileChange, 'path'>,
+): FileChange {
+  return { status: 'Modified', additions: 0, deletions: 0, ...overrides };
 }
 
 /**

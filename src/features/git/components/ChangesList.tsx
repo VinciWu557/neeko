@@ -2,10 +2,18 @@ import React, { useCallback, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import { Undo2, ListPlus } from '@/shared/components/icons';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import type { FileChange } from '@/shared/types';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { WorkspaceKey } from '@/shared/utils/workspaceRef';
 
 import { useUntrackedDirExpansion } from '../hooks/useUntrackedDirExpansion';
+import {
+  FILTER_STATUS_OPTIONS,
+  filterChangesByStatus,
+  STATUS_LABELS,
+  type FilterStatus,
+} from '../utils/changesFilter';
 import type { DiscardIntent } from '../utils/discardIntent';
 import {
   buildFileDiscardIntent,
@@ -15,6 +23,9 @@ import {
 import { buildGitStatusGroups } from '../utils/gitStatusGroups';
 
 import Section from './ChangesSection';
+
+/** 滚动视图身份：全局唯一 surface 常量（owner 段按 Workspace 隔离）。 */
+const SCROLL_SURFACE = 'dock.git.changes';
 
 /**
  * 分组头部的 discard 按钮。
@@ -76,16 +87,6 @@ interface ChangesListProps {
   workspaceKey: WorkspaceKey;
 }
 
-type FilterStatus = 'all' | 'Modified' | 'Added' | 'Deleted' | 'Renamed';
-
-const STATUS_LABELS: Record<FilterStatus, string> = {
-  all: 'All',
-  Modified: 'M',
-  Added: 'A',
-  Deleted: 'D',
-  Renamed: 'R',
-};
-
 const ChangesList: React.FC<ChangesListProps> = ({
   files,
   selectedFiles,
@@ -105,6 +106,10 @@ const ChangesList: React.FC<ChangesListProps> = ({
   const [unversionedExpanded, setUnversionedExpanded] = useState(true);
   const [filter, setFilter] = useState<FilterStatus>('all');
 
+  // 滚动记忆：Dock 面板互切（保活期引擎丢位置）与卸载重建都恢复；按 Workspace 隔离。
+  // 空态早退时元素未挂载（ref 为 null）→ 记忆只是暂存，列表回来即恢复。
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, workspaceKey));
+
   // G6 简化契约：tracked（staged/unstaged/conflicted 合并）与 unversioned 两组
   // （纯派生，无独立状态；缺 XY 的旧 payload 回退：Untracked → unversioned，其余 → tracked）
   const groups = useMemo(() => buildGitStatusGroups(files), [files]);
@@ -116,11 +121,10 @@ const ChangesList: React.FC<ChangesListProps> = ({
     workspaceKey,
   );
 
-  const filterList = useCallback(
-    (list: FileChange[]) => (filter === 'all' ? list : list.filter((f) => f.status === filter)),
-    [filter],
+  const filteredTracked = useMemo(
+    () => filterChangesByStatus(groups.tracked, filter),
+    [groups.tracked, filter],
   );
-  const filteredTracked = useMemo(() => filterList(groups.tracked), [groups.tracked, filterList]);
 
   const groupStats = (list: FileChange[]) => ({
     add: list.reduce((s, f) => s + f.additions, 0),
@@ -188,7 +192,7 @@ const ChangesList: React.FC<ChangesListProps> = ({
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 overflow-auto">
+    <div ref={scrollRef} className="flex flex-col flex-1 min-h-0 overflow-auto">
       {/* ── G4 截断提示（P3：截断显式化，对齐 orca too-many-changes）── */}
       {truncated && (
         <div className="px-3 py-1.5 text-[var(--font-size)] text-accent-orange bg-accent-orange/10 shrink-0">
@@ -215,7 +219,7 @@ const ChangesList: React.FC<ChangesListProps> = ({
           loading={loading}
           filter={
             <div className="flex items-center gap-1">
-              {(['all', 'Modified', 'Added', 'Deleted', 'Renamed'] as FilterStatus[]).map((s) => (
+              {FILTER_STATUS_OPTIONS.map((s) => (
                 <button
                   key={s}
                   className={cn(
