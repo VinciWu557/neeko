@@ -3,7 +3,8 @@ import React, { useMemo } from 'react';
 import { cn } from '@/lib/utils';
 
 import { buildSplitRows, computeWordDiff } from './diffAlgorithm';
-import { lastSelectedKeyOf, lineNumColumnWidth, type SelectionMode } from './diffViewUtils';
+import { lineNumColumnWidth } from './diffLineNumbers';
+import { lastSelectedKeyOf, type SelectionMode } from './diffSelection';
 import ExpandedSectionRows from './ExpandedSectionRows';
 import { renderHighlightedHtml, renderWordDiffHtml } from './highlight';
 import type { DiffHunk, DiffResult } from './types';

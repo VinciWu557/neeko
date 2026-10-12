@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState
 import { cn } from '@/lib/utils';
 import { Bug, FileText, GitCommit, Send, Sparkles, User, X } from '@/shared/components/icons';
 
-import { REVIEW_INSTRUCTION_MAX } from './diffViewUtils';
+import { REVIEW_INSTRUCTION_MAX } from './diffSelection';
 
 /** 下拉面板宽度。 */
 const PANEL_WIDTH = 280;

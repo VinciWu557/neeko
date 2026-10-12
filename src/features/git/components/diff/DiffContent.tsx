@@ -1,8 +1,8 @@
 import React, { type ReactNode } from 'react';
 
+import type { SelectionMode } from './diffSelection';
 import DiffTable from './DiffTable';
 import DiffTruncatedNotice from './DiffTruncatedNotice';
-import type { SelectionMode } from './diffViewUtils';
 import SplitDiffTable from './SplitDiffTable';
 import type { DiffHunk, DiffResult, ViewMode } from './types';
 

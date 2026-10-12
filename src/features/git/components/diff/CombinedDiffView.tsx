@@ -1,9 +1,10 @@
 import React from 'react';
 
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import type { CommitFileChange } from '@/shared/types';
 
+import type { SelectionMode } from './diffSelection';
 import DiffToolbar from './DiffToolbar';
-import type { SelectionMode } from './diffViewUtils';
 import FileDiffSection from './FileDiffSection';
 import type { DiffHunk, DiffViewProps, ViewMode } from './types';
 import { useCombinedDiffNav } from './useCombinedDiffNav';
@@ -32,6 +33,10 @@ interface CombinedDiffViewProps {
   lastSelectedPath: string | null;
   selectionActionBar: () => React.ReactNode;
   reviewPopoverEl: React.ReactNode;
+  /** 滚动记忆身份（由 DiffView 经 buildScrollKey 铸造）。 */
+  scrollMemoryKey: string;
+  /** false = 有显式滚动意图（scrollToPath），记忆让位并作废旧位置。 */
+  scrollMemoryEnabled: boolean;
 }
 
 /**
@@ -62,6 +67,8 @@ const CombinedDiffView: React.FC<CombinedDiffViewProps> = React.memo(
     lastSelectedPath,
     selectionActionBar,
     reviewPopoverEl,
+    scrollMemoryKey,
+    scrollMemoryEnabled,
   }) => {
     const {
       scrollRef,
@@ -81,6 +88,12 @@ const CombinedDiffView: React.FC<CombinedDiffViewProps> = React.memo(
       initialPath,
       onScrollToPathChange,
       viewMode,
+    });
+
+    // 滚动记忆：tab 互切（卸载重建）后从快照恢复；内容异步到达时由 hook 自行追平。
+    // 注意用独立 ref（外层 scrollRef 属于导航 hook，负责 scrollIntoView 定位）。
+    const bodyScrollRef = useScrollMemory<HTMLDivElement>(scrollMemoryKey, {
+      enabled: scrollMemoryEnabled,
     });
 
     // 项目身份唯一来源 = DiffSource.workspace（不再单列 projectId prop）
@@ -115,7 +128,7 @@ const CombinedDiffView: React.FC<CombinedDiffViewProps> = React.memo(
           onReview={fileList.length > 0 ? onReview : undefined}
         />
 
-        <div className="flex-1 overflow-auto min-w-0 bg-bg-secondary py-0.5">
+        <div ref={bodyScrollRef} className="flex-1 overflow-auto min-w-0 bg-bg-secondary py-0.5">
           {fileList.map((f, idx) => (
             <FileDiffSection
               key={f.path}

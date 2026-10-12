@@ -6,13 +6,8 @@ import { fileIconSrc } from '@/shared/utils/fileIcons';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import DiffContent from './DiffContent';
-import {
-  fileBlockId,
-  splitFilePath,
-  statusBadgeClass,
-  statusLetter,
-  type SelectionMode,
-} from './diffViewUtils';
+import { fileBlockId, splitFilePath, statusBadgeClass, statusLetter } from './diffFileDisplay';
+import type { SelectionMode } from './diffSelection';
 import { detectLanguage, ensureLanguageRegistered } from './highlight';
 import type { DiffHunk, DiffViewProps, ViewMode } from './types';
 import { useDiffData } from './useDiffData';

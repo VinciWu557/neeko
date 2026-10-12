@@ -36,12 +36,12 @@
       "kind": "legit",
       "note": "折叠目录占位行显示名剥离尾斜杠"
     },
-    "src/features/git/components/diff/diffViewUtils.ts": {
+    "src/features/git/components/diff/diffFileDisplay.ts": {
       "counts": {
         "backslash": 1
       },
       "kind": "legit",
-      "note": "diff 行「文件名 + 目录」"
+      "note": "splitFilePath：diff 行「文件名 + 目录」"
     },
     "src/features/git/components/gitlog/commitListUtils.ts": {
       "counts": {

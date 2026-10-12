@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { CommitFileChange } from '@/shared/types';
 
-import { fileBlockId, indexOfPath, initialExpandedPaths, sumFileStats } from './diffViewUtils';
+import { fileBlockId, indexOfPath, initialExpandedPaths, sumFileStats } from './diffFileDisplay';
 import type { ViewMode } from './types';
 
 interface UseCombinedDiffNavParams {

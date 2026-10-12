@@ -1,12 +1,13 @@
 import React, { type ReactNode } from 'react';
 
 import { openProjectFile } from '@/features/quick-open';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import DiffContent from './DiffContent';
+import type { SelectionMode } from './diffSelection';
 import DiffToolbar from './DiffToolbar';
-import type { SelectionMode } from './diffViewUtils';
 import { DiffFileCard } from './FileDiffSection';
 import { detectLanguage, ensureLanguageRegistered } from './highlight';
 import type { DiffResult, ViewMode } from './types';
@@ -76,6 +77,10 @@ interface SingleDiffBodyProps {
   onToggleSection: (hunkIdx: number, lineIdx: number) => void;
   selectionActionBar?: () => ReactNode;
   reviewPopoverEl: React.ReactNode;
+  /** 滚动记忆身份（由 DiffView 经 buildScrollKey 铸造）。 */
+  scrollMemoryKey: string;
+  /** false = 有显式滚动意图（scrollToPath），记忆让位并作废旧位置。 */
+  scrollMemoryEnabled: boolean;
 }
 
 /**
@@ -108,7 +113,14 @@ function SingleDiffBody(props: SingleDiffBodyProps) {
     onToggleSection,
     selectionActionBar,
     reviewPopoverEl,
+    scrollMemoryKey,
+    scrollMemoryEnabled,
   } = props;
+
+  // 滚动记忆：tab 互切（卸载重建）后从快照恢复；内容异步到达时由 hook 自行追平。
+  const scrollRef = useScrollMemory<HTMLDivElement>(scrollMemoryKey, {
+    enabled: scrollMemoryEnabled,
+  });
 
   const language = React.useMemo(() => detectLanguage(filePath), [filePath]);
   const [languageReady, setLanguageReady] = React.useState(false);
@@ -180,7 +192,7 @@ function SingleDiffBody(props: SingleDiffBodyProps) {
     <div className="relative flex-1 flex flex-col overflow-hidden min-w-0 bg-bg-secondary">
       {singleToolbar}
       {reviewPopoverEl}
-      <div className="flex-1 overflow-auto min-w-0 bg-bg-secondary py-0.5">
+      <div ref={scrollRef} className="flex-1 overflow-auto min-w-0 bg-bg-secondary py-0.5">
         {/*
           Single mode: keep the rounded content card for visual parity with
           combined, but hide the file header — toolbar already shows name/dir/stats.

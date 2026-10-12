@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { CloseIcon } from '@/shared/components/icons';
 
-import { REVIEW_INSTRUCTION_MAX } from './diffViewUtils';
+import { REVIEW_INSTRUCTION_MAX } from './diffSelection';
 
 interface SelectionActionBarProps {
   selectedCount: number;

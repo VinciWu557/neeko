@@ -22,4 +22,4 @@ export {
   statusLetter,
   initialExpandedPaths,
   sumFileStats,
-} from './diffViewUtils';
+} from './diffFileDisplay';

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { computeSelectionRange, selectionKeys } from './diffViewUtils';
-import type { DiffPos, SelectionMode } from './diffViewUtils';
+import {
+  computeSelectionRange,
+  selectionKeys,
+  type DiffPos,
+  type SelectionMode,
+} from './diffSelection';
 
 /**
  * 拖拽选择多行（AI review 选区）。

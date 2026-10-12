@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import CombinedDiffView from './CombinedDiffView';
-import { mergeSelection } from './diffViewUtils';
-import type { SelectionMode } from './diffViewUtils';
+import { diffScrollMemoryEnabled, diffScrollMemoryKey } from './diffScrollMemory';
+import { mergeSelection, type SelectionMode } from './diffSelection';
 import ReviewInstructionPopover from './ReviewInstructionPopover';
 import SelectionActionBar from './SelectionActionBar';
 import SingleDiffBody from './SingleDiffBody';
@@ -225,6 +225,10 @@ const DiffView: React.FC<DiffViewProps> = React.memo(
       [totalChangeBlocks, currentBlockIndex, setCurrentBlockIndex],
     );
 
+    // 滚动记忆：tab 互切后恢复；scrollToPath 显式导航时让位（身份与让位规则见 diffScrollMemory）。
+    const scrollMemoryKey = diffScrollMemoryKey(diffSource, combined, filePath);
+    const scrollMemoryEnabled = diffScrollMemoryEnabled(scrollToPath);
+
     // ── Combined multi-file view ──────────────────────────────────────────
     if (combined && files && diffSource) {
       return (
@@ -248,6 +252,8 @@ const DiffView: React.FC<DiffViewProps> = React.memo(
           lastSelectedPath={lastSelectedPath}
           selectionActionBar={selectionActionBar}
           reviewPopoverEl={reviewPopoverEl}
+          scrollMemoryKey={scrollMemoryKey}
+          scrollMemoryEnabled={scrollMemoryEnabled}
         />
       );
     }
@@ -279,6 +285,8 @@ const DiffView: React.FC<DiffViewProps> = React.memo(
         onToggleSection={toggleSection}
         selectionActionBar={selectionActionBar}
         reviewPopoverEl={reviewPopoverEl}
+        scrollMemoryKey={scrollMemoryKey}
+        scrollMemoryEnabled={scrollMemoryEnabled}
       />
     );
   },

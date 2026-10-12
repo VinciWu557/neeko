@@ -4,8 +4,8 @@ import {
   collapsedSectionRanges,
   findFullHunkForOldLine,
   spliceFullHunkSection,
-} from './diffViewUtils';
-import type { DiffPos } from './diffViewUtils';
+} from './diffCollapsedSections';
+import type { DiffPos } from './diffSelection';
 import { renderHighlightedHtml } from './highlight';
 import type { DiffHunk } from './types';
 

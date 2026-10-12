@@ -56,6 +56,8 @@ describe('SingleDiffBody — 语法高亮回归', () => {
         expandedSections={new Set()}
         onToggleSection={vi.fn()}
         reviewPopoverEl={null}
+        scrollMemoryKey="test.single.diff"
+        scrollMemoryEnabled={false}
       />,
     );
 
