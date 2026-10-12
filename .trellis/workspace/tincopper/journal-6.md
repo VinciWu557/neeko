@@ -517,3 +517,77 @@ neeko-check 增量（22 文件）：批 1（票号）/ 批 2（Pending）/ 批 3
 ### Next Steps
 
 - None - task complete
+
+
+## Session 272: 收尾 10-08 命名收敛：核验 AC 并归档
+
+**Date**: 2026-10-12
+**Task**: 收尾 10-08 命名收敛：核验 AC 并归档
+**Branch**: `main`
+
+### Summary
+
+核验 10-08-workspace-naming 的 5 条 AC 全达成（Tier 0/1/2/3 全栈落地远超初版范围），对齐 PRD 与实际落地的文档落差，归档任务。
+
+### Main Changes
+
+## 会话性质
+
+只读核验 + 文档对齐 + 归档，未改任何功能代码（仅修订 PRD 的 Scope/Out/缺口段措辞）。
+
+## 核验证据（可执行判据，非文档自述）
+
+| 判据 | 命令 | 结果 |
+|---|---|---|
+| type-check | `pnpm type-check` | 通过 |
+| 全量门禁 | `guards run --stage local` | **24/24 全过**（含 test_fe / test_rust / test_host） |
+| AC2 | `rg ProjectWorkspace src` | 0 命中 |
+| AC3 | `rg unitRootForProject src` | 0 命中 |
+| AC4 | 术语表唯一性 | `docs/domain-model.md` 唯一定文处；三处 spec 均为一句话指针 + 「不复述」声明 |
+| 旧名核验 | 全仓 `rg`（src-tauri/src + src + tools） | `RepoRef`/`WorktreeRef`/`UnitPath`/`ExecUnit`/`RepoKey`/`repoKeyOf`/`repo_key`/`get_repo_status`/`set_active_repo_unit`/`read_unit_status`/`release_unit`/`useWorktreeStore`/`WorktreeUnitState`/`selectActiveWorktreePath`/`WorktreeSnapshotItem`/`useActivateRepoUnit` 全 0 命中 |
+
+新符号抽样在位：`workspaceStore.ts`、`workspaceRef.ts`、`workspace_ref.rs`、`checkout_path.rs`、
+`ProjectView.tsx`、`check_workspace_identity.py`；后端 `WorkspaceRef`/`Checkout`/`CheckoutPath`/
+`ExecWorkspace` + `resolve_workspace`/`resolve_exec_workspace`/`resolve_workspace_root`；
+命令 `get_workspace_status`/`set_active_workspace` 已在 `lib.rs:229-230` 注册；
+wire `workspace_key` 落在 `git.ts`/`file.ts` 与 session/git/file hooks。
+
+刻意保留项确认（非遗漏）：`repo_key_prefix`（cache 键，4 文件）、`isActiveWorktree`
+（linked-vs-main 类型谓词，6 文件）、`isWorktreeDirty`/`create_worktree` 等 git 原生操作。
+
+## 范围落差（本次文档对齐的主体）
+
+PRD 初版把 Tier 2 大改名（75 import 点）与 Tier 3（后端类型 + wire）列为 Out，且决策
+「默认不改」；实际四轮落地中两者都做了（Tier 2 实际跨 78 文件；Tier 3 比原设想更彻底）。
+修订方式：保留原始规划口径 + 删除线标注「后续已落地」+ 指向 implement.md 对应记录段，
+便于将来对照「计划 vs 实际」的差距来源，而不是静默改写历史。
+
+另修正一处：R1.3 提到的 `RepoKey`/`RepoRef` 补注 Tier 3 后符号名为 `WorkspaceKey`/`WorkspaceRef`（语义不变）。
+
+## CI 覆盖
+
+`f784b8e7`（主改名提交）是最新绿 run 38135300006（286cdff5）的祖先；该 run 之后无任何提交
+触及本任务文件范围（命名/术语相关 12 条路径全部无 diff）→ CI 绿等价于当前代码状态绿。
+
+## 归档
+
+`task.py archive 10-08-workspace-naming` → `archive/2026-10/`。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f784b8e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
