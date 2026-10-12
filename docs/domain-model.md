@@ -97,6 +97,16 @@ Workspace」的命令**（含 branch / PR 两个子域）一律收首参 `worksp
 推导（构造律，调用方无权指定）。键的散件拼装/反解函数（`workspaceKeyOf` / `parseWorkspaceKey`）已退役，
 唯一铸造点是 `WorkspaceSession#key`（≡ Rust `WorkspaceRef::key()`）。
 
+**terminal 插入链路 = 地址由 `WorkspaceSession` 派生**（10-12 落地）：terminal 域唯一的地址铸造点是
+`terminalAddress(session, tabId, paneId)`（`src/features/terminal/components/terminalCache.ts`），
+物理键 = `session.key` + `TERMINAL_KEY_SEP` + `tabId` + SEP + `paneId`。**env（local / wsl / remote）
+不进键** —— 物理 Map 三分是存储/传输归属；键在三个 Map 间**唯一**，地址层按键/前缀直接命中，
+**不读 projectStore**（无 env 查表、无 env 缺失 fail-closed；见 10-12 实现注记）；
+旧的手搓 `wt:` / `wsl:` / `remote:` 键与 `terminalCacheKey` / `findSessionIdForProject` / 前缀销毁
+`destroy*CachesByPrefix` 已退役（护栏 `check_terminal_key_mint` 防回潮）。插入路由按**当前 workspace
+session** 在 `tabs[session.key]` 内仲裁前台 terminal tab，无前台则落到同 session 首个（**禁跨 session**）。
+其他模块不得从 terminal key 反解身份：分量解析走 `decodeTerminalKey`，日志/提示走 `terminalKeyLabel`。
+
 ## 未完成（登记）
 
 - 若某子系统的状态键仍是 `Project`（如 debug 活动会话、LSP 会话根），它尚未达到「按 `Workspace` 隔离」——
