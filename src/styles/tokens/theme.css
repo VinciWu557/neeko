@@ -252,9 +252,12 @@
   /* Terminal selection */
   --terminal-selection: rgba(201, 100, 66, 0.2);
 
-  /* Accent colors — Claude orange-brown palette */
-  --accent-blue:       #c96442;
-  --accent-blue-rgb:   201, 100, 66;
+  /* Accent colors — Claude 暖色调
+     accent-blue 承载「修改 / 重命名」语义（gitFileDecoration + 编辑器 git 变更高亮），
+     必须与 accent-brick(untracked) / accent-orange(deleted) 可区分，
+     故用钢青蓝而非品牌赭红（#c96442 曾令 modified 与 untracked/deleted 视觉同色）。 */
+  --accent-blue:       #2f6f9f;
+  --accent-blue-rgb:   47, 111, 159;
   --accent-green:  #5a8a5e;
   --accent-green-rgb: 90, 138, 94;
   --accent-yellow: #b8860b;
