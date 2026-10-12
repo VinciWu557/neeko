@@ -1,6 +1,11 @@
 # 领域命名收敛：App → Project → Workspace（能力容器）
 
-> 状态：**规划中（未动代码）**。术语决策见 `design.md`，执行批次见 `implement.md`。
+> 状态：**已完成（2026-10-08 归档前核验）**。5 条 AC 全达成，Tier 0/1/2/3 全栈落地。
+> 术语决策见 `design.md`，执行批次与四轮落地记录见 `implement.md`。
+>
+> **范围演进说明**：本 PRD 初版只把 Tier 2 大改名与 Tier 3 列为 Out；实施中两者均已落地
+> （记录见 `implement.md` 文末三段）。下文 Out / 已知缺口段保留**原始规划口径**并加
+> 「后续已落地」标注，便于对照「计划 vs 实际」的差距来源。
 
 ## Goal
 
@@ -37,13 +42,19 @@ App → Project → Workspace（能力容器）→ ide / agent / editor / debug 
 - **Tier 1**：UI 组件 `ProjectWorkspace.tsx` → `ProjectView.tsx`（释出 `Workspace` 给领域对象）。
 - **Tier 2（本批次）**：收敛 runner 侧「单元根」同义命名族（`unitRootForProject` 等）→ `Workspace*` 命名，单点派生。
 - **明确记录决策**：wire 契约 `RepoKey` / `repo_key` 与后端 `RepoRef` **默认不改名**（见 Out）。
+  **← 该决策后续被推翻**：Tier 3 落地时改为全栈统一为 `WorkspaceKey` / `workspace_key` /
+  `WorkspaceRef`（理由与保留边界见 `docs/domain-model.md`「等价关系」段）。
 
-### Out（本次不做，登记）
+### Out（原始规划口径；标注「后续已落地」者见 `implement.md` 文末记录）
 
-- **Tier 2（大改名）**：`worktreeStore` → `workspaceStore` 及其 75 个 import 点、`WorktreeUnitState` 等符号改名。属**纯机械 churn**，另立任务（本文件记录映射表）。
-- **Tier 3**：后端 `RepoRef` / `WorktreeRef` / `UnitPath` / `ExecUnit` 改名；wire `repo_key` → `workspace_key`。
-  **决策：默认不改** —— `RepoKey` 标的是 `workspace.checkout` 的**身份（属性）**，留着零冲突、零迁移风险；改 wire 需前后端 golden + 兼容期，零功能价值。
+- ~~**Tier 2（大改名）**：`worktreeStore` → `workspaceStore` 及其 75 个 import 点、`WorktreeUnitState` 等符号改名。~~
+  **后续已落地**（2026-10-08，实际跨 78 文件）：见 `implement.md`「Tier 2 大改名落地记录」。
+- ~~**Tier 3**：后端 `RepoRef` / `WorktreeRef` / `UnitPath` / `ExecUnit` 改名；wire `repo_key` → `workspace_key`。~~
+  **后续已落地**（2026-10-08）：见 `implement.md`「Tier 3 全栈对齐落地记录」。
+  原「默认不改」的理由（`RepoKey` 是 `workspace.checkout` 的身份、零迁移风险）**部分保留**：
+  `WorkspaceKey` 仍只标 checkout 身份、不充当容器名；但名字本身随容器统一为 Workspace 词根。
 - 不改 LSP 协议名（`WorkspaceEdit` / `workspace/workspaceFolders`）与 `${workspaceFolder}`（外部约定）。
+  **← 本项至今仍然成立**（协议命名空间与领域对象不冲突，无需为规避而改协议名）。
 
 ## Requirements
 
@@ -52,6 +63,7 @@ App → Project → Workspace（能力容器）→ ide / agent / editor / debug 
 - R1.1 术语表有且仅有**一个正文落点**（`docs/domain-model.md`），其余 spec 只链接、不复述。
 - R1.2 术语表必须包含：`App` / `Project` / `Workspace` / `workspace.checkout` / `workspace.root` 的定义、基数与归属。
 - R1.3 `workspace.root ≡ ${workspaceFolder} ≡ LSP workspace root` 的等价关系必须写明；`RepoKey`/`RepoRef` 注明为 `workspace.checkout` 的身份。
+  （Tier 3 后符号名为 `WorkspaceKey` / `WorkspaceRef`，语义不变。）
 
 ### R2 组件命名（Tier 1）
 
@@ -72,7 +84,15 @@ App → Project → Workspace（能力容器）→ ide / agent / editor / debug 
 4. 术语表仅一处；`git-domain.md` / `state-management.md` / `dap-domain.md` 各增一行**指针**（不复述定义）。
 5. 行为零变更：现有 `runner` / `editor` 测试不回归。
 
-## 已知缺口（登记，另立任务）
+## 已知缺口（原始登记；两项均已被本任务自身消化，无遗留）
 
-- `worktreeStore`/`WorktreeUnitState`/`selectActiveWorktreePath` 等 Tier 2 大改名（75 import 点）。
-- 后端 `RepoRef`→`CheckoutRef`、`WorktreeRef`→`CheckoutKind`、`ExecUnit` 命名统一；wire `repo_key` 是否改名。
+- ~~`worktreeStore`/`WorktreeUnitState`/`selectActiveWorktreePath` 等 Tier 2 大改名（75 import 点）。~~
+  **已落地**（`implement.md`「Tier 2 大改名落地记录」），最终符号为 `workspaceStore` / `WorkspaceState` /
+  `selectActiveCheckoutPath` 等。
+- ~~后端 `RepoRef`→`CheckoutRef`、`WorktreeRef`→`CheckoutKind`、`ExecUnit` 命名统一；wire `repo_key` 是否改名。~~
+  **已落地**（`implement.md`「Tier 3 全栈对齐落地记录」），实际落点为 `WorkspaceRef` / `Checkout` /
+  `CheckoutPath` / `ExecWorkspace` + wire `workspace_key`（比原计划设想更彻底）。
+
+**遗留的刻意保留项**（非遗漏，均属 git 原生或缓存键，见 `implement.md`「第四遍复核」）：
+`repo_key_prefix`（cache 键前缀）、`isActiveWorktree`（linked-vs-main 类型谓词）、
+`create/remove/rename_worktree`、`isWorktreeDirty`、`WorktreeList`、持久化字段 `worktree_state`。
