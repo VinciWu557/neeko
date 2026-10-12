@@ -75,12 +75,13 @@ POSIX shell（红线 2 明令禁止）。同一形态散落在 10+ 处（见
 
 ## Acceptance Criteria
 
-- [ ] AC1 `pnpm test:rust` 全绿，**包括 Windows `backend-test`**（4 条 Windows-only 回归不再
-      出现；`git status` / `read_unit_status` 用例在 Windows 通过）。*本机 mac 全绿；Windows 由 CI 复核。*
+- [x] AC1 `pnpm test:rust` 全绿，**包括 Windows `backend-test`**（4 条 Windows-only 回归不再
+      出现；`git status` / `read_unit_status` 用例在 Windows 通过）。*CI run 38135300006
+      （286cdff5，含 10-07 全部迁移代码）：backend-test mac/windows/ubuntu 三平台全绿。*
 - [x] AC2 `git-domain.md` 指定的 git 行为不变：`transport/tests.rs`（streaming 聚合一致、stderr
       分类、空 work_dir 拒绝）、`check_git_optional_locks_single_source` 仍绿；新增 golden
       `git_argv_matches_pre_migration_shape_and_omits_stray_double_dash`。
-- [x] AC3 审计复跑：新护栏 `check_command_execution` 在全仓 338 个生产文件 **0 违规**
+- [x] AC3 审计复跑：新护栏 `check_command_execution` 在全仓 351 个生产文件 **0 违规**
       （`platform/` / `common/executor/` / `terminal/` / `common/utils/command/` / `core/exec.rs` 豁免）。
 - [x] AC4 新护栏接入 `pnpm lint`（`--stage local`）与 CI（`--stage ci`），自身 9 条负例/正例测试。
 - [x] AC5 `dap/process.rs::run_pre_launch_task` 走 `exec::collect_script`（Local `cmd /C`、WSL/SSH

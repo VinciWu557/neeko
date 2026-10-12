@@ -21,13 +21,13 @@
 
 - [x] `tools/guards/checks/check_command_execution.py`：V1/V2/V3 三类判据（排除测试、`platform/`、
       `common/executor/`、`terminal/`、`common/utils/command/` 与统一层 `core/exec.rs`）。
-- [x] 护栏负例测试（`tools/guards/tests/test_check_command_execution.py`，9 例：V1/V2/V3、正例、
-      豁免、`#[cfg(test)]` 块、测试文件）。
+- [x] 护栏负例测试（`tools/guards/tests/test_check_command_execution.py`，10 例：V1/V2/V3、正例、
+      豁免、`#[cfg(test)]` 块、测试文件、facade 受扫）。
 - [x] 更新 `.trellis/spec/backend/`：新增 `command-execution.md`（统一标准）；退役
       `git-domain.md:227-228` 的「合法特例」段；更正 `executor/env_defaults.rs` 模块注释措辞；
       更新 `run_shell_streaming` → `run_spawn_streaming` 的引用。
 
-**判据**：护栏接入 `pnpm lint`（`--stage local`）与 CI（`--stage ci`），全仓 338 个生产文件 0 违规。
+**判据**：护栏接入 `pnpm lint`（`--stage local`）与 CI（`--stage ci`），全仓 351 个生产文件 0 违规。
 **回滚**：护栏与文档独立提交。
 
 ### P2 — git 传输层迁移 + Windows 回归收敛
@@ -72,7 +72,8 @@
 
 - [x] 复跑审计 §4 三条 grep：生产代码零命中（新护栏 `check_command_execution` = 全仓 0 违规）。
 - [x] `pnpm lint`（含全部护栏）、`pnpm test:rust`（`test:rust` 本机全绿）。
-- [ ] CI 三平台 `backend-test` 复核（Windows `\\?\` 回归由 CI 给出最终判据）。
+- [x] CI 三平台 `backend-test` 复核（Windows `\\?\` 回归由 CI 给出最终判据）—— run 38135300006
+      （286cdff5）三平台全绿。
 - [x] `trellis-update-spec`：把 §8 记忆点写回 spec（`command-execution.md`）。
 
 ## 全量验证命令
