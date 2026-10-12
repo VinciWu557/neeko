@@ -591,3 +591,34 @@ PRD 初版把 Tier 2 大改名（75 import 点）与 Tier 3（后端类型 + wir
 ### Next Steps
 
 - None - task complete
+
+
+## Session 273: terminal 插入链路 WorkspaceSession 寻址迁移（env-blind 键 + session 内路由 + 护栏）
+
+**Date**: 2026-10-12
+**Task**: terminal 插入链路 WorkspaceSession 寻址迁移（env-blind 键 + session 内路由 + 护栏）
+**Branch**: `main`
+
+### Summary
+
+terminal 缓存键统一为 terminalAddress(session,...)；读侧/③ 面（前缀销毁/刷新/切换）全部 session 化；插入路由按 workspace session 仲裁；删除手搓 wt:/wsl:/remote: 键与零消费者死代码；新增 check_terminal_key_mint 护栏。pnpm check 26/26 全绿，前端 4689 用例通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

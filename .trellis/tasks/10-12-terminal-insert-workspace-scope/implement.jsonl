@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Workspace 分槽与激活态单源：session.key 是唯一身份投影"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门禁/禁止模式（ESLint 防火墙、组件边界）"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "前端测试层级与 Tauri invoke mock 策略（Red 先行）"}
+{"file": ".trellis/spec/unit-test/mock-strategies.md", "reason": "mock 策略：store 注入与事件"}
+{"file": "docs/domain-model.md", "reason": "WorkspaceSession 领域词汇与地址/物理键分层"}

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 272
+- **Total Sessions**: 273
 - **Last Active**: 2026-10-12
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~593 | Active |
+| `journal-6.md` | ~624 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 273 | 2026-10-12 | terminal 插入链路 WorkspaceSession 寻址迁移（env-blind 键 + session 内路由 + 护栏） | - | `main` |
 | 272 | 2026-10-12 | 收尾 10-08 命名收敛：核验 AC 并归档 | `f784b8e7` | `main` |
 | 271 | 2026-10-12 | 收尾 10-07 统一命令执行：核验全部 AC 并归档 | `60ebbed1`, `c41902ae`, `a1241401`, `f9467699`, `d6726ea0`, `62cf8f7e`, `b3b08ce1`, `a0d33d94`, `93b8bff5` | `main` |
 | 270 | 2026-10-11 | neeko-check 评审修复：台账措辞收窄 + 守卫 arm 提前 + A4 注释剥除 + pending staleness 对齐 | - | `main` |
