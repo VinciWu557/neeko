@@ -64,32 +64,32 @@ PATH 中存在代理与「该工具在该项目环境下能应答」是两件事
 
 ## Acceptance Criteria
 
-- [ ] **AC1a 失败后日志可读（编排层）**：用既有装配端口桩 `FailingSessionFactory`
+- [x] **AC1a 失败后日志可读（编排层）**：用既有装配端口桩 `FailingSessionFactory`
   （`manager.rs:1493`，`build` 固定返回 `Err`）走 `get_or_create_session` 返回 `Err` 后，
   `get_server_logs(key)` **返回含失败原因的条目**且**不返回 `Err`**。
   — 这是本次事故的直接复现（当前实现必 Red：会返回 `No LSP session for: …`）。
-- [ ] **AC1b 真实子进程的 stderr 进证据（进程层）**：`tempdir()` 内脚本（stderr 输出一行 + `exit 1`，
+- [x] **AC1b 真实子进程的 stderr 进证据（进程层）**：`tempdir()` 内脚本（stderr 输出一行 + `exit 1`，
   平台无关，红线 13）经探测/启动路径运行时，其 stderr 行进入该键的日志证据。
   — 与 AC1a 分层：AC1a 钉「归属」，AC1b 钉「采集」。
-- [ ] **AC2 从未尝试 ≠ 报错**：对从未尝试过的键，`get_server_logs` 返回空数组、
+- [x] **AC2 从未尝试 ≠ 报错**：对从未尝试过的键，`get_server_logs` 返回空数组、
   `get_server_info` 返回 unknown 形态；两者均不返回 `Err`。
-- [ ] **AC3 失败消息内联证据**：失败返回的 `AppError` 文案包含 stderr 尾部（对齐 DAP 既有惯例
+- [x] **AC3 失败消息内联证据**：失败返回的 `AppError` 文案包含 stderr 尾部（对齐 DAP 既有惯例
   `dap/session.rs:247` `"{base} | adapter stderr: {detail}"`）；`crash_message` 不再只报
   `"{server} exited unexpectedly"` 而丢掉原因。
-- [ ] **AC4 探测环境正确**：探测命令的 spawn 规格与真实启动一致（含 workspace root 作为 cwd）。
+- [x] **AC4 探测环境正确**：探测命令的 spawn 规格与真实启动一致（含 workspace root 作为 cwd）。
   测试用可感知 cwd 的夹具脚本断言（`tempdir` 推导路径，禁止硬编码 POSIX 绝对路径）。
-- [ ] **AC5 探测失败不降级**：探测非零退出 / 无法启动时，其 stderr 进入诊断通道，
+- [x] **AC5 探测失败不降级**：探测非零退出 / 无法启动时，其 stderr 进入诊断通道，
   不再被静默降级为 `LspServerInfo::unknown()`；探测返回的退出码不得被丢弃。
   形态判据按 `design.md` §2.2（方案 A「分形」，2026-10-11 确认）：`Err`（执行不了）
   直接失败；「非零退出 **且** stderr 非空」只记证据并内联进失败消息、**不**拒绝启动
   （由真实 spawn + 握手兜底）；超时与无 stderr 的弱信号只记录。
-- [ ] **AC6 驱逐有效**：项目移除后，该项目全部键的诊断记录被清理（store 为空）。
-- [ ] **AC7 重置语义**：同一键第二次尝试不含第一次尝试的日志条目。
-- [ ] **AC8 界**：单键诊断占用仍受既有 `LOG_RING_MAX_BYTES` 约束；键的数量受驱逐点约束，
+- [x] **AC6 驱逐有效**：项目移除后，该项目全部键的诊断记录被清理（store 为空）。
+- [x] **AC7 重置语义**：同一键第二次尝试不含第一次尝试的日志条目。
+- [x] **AC8 界**：单键诊断占用仍受既有 `LOG_RING_MAX_BYTES` 约束；键的数量受驱逐点约束，
   有测试或断言说明「键不被清理」时不会无界增长。
-- [ ] **AC9 配置自洽**：`rust-toolchain.toml` 的 `components` 含 `rust-analyzer`，
+- [x] **AC9 配置自洽**：`rust-toolchain.toml` 的 `components` 含 `rust-analyzer`，
   且 `pnpm check` 全绿（含 `test:rust` / `test:host`）。
-- [ ] **AC10 防回退**：新增护栏测试钉住「缺会话时读日志/信息不报错」这一契约；
+- [x] **AC10 防回退**：新增护栏测试钉住「缺会话时读日志/信息不报错」这一契约；
   并证明「探测无 cwd」在类型层面不可表达。
 
 ## Constraints（项目红线）

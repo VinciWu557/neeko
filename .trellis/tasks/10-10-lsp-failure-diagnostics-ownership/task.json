@@ -3,7 +3,7 @@
   "name": "lsp-failure-diagnostics-ownership",
   "title": "LSP 失败诊断归属重构（诊断证据锚定身份键 + 探测环境一致性）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
