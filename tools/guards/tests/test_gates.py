@@ -342,7 +342,8 @@ class ContextCommandSetTest(unittest.TestCase):
         )
         # 16 条既有进程内判据 + check_nondeterministic_event_assertions + check_file_io_scope
         # + check_platform_cfg_placement（测试域平台门控附着位置，L2 禁令）
-        self.assertEqual(self.in_process_count("local"), 19)
+        # + check_workspace_session_addressing（git 命令按 WorkspaceSession 寻址）
+        self.assertEqual(self.in_process_count("local"), 20)
 
     def test_coverage_entry_is_the_manual_stage(self):
         self.assertEqual(
@@ -366,7 +367,7 @@ class ContextCommandSetTest(unittest.TestCase):
 
     def test_ci_guards_job_stays_in_process_only(self):
         self.assertEqual(self.command_ids("ci", suite="lint", source="python"), [])
-        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 19)
+        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 20)
 
 
 if __name__ == "__main__":
