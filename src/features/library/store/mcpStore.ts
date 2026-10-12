@@ -279,6 +279,11 @@ export const useMcpStore = create<McpState & McpActions>()(
 
       deleteMcpTagGroup: async (id) => {
         await deleteMcpTagGroupApi(id);
+        // 与 skillStore.deleteTagGroup 对齐：被删分组若处于激活态，一并清理
+        // （否则列表会残留幽灵 id 过滤）。
+        if (useMcpStore.getState().activeMcpTagGroup === id) {
+          set({ activeMcpTagGroup: null });
+        }
         await useMcpStore.getState().refreshMcpTagGroups();
       },
 

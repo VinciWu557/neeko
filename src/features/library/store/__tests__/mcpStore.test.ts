@@ -67,6 +67,34 @@ describe('mcpStore tag group actions', () => {
     expect(useMcpStore.getState().mcpTagGroups).toEqual([groups[1]]);
   });
 
+  it('deleteMcpTagGroup 清理指向被删分组的激活态', async () => {
+    const groups = [makeTagGroup(), makeTagGroup({ id: 'tg-2', name: 'Frontend' })];
+    vi.spyOn(libraryApi, 'getMcpTagGroups').mockResolvedValue(groups);
+    await useMcpStore.getState().refreshMcpTagGroups();
+    useMcpStore.setState({ activeMcpTagGroup: 'tg-1' });
+
+    vi.spyOn(libraryApi, 'deleteMcpTagGroup').mockResolvedValue(undefined);
+    vi.spyOn(libraryApi, 'getMcpTagGroups').mockResolvedValue([groups[1]]);
+
+    await useMcpStore.getState().deleteMcpTagGroup('tg-1');
+
+    expect(useMcpStore.getState().activeMcpTagGroup).toBeNull();
+  });
+
+  it('deleteMcpTagGroup 不影响指向其他分组的激活态', async () => {
+    const groups = [makeTagGroup(), makeTagGroup({ id: 'tg-2', name: 'Frontend' })];
+    vi.spyOn(libraryApi, 'getMcpTagGroups').mockResolvedValue(groups);
+    await useMcpStore.getState().refreshMcpTagGroups();
+    useMcpStore.setState({ activeMcpTagGroup: 'tg-2' });
+
+    vi.spyOn(libraryApi, 'deleteMcpTagGroup').mockResolvedValue(undefined);
+    vi.spyOn(libraryApi, 'getMcpTagGroups').mockResolvedValue([groups[1]]);
+
+    await useMcpStore.getState().deleteMcpTagGroup('tg-1');
+
+    expect(useMcpStore.getState().activeMcpTagGroup).toBe('tg-2');
+  });
+
   it('addServerToMcpTagGroup 透传 tagGroupId 与 serverId', async () => {
     const addSpy = vi.spyOn(libraryApi, 'addServerToMcpTagGroup').mockResolvedValue(undefined);
 

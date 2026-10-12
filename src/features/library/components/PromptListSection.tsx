@@ -2,9 +2,10 @@ import { ChevronDown, CornerDownLeft, Copy, Pencil, Star, Terminal, Trash2 } fro
 import React, { useCallback, useMemo } from 'react';
 
 import { useLibraryStore } from '@/features/library/store/libraryStore';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
-import { useNotificationStore } from '@/shared/store/notificationStore';
+import { useDeleteConfirm } from '@/shared/hooks/useDeleteConfirm';
+import { useNotify } from '@/shared/hooks/useNotify';
 import type { PromptInsertTarget, PromptResource } from '@/shared/types/library';
 
 import { sortResources } from '../utils/resourceSort';
@@ -25,8 +26,16 @@ const PromptListSection: React.FC<PromptListSectionProps> = React.memo(({ onInse
   const openEditor = useLibraryStore((s) => s.openEditor);
   const deletePrompt = useLibraryStore((s) => s.deletePrompt);
 
-  const [pendingDeleteId, setPendingDeleteId] = React.useState<string | null>(null);
+  const { notify } = useNotify();
   const copyToClipboard = useCopyToClipboard();
+
+  // 删除确认走共享状态机（与 MCP servers / tag groups 同一实现）；prompts 总是确认。
+  const del = useDeleteConfirm({
+    items: prompts,
+    remove: deletePrompt,
+    notify,
+    entityLabel: 'prompt',
+  });
 
   const filtered = useMemo(() => {
     let list = prompts;
@@ -59,32 +68,10 @@ const PromptListSection: React.FC<PromptListSectionProps> = React.memo(({ onInse
   const handleCopy = useCallback(
     (content: string) => {
       void copyToClipboard(content, 'prompt').then((ok) => {
-        if (ok) {
-          useNotificationStore.getState().addNotification({
-            type: 'info',
-            title: 'Copied',
-            message: 'Prompt copied to clipboard',
-          });
-        }
+        if (ok) notify('Prompt copied to clipboard', 'info', 'Copied');
       });
     },
-    [copyToClipboard],
-  );
-
-  const handleDelete = useCallback(
-    async (id: string) => {
-      try {
-        await deletePrompt(id);
-        setPendingDeleteId(null);
-      } catch (e) {
-        useNotificationStore.getState().addNotification({
-          type: 'error',
-          title: 'Error',
-          message: `Failed to delete prompt: ${String(e)}`,
-        });
-      }
-    },
-    [deletePrompt],
+    [copyToClipboard, notify],
   );
 
   if (loading && prompts.length === 0) {
@@ -107,89 +94,51 @@ const PromptListSection: React.FC<PromptListSectionProps> = React.memo(({ onInse
     );
   }
 
-  if (viewMode === 'grid') {
-    return (
-      <div className="p-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 content-start">
-        {filtered.map((prompt) => (
-          <PromptCard
-            key={prompt.id}
-            prompt={prompt}
-            onInsert={onInsert}
-            onEdit={() => openEditor(prompt)}
-            onCopy={() => handleCopy(prompt.content)}
-            onDelete={() => setPendingDeleteId(prompt.id)}
-          />
-        ))}
-        <ConfirmDialog
-          open={pendingDeleteId !== null}
-          onOpenChange={(open) => {
-            if (!open) setPendingDeleteId(null);
-          }}
-          title="Delete prompt?"
-          description={
-            pendingDeleteId ? (
-              <p className="text-sm text-text-secondary">
-                Are you sure you want to delete{' '}
-                <span className="font-medium text-text-primary">
-                  {prompts.find((p) => p.id === pendingDeleteId)?.name ?? 'this prompt'}
-                </span>
-                ? This cannot be undone.
-              </p>
-            ) : null
-          }
-          confirmLabel="Delete"
-          danger
-          onConfirm={() => {
-            if (pendingDeleteId) {
-              const id = pendingDeleteId;
-              void handleDelete(id);
-            }
-          }}
-        />
-      </div>
-    );
-  }
-
-  // List view
   return (
-    <div className="flex flex-col gap-1 p-2">
-      {filtered.map((prompt) => (
-        <PromptListItem
-          key={prompt.id}
-          prompt={prompt}
-          onInsert={onInsert}
-          onEdit={() => openEditor(prompt)}
-          onCopy={() => handleCopy(prompt.content)}
-          onDelete={() => setPendingDeleteId(prompt.id)}
-        />
-      ))}
-      <ConfirmDialog
-        open={pendingDeleteId !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDeleteId(null);
-        }}
-        title="Delete prompt?"
-        description={
-          pendingDeleteId ? (
-            <p className="text-sm text-text-secondary">
-              Are you sure you want to delete{' '}
-              <span className="font-medium text-text-primary">
-                {prompts.find((p) => p.id === pendingDeleteId)?.name ?? 'this prompt'}
-              </span>
-              ? This cannot be undone.
-            </p>
-          ) : null
+    <>
+      <div
+        className={
+          viewMode === 'grid'
+            ? 'p-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 content-start'
+            : 'flex flex-col gap-1 p-2'
         }
-        confirmLabel="Delete"
-        danger
-        onConfirm={() => {
-          if (pendingDeleteId) {
-            const id = pendingDeleteId;
-            void handleDelete(id);
-          }
-        }}
+      >
+        {filtered.map((prompt) =>
+          viewMode === 'grid' ? (
+            <PromptCard
+              key={prompt.id}
+              prompt={prompt}
+              onInsert={onInsert}
+              onEdit={() => openEditor(prompt)}
+              onCopy={() => handleCopy(prompt.content)}
+              onDelete={() => del.request(prompt.id)}
+            />
+          ) : (
+            <PromptListItem
+              key={prompt.id}
+              prompt={prompt}
+              onInsert={onInsert}
+              onEdit={() => openEditor(prompt)}
+              onCopy={() => handleCopy(prompt.content)}
+              onDelete={() => del.request(prompt.id)}
+            />
+          ),
+        )}
+      </div>
+      <DeleteConfirmDialog
+        pending={del.pending}
+        onCancel={del.cancel}
+        onConfirm={del.confirm}
+        title="Delete prompt?"
+        describe={(prompt) => (
+          <p className="text-sm text-text-secondary">
+            Are you sure you want to delete{' '}
+            <span className="font-medium text-text-primary">{prompt.name}</span>? This cannot be
+            undone.
+          </p>
+        )}
       />
-    </div>
+    </>
   );
 });
 

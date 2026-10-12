@@ -3,6 +3,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 import { useLibraryStore } from '@/features/library/store/libraryStore';
 import { cn } from '@/lib/utils';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 
 import { getAllPromptTags } from '../api/libraryApi';
 
@@ -11,6 +13,11 @@ const LibrarySidebar: React.FC = React.memo(() => {
   const setTagFilter = useLibraryStore((s) => s.setTagFilter);
   const scopeFilter = useLibraryStore((s) => s.scopeFilter);
   const setScopeFilter = useLibraryStore((s) => s.setScopeFilter);
+
+  // 滚动记忆：Library 常驻期引擎丢位置 / 卸载重建都恢复（prompt 导航列）。
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('library.sidebar', null, 'prompt'),
+  );
 
   const [tags, setTags] = useState<string[]>([]);
   const [tagsExpanded, setTagsExpanded] = useState(true);
@@ -32,7 +39,7 @@ const LibrarySidebar: React.FC = React.memo(() => {
   );
 
   return (
-    <div className="flex-1 overflow-y-auto py-2 px-1.5">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto py-2 px-1.5">
       {/* Scope filter */}
       <div className="mb-1">
         <button

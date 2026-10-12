@@ -7,7 +7,12 @@ import { useMcpStore } from '@/features/library/store/mcpStore';
 
 const DEFAULT_PAGE_SIZE = 20;
 export const MCP_PAGE_SIZE_OPTIONS = [20, 40, 80] as const;
+/** 市场支持过滤的传输方式（chips 渲染顺序即此顺序）。 */
+export const MCP_TRANSPORT_OPTIONS = ['http', 'stdio', 'sse'] as const;
 const SEARCH_DEBOUNCE_MS = 300;
+
+/** 市场排序模式（单一来源：hook 状态与过滤行 props 共用）。 */
+export type McpMarketSortMode = 'recent' | 'alpha' | 'popular' | 'downloads';
 
 interface CursorEntry {
   servers: McpRegistrySummary[];
@@ -36,7 +41,7 @@ export function useMcpMarketplace() {
   // Client-side view controls (applied to the current page — registry has no
   // downloads/popularity fields natively; stars/downloads are enriched by the
   // backend from GitHub / npm / pypi, so sorting uses those metrics).
-  const [sortMode, setSortMode] = useState<'recent' | 'alpha' | 'popular' | 'downloads'>('recent');
+  const [sortMode, setSortMode] = useState<McpMarketSortMode>('recent');
   const [transportFilter, setTransportFilter] = useState<string | null>(null);
 
   // Debounce timer

@@ -2,12 +2,10 @@ import React, { useCallback } from 'react';
 
 import { useMcpStore } from '@/features/library/store/mcpStore';
 import { useSkillStore } from '@/features/skill/store';
-import CountLabel from '@/shared/components/nav/CountLabel';
 import NavEmpty from '@/shared/components/nav/NavEmpty';
-import NavRow from '@/shared/components/nav/NavRow';
 import NavSection from '@/shared/components/nav/NavSection';
+import ProjectRailRow from '@/shared/components/nav/ProjectRailRow';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { getAvatarStyle, getProjectInitials } from '@/shared/utils/projectAvatar';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 /** Project group list inside the MCP navigation panel (selecting one opens the project view). */
@@ -39,48 +37,21 @@ const McpProjectGroupList: React.FC = React.memo(() => {
       {projects.length === 0 ? (
         <NavEmpty>No projects loaded.</NavEmpty>
       ) : (
-        projects.map((project) => {
-          const avatarStyle = getAvatarStyle({
-            name: project.name,
-            color: project.avatar_color,
-          });
-          const initials = getProjectInitials(project.name);
-          return (
-            <NavRow
-              key={project.id}
-              active={mcpView === 'project' && project.id === activeMcpProjectId}
-              onSelect={() => handleSelect(project.id)}
-              testId={`mcp-project-row-${project.id}`}
-              leading={
-                <span
-                  className="flex items-center justify-center h-4 w-4 rounded-full text-[9px] font-bold shrink-0"
-                  style={avatarStyle}
-                >
-                  {initials}
-                </span>
-              }
-            >
-              <span className="truncate flex-1 font-medium">{project.name}</span>
-              <span className="inline-flex items-baseline gap-1 text-[11px] tabular-nums shrink-0">
-                <CountLabel
-                  loading={projectSkillCountsLoading}
-                  error={projectSkillCountsError}
-                  count={projectSkillCounts.get(project.id)}
-                  testId={`mcp-project-disk-count-${project.id}`}
-                />
-                <span className="opacity-40" aria-hidden>
-                  ·
-                </span>
-                <CountLabel
-                  loading={projectTagGroupCountsLoading}
-                  error={projectTagGroupCountsError}
-                  count={projectTagGroupCounts.get(project.id)}
-                  testId={`mcp-project-group-count-${project.id}`}
-                />
-              </span>
-            </NavRow>
-          );
-        })
+        projects.map((project) => (
+          <ProjectRailRow
+            key={project.id}
+            project={project}
+            active={mcpView === 'project' && project.id === activeMcpProjectId}
+            diskCount={projectSkillCounts.get(project.id)}
+            groupCount={projectTagGroupCounts.get(project.id)}
+            diskLoading={projectSkillCountsLoading}
+            groupLoading={projectTagGroupCountsLoading}
+            skillError={projectSkillCountsError}
+            tagGroupError={projectTagGroupCountsError}
+            testIdPrefix="mcp-project-"
+            onSelect={handleSelect}
+          />
+        ))
       )}
     </NavSection>
   );

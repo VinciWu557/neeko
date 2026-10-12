@@ -5,7 +5,9 @@ import PromptListSection from '@/features/library/components/PromptListSection';
 import { useLibraryStore } from '@/features/library/store/libraryStore';
 import { useMcpStore } from '@/features/library/store/mcpStore';
 import { SkillContent } from '@/features/skill';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import type { PromptInsertTarget, PromptResource, ResourceKind } from '@/shared/types/library';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 
 import { usePromptInsert } from '../hooks/usePromptInsert';
 
@@ -40,6 +42,11 @@ const LibraryDetail: React.FC<{
   const setSearchQuery = useLibraryStore((s) => s.setSearchQuery);
   const handleInsert = usePromptInsert(onInsertPrompt);
 
+  // 滚动记忆：Library 常驻期引擎丢位置 / 卸载重建都恢复（prompt 列表）。
+  const promptScrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('library.detail', null, 'prompt'),
+  );
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <LibraryToolbar />
@@ -55,7 +62,10 @@ const LibraryDetail: React.FC<{
       <div className="flex-1 min-h-0 overflow-hidden">
         {activeKind === 'skill' && <SkillContent titleless />}
         {activeKind === 'prompt' && (
-          <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div
+            ref={promptScrollRef}
+            className="h-full overflow-y-auto overflow-x-hidden overscroll-contain"
+          >
             <PromptListSection onInsert={handleInsert} />
           </div>
         )}

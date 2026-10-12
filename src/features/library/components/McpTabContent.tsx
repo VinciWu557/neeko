@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
 
 import { useMcpStore } from '@/features/library/store/mcpStore';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import type { McpServer } from '@/shared/types/mcpServer';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 
 import McpAgentContent from './McpAgentContent';
 import McpEditorDialog from './McpEditorDialog';
@@ -18,6 +20,11 @@ const McpTabContent: React.FC = React.memo(() => {
   const mcpTagGroups = useMcpStore((s) => s.mcpTagGroups);
   const activeMcpAgentId = useMcpStore((s) => s.activeMcpAgentId);
   const activeMcpProjectId = useMcpStore((s) => s.activeMcpProjectId);
+
+  // 滚动记忆：Library 常驻期引擎丢位置 / 卸载重建都恢复（installed 列表）。
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('library.mcp', null, 'installed'),
+  );
 
   useEffect(() => {
     void refreshMcpServers();
@@ -58,7 +65,10 @@ const McpTabContent: React.FC = React.memo(() => {
       )}
       <div className="flex-1 min-h-0">
         {mcpView === 'installed' && (
-          <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain">
+          <div
+            ref={scrollRef}
+            className="h-full overflow-y-auto overflow-x-hidden overscroll-contain"
+          >
             <McpListSection onEdit={handleEdit} />
           </div>
         )}
