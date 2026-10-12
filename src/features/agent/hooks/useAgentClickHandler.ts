@@ -1,9 +1,10 @@
 import { useCallback } from 'react';
 
 import { useProjectStore } from '@/shared/store/projectStore';
+import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { AgentConfig } from '@/shared/types';
 import type { TerminalTab } from '@/shared/types/terminal';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { setProjectAgents } from '../api/agentApi';
 
@@ -12,7 +13,7 @@ interface UseAgentClickHandlerOptions {
   handleTabAgentClick: (tabKey: string, agent: AgentConfig) => TerminalTab | null;
   activeProject: { id: ProjectId } | null;
   agentActions: {
-    handleSelectLocalAgent: (agent: AgentConfig, cacheKey: string) => void;
+    handleSelectLocalAgent: (agent: AgentConfig, session: WorkspaceSession) => void;
   };
   wslActions: {
     updateProjectAgent: (agent: AgentConfig | null) => void;
@@ -52,8 +53,7 @@ export function useAgentClickHandler(options: UseAgentClickHandlerOptions) {
           console.error('[TitleBar] Failed to set agent:', err);
         });
         if (!newTab) {
-          const cacheKey = `${activeProject.id}:1`;
-          agentActions.handleSelectLocalAgent(agent, cacheKey);
+          agentActions.handleSelectLocalAgent(agent, activeWorkspaceSession(activeProject.id));
         }
       }
     },

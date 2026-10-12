@@ -20,16 +20,14 @@ import { getGitInfo } from '../../features/git/api/gitApi';
 import { loadOnboardingState } from '../../features/project/api/onboardingApi';
 // eslint-disable-next-line import/no-restricted-paths -- shared hook depends on project API for IDE launch
 import { openWslIde, openRemoteIde } from '../../features/project/api/projectApi';
-// eslint-disable-next-line import/no-restricted-paths -- shared hook mirrors local worktree onboarding check
+// eslint-disable-next-line import/no-restricted-paths -- shared hook depends on terminal for env-blind agent switch
+import { switchAgentInTerminal } from '../../features/terminal';
 import {
-  refreshWslTerminal,
-  switchAgentInWslTerminal,
-  wslCacheKey,
-  refreshRemoteTerminal,
-  remoteCacheKey,
-  switchAgentInRemoteTerminal,
-  // eslint-disable-next-line import/no-restricted-paths -- shared hook depends on terminal cache for terminal operations
+  refreshTerminalForSession,
+  // eslint-disable-next-line import/no-restricted-paths -- shared hook depends on terminal addressing for refresh
 } from '../../features/terminal/components/terminalCache';
+// eslint-disable-next-line import/no-restricted-paths -- shared hook depends on terminal routing for foreground tab
+import { foregroundTerminalTab } from '../../features/terminal/components/terminalRouting';
 
 import type { SaveSessionFn } from './useConnectionProjects';
 
@@ -247,40 +245,18 @@ export function useProjectActions({
       const envType = isWsl ? 'Wsl' : 'Remote';
       if (activeProject.environment.type !== envType) return;
 
-      if (isWsl) {
-        const env = activeProject.environment as any;
-        const distro = env.distro;
-        const cacheKey = wslCacheKey(distro, activeProject.id);
-        if (agent) {
-          void switchAgentInWslTerminal(
-            cacheKey,
-            distro,
-            activeProject.path,
-            activeProject.name,
-            agent.id,
-            config.terminalFontSize ?? 14,
-            config.monoFontFamily ?? config.fontFamily ?? '',
-            config.agentCommandOverrides,
-          );
-        }
-        updateProjectAgent(agent);
-        if (!agent) {
-          setTimeout(() => refreshWslTerminal(cacheKey), 50);
-        }
-      } else {
-        const env = activeProject.environment as any;
-        const entryId = remoteEntries.find((e) => e.host === env.host)?.id ?? '';
-        const cacheKey = remoteCacheKey(entryId, activeProject.id);
-        if (agent) {
-          void switchAgentInRemoteTerminal(cacheKey, agent.id, config.agentCommandOverrides);
-        }
-        updateProjectAgent(agent);
-        if (!agent) {
-          setTimeout(() => refreshRemoteTerminal(cacheKey), 50);
-        }
+      const session = activeWorkspaceSession(activeProject.id);
+      const tabId = foregroundTerminalTab(session)?.tab.id ?? null;
+
+      if (agent) {
+        void switchAgentInTerminal(session, tabId, agent.id, config.agentCommandOverrides);
+      }
+      updateProjectAgent(agent);
+      if (!agent) {
+        setTimeout(() => refreshTerminalForSession(session, tabId), 50);
       }
     },
-    [isWsl, config, remoteEntries, updateProjectAgent],
+    [isWsl, config, updateProjectAgent],
   );
 
   // ── Remote-specific: invokeRemoteGit ────────────────────────────────────

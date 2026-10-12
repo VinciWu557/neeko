@@ -13,11 +13,9 @@ import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { createProject } from '@/testing/factories';
 import { invoke } from '@/testing/tauriCore';
 
-// mock destroyTerminalCache — 不验证内部调用
+// mock 终端清理 — 不验证内部调用
 vi.mock('@/features/terminal/components/terminalCache', () => ({
-  destroyTerminalCachesByPrefix: vi.fn(),
-  refreshTerminal: vi.fn(),
-  refreshSideTerminal: vi.fn(),
+  destroyTerminalsForProject: vi.fn(),
 }));
 
 const mockInvoke = vi.mocked(invoke);

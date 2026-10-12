@@ -1,80 +1,20 @@
 import { useEditorStore } from '@/shared/store/editorStore';
-import { WorkspaceSession, isMainCheckout } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
-import {
-  destroyRemoteCache,
-  destroyTerminalCache,
-  destroyTerminalCachesByPrefix,
-  destroyWslCache,
-  remoteTerminalCache,
-  terminalCache,
-  wslTerminalCache,
-} from './terminalCache';
+import { destroyTerminalsForSession, destroyTerminalsForTab } from './terminalCache';
 
 /**
- * tab 空间键 → 终端本地 cache key 前缀的**唯一换算点**。
+ * tab 空间清理 —— 直接按 editor 组键（canonical `WorkspaceKey`，裸 `projectId` 亦按主 checkout 解析）
+ * 构造 session，再走 terminal 寻址 API。
  *
- * editor 的 tab 组键是 canonical `WorkspaceKey`（`{projectId}\u0000{wtPath}`，裸
- * `projectId` 亦按主 checkout 解析）；终端 PTY 缓存保持自己的 `:wt:` 命名空间
- * （`{projectId}:wt:{path}:…`，唯一实现处 strategies/terminalCache）。清理入口收到
- * 的是 editor 键，两个命名空间之间的转换必须且只能发生在这里 —— 调用方不得手拼
- * cache key，清理也不得拿 NUL 形态直接做前缀（永不命中 = PTY 泄漏）。
+ * 新键（`session.key` + SEP + tabId + SEP + paneId）下**不需要**「两个命名空间换算」：
+ * session.key 直接是键前缀，`terminalAddressPrefixOfTab` / `terminalAddressPrefix` 已精确覆盖，
+ * 旧的 `P:wt:path` 前缀换算与冒号段匹配随之退役。
  */
-function terminalSpacePrefix(tabKey: string): string {
-  const { projectId, worktreePath } = WorkspaceSession.fromKeyOrId(tabKey);
-  return worktreePath === null ? projectId : `${projectId}:wt:${worktreePath}`;
-}
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** True when cache key contains `tabId` as a full `:`-delimited segment. */
-function keyHasTabSegment(key: string, tabId: string): boolean {
-  const mid = `:${tabId}:`;
-  const end = `:${tabId}`;
-  return key.includes(mid) || key.endsWith(end);
-}
-
-function destroyMatchingKeys(
-  keys: Iterable<string>,
-  destroyOne: (key: string) => void,
-  predicate: (key: string) => boolean,
-): void {
-  for (const key of Array.from(keys)) {
-    if (predicate(key)) {
-      destroyOne(key);
-    }
-  }
-}
-
-/**
- * Tear down local / WSL / remote terminal PTY caches for a single editor tab.
- *
- * Local cache keys look like:
- * - `{projectId}:{tabId}:{paneId}` (main space)
- * - `{projectId}:wt:{path}:{tabId}:{paneId}` (worktree space)
- *
- * The incoming `tabKey` is the editor group key (canonical `WorkspaceKey`);
- * it is translated to the terminal namespace via `terminalSpacePrefix`.
- *
- * WSL / remote embed the tab id mid-key, e.g. `wsl:{distro}:{projectId}:{tabId}:p1`.
- */
+/** Tear down local / WSL / remote terminal PTY caches for a single editor tab. */
 export function cleanupTerminalsForTab(tabKey: string, tabId: string): void {
-  // Primary local prefix (covers main + worktree tab spaces and pane suffixes).
-  destroyTerminalCachesByPrefix(`${terminalSpacePrefix(tabKey)}:${tabId}`);
-
-  // Safety net: any local key that still embeds this tab id (split panes, legacy).
-  destroyMatchingKeys(terminalCache.keys(), destroyTerminalCache, (key) =>
-    keyHasTabSegment(key, tabId),
-  );
-
-  destroyMatchingKeys(wslTerminalCache.keys(), destroyWslCache, (key) =>
-    keyHasTabSegment(key, tabId),
-  );
-  destroyMatchingKeys(remoteTerminalCache.keys(), destroyRemoteCache, (key) =>
-    keyHasTabSegment(key, tabId),
-  );
+  destroyTerminalsForTab(WorkspaceSession.fromKeyOrId(tabKey), tabId);
 }
 
 /**
@@ -83,21 +23,7 @@ export function cleanupTerminalsForTab(tabKey: string, tabId: string): void {
  * tab in that space.
  */
 export function cleanupTerminalsForTabKey(tabKey: string): void {
-  destroyTerminalCachesByPrefix(terminalSpacePrefix(tabKey));
-
-  // Only sweep env-scoped caches when clearing the main project tab space.
-  // Worktree tab spaces share the project id but use different cache encodings;
-  // their local keys are already covered by the tabKey prefix above.
-  if (!isMainCheckout(tabKey)) {
-    return;
-  }
-
-  const { projectId } = WorkspaceSession.fromKeyOrId(tabKey);
-  const wslRe = new RegExp(`^wsl:[^:]+:${escapeRegExp(projectId)}(?::|$)`);
-  const remoteRe = new RegExp(`^remote:[^:]+:${escapeRegExp(projectId)}(?::|$)`);
-
-  destroyMatchingKeys(wslTerminalCache.keys(), destroyWslCache, (key) => wslRe.test(key));
-  destroyMatchingKeys(remoteTerminalCache.keys(), destroyRemoteCache, (key) => remoteRe.test(key));
+  destroyTerminalsForSession(WorkspaceSession.fromKeyOrId(tabKey));
 }
 
 /** Close one editor tab and recycle any terminal PTY behind it. */

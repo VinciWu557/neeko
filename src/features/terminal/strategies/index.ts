@@ -2,21 +2,19 @@ import { useMemo } from 'react';
 
 import { useAppContext, useEditorContext } from '@/shared/contexts';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { useActiveCheckoutPath } from '@/shared/store/workspaceStore';
+import { useActiveWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { AuthMethod } from '@/shared/types';
-import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
+import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { createTerminalSession, resizeTerminal, closeTerminalSession } from '../api/terminalApi';
 import {
+  terminalAddress,
   terminalCache,
   terminalRebuildCallbacks,
   terminalWrapperRefs,
-  terminalCacheKey,
-  wslCacheKey,
   wslRebuildCallbacks,
   wslTerminalCache,
   wslWrapperRefs,
-  remoteCacheKey,
   remoteRebuildCallbacks,
   remoteTerminalCache,
   remoteWrapperRefs,
@@ -26,10 +24,6 @@ import { setupTerminalLinks } from '../components/terminalLinks';
 import { createTerminalStrategy } from './factory';
 import type { TerminalStrategy } from './types';
 
-// Backward-compatible individual exports
-export { useLocalTerminalStrategy } from './local';
-export { useWslTerminalStrategy } from './wsl';
-export { useRemoteTerminalStrategy } from './remote';
 export type { TerminalStrategy } from './types';
 
 export interface UseTerminalStrategyOptions {
@@ -42,11 +36,7 @@ export interface UseTerminalStrategyOptions {
     username: string;
     auth: AuthMethod;
     onSessionReady?: (projectId: ProjectId) => void;
-    cacheKeySuffix?: string;
   };
-  /** Optional worktree overrides (same as local-only TerminalView props) */
-  worktreePathOverride?: string;
-  worktreeBranchOverride?: string;
 }
 
 /**
@@ -54,6 +44,10 @@ export interface UseTerminalStrategyOptions {
  *
  * Inspects `activeProject.environment` and returns the correct strategy
  * for Local / WSL / Remote environments.
+ *
+ * **寻址**：cacheKey 一律由 `terminalAddress(session, tabId, paneId)` 派生，session 来源是
+ * `useActiveWorkspaceSession`（唯一身份源）。env 不进键（Q6）——三环境键形态相同，
+ * 物理 Map 由 backend 身份承担，读写同键。
  *
  * Usage:
  * ```ts
@@ -64,42 +58,19 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
   const { config, showToast } = useAppContext();
   const { activeTabId } = useEditorContext();
   const activeProject = useProjectStore((s) => s.activeProject);
-  const activeCheckoutPath = useActiveCheckoutPath();
-  const { paneId, remoteConfig, worktreePathOverride } = options;
+  const session = useActiveWorkspaceSession(activeProject?.id ?? null);
+  const { paneId, remoteConfig } = options;
 
   return useMemo(() => {
-    const env = activeProject?.environment;
-    if (!env) return null;
+    if (!activeProject || !session) return null;
+    const env = activeProject.environment;
+
+    // 同一次渲染内 tabId 稳定；缺省占位与旧 WSL/worktree 分支口径一致（'default'）。
+    const cacheKey = terminalAddress(session, activeTabId ?? 'default', paneId);
 
     // ---- Local ----
     if (env.type === 'Local') {
-      return buildLocalStrategy();
-    }
-
-    // ---- WSL ----
-    if (env.type === 'Wsl') {
-      return buildWslStrategy(env);
-    }
-
-    // ---- Remote ----
-    if (env.type === 'Remote') {
-      return buildRemoteStrategy();
-    }
-
-    return null;
-
-    function buildLocalStrategy(): TerminalStrategy | null {
-      const projectId = activeProject?.id ?? null;
-      if (!projectId) return null;
-
-      const effWorktreePath = worktreePathOverride ?? activeCheckoutPath;
-      const isWorktree = !!effWorktreePath;
-      const projectPath = effWorktreePath ?? activeProject?.path ?? null;
-      const cacheKey = projectId
-        ? isWorktree
-          ? `${projectId}:wt:${effWorktreePath}:${activeTabId ?? 'default'}:${paneId}`
-          : terminalCacheKey(projectId, activeTabId, paneId)
-        : `local:none:${paneId}`;
+      const projectPath = session.worktreePath ?? activeProject.path ?? null;
 
       return createTerminalStrategy({
         kind: 'local',
@@ -108,15 +79,15 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
         rebuildCallbacks: terminalRebuildCallbacks,
         wrapperRefs: terminalWrapperRefs,
         createSession: async (cols, rows, payload) => {
-          const session = await createTerminalSession(
-            projectId,
+          const created = await createTerminalSession(
+            activeProject.id,
             cols,
             rows,
             config.shell || null,
             projectPath || null,
             payload?.command ?? null,
           );
-          return session.id;
+          return created.id;
         },
         resize: resizeTerminal,
         closeSession: closeTerminalSession,
@@ -131,28 +102,20 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
         },
         setupFileLinks: (term) => {
           if (projectPath) {
-            const tabWorkspace = WorkspaceSession.of(
-              projectId,
-              isWorktree ? (effWorktreePath ?? null) : null,
-            );
-            const tabKey = tabWorkspace.key;
-            setupTerminalLinks(term, { projectPath, tabKey, workspace: tabWorkspace, showToast });
+            setupTerminalLinks(term, {
+              projectPath,
+              tabKey: session.key,
+              workspace: session,
+              showToast,
+            });
           }
         },
       });
     }
 
     // ---- WSL ----
-    function buildWslStrategy(env: { type: 'Wsl'; distro: string }): TerminalStrategy | null {
-      const distro = env.distro;
-      const projectId = activeProject!.id;
-      const projectPath = activeCheckoutPath ?? activeProject!.path ?? '';
-
-      const cacheKeySuffix = activeCheckoutPath
-        ? `:wt:${btoa(activeCheckoutPath).replace(/=/g, '')}`
-        : '';
-
-      const cacheKey = `${wslCacheKey(distro, projectId)}${activeTabId ? `:${activeTabId}` : ''}${cacheKeySuffix}:${paneId}`;
+    if (env.type === 'Wsl') {
+      const projectPath = session.worktreePath ?? activeProject.path ?? '';
 
       return createTerminalStrategy({
         kind: 'wsl',
@@ -161,8 +124,8 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
         rebuildCallbacks: wslRebuildCallbacks,
         wrapperRefs: wslWrapperRefs,
         createSession: async (cols, rows) => {
-          const session = await createTerminalSession(projectId, cols, rows);
-          return session.id;
+          const created = await createTerminalSession(activeProject.id, cols, rows);
+          return created.id;
         },
         resize: resizeTerminal,
         closeSession: closeTerminalSession,
@@ -173,59 +136,56 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
         onSessionReady: () => {},
         setupFileLinks: (term) => {
           if (projectPath) {
-            const tabWorkspace = WorkspaceSession.of(projectId, activeCheckoutPath ?? null);
-            const tabKey = tabWorkspace.key;
-            setupTerminalLinks(term, { projectPath, tabKey, workspace: tabWorkspace, showToast });
-          }
-        },
-      });
-    }
-
-    // ---- Remote ----
-    function buildRemoteStrategy(): TerminalStrategy | null {
-      if (!remoteConfig) return null;
-      const projectId = activeProject!.id;
-      const projectPath = activeProject!.path;
-
-      const cacheKey = `${remoteCacheKey(remoteConfig.entryId, projectId)}${activeTabId ? `:${activeTabId}` : ''}${remoteConfig.cacheKeySuffix ?? ''}:${paneId}`;
-
-      return createTerminalStrategy({
-        kind: 'remote',
-        cacheKey,
-        cache: remoteTerminalCache as Map<string, import('./types').CacheEntry>,
-        rebuildCallbacks: remoteRebuildCallbacks,
-        wrapperRefs: remoteWrapperRefs,
-        createSession: async (cols, rows) => {
-          const session = await createTerminalSession(projectId, cols, rows);
-          return session.id;
-        },
-        resize: resizeTerminal,
-        closeSession: closeTerminalSession,
-        agentDelayMs: 800,
-        fontSize: config.terminalFontSize,
-        fontFamily: config.monoFontFamily ?? config.fontFamily ?? '',
-        gpuAccel: config.terminalGpuAcceleration ?? false,
-        onSessionReady: remoteConfig.onSessionReady
-          ? () => remoteConfig.onSessionReady!(projectId)
-          : undefined,
-        setupFileLinks: (term) => {
-          if (projectPath) {
             setupTerminalLinks(term, {
               projectPath,
-              tabKey: projectId,
-              workspace: WorkspaceSession.of(projectId, null),
+              tabKey: session.key,
+              workspace: session,
               showToast,
             });
           }
         },
       });
     }
+
+    // ---- Remote ----
+    if (!remoteConfig) return null;
+    const projectPath = session.worktreePath ?? activeProject.path;
+
+    return createTerminalStrategy({
+      kind: 'remote',
+      cacheKey,
+      cache: remoteTerminalCache as Map<string, import('./types').CacheEntry>,
+      rebuildCallbacks: remoteRebuildCallbacks,
+      wrapperRefs: remoteWrapperRefs,
+      createSession: async (cols, rows) => {
+        const created = await createTerminalSession(activeProject.id, cols, rows);
+        return created.id;
+      },
+      resize: resizeTerminal,
+      closeSession: closeTerminalSession,
+      agentDelayMs: 800,
+      fontSize: config.terminalFontSize,
+      fontFamily: config.monoFontFamily ?? config.fontFamily ?? '',
+      gpuAccel: config.terminalGpuAcceleration ?? false,
+      onSessionReady: remoteConfig.onSessionReady
+        ? () => remoteConfig.onSessionReady!(activeProject.id)
+        : undefined,
+      setupFileLinks: (term) => {
+        if (projectPath) {
+          setupTerminalLinks(term, {
+            projectPath,
+            tabKey: session.key,
+            workspace: session,
+            showToast,
+          });
+        }
+      },
+    });
   }, [
     activeProject,
-    activeCheckoutPath,
+    session,
     paneId,
     remoteConfig,
-    worktreePathOverride,
     activeTabId,
     showToast,
     config.terminalFontSize,

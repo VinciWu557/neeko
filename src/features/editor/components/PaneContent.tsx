@@ -32,7 +32,6 @@ interface PaneContentProps {
     port: number;
     username: string;
     auth: AuthMethod;
-    cacheKeySuffix?: string;
     onSessionReady?: (pid: string) => void;
   } | null;
   onCloseTab: (tabId: string) => void;

@@ -1,46 +1,31 @@
 import { emit } from '@tauri-apps/api/event';
 
-import { reportFrontendError } from '@/shared/utils/errorReporting';
-import { safeDisposeTerminal } from '@/shared/utils/terminal';
 import { terminalInputEvent } from '@/shared/utils/terminalEvents';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
-
-import { getAgent } from '../../agent/api/agentApi';
-import { resizeTerminal, closeTerminalSession } from '../api/terminalApi';
+import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import {
-  terminalCache,
-  terminalCacheKey,
-  terminalWrapperRefs,
-  terminalRebuildCallbacks,
+  firstTerminalEntryOfSession,
   log,
+  resolveTerminalEntry,
+  terminalKeyLabel,
 } from './terminalCache';
-import { createTerminalForProject } from './terminalFactory';
 
-export function sendToTerminal(projectId: ProjectId, text: string, tabId?: string | null) {
-  let sessionId: string | null = null;
-
-  // When tabId is provided, build the exact cache key for precise lookup
-  if (tabId) {
-    const exactKey = terminalCacheKey(projectId, tabId);
-    sessionId = terminalCache.get(exactKey)?.sessionId ?? null;
-  }
-
-  // Fallback: exact projectId match, then prefix match
-  if (!sessionId) {
-    sessionId = terminalCache.get(projectId)?.sessionId ?? null;
-  }
-  if (!sessionId) {
-    for (const [key, c] of terminalCache.entries()) {
-      if (key.startsWith(`${projectId}:`)) {
-        sessionId = c.sessionId;
-        break;
-      }
-    }
-  }
+/**
+ * 写侧执行路径统一入口。地址一律由 `session` 派生（`terminalAddress`），
+ * 不再有裸 `projectId` 前缀扫描 —— 跨 session 串写在前缀上不可表达。
+ */
+export function sendToTerminal(
+  session: WorkspaceSession,
+  text: string,
+  tabId?: string | null,
+): void {
+  const entry = tabId ? resolveTerminalEntry(session, tabId) : firstTerminalEntryOfSession(session);
+  const sessionId = entry?.sessionId ?? null;
 
   if (!sessionId) {
-    log(`sendToTerminal: no session for ${projectId}${tabId ? `:${tabId}` : ''}`);
+    log(
+      `sendToTerminal: no session for ${terminalKeyLabel(session.key)}${tabId ? `:${tabId}` : ''}`,
+    );
     return;
   }
 
@@ -82,123 +67,20 @@ export function pasteToTerminalSession(sessionId: string, text: string): void {
  * @returns true when a session matched and bytes were emitted, false otherwise.
  */
 export function pasteToTerminal(
-  projectId: ProjectId,
+  session: WorkspaceSession,
   text: string,
   tabId?: string | null,
 ): boolean {
-  let sessionId: string | null = null;
-
-  // When tabId is provided, build the exact cache key for precise lookup
-  if (tabId) {
-    const exactKey = terminalCacheKey(projectId, tabId);
-    sessionId = terminalCache.get(exactKey)?.sessionId ?? null;
-  }
-
-  // Fallback: exact projectId match, then prefix match
-  if (!sessionId) {
-    sessionId = terminalCache.get(projectId)?.sessionId ?? null;
-  }
-  if (!sessionId) {
-    for (const [key, c] of terminalCache.entries()) {
-      if (key.startsWith(`${projectId}:`)) {
-        sessionId = c.sessionId;
-        break;
-      }
-    }
-  }
+  const entry = tabId ? resolveTerminalEntry(session, tabId) : firstTerminalEntryOfSession(session);
+  const sessionId = entry?.sessionId ?? null;
 
   if (!sessionId) {
-    log(`pasteToTerminal: no session for ${projectId}${tabId ? `:${tabId}` : ''}`);
+    log(
+      `pasteToTerminal: no session for ${terminalKeyLabel(session.key)}${tabId ? `:${tabId}` : ''}`,
+    );
     return false;
   }
 
   pasteToTerminalSession(sessionId, text);
   return true;
-}
-
-export function launchAgentInTerminal(projectId: ProjectId, command: string, args: string[]) {
-  const cmdStr = [command, ...args].join(' ');
-  sendToTerminal(projectId, '\x03');
-  setTimeout(() => sendToTerminal(projectId, `${cmdStr}\r`), 50);
-}
-
-export async function switchAgentInTerminal(
-  cacheKey: string,
-  projectPath: string,
-  projectName: string,
-  agentId: string,
-  fontSize: number,
-  shell: string,
-  fontFamily: string,
-  backendProjectId: string,
-  agentCommandOverrides?: Record<string, string>,
-  gpuAcceleration?: boolean,
-) {
-  let resolvedKey = cacheKey;
-  if (!terminalWrapperRefs.has(cacheKey)) {
-    for (const key of terminalWrapperRefs.keys()) {
-      if (key.startsWith(`${cacheKey}:`)) {
-        resolvedKey = key;
-        break;
-      }
-    }
-  }
-
-  const wrapper = terminalWrapperRefs.get(resolvedKey);
-  if (!wrapper) {
-    const agent = await getAgent(agentId).catch(() => null);
-    if (agent) {
-      const cmd = agentCommandOverrides?.[agent.id] ?? agent.command;
-      launchAgentInTerminal(backendProjectId as ProjectId, cmd, agent.args);
-    }
-    return;
-  }
-
-  const oldCache = terminalCache.get(resolvedKey);
-  if (oldCache) {
-    oldCache.unlistenOutput?.();
-    oldCache.unlistenClosed?.();
-  }
-
-  terminalCache.delete(resolvedKey);
-
-  while (wrapper.firstChild) {
-    wrapper.removeChild(wrapper.firstChild);
-  }
-
-  try {
-    const newCache = await createTerminalForProject(
-      resolvedKey,
-      projectPath,
-      projectName,
-      agentId,
-      fontSize,
-      wrapper,
-      shell,
-      fontFamily,
-      backendProjectId,
-      agentCommandOverrides,
-      undefined,
-      undefined,
-      gpuAcceleration,
-    );
-    requestAnimationFrame(() => {
-      newCache.fitAddon.fit();
-      if (newCache.sessionId) {
-        // 静默豁免：高频 resize，尽力而为，失败无需上报
-        resizeTerminal(newCache.sessionId, newCache.term.cols, newCache.term.rows).catch(() => {});
-      }
-      newCache.term.focus();
-    });
-
-    if (oldCache?.sessionId) {
-      closeTerminalSession(oldCache.sessionId).catch((err) =>
-        reportFrontendError('terminal.closeSession', err),
-      );
-    }
-    if (oldCache?.term) safeDisposeTerminal(oldCache.term);
-  } catch (err) {
-    log(`switchAgentInTerminal: createTerminalForProject failed: ${err}`);
-    terminalRebuildCallbacks.get(cacheKey)?.();
-  }
 }

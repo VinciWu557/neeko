@@ -27,7 +27,7 @@ import { getAgent } from '../../agent/api/agentApi';
 import { drainTerminal, drainTerminalWait } from '../api/terminalApi';
 import type { TerminalStrategy, CacheEntry } from '../strategies/types';
 
-import { refreshTerminal, refreshRemoteTerminal, refreshWslTerminal } from './terminalCache';
+import { refreshTerminalEntry } from './terminalCache';
 
 /**
  * Write 流水线哨兵：最后一次 write 下发后超过该时长仍无 parse 回调，
@@ -347,9 +347,8 @@ export default React.memo(function TerminalViewBase({
               return;
             }
             lastRebuildAtRef.current = now;
-            if (key.startsWith('wsl:')) refreshWslTerminal(key);
-            else if (key.startsWith('remote:')) refreshRemoteTerminal(key);
-            else refreshTerminal(key);
+            // 按精确键刷新（键在三个物理 Map 中唯一命中其一，不再从 key 猜 env 前缀）。
+            refreshTerminalEntry(key);
           };
 
           const clearStallWatch = () => {

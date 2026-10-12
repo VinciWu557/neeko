@@ -9,10 +9,7 @@ import { applyStateAction, upsertEntryById } from '@/shared/utils/entryUpdates';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import {
-  wslCacheKey,
-  destroyWslCachesByPrefix,
-  remoteCacheKey,
-  destroyRemoteCachesByPrefix,
+  destroyTerminalsForProject,
   // eslint-disable-next-line import/no-restricted-paths -- shared hook depends on terminal cache for cleanup
 } from '../../features/terminal/components/terminalCache';
 export type SaveSessionFn = (...args: unknown[]) => Promise<void>;
@@ -136,41 +133,24 @@ export function useConnectionProjects({
 
   // ── Close project ────────────────────────────────────────────────────────
 
-  const handleCloseProject = useCallback(
-    (entryId: string, projectId: ProjectId) => {
-      if (isWsl) {
-        const entry = wslEntries.find((e) => e.id === entryId);
-        if (entry) {
-          destroyWslCachesByPrefix(wslCacheKey(entry.distro, projectId));
-        }
-      } else {
-        destroyRemoteCachesByPrefix(remoteCacheKey(entryId, projectId));
-      }
-      const activeId = useProjectStore.getState().activeProjectId;
-      if (activeId === projectId) {
-        useProjectStore.setState({ activeProjectId: null, activeProject: null });
-      }
-      setOpenSessions((prev) => {
-        const n = new Set(prev);
-        n.delete(projectId);
-        return n;
-      });
-    },
-    [isWsl, wslEntries],
-  );
+  const handleCloseProject = useCallback((_entryId: string, projectId: ProjectId) => {
+    destroyTerminalsForProject(projectId);
+    const activeId = useProjectStore.getState().activeProjectId;
+    if (activeId === projectId) {
+      useProjectStore.setState({ activeProjectId: null, activeProject: null });
+    }
+    setOpenSessions((prev) => {
+      const n = new Set(prev);
+      n.delete(projectId);
+      return n;
+    });
+  }, []);
 
   // ── Remove project ───────────────────────────────────────────────────────
 
   const handleRemoveProject = useCallback(
     async (entryId: string, projectId: ProjectId) => {
-      if (isWsl) {
-        const entry = wslEntries.find((e) => e.id === entryId);
-        if (entry) {
-          destroyWslCachesByPrefix(wslCacheKey(entry.distro, projectId));
-        }
-      } else {
-        destroyRemoteCachesByPrefix(remoteCacheKey(entryId, projectId));
-      }
+      destroyTerminalsForProject(projectId);
       const activeId = useProjectStore.getState().activeProjectId;
       if (activeId === projectId) {
         useProjectStore.setState({ activeProjectId: null, activeProject: null });
@@ -195,7 +175,7 @@ export function useConnectionProjects({
         await saveSession(undefined, newEntries).catch(console.error);
       }
     },
-    [isWsl, entries, wslEntries, setEntries, saveSession],
+    [isWsl, entries, setEntries, saveSession],
   );
 
   // ── Remove entry ─────────────────────────────────────────────────────────
@@ -206,8 +186,7 @@ export function useConnectionProjects({
       if (entry) {
         if (isWsl) {
           entry.projects.forEach((p: any) => {
-            const key = wslCacheKey(entry.distro, p.id);
-            destroyWslCachesByPrefix(key);
+            destroyTerminalsForProject(p.id);
             setOpenSessions((prev) => {
               const next = new Set(prev);
               next.delete(p.id);
@@ -216,7 +195,7 @@ export function useConnectionProjects({
           });
         } else {
           entry.projects.forEach((p: any) => {
-            destroyRemoteCachesByPrefix(remoteCacheKey(entryId, p.id));
+            destroyTerminalsForProject(p.id);
           });
           setRemoteAuthStore((prev) => {
             const next = new Map(prev);

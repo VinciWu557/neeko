@@ -180,7 +180,7 @@ export function useBrowserTab({
 
         const browserUrl = useBrowserTabsStore.getState().getTabState(tabId, label)?.url ?? '';
         const message = formatPickerMessage(data.prompt, data.elements, browserUrl);
-        sendToTerminal(projectId, message + '\r', targetTabId);
+        sendToTerminal(activeWorkspaceSession(projectId), message + '\r', targetTabId);
         // 武装项目级自动刷新：agent 修改文件后刷新本项目的 Browser tab
         armProjectAutoRefresh(projectId);
         reinjectPicker();

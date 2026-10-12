@@ -128,7 +128,11 @@ describe('useFileDrop', () => {
     });
 
     // Verify: sendToTerminal was called
-    expect(sendToTerminal).toHaveBeenCalledWith('proj-1', '/some/file.txt ', 'tab-1');
+    expect(sendToTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-1', worktreePath: null }),
+      '/some/file.txt ',
+      'tab-1',
+    );
 
     // Verify: no CustomEvent dispatched
     expect(dispatchedEvents).toHaveLength(0);
@@ -163,7 +167,11 @@ describe('useFileDrop', () => {
     });
 
     // Verify: sendToTerminal was called (not agent input)
-    expect(sendToTerminal).toHaveBeenCalledWith('proj-1', '/some/path ', 'tab-1');
+    expect(sendToTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-1', worktreePath: null }),
+      '/some/path ',
+      'tab-1',
+    );
     expect(dispatchedEvents).toHaveLength(0);
 
     document.body.removeChild(checkbox);

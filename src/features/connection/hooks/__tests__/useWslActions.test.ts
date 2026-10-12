@@ -2,11 +2,9 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { useWslActions } from '@/features/connection/hooks/useWslActions';
-/* eslint-disable import/no-restricted-paths -- test mocks terminal cache for wsl actions */
-import {
-  switchAgentInWslTerminal,
-  refreshWslTerminal,
-} from '@/features/terminal/components/terminalCache';
+import { switchAgentInTerminal } from '@/features/terminal';
+/* eslint-disable import/no-restricted-paths -- test mocks terminal refresh for wsl actions */
+import { refreshTerminalForSession } from '@/features/terminal/components/terminalCache';
 /* eslint-enable import/no-restricted-paths */
 import { useConnectionStore } from '@/shared/store/connectionStore';
 import { useEditorStore } from '@/shared/store/editorStore';
@@ -14,14 +12,15 @@ import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { WSLEntrySession } from '@/shared/types';
 
+vi.mock('@/features/terminal', () => ({
+  switchAgentInTerminal: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('@/features/terminal/components/terminalCache', () => ({
-  wslCacheKey: (distro: string, projectId: string) => `wsl:${distro}:${projectId}`,
-  switchAgentInWslTerminal: vi.fn().mockResolvedValue(undefined),
-  refreshWslTerminal: vi.fn(),
+  refreshTerminalForSession: vi.fn(),
 }));
 
-const mockSwitchAgent = vi.mocked(switchAgentInWslTerminal);
-const mockRefreshTerminal = vi.mocked(refreshWslTerminal);
+const mockSwitchAgent = vi.mocked(switchAgentInTerminal);
+const mockRefreshTerminal = vi.mocked(refreshTerminalForSession);
 
 function makeWslProject(id = 'wp1', overrides: Record<string, unknown> = {}) {
   return {
@@ -187,7 +186,7 @@ describe('useWslActions', () => {
       expect(mockSaveSession).toHaveBeenCalledTimes(1);
     });
 
-    it('不调用 switchAgentInWslTerminal', () => {
+    it('不调用 switchAgentInTerminal', () => {
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -207,7 +206,7 @@ describe('useWslActions', () => {
       expect(mockSwitchAgent).not.toHaveBeenCalled();
     });
 
-    it('不调用 refreshWslTerminal', () => {
+    it('不调用 refreshTerminalForSession', () => {
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -233,7 +232,7 @@ describe('useWslActions', () => {
   });
 
   describe('handleSelectAgent', () => {
-    it('传入 agent 时调用 switchAgentInWslTerminal', async () => {
+    it('传入 agent 时调用 switchAgentInTerminal', async () => {
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -253,13 +252,9 @@ describe('useWslActions', () => {
       });
 
       expect(mockSwitchAgent).toHaveBeenCalledWith(
-        'wsl:Ubuntu:wp1',
-        'Ubuntu',
-        '/home/user/wp1',
-        'proj-wp1',
+        expect.objectContaining({ projectId: 'wp1', worktreePath: null }),
+        null,
         'claude-code',
-        14,
-        '',
         {},
       );
     });
@@ -289,7 +284,7 @@ describe('useWslActions', () => {
       expect(connState.wslEntries[0].projects[0].selected_agents).toEqual(['claude-code']);
     });
 
-    it('传入 null 时不调用 switchAgentInWslTerminal', async () => {
+    it('传入 null 时不调用 switchAgentInTerminal', async () => {
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -301,7 +296,7 @@ describe('useWslActions', () => {
       expect(mockSwitchAgent).not.toHaveBeenCalled();
     });
 
-    it('传入 null 时通过 setTimeout 调用 refreshWslTerminal', async () => {
+    it('传入 null 时通过 setTimeout 调用 refreshTerminalForSession', async () => {
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -314,7 +309,10 @@ describe('useWslActions', () => {
         vi.advanceTimersByTime(50);
       });
 
-      expect(mockRefreshTerminal).toHaveBeenCalledWith('wsl:Ubuntu:wp1');
+      expect(mockRefreshTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'wp1', worktreePath: null }),
+        null,
+      );
     });
   });
 });

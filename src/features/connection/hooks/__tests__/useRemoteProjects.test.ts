@@ -8,10 +8,7 @@ import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { RemoteEntrySession, AuthMethod } from '@/shared/types';
 
 vi.mock('@/features/terminal/components/terminalCache', () => ({
-  remoteCacheKey: (entryId: string, projectId: string) => `remote:${entryId}:${projectId}`,
-  destroyRemoteCachesByPrefix: vi.fn(),
-  destroyWslCachesByPrefix: vi.fn(),
-  wslCacheKey: vi.fn(),
+  destroyTerminalsForProject: vi.fn(),
 }));
 
 function makeRemoteProject(id = 'rp1') {

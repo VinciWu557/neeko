@@ -23,11 +23,7 @@ function mkSession(projectId: string) {
 
 // mock terminal refresh functions
 vi.mock('@/features/terminal/components/terminalCache', () => ({
-  refreshTerminal: vi.fn(),
-  refreshWslTerminal: vi.fn(),
-  refreshRemoteTerminal: vi.fn(),
-  terminalCacheKey: (projectId: string, tabId?: string | null) =>
-    tabId ? `${projectId}:${tabId}:p1` : `${projectId}:p1`,
+  refreshTerminalForSession: vi.fn(),
 }));
 
 function createDefaultParams() {
@@ -662,8 +658,10 @@ describe('useKeyboardShortcuts', () => {
   });
 
   it('Ctrl+Alt+R 刷新当前 tab 终端', async () => {
-    // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
-    const { refreshTerminal } = await import('@/features/terminal/components/terminalCache');
+    const { refreshTerminalForSession } = await import(
+      // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
+      '@/features/terminal/components/terminalCache'
+    );
     params.activeTabId = 'tab1';
     storeState = seedStore({
       ...storeState,
@@ -675,12 +673,17 @@ describe('useKeyboardShortcuts', () => {
 
     dispatchKey('KeyR', { ctrlKey: true, altKey: true });
 
-    expect(refreshTerminal).toHaveBeenCalledWith('p1:tab1:p1');
+    expect(refreshTerminalForSession).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: null }),
+      'tab1',
+    );
   });
 
   it('Ctrl+Alt+R 无活跃 tab 时刷新项目终端', async () => {
-    // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
-    const { refreshTerminal } = await import('@/features/terminal/components/terminalCache');
+    const { refreshTerminalForSession } = await import(
+      // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
+      '@/features/terminal/components/terminalCache'
+    );
     params.activeTabId = null;
     storeState = seedStore({
       ...storeState,
@@ -692,7 +695,10 @@ describe('useKeyboardShortcuts', () => {
 
     dispatchKey('KeyR', { ctrlKey: true, altKey: true });
 
-    expect(refreshTerminal).toHaveBeenCalledWith('p1:p1');
+    expect(refreshTerminalForSession).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'p1', worktreePath: null }),
+      null,
+    );
   });
 
   it('Ctrl+Shift+2 在 Library Skills 页时切回 normal（toggle-off）', () => {

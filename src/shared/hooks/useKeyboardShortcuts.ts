@@ -13,7 +13,7 @@ import { useQuickOpenStore } from '@/features/quick-open/store/quickOpenStore';
 // eslint-disable-next-line import/no-restricted-paths -- keyboard shortcuts need MRU tab cycle
 import { useTabCycleStore } from '@/features/quick-open/store/tabCycleStore';
 // eslint-disable-next-line import/no-restricted-paths -- keyboard shortcuts need terminal cache for refresh
-import { refreshTerminal, terminalCacheKey } from '@/features/terminal/components/terminalCache';
+import { refreshTerminalForSession } from '@/features/terminal/components/terminalCache';
 // eslint-disable-next-line import/no-restricted-paths
 import { useAppViewStore } from '@/shared/store/appViewStore';
 // eslint-disable-next-line import/no-restricted-paths
@@ -23,6 +23,7 @@ import { useNavHistoryStore } from '@/shared/store/navigationHistoryStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
   activeWorkspaceKeyOf,
+  activeWorkspaceSession,
   selectWorkspaceStateOf,
   useWorkspaceStore,
 } from '@/shared/store/workspaceStore';
@@ -155,8 +156,8 @@ export function useKeyboardShortcuts({
             e.preventDefault();
             const proj = useProjectStore.getState();
             if (proj.activeProjectId && proj.isTerminalView) {
-              const key = terminalCacheKey(proj.activeProjectId, activeTabIdRef.current);
-              refreshTerminal(key);
+              const session = activeWorkspaceSession(proj.activeProjectId);
+              refreshTerminalForSession(session, activeTabIdRef.current);
             }
             break;
           }

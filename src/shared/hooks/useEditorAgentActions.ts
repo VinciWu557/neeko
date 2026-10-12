@@ -36,7 +36,7 @@ export function useEditorAgentActions() {
     (projectId: ProjectId, message: string) => {
       const agentTab = findAgentTab(projectId);
       if (agentTab) {
-        sendToTerminal(projectId, `${message}\r`, agentTab.id);
+        sendToTerminal(activeWorkspaceSession(projectId), `${message}\r`, agentTab.id);
         return true;
       }
       setPending({ message, projectId });

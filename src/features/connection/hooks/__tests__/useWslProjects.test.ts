@@ -7,10 +7,7 @@ import { useProjectStore } from '@/shared/store/projectStore';
 import type { WSLEntrySession } from '@/shared/types';
 
 vi.mock('@/features/terminal/components/terminalCache', () => ({
-  wslCacheKey: (distro: string, projectId: string) => `wsl:${distro}:${projectId}`,
-  destroyWslCachesByPrefix: vi.fn(),
-  destroyRemoteCachesByPrefix: vi.fn(),
-  remoteCacheKey: vi.fn(),
+  destroyTerminalsForProject: vi.fn(),
 }));
 
 function makeWslEntry(overrides: Partial<WSLEntrySession> = {}): WSLEntrySession {

@@ -6,6 +6,7 @@ import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { safeDisposeTerminal } from '@/shared/utils/terminal';
 import { terminalInputEvent } from '@/shared/utils/terminalEvents';
 import type { TerminalInputController } from '@/shared/utils/terminalInput';
+import { WorkspaceSession, workspaceKeyLabel } from '@/shared/utils/workspaceRef';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { getAgent } from '../../agent/api/agentApi';
@@ -26,45 +27,26 @@ interface CacheEntry {
   unlistenClosed?: (() => void) | null;
 }
 export interface CacheBackendOptions {
-  /** Cache key prefix, e.g. "wsl:", "remote:", "" */
-  prefix: string;
   /** Close a terminal session */
   closeSession: (sessionId: string) => Promise<void>;
   /** Log prefix, e.g. "[WSL]", "[SSH]", "[Terminal]" */
   logPrefix: string;
-  /** Whether to track executed agent keys (local only) */
-  trackExecutedAgents?: boolean;
 }
 export function createTerminalCacheBackend<TCache extends CacheEntry>(
   options: CacheBackendOptions,
 ) {
-  const { prefix, closeSession, logPrefix, trackExecutedAgents } = options;
+  const { closeSession, logPrefix } = options;
 
   // ---- internal maps ----
   const cache = new Map<string, TCache>();
   const rebuildCallbacks = new Map<string, () => void>();
   const wrapperRefs = new Map<string, HTMLDivElement>();
-  const executedAgentKeys = trackExecutedAgents ? new Set<string>() : undefined;
 
   // ---- utilities ----
 
   function log(msg: string) {
     const ts = new Date().toLocaleTimeString();
     console.debug(`['${ts}'] ${logPrefix} ${msg}`);
-  }
-
-  function cacheKey(...parts: (string | null | undefined)[]): string {
-    return prefix + parts.filter(Boolean).join(':');
-  }
-
-  function resolveCacheKey(keyOrPrefix: string): string | null {
-    if (cache.has(keyOrPrefix)) return keyOrPrefix;
-    for (const key of cache.keys()) {
-      if (key.startsWith(keyOrPrefix + ':')) {
-        return key;
-      }
-    }
-    return null;
   }
 
   function destroyCache(key: string): void {
@@ -87,28 +69,16 @@ export function createTerminalCacheBackend<TCache extends CacheEntry>(
     cache.delete(key);
     rebuildCallbacks.delete(key);
     wrapperRefs.delete(key);
-    if (executedAgentKeys) executedAgentKeys.delete(key);
 
     log(`Cache destroyed for ${key}`);
   }
 
-  function destroyCachesByPrefix(prefix: string): void {
-    const keys = Array.from(cache.keys());
-    for (const key of keys) {
-      if (key === prefix || key.startsWith(prefix + ':')) {
-        destroyCache(key);
-      }
-    }
-  }
-
+  /** 精确键刷新（键由 terminal 寻址层 mint，本层不再做前缀消解）。 */
   function refreshTerminal(key: string): void {
-    const resolved = resolveCacheKey(key);
-    if (!resolved) return;
-
-    const entry = cache.get(resolved);
+    const entry = cache.get(key);
     if (!entry) return;
 
-    const rebuildCb = rebuildCallbacks.get(resolved);
+    const rebuildCb = rebuildCallbacks.get(key);
 
     if (entry.unlisten) entry.unlisten();
     if (entry.unlistenOutput) entry.unlistenOutput();
@@ -123,21 +93,17 @@ export function createTerminalCacheBackend<TCache extends CacheEntry>(
 
     safeDisposeTerminal(entry.term);
 
-    cache.delete(resolved);
-    rebuildCallbacks.delete(resolved);
-    wrapperRefs.delete(resolved);
-    if (executedAgentKeys) executedAgentKeys.delete(resolved);
+    cache.delete(key);
+    rebuildCallbacks.delete(key);
+    wrapperRefs.delete(key);
 
-    log(`Cache destroyed for ${resolved}`);
+    log(`Cache destroyed for ${key}`);
 
     rebuildCb?.();
   }
 
-  function launchAgentInTerminal(cacheKeyOrPrefix: string, command: string, args: string[]): void {
-    const resolved = resolveCacheKey(cacheKeyOrPrefix);
-    if (!resolved) return;
-
-    const entry = cache.get(resolved);
+  function launchAgentInTerminal(key: string, command: string, args: string[]): void {
+    const entry = cache.get(key);
     if (!entry?.sessionId) return;
 
     const sessionId = entry.sessionId;
@@ -153,22 +119,13 @@ export function createTerminalCacheBackend<TCache extends CacheEntry>(
     }, 50);
   }
 
-  function getSessionId(key: string): string | null {
-    return cache.get(key)?.sessionId ?? null;
-  }
-
   return {
     cache,
     rebuildCallbacks,
     wrapperRefs,
-    executedAgentKeys,
-    cacheKey,
-    resolveCacheKey,
     destroyCache,
-    destroyCachesByPrefix,
     refreshTerminal,
     launchAgentInTerminal,
-    getSessionId,
     log,
   };
 }
@@ -178,36 +135,15 @@ export function createTerminalCacheBackend<TCache extends CacheEntry>(
 // =============================================================================
 
 const backend = createTerminalCacheBackend<TerminalCache>({
-  prefix: '',
   closeSession: closeTerminalSession,
   logPrefix: '[Terminal]',
-  trackExecutedAgents: true,
 });
 
 export const terminalCache = backend.cache;
 export const terminalRebuildCallbacks = backend.rebuildCallbacks;
 export const terminalWrapperRefs = backend.wrapperRefs;
-export const executedAgentKeys = backend.executedAgentKeys!;
-
-export function terminalCacheKey(projectId: ProjectId, tabId?: string | null, paneId = 'p1') {
-  return tabId ? backend.cacheKey(projectId, tabId, paneId) : backend.cacheKey(projectId, paneId);
-}
 
 export const log = backend.log;
-
-export function destroyTerminalCache(cacheKey: string) {
-  backend.destroyCache(cacheKey);
-}
-
-export function destroyTerminalCachesByPrefix(prefix: string) {
-  backend.destroyCachesByPrefix(prefix);
-}
-
-// 入参可为 projectId（`useAgentActions`）或完整 cache key（快捷键 / TerminalViewBase）——
-// 后端 refreshTerminal 按前缀消解，故类型保持 string。
-export function refreshTerminal(projectIdOrKey: string) {
-  backend.refreshTerminal(projectIdOrKey);
-}
 
 // =============================================================================
 // WSL terminal cache — instance and exports
@@ -225,7 +161,6 @@ export interface WslTerminalCache {
 }
 
 const wslBackend = createTerminalCacheBackend<WslTerminalCache>({
-  prefix: 'wsl:',
   closeSession: closeTerminalSession,
   logPrefix: '[WSL]',
 });
@@ -233,107 +168,6 @@ const wslBackend = createTerminalCacheBackend<WslTerminalCache>({
 export const wslTerminalCache = wslBackend.cache;
 export const wslRebuildCallbacks = wslBackend.rebuildCallbacks;
 export const wslWrapperRefs = wslBackend.wrapperRefs;
-
-export function wslCacheKey(distro: string, projectId: ProjectId) {
-  return wslBackend.cacheKey(distro, projectId);
-}
-
-function parseProjectIdFromWslKey(key: string): string | null {
-  const withWorktree = key.match(/^wsl:.+:([^:]+):wt:[^:]+:p\d+$/);
-  if (withWorktree) return withWorktree[1];
-  const normal = key.match(/^wsl:.+:([^:]+):p\d+$/);
-  if (normal) return normal[1];
-  return null;
-}
-
-export function destroyWslCache(key: string) {
-  const resolved = wslBackend.resolveCacheKey(key);
-  if (!resolved) return;
-  wslBackend.destroyCache(resolved);
-}
-
-export function destroyWslCachesByPrefix(prefix: string) {
-  wslBackend.destroyCachesByPrefix(prefix);
-}
-
-export function refreshWslTerminal(key: string) {
-  wslBackend.refreshTerminal(key);
-}
-
-export function getWslSessionId(key: string): string | null {
-  return wslBackend.getSessionId(key);
-}
-
-export function getWslOpenProjectIds(distro: string): Set<string> {
-  const result = new Set<string>();
-  for (const [key, cache] of wslTerminalCache.entries()) {
-    if (key.startsWith(`wsl:${distro}:`) && cache.sessionId) {
-      const projectId = parseProjectIdFromWslKey(key);
-      if (projectId) result.add(projectId);
-    }
-  }
-  return result;
-}
-
-export function getAllWslOpenProjectIds(): Set<string> {
-  const result = new Set<string>();
-  for (const [key, cache] of wslTerminalCache.entries()) {
-    if (key.startsWith('wsl:') && cache.sessionId) {
-      const projectId = parseProjectIdFromWslKey(key);
-      if (projectId) result.add(projectId);
-    }
-  }
-  return result;
-}
-
-export function launchAgentInWslTerminal(cacheKey: string, command: string, args: string[]) {
-  wslBackend.launchAgentInTerminal(cacheKey, command, args);
-}
-
-export async function switchAgentInWslTerminal(
-  cacheKey: string,
-  _distro: string,
-  _projectPath: string,
-  _projectName: string,
-  agentId: string,
-  _fontSize: number,
-  _fontFamily: string,
-  agentCommandOverrides?: Record<string, string>,
-) {
-  const resolved = wslBackend.resolveCacheKey(cacheKey) ?? cacheKey;
-  const wrapper = wslWrapperRefs.get(resolved);
-  if (!wrapper) {
-    const agent = await getAgent(agentId).catch(() => null);
-    if (agent) {
-      const cmd = agentCommandOverrides?.[agent.id] ?? agent.command;
-      launchAgentInWslTerminal(cacheKey, cmd, agent.args);
-    }
-    return;
-  }
-
-  const oldCache = wslTerminalCache.get(resolved);
-  if (oldCache) {
-    oldCache.unlisten?.();
-    oldCache.unlistenOutput?.();
-    oldCache.unlistenClosed?.();
-    oldCache.inputController?.dispose();
-  }
-
-  wslTerminalCache.delete(resolved);
-
-  while (wrapper.firstChild) {
-    wrapper.removeChild(wrapper.firstChild);
-  }
-
-  wslRebuildCallbacks.get(resolved)?.();
-
-  if (oldCache?.sessionId) {
-    closeTerminalSession(oldCache.sessionId).catch((err) =>
-      reportFrontendError('terminal.closeSession', err),
-    );
-  }
-  if (oldCache?.term) safeDisposeTerminal(oldCache.term);
-}
 
 // =============================================================================
 // Remote terminal cache — instance and exports
@@ -351,7 +185,6 @@ export interface RemoteTerminalCache {
 }
 
 const remoteBackend = createTerminalCacheBackend<RemoteTerminalCache>({
-  prefix: 'remote:',
   closeSession: closeTerminalSession,
   logPrefix: '[SSH]',
 });
@@ -360,196 +193,221 @@ export const remoteTerminalCache = remoteBackend.cache;
 export const remoteRebuildCallbacks = remoteBackend.rebuildCallbacks;
 export const remoteWrapperRefs = remoteBackend.wrapperRefs;
 
-export function remoteCacheKey(entryId: string, projectId: ProjectId) {
-  return remoteBackend.cacheKey(entryId, projectId);
-}
-
-export function destroyRemoteCache(key: string) {
-  const resolved = remoteBackend.resolveCacheKey(key);
-  if (!resolved) return;
-  remoteBackend.destroyCache(resolved);
-}
-
-export function destroyRemoteCachesByPrefix(prefix: string) {
-  remoteBackend.destroyCachesByPrefix(prefix);
-}
-
-export function refreshRemoteTerminal(key: string) {
-  remoteBackend.refreshTerminal(key);
-}
-
-export function launchAgentInRemoteTerminal(cacheKey: string, command: string, args: string[]) {
-  remoteBackend.launchAgentInTerminal(cacheKey, command, args);
-}
-
-export async function switchAgentInRemoteTerminal(
-  cacheKey: string,
-  agentId: string,
-  agentCommandOverrides?: Record<string, string>,
-) {
-  const resolved = remoteBackend.resolveCacheKey(cacheKey) ?? cacheKey;
-  const wrapper = remoteWrapperRefs.get(resolved);
-  if (!wrapper) {
-    const agent = await getAgent(agentId).catch(() => null);
-    if (agent) {
-      const cmd = agentCommandOverrides?.[agent.id] ?? agent.command;
-      launchAgentInRemoteTerminal(cacheKey, cmd, agent.args);
-    }
-    return;
-  }
-
-  const oldCache = remoteTerminalCache.get(resolved);
-  if (oldCache) {
-    oldCache.unlisten?.();
-    oldCache.unlistenOutput?.();
-    oldCache.unlistenClosed?.();
-    oldCache.inputController?.dispose();
-  }
-
-  remoteTerminalCache.delete(resolved);
-
-  while (wrapper.firstChild) {
-    wrapper.removeChild(wrapper.firstChild);
-  }
-
-  remoteRebuildCallbacks.get(resolved)?.();
-
-  if (oldCache?.sessionId) {
-    closeTerminalSession(oldCache.sessionId).catch((err) =>
-      reportFrontendError('terminal.closeSession', err),
-    );
-  }
-  if (oldCache?.term) safeDisposeTerminal(oldCache.term);
-}
-
 // =============================================================================
-// Unified terminal cache manager
+// Terminal addressing — env-blind address → physical cache key (single mint)
 // =============================================================================
 
 /**
- * Resolves the appropriate cache backend for a cache key by inspecting its
- * prefix ("wsl:", "remote:", or bare key for local).
+ * 段分隔符（唯一）：`session.key` + SEP + `tabId` + SEP + `paneId`。
+ *
+ * **不用 `:` 作段界**：editor tabId 本身含 `:`（如 `proj:src/a.ts`）——
+ * `…SEP A :p1`（tab=A, pane=p1）与 `…SEP A:p1 :p2`（tab=`A:p1`）前缀同形，
+ * 按 tab 清理会过度命中。统一 SEP 后 tab 前缀是 `…SEP A SEP`，两者不可混淆。
+ * `session.key` 的内部分隔符是 NUL（`WORKSPACE_KEY_SEP`），与 SEP 不同，反解无歧义。
  */
-function resolveBackendForKey(key: string): {
-  cache: Map<string, unknown>;
-  rebuildCallbacks: Map<string, () => void>;
+export const TERMINAL_KEY_SEP = '\u0001';
+
+/** 唯一 mint：terminal 地址（env-blind，身份唯一输入是 `session`）。 */
+export function terminalAddress(session: WorkspaceSession, tabId: string, paneId = 'p1'): string {
+  return `${session.key}${TERMINAL_KEY_SEP}${tabId}${TERMINAL_KEY_SEP}${paneId}`;
+}
+
+/** session 级扫描前缀（③ 面：生命周期销毁 / 刷新）。 */
+export function terminalAddressPrefix(session: WorkspaceSession): string {
+  return `${session.key}${TERMINAL_KEY_SEP}`;
+}
+
+/** tab 级扫描前缀（③ 面：按 tab 清理）。 */
+export function terminalAddressPrefixOfTab(session: WorkspaceSession, tabId: string): string {
+  return `${terminalAddressPrefix(session)}${tabId}${TERMINAL_KEY_SEP}`;
+}
+
+export interface DecodedTerminalKey {
+  session: WorkspaceSession;
+  tabId: string;
+  paneId: string;
+}
+
+/**
+ * 唯一 codec（terminal key → 分量）。
+ *
+ * **不得复用 `WorkspaceSession.fromKey`**：它会把 `\u0001tabId\u0001p1` 当成
+ * `worktreePath`（非 null）⇒ 伪 worktree session。本函数只从第一个 SEP 切分。
+ */
+export function decodeTerminalKey(key: string): DecodedTerminalKey | null {
+  const first = key.indexOf(TERMINAL_KEY_SEP);
+  if (first < 0) return null;
+  const session = WorkspaceSession.fromKey(key.slice(0, first));
+  if (!session) return null;
+  const rest = key.slice(first + 1);
+  const second = rest.indexOf(TERMINAL_KEY_SEP);
+  if (second <= 0) return null;
+  const paneId = rest.slice(second + 1);
+  if (paneId === '') return null;
+  return { session, tabId: rest.slice(0, second), paneId };
+}
+
+/**
+ * 日志 / 提示用可读标签（对照 `workspaceKeyLabel`）。
+ * NUL 与 SEP 直接进日志会让日志文件被 `file(1)` 判成 data（同 workspaceKeyLabel 的既有理由）。
+ */
+export function terminalKeyLabel(key: string): string {
+  const decoded = decodeTerminalKey(key);
+  if (decoded) {
+    return `${workspaceKeyLabel(decoded.session.key)} :: ${decoded.tabId} :: ${decoded.paneId}`;
+  }
+  return '<invalid terminal key>';
+}
+
+interface TerminalBackendHandle {
+  cache: Map<string, CacheEntry>;
   wrapperRefs: Map<string, HTMLDivElement>;
-  resolveCacheKey: (k: string) => string | null;
-  launchAgentInTerminal: (k: string, cmd: string, args: string[]) => void;
-  destroyCache: (k: string) => void;
-  refreshTerminal: (k: string) => void;
-} {
-  if (key.startsWith('wsl:')) {
-    return wslBackend;
-  }
-  if (key.startsWith('remote:')) {
-    return remoteBackend;
-  }
-  return backend;
+  rebuildCallbacks: Map<string, () => void>;
+  destroyCache: (key: string) => void;
+  refreshTerminal: (key: string) => void;
+  launchAgentInTerminal: (key: string, cmd: string, args: string[]) => void;
 }
 
 /**
- * Unified launch agent — works for any cache key (local, wsl, remote).
+ * 三个物理 Map（传输归属，非寻址维度）。键在它们之间**唯一**（一个 terminal 只属一个 env），
+ * 所以整个地址层可以只靠键/前缀在 Map 中查找，**不需要读 projectStore 反推 env**
+ * （移除隐藏 store 依赖与「env 未知就静默 no-op」的泄漏面）。
+ */
+function allBackends(): TerminalBackendHandle[] {
+  return [backend, wslBackend, remoteBackend] as unknown as TerminalBackendHandle[];
+}
+
+/** 精确键唯一命中其物理 Map；未命中 → null。 */
+function backendForKey(key: string): TerminalBackendHandle | null {
+  for (const bk of allBackends()) {
+    if (bk.cache.has(key)) return bk;
+  }
+  return null;
+}
+
+/**
+ * 唯一 resolve：精确键在三个物理 Map 中唯一命中。
  *
- * Dispatches to the correct backend based on the key prefix.
+ * **tabId 必填、无隐式 fallback** —— session 内 fallback 只由 `terminalRouting` 的前台仲裁
+ * 承担（避免同一语义两处实现而漂移）。跨 session 串写在前缀上不可表达（前缀 = 整串
+ * `session.key` + SEP，嵌套 worktree `/wt/a` 不匹配 `/wt/a-b`）。
  */
-export function launchAgentInAnyTerminal(cacheKey: string, command: string, args: string[]): void {
-  const bk = resolveBackendForKey(cacheKey);
-  bk.launchAgentInTerminal(cacheKey, command, args);
+export function resolveTerminalEntry(
+  session: WorkspaceSession,
+  tabId: string,
+  paneId = 'p1',
+): CacheEntry | null {
+  const key = terminalAddress(session, tabId, paneId);
+  return backendForKey(key)?.cache.get(key) ?? null;
 }
 
-/**
- * Unified switch agent — works for any cache key (local, wsl, remote).
- *
- * Dispatches to the correct backend based on the key prefix.
- */
-export async function switchAgentInAnyTerminal(
-  cacheKey: string,
-  agentId: string,
-  agentCommandOverrides?: Record<string, string>,
-): Promise<void> {
-  const bk = resolveBackendForKey(cacheKey);
-  const resolved = bk.resolveCacheKey(cacheKey) ?? cacheKey;
-  const wrapper = bk.wrapperRefs.get(resolved);
-
-  if (!wrapper) {
-    const agent = await getAgent(agentId).catch(() => null);
-    if (agent) {
-      const cmd = agentCommandOverrides?.[agent.id] ?? agent.command;
-      bk.launchAgentInTerminal(cacheKey, cmd, agent.args);
-    }
-    return;
-  }
-
-  const oldCache = bk.cache.get(resolved) as CacheEntry | undefined;
-  if (oldCache) {
-    oldCache.unlisten?.();
-    oldCache.unlistenOutput?.();
-    oldCache.unlistenClosed?.();
-    oldCache.inputController?.dispose();
-  }
-
-  bk.cache.delete(resolved);
-  while (wrapper.firstChild) {
-    wrapper.removeChild(wrapper.firstChild);
-  }
-
-  bk.rebuildCallbacks.get(resolved)?.();
-
-  if (oldCache?.sessionId) {
-    closeTerminalSession(oldCache.sessionId).catch((err) =>
-      reportFrontendError('terminal.closeSession', err),
-    );
-  }
-  if (oldCache?.term) safeDisposeTerminal(oldCache.term);
-}
-
-/**
- * 检查 key 是否以冒号定界含某段（整段出现，非子串）。
- * 不用 `key.split(':').includes(part)`：part 本身含冒号（如编辑器 tabId
- * `proj:src/a.ts`、远端 key 内嵌的 tab 段）时会被切碎导致永远 miss；
- * 定界子串匹配对含冒号的 part 同样成立，且不会把 `proj` 误配 `proj-1`。
- */
-function hasCacheKeySegment(key: string, part: string): boolean {
-  return (
-    key === part ||
-    key.startsWith(`${part}:`) ||
-    key.endsWith(`:${part}`) ||
-    key.includes(`:${part}:`)
-  );
-}
-
-/**
- * 在终端 cache 中按项目找活动会话。key 形态各异
- *（local `proj:tab:p1` / wsl `wsl:distro:proj:…` / remote `remote:entry:proj:…`），
- * 按冒号定界匹配 projectId，优先命中活动 tab。
- * `scopePrefix` 为确知命名空间（如 `wsl:<distro>:`）时先收敛作用域，
- * 镜像后端 `resolveCacheKey` 的前缀消解语义。
- */
-export function findSessionIdForProject(
-  cache: Map<string, { sessionId: string | null }>,
-  projectId: ProjectId,
-  tabId?: string | null,
-  scopePrefix?: string,
-): string | null {
-  const inScope = (key: string): boolean =>
-    !scopePrefix || key === scopePrefix.slice(0, -1) || key.startsWith(scopePrefix);
-  if (tabId) {
-    for (const [key, entry] of cache.entries()) {
-      if (
-        entry.sessionId &&
-        inScope(key) &&
-        hasCacheKeySegment(key, projectId) &&
-        hasCacheKeySegment(key, tabId)
-      ) {
-        return entry.sessionId;
-      }
-    }
-  }
-  for (const [key, entry] of cache.entries()) {
-    if (entry.sessionId && inScope(key) && hasCacheKeySegment(key, projectId)) {
-      return entry.sessionId;
+/** 该 session 内首个终端键（按 Map 插入顺序）；无 → null。跨 session 不可表达。 */
+export function firstTerminalKeyOfSession(session: WorkspaceSession): string | null {
+  const prefix = terminalAddressPrefix(session);
+  for (const bk of allBackends()) {
+    for (const key of bk.cache.keys()) {
+      if (key.startsWith(prefix)) return key;
     }
   }
   return null;
+}
+
+/** 该 session 内首个终端条目；无 → null。 */
+export function firstTerminalEntryOfSession(session: WorkspaceSession): CacheEntry | null {
+  const key = firstTerminalKeyOfSession(session);
+  return key ? (backendForKey(key)?.cache.get(key) ?? null) : null;
+}
+
+/**
+ * ③ 面：切换该 session 内某 tab 的 agent（WSL/Remote 共用——键唯一命中其物理 Map）。
+ *
+ * WSL/Remote 的 agent 切换不重建 PTY，只清缓存并触发 pane 重建回调；
+ * 无 wrapper 时降级为「向该键下发 agent 命令」。
+ */
+export async function switchAgentInSessionTerminal(
+  session: WorkspaceSession,
+  tabId: string | null,
+  agentId: string,
+  agentCommandOverrides?: Record<string, string>,
+): Promise<void> {
+  const resolvedKey = tabId ? terminalAddress(session, tabId) : firstTerminalKeyOfSession(session);
+  if (!resolvedKey) return;
+  const bk = backendForKey(resolvedKey);
+  if (!bk) return;
+
+  const wrapper = bk.wrapperRefs.get(resolvedKey);
+  if (!wrapper) {
+    const agent = await getAgent(agentId).catch(() => null);
+    if (agent) {
+      const cmd = agentCommandOverrides?.[agent.id] ?? agent.command;
+      bk.launchAgentInTerminal(resolvedKey, cmd, agent.args);
+    }
+    return;
+  }
+
+  const oldCache = bk.cache.get(resolvedKey);
+  if (oldCache) {
+    oldCache.unlisten?.();
+    oldCache.unlistenOutput?.();
+    oldCache.unlistenClosed?.();
+    oldCache.inputController?.dispose();
+  }
+
+  bk.cache.delete(resolvedKey);
+
+  while (wrapper.firstChild) {
+    wrapper.removeChild(wrapper.firstChild);
+  }
+
+  bk.rebuildCallbacks.get(resolvedKey)?.();
+
+  if (oldCache?.sessionId) {
+    closeTerminalSession(oldCache.sessionId).catch((err) =>
+      reportFrontendError('terminal.closeSession', err),
+    );
+  }
+  if (oldCache?.term) safeDisposeTerminal(oldCache.term);
+}
+
+function destroyTerminalsByPrefix(prefix: string): void {
+  for (const bk of allBackends()) {
+    for (const key of Array.from(bk.cache.keys())) {
+      if (key.startsWith(prefix)) bk.destroyCache(key);
+    }
+  }
+}
+
+/** ③ 面：销毁该 session 下全部终端（删 worktree / 清 tab 空间）。 */
+export function destroyTerminalsForSession(session: WorkspaceSession): void {
+  destroyTerminalsByPrefix(terminalAddressPrefix(session));
+}
+
+/**
+ * ③ 面：销毁某项目**所有 workspace**（主仓 + 全部 worktree、全 env）的终端。
+ * 用于「关项目 / 删 entry」——项目级关闭语义就是所有单元。
+ * 前缀 = `projectId` + NUL（session.key 的第一段），UUID 后接 NUL 使跨项目无歧义。
+ */
+export function destroyTerminalsForProject(projectId: ProjectId): void {
+  // 主 checkout 的 session.key 就是 `<projectId>\0`（第一段 + NUL）——
+  // 由唯一 mint 投影得到，不在本模块重拼 NUL。
+  destroyTerminalsByPrefix(WorkspaceSession.of(projectId, null).key);
+}
+
+/** ③ 面：销毁该 session 下某个 tab 的终端（关闭单个 tab）。 */
+export function destroyTerminalsForTab(session: WorkspaceSession, tabId: string): void {
+  destroyTerminalsByPrefix(terminalAddressPrefixOfTab(session, tabId));
+}
+
+/** ③ 面：刷新该 session 的终端；给定 tabId 精确，否则首个（agent 切换 / 重建自愈）。 */
+export function refreshTerminalForSession(session: WorkspaceSession, tabId?: string | null): void {
+  const key = tabId ? terminalAddress(session, tabId) : firstTerminalKeyOfSession(session);
+  if (key) backendForKey(key)?.refreshTerminal(key);
+}
+
+/**
+ * 精确键刷新任意 env 的终端（键在三个物理 Map 中唯一命中其一）。
+ * 供自愈路径使用 —— 调用方持有 strategy 的完整键，无需知道 env。
+ */
+export function refreshTerminalEntry(key: string): void {
+  backendForKey(key)?.refreshTerminal(key);
 }

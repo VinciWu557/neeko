@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import { useShallow } from 'zustand/shallow';
 
 // eslint-disable-next-line import/no-restricted-paths -- useLocalProjects cleans terminal caches on project close
-import { destroyTerminalCachesByPrefix } from '@/features/terminal';
+import { destroyTerminalsForProject } from '@/features/terminal';
 import { bumpGitRefresh } from '@/shared/hooks/useGitRefresh';
 import { restoreActiveTabId, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
@@ -175,7 +175,7 @@ export function useLocalProjects() {
         activeProject: nextActiveProject,
       });
 
-      destroyTerminalCachesByPrefix(projectId);
+      destroyTerminalsForProject(projectId);
     } catch (error) {
       console.error('[App] Failed to remove project:', error);
     }

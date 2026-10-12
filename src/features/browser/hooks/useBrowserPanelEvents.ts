@@ -164,7 +164,7 @@ export function useBrowserPanelEvents({
 
         const browserUrl = useProjectBrowserStore.getState().getPanelState(projectId)?.url ?? '';
         const message = formatPickerMessage(data.prompt, data.elements, browserUrl);
-        sendToTerminal(projectId, message + '\r', editorState.activeTabId);
+        sendToTerminal(activeWorkspaceSession(projectId), message + '\r', editorState.activeTabId);
         armAutoRefresh();
         reinjectPicker();
       },

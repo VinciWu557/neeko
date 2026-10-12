@@ -60,7 +60,7 @@ export function useFileDrop(): void {
       const activeTab = entry.tabs.find((t) => t.id === entry.activeTabId);
       if (!activeTab || activeTab.data.kind !== 'terminal') return;
 
-      sendToTerminal(projectId, path + ' ', activeTab.id);
+      sendToTerminal(activeWorkspaceSession(projectId), path + ' ', activeTab.id);
     };
 
     document.addEventListener('dragend', handleDragEnd);

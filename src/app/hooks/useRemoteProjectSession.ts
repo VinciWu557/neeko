@@ -14,7 +14,6 @@ export interface RemoteProjectProp {
   port: number;
   username: string;
   auth: AuthMethod;
-  cacheKeySuffix?: string;
   onSessionReady?: (pid: string) => void;
 }
 
@@ -66,9 +65,6 @@ export function useRemoteProjectSession({
     const auth = remoteAuthStore.get(entry.id);
     if (!auth) return null;
     const projectPath = activeRemoteCheckoutPath ?? activeProject.path;
-    const cacheKeySuffix = activeRemoteCheckoutPath
-      ? `:wt:${btoa(activeRemoteCheckoutPath).replace(/=/g, '')}`
-      : '';
     return {
       entryId: entry.id,
       projectId: activeProject.id,
@@ -78,7 +74,6 @@ export function useRemoteProjectSession({
       port: entry.port,
       username: entry.username,
       auth,
-      cacheKeySuffix,
       onSessionReady: onRemoteSessionReady,
     };
   }, [activeProject, remoteAuthStore, activeRemoteCheckoutPath, onRemoteSessionReady]);

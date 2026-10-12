@@ -99,8 +99,8 @@ describe('DiffView AI review (sendToAgent path)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit review' }));
 
     expect(sendToTerminal).toHaveBeenCalledTimes(1);
-    const [projectId, message, tabId] = sendToTerminal.mock.calls[0];
-    expect(projectId).toBe('p1');
+    const [session, message, tabId] = sendToTerminal.mock.calls[0];
+    expect(session).toEqual(expect.objectContaining({ projectId: 'p1', worktreePath: null }));
     expect(tabId).toBe('agent-tab');
     expect(message).toContain('review the changes in src/a.ts');
     expect(message).toContain('Custom instruction (highest priority):\nfocus on edge cases');
@@ -131,8 +131,8 @@ describe('DiffView AI review (sendToAgent path)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit review' }));
 
     expect(sendToTerminal).toHaveBeenCalledTimes(1);
-    const [projectId, message, tabId] = sendToTerminal.mock.calls[0];
-    expect(projectId).toBe('p1');
+    const [session, message, tabId] = sendToTerminal.mock.calls[0];
+    expect(session).toEqual(expect.objectContaining({ projectId: 'p1', worktreePath: null }));
     expect(tabId).toBe('agent-tab');
     expect(message).toContain('review the selected changes in src/a.ts');
     expect(message).not.toContain('Custom instruction');

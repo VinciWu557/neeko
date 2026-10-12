@@ -72,9 +72,9 @@ export function useWorktreeListActions(
       setDeleting(worktreePath);
       try {
         // 删除前回收该工作树 tab 空间下的**全部**终端 PTY（分屏 / 多个 tab 都在内）。
-        // 传 editor 组键（canonical WorkspaceKey）：终端域在自己的单点把它换算成
-        // `:wt:` cache-key 命名空间的前缀（见 terminalTabCleanup 的 terminalSpacePrefix），
-        // 调用方不手拼 cache key —— 换算缺失时前缀永不命中，PTY 会一直挂在即将消失的目录上。
+        // 传 editor 组键（canonical WorkspaceKey）：terminal 域按 session 前缀精确销毁
+        //（见 terminalTabCleanup → destroyTerminalsForSession），调用方不手拼 cache key
+        // —— 前缀缺失时永不命中，PTY 会一直挂在即将消失的目录上。
         cleanupTerminalsForTabKey(WorkspaceSession.of(projectId, worktreePath ?? null).key);
         await removeWorktree(projectId, worktreePath);
         // 该单元从此没有任何生产者，槽位必须作废（I1-b「未知 ≠ 旧数据」）——命令成功后才做，

@@ -16,13 +16,7 @@ import { ProjectGuidePage } from '@/features/project';
 import { useProjectActionsContext } from '@/features/project/ProjectContext';
 import { useQuickOpenStore } from '@/features/quick-open/store/quickOpenStore';
 import { useRecentFilesStore } from '@/features/quick-open/store/recentFilesStore';
-import {
-  findSessionIdForProject,
-  pasteToTerminal,
-  pasteToTerminalSession,
-  remoteTerminalCache,
-  wslTerminalCache,
-} from '@/features/terminal';
+import { insertToSessionTerminal } from '@/features/terminal';
 import { KeyRound } from '@/shared/components/icons';
 import { useEditorContext, useAppContext, useTerminalInsert } from '@/shared/contexts';
 import { INSERT_TO_AGENT_INPUT_EVENT } from '@/shared/events';
@@ -193,31 +187,14 @@ function ProjectView() {
       },
       /** Write text to the active terminal's PTY (secondary insert target). */
       insertToTerminal: (text: string) => {
-        const editorState = useEditorStore.getState();
-        const activeTabId = editorState.activeTabId;
         const activeProject = useProjectStore.getState().activeProject;
-        const activeProjectId = activeProject?.id;
-        if (!activeProjectId || !activeProject) return false;
+        if (!activeProject) return false;
         try {
-          const env = activeProject.environment;
-          // WSL / SSH 会话落在各自 cache——同样走 bracketed-paste（不执行）。
-          // WSL 用确知 distro 收敛命名空间；SSH 的 environment 不含 entryId，
-          // host 反查 remoteEntries 在多 entry 同 host 时歧义，且 remote projectId
-          // 为全局 UUID、remote 域内定界匹配已精确，故保持 'remote:' 不再收敛。
-          if (env.type === 'Wsl' || env.type === 'Remote') {
-            const cache = env.type === 'Wsl' ? wslTerminalCache : remoteTerminalCache;
-            const scopePrefix = env.type === 'Wsl' ? `wsl:${env.distro}:` : 'remote:';
-            const sessionId = findSessionIdForProject(
-              cache,
-              activeProjectId,
-              activeTabId,
-              scopePrefix,
-            );
-            if (!sessionId) return false;
-            pasteToTerminalSession(sessionId, text);
-            return true;
+          const result = insertToSessionTerminal(activeWorkspaceSession(activeProject.id), text);
+          if (result.ok && result.isFallback) {
+            showToast(`已插入到 ${result.landedTabTitle ?? '终端'}`, 'info');
           }
-          return pasteToTerminal(activeProjectId, text, activeTabId);
+          return result.ok;
         } catch (err) {
           console.error('[ProjectView] insertToTerminal failed:', err);
           return false;
@@ -225,7 +202,7 @@ function ProjectView() {
       },
     });
     return unregister;
-  }, [register]);
+  }, [register, showToast]);
 
   const paletteCtx: ActionContext = useMemo(
     () => ({

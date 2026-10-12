@@ -1,22 +1,18 @@
 import { useCallback } from 'react';
 
-import { refreshTerminal, switchAgentInTerminal } from '@/features/terminal';
+import {
+  foregroundTerminalTab,
+  refreshTerminalForSession,
+  switchAgentInTerminal,
+} from '@/features/terminal';
 import type { SaveSessionFn } from '@/shared/hooks/useConnectionProjects';
 import { useProjectStore } from '@/shared/store/projectStore';
 import type { AgentConfig } from '@/shared/types';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { setProjectIde } from '../../project/api/projectApi';
 
-interface TerminalSettings {
-  fontSize: number;
-  shell: string;
-  fontFamily: string;
-  gpuAcceleration: boolean;
-}
-
 interface UseAgentActionsParams {
-  terminal: TerminalSettings;
   agentCommandOverrides?: Record<string, string>;
   handleOpenIde: (project: { id: string; selected_ide: string | null }) => Promise<void>;
   showToast: (message: string, type?: 'info' | 'error') => void;
@@ -24,7 +20,7 @@ interface UseAgentActionsParams {
 }
 
 interface UseAgentActionsResult {
-  handleSelectLocalAgent: (agent: AgentConfig | null, cacheKey: string) => void;
+  handleSelectLocalAgent: (agent: AgentConfig | null, session: WorkspaceSession) => void;
   handleOpenIdeCallback: (project: { id: string; selected_ide: string | null }) => void;
   handleOpenIdeForSidebar: (projectId: ProjectId) => void;
   handleSaveProjectSettings: (
@@ -36,7 +32,6 @@ interface UseAgentActionsResult {
 }
 
 export function useAgentActions({
-  terminal,
   agentCommandOverrides,
   handleOpenIde,
   showToast,
@@ -45,7 +40,7 @@ export function useAgentActions({
   const projects = useProjectStore((state) => state.projects);
 
   const handleSelectLocalAgent = useCallback(
-    (agent: AgentConfig | null, cacheKey: string) => {
+    (agent: AgentConfig | null, session: WorkspaceSession) => {
       const snapshot = useProjectStore.getState();
       const currentActiveProject = snapshot.activeProject;
       if (!currentActiveProject) {
@@ -73,29 +68,17 @@ export function useAgentActions({
 
       if (agent) {
         void switchAgentInTerminal(
-          cacheKey,
-          currentActiveProject.path,
-          currentActiveProject.name,
+          session,
+          foregroundTerminalTab(session)?.tab.id ?? null,
           agent.id,
-          terminal.fontSize,
-          terminal.shell,
-          terminal.fontFamily,
-          currentActiveProject.id,
           agentCommandOverrides,
-          terminal.gpuAcceleration,
         );
         return;
       }
 
-      setTimeout(() => refreshTerminal(currentActiveProject.id), 50);
+      setTimeout(() => refreshTerminalForSession(session), 50);
     },
-    [
-      agentCommandOverrides,
-      terminal.fontFamily,
-      terminal.fontSize,
-      terminal.shell,
-      terminal.gpuAcceleration,
-    ],
+    [agentCommandOverrides],
   );
 
   const handleOpenIdeCallback = useCallback(

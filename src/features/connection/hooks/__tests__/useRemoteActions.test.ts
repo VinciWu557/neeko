@@ -2,11 +2,9 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { useRemoteActions } from '@/features/connection/hooks/useRemoteActions';
-/* eslint-disable import/no-restricted-paths -- test mocks terminal cache for remote actions */
-import {
-  switchAgentInRemoteTerminal,
-  refreshRemoteTerminal,
-} from '@/features/terminal/components/terminalCache';
+import { switchAgentInTerminal } from '@/features/terminal';
+/* eslint-disable import/no-restricted-paths -- test mocks terminal refresh for remote actions */
+import { refreshTerminalForSession } from '@/features/terminal/components/terminalCache';
 /* eslint-enable import/no-restricted-paths */
 import { useConnectionStore } from '@/shared/store/connectionStore';
 import { useEditorStore } from '@/shared/store/editorStore';
@@ -14,14 +12,15 @@ import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { RemoteEntrySession } from '@/shared/types';
 
+vi.mock('@/features/terminal', () => ({
+  switchAgentInTerminal: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('@/features/terminal/components/terminalCache', () => ({
-  remoteCacheKey: (entryId: string, projectId: string) => `remote:${entryId}:${projectId}`,
-  switchAgentInRemoteTerminal: vi.fn().mockResolvedValue(undefined),
-  refreshRemoteTerminal: vi.fn(),
+  refreshTerminalForSession: vi.fn(),
 }));
 
-const mockSwitchAgent = vi.mocked(switchAgentInRemoteTerminal);
-const mockRefreshTerminal = vi.mocked(refreshRemoteTerminal);
+const mockSwitchAgent = vi.mocked(switchAgentInTerminal);
+const mockRefreshTerminal = vi.mocked(refreshTerminalForSession);
 
 function makeRemoteProject(id = 'rp1', overrides: Record<string, unknown> = {}) {
   return {
@@ -232,7 +231,7 @@ describe('useRemoteActions', () => {
       expect(mockSaveSession).toHaveBeenCalledTimes(1);
     });
 
-    it('不调用 switchAgentInRemoteTerminal', () => {
+    it('不调用 switchAgentInTerminal', () => {
       const { result } = renderHook(() =>
         useRemoteActions({
           config: DEFAULT_CONFIG,
@@ -256,7 +255,7 @@ describe('useRemoteActions', () => {
       expect(mockSwitchAgent).not.toHaveBeenCalled();
     });
 
-    it('不调用 refreshRemoteTerminal', () => {
+    it('不调用 refreshTerminalForSession', () => {
       const { result } = renderHook(() =>
         useRemoteActions({
           config: DEFAULT_CONFIG,
@@ -286,7 +285,7 @@ describe('useRemoteActions', () => {
   });
 
   describe('handleSelectAgent', () => {
-    it('传入 agent 时调用 switchAgentInRemoteTerminal', async () => {
+    it('传入 agent 时调用 switchAgentInTerminal', async () => {
       const { result } = renderHook(() =>
         useRemoteActions({
           config: DEFAULT_CONFIG,
@@ -309,7 +308,12 @@ describe('useRemoteActions', () => {
         result.current.handleSelectAgent(agent);
       });
 
-      expect(mockSwitchAgent).toHaveBeenCalledWith('remote:entry-1:rp1', 'claude-code', {});
+      expect(mockSwitchAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'rp1', worktreePath: null }),
+        null,
+        'claude-code',
+        {},
+      );
     });
 
     it('传入 agent 时同时更新 selected_agent 状态', async () => {
@@ -341,7 +345,7 @@ describe('useRemoteActions', () => {
       expect(projectState.activeProject?.selected_agents).toEqual(['claude-code']);
     });
 
-    it('传入 null 时不调用 switchAgentInRemoteTerminal', async () => {
+    it('传入 null 时不调用 switchAgentInTerminal', async () => {
       const { result } = renderHook(() =>
         useRemoteActions({
           config: DEFAULT_CONFIG,
@@ -357,7 +361,7 @@ describe('useRemoteActions', () => {
       expect(mockSwitchAgent).not.toHaveBeenCalled();
     });
 
-    it('传入 null 时通过 setTimeout 调用 refreshRemoteTerminal', async () => {
+    it('传入 null 时通过 setTimeout 调用 refreshTerminalForSession', async () => {
       const { result } = renderHook(() =>
         useRemoteActions({
           config: DEFAULT_CONFIG,
@@ -374,7 +378,10 @@ describe('useRemoteActions', () => {
         vi.advanceTimersByTime(50);
       });
 
-      expect(mockRefreshTerminal).toHaveBeenCalledWith('remote:entry-1:rp1');
+      expect(mockRefreshTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({ projectId: 'rp1', worktreePath: null }),
+        null,
+      );
     });
   });
 });
