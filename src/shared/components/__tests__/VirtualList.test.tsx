@@ -157,6 +157,10 @@ describe('VirtualList', () => {
           scrollTopValue = v;
         },
       });
+      // 可控几何：共享滚动记忆 hook 会把写回目标 clamp 到 scrollHeight - clientHeight
+      // （jsdom 两者恒 0，不桩会被钳成 0 而不写回）。
+      Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => 400 });
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => 200 * 40 });
       // scrollTo stub：写回同时更新真实值 + 派发 scroll（镜像浏览器行为）
       el.scrollTo = ((opts: ScrollToOptions) => {
         scrollTopValue = opts.top ?? 0;

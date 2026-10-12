@@ -2,6 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import React, { useCallback, useEffect, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 
 export interface VirtualListHandle {
   scrollToIndex: (index: number, align?: 'center' | 'start' | 'end') => void;
@@ -46,14 +47,20 @@ function VirtualListInner<T>({
   // 让 tanstack 主动 cleanup 行元素的 ResizeObserver，防止行在脱离渲染树时被测成
   // 0 尺寸后永久污染 itemSizeCache（导致恢复显示时前面的行不可见/塌缩）。
   const [scrollVisible, setScrollVisible] = React.useState(true);
-  // 最后一次真实 scrollTop 镜像。display:none 期间（无 scroll 事件）保持最后已知值，
-  // 恢复显示时与 DOM scrollTop 比对，差异时把 DOM 写回镜像值（浏览器丢滚动位置时
-  // —— 已知 WKWebView 行为——保留用户位置；正常引擎下滚动位置已被保留时是 no-op）。
-  const lastScrollTopRef = useRef(0);
-  // 隐藏瞬间的恢复目标快照。恢复 enabled 时 tanstack 会向 DOM 写一次
-  // initialOffset(0)，其触发的 scroll 事件会把镜像一起污染为 0 ——
-  // 恢复写回必须用这份快照，恢复完成后清空。
-  const pendingRestoreRef = useRef<number | null>(null);
+  // 滚动位置修复（display:none 期间引擎丢 scrollTop 的写回）与其余面板同源：
+  // 共享 `useScrollMemory` 承载镜像 / 隐藏快照 / 帧内复核（复核晚于下方 tanstack 的
+  // enabled 恢复写入，避免写回被 initialOffset=0 覆盖）。
+  // key=null：本组件暂不做跨卸载持久化（消费点各有显式滚动意图——文件树定位、
+  // 会话加载/贴底——待逐点决策后再接线）。
+  const scrollMemoryRef = useScrollMemory<HTMLDivElement>(null);
+  // 合并回调 ref：VirtualListHandle.getScrollElement 仍需要 mutable ref。
+  const setScrollRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      internalScrollRef.current = node;
+      scrollMemoryRef(node);
+    },
+    [scrollMemoryRef],
+  );
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -95,49 +102,26 @@ function VirtualListInner<T>({
 
   const handleScroll = useCallback(
     (e: React.UIEvent<HTMLDivElement>) => {
-      lastScrollTopRef.current = e.currentTarget.scrollTop;
       onScroll?.(e.currentTarget.scrollTop);
     },
     [onScroll],
   );
 
-  // display:none → 显示恢复的双重修复：
-  // ① enabled=false 让 tanstack 在隐藏期间 cleanup 行 RO 并卸载行元素，
+  // ① 可见性门控：enabled=false 让 tanstack 在隐藏期间 cleanup 行 RO 并卸载行元素，
   //    杜绝 itemSizeCache 被 0 尺寸污染（measurements 完整保留，恢复后正常）。
-  //    注意：tanstack 恢复 enabled 时会按 getScrollOffset()（disabled 期间被
-  //    清成 initialOffset=0）向 DOM 写一次滚动位置 —— 见下方 ② 的时序。
-  // ② 恢复显示时若真实 scrollTop 与镜像脱节则写回镜像（WKWebView display:none
-  //    期间丢弃滚动位置；正常引擎下 tanstack 的恢复写入也会把它拉回 0）。
-  //    写回必须在 passive effect 里做：tanstack 的恢复写入发生在 layout effect
-  //    阶段且此时它还没重挂 scroll 监听，若在 RO 回调（渲染前）同步写回会被
-  //    tanstack 的恢复写入覆盖。effect 在其后执行 → 我们后写、最终生效，且
-  //    scroll 事件随之把 virtualizer 内部 offset 对齐。超界浏览器 clamp。
+  // ② 滚动位置的写回不在这里：由 `useScrollMemory` 负责 —— tanstack 恢复 enabled 时
+  //    会写一次 initialOffset=0（layout effect 阶段），共享 hook 的帧内复核在其后
+  //    落位，期间忽略 scroll 事件以免镜像被污染；virtualizer 的内部 offset 随写回
+  //    触发的 scroll 事件对齐。超界由共享 hook clamp。
   useEffect(() => {
     const el = internalScrollRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => {
-      if (el.offsetHeight === 0) {
-        // 隐藏瞬间快照恢复目标（此后 tanstack/引擎的恢复写入会污染镜像与 DOM）
-        pendingRestoreRef.current = lastScrollTopRef.current;
-        setScrollVisible(false);
-        return;
-      }
-      setScrollVisible(true);
+      setScrollVisible(el.offsetHeight !== 0);
     });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!scrollVisible) return;
-    const el = internalScrollRef.current;
-    if (!el) return;
-    const target = pendingRestoreRef.current;
-    pendingRestoreRef.current = null;
-    if (target == null) return;
-    if (Math.abs(el.scrollTop - target) < 1) return;
-    el.scrollTo({ top: target });
-  }, [scrollVisible]);
 
   // 动态高度测量：渲染后触发 virtualizer 重新测量，修正 translateY 位置
   const measureRef = useCallback(
@@ -159,7 +143,7 @@ function VirtualListInner<T>({
 
   return (
     <div
-      ref={internalScrollRef}
+      ref={setScrollRef}
       onScroll={handleScroll}
       data-testid="scroll-list"
       className={cn('overflow-y-auto', className)}
