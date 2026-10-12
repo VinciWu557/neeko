@@ -3,8 +3,7 @@ import React, { useMemo } from 'react';
 import { useSkillStore } from '@/features/skill/store';
 import { cn } from '@/lib/utils';
 import type { ManagedSkillDto } from '@/shared/types';
-
-import { tagChipClass } from './skillTagColors';
+import { tagChipClass } from '@/shared/utils/tagColors';
 
 interface TagCloudFilterProps {
   skills: ManagedSkillDto[];

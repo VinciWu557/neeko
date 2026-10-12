@@ -19,6 +19,7 @@ import { parseSkillDescription } from '@/features/skill/utils/parseSkillDescript
 import { cn } from '@/lib/utils';
 import type { ManagedSkillDto } from '@/shared/types';
 import { getAgentIconSrc } from '@/shared/utils/agents';
+import { tagChipClass, tagGroupBadgeClass } from '@/shared/utils/tagColors';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -34,7 +35,6 @@ import {
   skillMenuLabelClass,
   skillMenuSeparatorClass,
 } from './skillMenuStyles';
-import { tagChipClass, tagGroupBadgeClass } from './skillTagColors';
 
 interface SkillCardProps {
   skill: ManagedSkillDto;

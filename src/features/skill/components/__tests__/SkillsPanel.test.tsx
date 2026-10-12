@@ -155,8 +155,8 @@ describe('SkillsPanel — 导航', () => {
 
     expect(screen.getByText('neeko')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByTestId('project-disk-count-proj-1')).toHaveTextContent('2');
-      expect(screen.getByTestId('project-group-count-proj-1')).toHaveTextContent('3g');
+      expect(screen.getByTestId('project-skill-disk-count-proj-1')).toHaveTextContent('2');
+      expect(screen.getByTestId('project-skill-group-count-proj-1')).toHaveTextContent('3g');
     });
     expect(screen.getByTestId('project-skill-row-proj-1')).toHaveAttribute(
       'title',
@@ -179,8 +179,8 @@ describe('SkillsPanel — 导航', () => {
     fireEvent.click(await screen.findByText('Projects'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('project-disk-count-proj-1')).toHaveTextContent('0');
-      expect(screen.getByTestId('project-group-count-proj-1')).toHaveTextContent('0g');
+      expect(screen.getByTestId('project-skill-disk-count-proj-1')).toHaveTextContent('0');
+      expect(screen.getByTestId('project-skill-group-count-proj-1')).toHaveTextContent('0g');
     });
   });
 
@@ -254,5 +254,17 @@ describe('SkillsPanel — Tags', () => {
     useSkillStore.setState({ tagGroups: [] });
     render(<SkillsPanel />);
     expect(screen.getByText('New Tag')).toBeInTheDocument();
+  });
+
+  it('有 skill 的 tag 删除走智能确认（技能侧文案含成员数）', () => {
+    useSkillStore.setState({
+      tagGroups: [createTagGroup({ id: 'tg1', name: 'Frontend', skill_count: 3 })],
+    });
+    render(<SkillsPanel />);
+
+    fireEvent.click(screen.getByTitle('Delete tag'));
+
+    expect(screen.getByText('Delete tag with skills?')).toBeInTheDocument();
+    expect(screen.getByText(/3 skills/)).toBeInTheDocument();
   });
 });

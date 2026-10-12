@@ -15,6 +15,7 @@ export type {
 
 // Hooks
 export { useMarketplace, PAGE_SIZE_OPTIONS, DEFAULT_PAGE_SIZE } from './hooks/useMarketplace';
+export { useSkillCountRefresh } from './hooks/useSkillCountRefresh';
 export { useApplyProjectSkills } from './hooks/useApplyProjectSkills';
 export {
   useBindProjectTagGroups,

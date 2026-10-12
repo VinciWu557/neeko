@@ -15,6 +15,7 @@ import { parseSkillDescription } from '@/features/skill/utils/parseSkillDescript
 import { cn } from '@/lib/utils';
 import type { AgentDiskSkill, ManagedSkillDto } from '@/shared/types';
 import { getAgentIconSrc } from '@/shared/utils/agents';
+import { tagChipClass } from '@/shared/utils/tagColors';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,7 +29,6 @@ import {
   skillMenuItemClass,
   skillMenuSeparatorClass,
 } from './skillMenuStyles';
-import { tagChipClass } from './skillTagColors';
 
 interface AgentSkillCardProps {
   skill: AgentDiskSkill;

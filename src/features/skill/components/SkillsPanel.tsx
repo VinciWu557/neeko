@@ -1,28 +1,34 @@
-import {
-  Package,
-  Download,
-  Trash2,
-  Plus,
-  RefreshCw,
-  LayoutGrid,
-  Pencil,
-  Terminal,
-} from 'lucide-react';
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { Download, Package } from 'lucide-react';
+import React, { useCallback } from 'react';
 
-import { resolveAgentIconSrc } from '@/features/agent/api/agentApi';
+import { AgentRailRow } from '@/features/agent';
 import { useSkillStore } from '@/features/skill/store';
-import { cn } from '@/lib/utils';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
 import CountLabel from '@/shared/components/nav/CountLabel';
 import NavEmpty from '@/shared/components/nav/NavEmpty';
 import NavRow from '@/shared/components/nav/NavRow';
 import NavSection from '@/shared/components/nav/NavSection';
-import { useNotificationStore } from '@/shared/store/notificationStore';
+import ProjectRailRow from '@/shared/components/nav/ProjectRailRow';
+import TagGroupRail from '@/shared/components/nav/TagGroupRail';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import type { TagGroupCrudItem } from '@/shared/hooks/useTagGroupCrud';
 import { useProjectStore } from '@/shared/store/projectStore';
 import type { SkillView } from '@/shared/types';
-import { getAvatarStyle, getProjectInitials } from '@/shared/utils/projectAvatar';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+
+import { useSkillCountRefresh } from '../hooks/useSkillCountRefresh';
+import { useTagGroupRail } from '../hooks/useTagGroupRail';
+
+/** 删除确认正文（技能侧文案），注入给共享 TagGroupRail。 */
+const describeSkillTagDelete = (group: TagGroupCrudItem) => (
+  <p className="text-sm text-text-secondary">
+    This tag still has{' '}
+    <span className="font-medium text-text-primary">
+      {group.count} skill{group.count === 1 ? '' : 's'}
+    </span>{' '}
+    bound to it. Are you sure you want to delete it? All skill associations will be removed.
+  </p>
+);
 
 interface NavItem {
   key: SkillView;
@@ -30,71 +36,39 @@ interface NavItem {
   icon: React.ElementType;
   count?: number;
 }
+
 /**
- * Skills left rail — structure inspired by Skills Manager:
- * primary nav + Tags (tag groups).
+ * Skills left rail — structure inspired by Skills Manager: primary nav + Tags (tag groups).
+ * 拆分（组件体积 ratchet，均为「迁移 JSX 与依赖」，行为零漂移）：
+ * - Tags 交互 → `useTagGroupRail`（组合共享 `useTagGroupCrud` + 本侧选择/同步；草稿状态留在 hooks 层）
+ * - 左栏计数副作用 → `useSkillCountRefresh`（与 MCP 左栏共用；时序仍随面板挂载）
+ * - 区块/行组件 → 共享件：Tags = `TagGroupRail`；Agent = `AgentRailRow`；Project = `ProjectRailRow`
  */
 const SkillsPanel: React.FC = React.memo(() => {
   const activeSkillView = useSkillStore((s) => s.activeSkillView);
   const skills = useSkillStore((s) => s.skills);
-  const tagGroups = useSkillStore((s) => s.tagGroups);
   const activeTagGroupIds = useSkillStore((s) => s.activeTagGroupIds);
-  const activeAgentId = useSkillStore((s) => s.activeAgentId);
   const setActiveSkillView = useSkillStore((s) => s.setActiveSkillView);
   const setActiveTagGroupIds = useSkillStore((s) => s.setActiveTagGroupIds);
   const setActiveAgentId = useSkillStore((s) => s.setActiveAgentId);
-  const deleteTagGroup = useSkillStore((s) => s.deleteTagGroup);
-  const updateTagGroup = useSkillStore((s) => s.updateTagGroup);
-  const createTagGroup = useSkillStore((s) => s.createTagGroup);
-  const syncTagGroup = useSkillStore((s) => s.syncTagGroup);
+  const agentGroups = useSkillStore((s) => s.agentSkillGroups);
+  const activeAgentId = useSkillStore((s) => s.activeAgentId);
   const projectSkillCounts = useSkillStore((s) => s.projectSkillCounts);
   const projectSkillCountsLoading = useSkillStore((s) => s.projectSkillCountsLoading);
   const projectSkillCountsError = useSkillStore((s) => s.projectSkillCountsError);
-  const refreshProjectSkillCounts = useSkillStore((s) => s.refreshProjectSkillCounts);
   const projectTagGroupCounts = useSkillStore((s) => s.projectTagGroupCounts);
   const projectTagGroupCountsLoading = useSkillStore((s) => s.projectTagGroupCountsLoading);
   const projectTagGroupCountsError = useSkillStore((s) => s.projectTagGroupCountsError);
-  const refreshProjectTagGroupCounts = useSkillStore((s) => s.refreshProjectTagGroupCounts);
-  const agentGroups = useSkillStore((s) => s.agentSkillGroups);
-  const refreshAgentSkills = useSkillStore((s) => s.refreshAgentSkills);
-
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const selectProject = useProjectStore((s) => s.selectProject);
-  const projectsKey = useMemo(
-    () => projects.map((project) => `${project.id}:${project.path}`).join('\n'),
-    [projects],
-  );
 
-  const toast = useCallback((message: string, type: 'info' | 'error' = 'info') => {
-    useNotificationStore.getState().addNotification({
-      type: type === 'error' ? 'error' : 'info',
-      title: type === 'error' ? 'Error' : 'Skills',
-      message,
-    });
-  }, []);
+  const { crud, railGroups, syncingId, handleSync, handleTagGroupSelect } = useTagGroupRail();
 
-  // Left-rail counts: agents once on mount; project counts when project list changes.
-  useEffect(() => {
-    void refreshAgentSkills().catch((e) => {
-      toast(`Failed to load agent skill counts: ${String(e)}`, 'error');
-    });
-  }, [refreshAgentSkills, toast]);
+  useSkillCountRefresh();
 
-  useEffect(() => {
-    void refreshProjectSkillCounts().catch((e) => {
-      toast(`Failed to load project skill counts: ${String(e)}`, 'error');
-    });
-    void refreshProjectTagGroupCounts().catch((e) => {
-      toast(`Failed to load project tag group counts: ${String(e)}`, 'error');
-    });
-  }, [projectsKey, refreshProjectSkillCounts, refreshProjectTagGroupCounts, toast]);
+  // 滚动记忆：左栏自身的滚动容器（Library 常驻期引擎丢位置 / 卸载重建都恢复）。
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey('library.skillRail'));
 
   const navItems: NavItem[] = [
     { key: 'local', label: 'Installed', icon: Package, count: skills.length },
@@ -113,16 +87,6 @@ const SkillsPanel: React.FC = React.memo(() => {
     setActiveTagGroupIds([]);
     setActiveAgentId(null);
   }, [setActiveSkillView, setActiveTagGroupIds, setActiveAgentId]);
-
-  const handleTagGroupSelect = useCallback(
-    (id: string) => {
-      const wasActive = activeTagGroupIds.includes(id);
-      setActiveTagGroupIds(wasActive ? [] : [id]);
-      setActiveSkillView('local');
-      setActiveAgentId(null);
-    },
-    [activeTagGroupIds, setActiveTagGroupIds, setActiveSkillView, setActiveAgentId],
-  );
 
   const selectAgent = useCallback(
     (agentId: string) => {
@@ -143,86 +107,9 @@ const SkillsPanel: React.FC = React.memo(() => {
     [selectProject, setActiveSkillView, setActiveTagGroupIds, setActiveAgentId],
   );
 
-  const handleCreate = useCallback(async () => {
-    const name = newName.trim();
-    if (!name) return;
-    try {
-      await createTagGroup(name);
-      setNewName('');
-      setCreating(false);
-      toast(`Created tag group "${name}"`);
-    } catch (e) {
-      toast(String(e), 'error');
-    }
-  }, [newName, createTagGroup, toast]);
-
-  const handleSync = useCallback(
-    async (e: React.MouseEvent, id: string, name: string) => {
-      e.stopPropagation();
-      setSyncingId(id);
-      try {
-        await syncTagGroup(id);
-        toast(`Synced "${name}" to agents`);
-      } catch (err) {
-        toast(String(err), 'error');
-      } finally {
-        setSyncingId(null);
-      }
-    },
-    [syncTagGroup, toast],
-  );
-
-  const deleteTagGroupById = useCallback(
-    async (id: string) => {
-      try {
-        await deleteTagGroup(id);
-      } catch (err) {
-        toast(String(err), 'error');
-      }
-    },
-    [deleteTagGroup, toast],
-  );
-
-  const handleDelete = useCallback(
-    (e: React.MouseEvent, id: string) => {
-      e.stopPropagation();
-      const tag = tagGroups.find((t) => t.id === id);
-      if (tag && tag.skill_count > 0) {
-        setPendingDeleteId(id);
-        return;
-      }
-      void deleteTagGroupById(id);
-    },
-    [tagGroups, deleteTagGroupById],
-  );
-
-  const handleRenameStart = useCallback((e: React.MouseEvent, id: string, currentName: string) => {
-    e.stopPropagation();
-    setRenamingId(id);
-    setRenameValue(currentName);
-  }, []);
-
-  const handleRenameSubmit = useCallback(
-    async (id: string) => {
-      const name = renameValue.trim();
-      if (!name || name === tagGroups.find((t) => t.id === id)?.name) {
-        setRenamingId(null);
-        return;
-      }
-      try {
-        await updateTagGroup(id, name);
-        setRenamingId(null);
-        toast(`Renamed to "${name}"`);
-      } catch (err) {
-        toast(String(err), 'error');
-      }
-    },
-    [renameValue, tagGroups, updateTagGroup, toast],
-  );
-
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {/* Primary nav */}
         <nav className="py-2 px-1.5" aria-label="Skill views">
           {navItems.map((item) => {
@@ -235,15 +122,7 @@ const SkillsPanel: React.FC = React.memo(() => {
                 key={item.key}
                 active={isActive}
                 gapClassName="gap-2.5"
-                onSelect={() => {
-                  if (item.key === 'local') selectLibrary();
-                  else if (item.key === 'marketplace') selectMarketplace();
-                  else {
-                    setActiveSkillView(item.key);
-                    setActiveTagGroupIds([]);
-                    setActiveAgentId(null);
-                  }
-                }}
+                onSelect={() => (item.key === 'local' ? selectLibrary() : selectMarketplace())}
                 leading={<Icon className="h-3.5 w-3.5 shrink-0 opacity-90" />}
               >
                 <span className="truncate flex-1 font-medium">{item.label}</span>
@@ -254,157 +133,31 @@ const SkillsPanel: React.FC = React.memo(() => {
         </nav>
 
         {/* Tags = Tag Groups */}
-        <NavSection
-          title="Tags"
-          defaultExpanded
-          listClassName="pb-2 px-1.5"
-          actions={
-            <button
-              type="button"
-              className="p-1 rounded-md text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors"
-              title="New tag group"
-              onClick={() => setCreating(true)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          }
-        >
-          {creating && (
-            <div className="px-1.5 py-1 flex gap-1 items-center mb-0.5">
-              <input
-                className={cn(
-                  'flex-1 min-w-0 h-7 px-2 text-[var(--font-size)] rounded-md',
-                  'bg-bg-hover/60 border border-border text-text-primary',
-                  'outline-none focus:border-border focus:bg-bg-primary placeholder:text-text-muted',
-                )}
-                placeholder="e.g. Backend"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleCreate();
-                  if (e.key === 'Escape') {
-                    setCreating(false);
-                    setNewName('');
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="h-7 px-2.5 text-[11px] font-medium text-text-primary bg-bg-selected hover:bg-bg-hover rounded-md shrink-0 border border-border"
-                onClick={() => void handleCreate()}
-              >
-                Add
-              </button>
-            </div>
-          )}
-
-          {tagGroups.map((tg) => {
-            const active = activeTagGroupIds.includes(tg.id) && activeSkillView === 'local';
-            return (
-              <NavRow
-                key={tg.id}
-                active={active}
-                onSelect={() => handleTagGroupSelect(tg.id)}
-                leading={<LayoutGrid className="h-3.5 w-3.5 shrink-0 opacity-50" />}
-                actions={
-                  <>
-                    <button
-                      type="button"
-                      onClick={(e) => void handleRenameStart(e, tg.id, tg.name)}
-                      className="p-0.5 rounded text-text-muted hover:text-text-primary"
-                      title="Rename tag"
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => void handleSync(e, tg.id, tg.name)}
-                      className="p-0.5 rounded text-text-muted hover:text-text-primary"
-                      title="Sync to agents"
-                      disabled={syncingId === tg.id}
-                    >
-                      <RefreshCw className={cn('h-3 w-3', syncingId === tg.id && 'animate-spin')} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => void handleDelete(e, tg.id)}
-                      className="p-0.5 rounded text-text-muted hover:text-accent-red"
-                      title="Delete tag"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </>
-                }
-              >
-                {renamingId === tg.id ? (
-                  <input
-                    className={cn(
-                      'flex-1 min-w-0 h-6 px-1.5 text-[var(--font-size)] rounded',
-                      'bg-bg-hover/60 border border-border text-text-primary outline-none',
-                    )}
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void handleRenameSubmit(tg.id);
-                      if (e.key === 'Escape') setRenamingId(null);
-                    }}
-                    onBlur={() => void handleRenameSubmit(tg.id)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
-                  <span className="truncate flex-1 font-medium">{tg.name}</span>
-                )}
-                <CountLabel loading={false} count={tg.skill_count} />
-              </NavRow>
-            );
-          })}
-
-          {!creating && (
-            <button
-              type="button"
-              className="flex items-center gap-2 w-full px-2.5 py-1.5 rounded-md text-[var(--font-size)] text-text-muted hover:bg-bg-hover hover:text-text-secondary transition-colors"
-              onClick={() => setCreating(true)}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              New Tag
-            </button>
-          )}
-
-          {tagGroups.length === 0 && !creating && (
-            <NavEmpty>Group skills by role (Backend, Frontend…)</NavEmpty>
-          )}
-        </NavSection>
+        <TagGroupRail
+          crud={crud}
+          groups={railGroups}
+          activeIds={activeSkillView === 'local' ? activeTagGroupIds : []}
+          onSelect={handleTagGroupSelect}
+          emptyText="Group skills by role (Backend, Frontend…)"
+          confirmTitle="Delete tag with skills?"
+          describeDelete={describeSkillTagDelete}
+          syncingId={syncingId}
+          onSync={handleSync}
+        />
 
         {/* Agent list */}
         <NavSection title="Agents">
           {agentGroups.length === 0 ? (
             <NavEmpty>No agents configured.</NavEmpty>
           ) : (
-            agentGroups.map((group) => {
-              const icon = resolveAgentIconSrc(group.agent_icon);
-              const isActiveAgent =
-                activeAgentId === group.agent_id && activeSkillView === 'agents';
-              return (
-                <NavRow
-                  key={group.agent_id}
-                  active={isActiveAgent}
-                  onSelect={() => selectAgent(group.agent_id)}
-                  leading={
-                    icon ? (
-                      <img src={icon} alt="" className="h-4 w-4 rounded shrink-0" />
-                    ) : (
-                      <Terminal className="h-3.5 w-3.5 shrink-0 opacity-50" />
-                    )
-                  }
-                >
-                  <span className="truncate flex-1 font-medium">{group.agent_name}</span>
-                  {!group.agent_enabled && (
-                    <span className="text-[10px] text-text-muted">disabled</span>
-                  )}
-                  <CountLabel loading={false} count={group.skills.length} />
-                </NavRow>
-              );
-            })
+            agentGroups.map((group) => (
+              <AgentRailRow
+                key={group.agent_id}
+                group={group}
+                active={activeAgentId === group.agent_id && activeSkillView === 'agents'}
+                onSelect={selectAgent}
+              />
+            ))
           )}
         </NavSection>
 
@@ -413,114 +166,24 @@ const SkillsPanel: React.FC = React.memo(() => {
           {projects.length === 0 ? (
             <NavEmpty>No projects loaded.</NavEmpty>
           ) : (
-            projects.map((project) => {
-              const isActive = activeProjectId === project.id && activeSkillView === 'project';
-              const diskCount = projectSkillCounts.get(project.id);
-              const groupCount = projectTagGroupCounts.get(project.id);
-              const diskNum = diskCount ?? 0;
-              const groupNum = groupCount ?? 0;
-              const diskLabel =
-                projectSkillCountsError || projectTagGroupCountsError
-                  ? '!'
-                  : projectSkillCountsLoading && diskCount === undefined
-                    ? '…'
-                    : String(diskNum);
-              const groupLabel =
-                projectSkillCountsError || projectTagGroupCountsError
-                  ? '!'
-                  : projectTagGroupCountsLoading && groupCount === undefined
-                    ? '…'
-                    : `${groupNum}g`;
-              const metricsTitle =
-                projectSkillCountsError || projectTagGroupCountsError
-                  ? (projectSkillCountsError ?? projectTagGroupCountsError ?? undefined)
-                  : `${diskNum} skill${diskNum === 1 ? '' : 's'} on disk · ${groupNum} tag group${groupNum === 1 ? '' : 's'} bound`;
-              return (
-                <NavRow
-                  key={project.id}
-                  active={isActive}
-                  gapClassName="gap-2.5"
-                  onSelect={() => selectProjectNav(project.id)}
-                  title={metricsTitle}
-                  testId={`project-skill-row-${project.id}`}
-                  leading={
-                    <span
-                      className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold shrink-0"
-                      style={getAvatarStyle({ name: project.name, color: project.avatar_color })}
-                    >
-                      {getProjectInitials(project.name)}
-                    </span>
-                  }
-                >
-                  <span className="truncate flex-1 font-medium">{project.name}</span>
-                  <span
-                    className={cn(
-                      'inline-flex items-baseline gap-1 text-[11px] tabular-nums shrink-0',
-                      projectSkillCountsError || projectTagGroupCountsError
-                        ? 'text-accent-red'
-                        : 'text-text-muted',
-                    )}
-                    data-testid={`project-skill-metrics-${project.id}`}
-                    aria-label={`${diskLabel} on disk, ${groupLabel} bound`}
-                  >
-                    <CountLabel
-                      loading={projectSkillCountsLoading}
-                      error={projectSkillCountsError}
-                      count={diskCount}
-                      testId={`project-disk-count-${project.id}`}
-                    />
-                    <span className="opacity-40" aria-hidden>
-                      ·
-                    </span>
-                    <span
-                      className={cn(
-                        isActive && !projectTagGroupCountsError && 'text-accent-blue/90',
-                      )}
-                      data-testid={`project-group-count-${project.id}`}
-                    >
-                      <CountLabel
-                        loading={projectTagGroupCountsLoading}
-                        error={projectTagGroupCountsError}
-                        count={groupCount}
-                        format={(n) => `${n}g`}
-                      />
-                    </span>
-                  </span>
-                </NavRow>
-              );
-            })
+            projects.map((project) => (
+              <ProjectRailRow
+                key={project.id}
+                project={project}
+                active={activeProjectId === project.id && activeSkillView === 'project'}
+                diskCount={projectSkillCounts.get(project.id)}
+                groupCount={projectTagGroupCounts.get(project.id)}
+                diskLoading={projectSkillCountsLoading}
+                groupLoading={projectTagGroupCountsLoading}
+                skillError={projectSkillCountsError}
+                tagGroupError={projectTagGroupCountsError}
+                testIdPrefix="project-skill-"
+                onSelect={selectProjectNav}
+              />
+            ))
           )}
         </NavSection>
       </div>
-      <ConfirmDialog
-        open={pendingDeleteId !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingDeleteId(null);
-        }}
-        title="Delete tag with skills?"
-        description={
-          pendingDeleteId ? (
-            <p className="text-sm text-text-secondary">
-              This tag still has{' '}
-              <span className="font-medium text-text-primary">
-                {tagGroups.find((t) => t.id === pendingDeleteId)?.skill_count} skill
-                {tagGroups.find((t) => t.id === pendingDeleteId)?.skill_count === 1 ? '' : 's'}
-              </span>{' '}
-              bound to it. Are you sure you want to delete it? All skill associations will be
-              removed.
-            </p>
-          ) : null
-        }
-        confirmLabel="Delete"
-        danger
-        onConfirm={() => {
-          if (pendingDeleteId) {
-            const id = pendingDeleteId;
-            setPendingDeleteId(null);
-            void deleteTagGroupById(id);
-          }
-        }}
-      />
     </div>
   );
 });
