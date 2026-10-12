@@ -3,10 +3,12 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { PRDetailTabData } from '@/features/editor/types';
 import { cn } from '@/lib/utils';
 import { SearchIcon, MessageSquare, ChevronDown, GitMerge, X } from '@/shared/components/icons';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import { useEditorStore } from '@/shared/store/editorStore';
 import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { PRListItem } from '@/shared/types';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import {
@@ -18,7 +20,12 @@ import {
   listRepoAuthors,
   mergePr,
 } from '../api/gitApi';
+import { formatCreatedAt, getStateBadgeClass } from '../utils/prDisplay';
 import { getInvokeErrorMessage, mapPrLoadError } from '../utils/prLoadError';
+
+/** 滚动视图身份：全局唯一 surface 常量（owner 段按 workspace tabKey 隔离）。 */
+const SCROLL_SURFACE = 'dock.git.pullRequests';
+
 interface PullRequestsPanelProps {
   projectId: ProjectId;
   tabKey: string;
@@ -33,34 +40,6 @@ const STATE_OPTIONS = [
   { label: 'Closed', value: 'closed' },
   { label: 'Merged', value: 'merged' },
 ];
-
-function formatCreatedAt(timestamp: string | undefined | null): string {
-  if (!timestamp) return '';
-  try {
-    const date = new Date(timestamp);
-    if (isNaN(date.getTime())) return timestamp;
-    return date.toLocaleDateString('zh-CN', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-    });
-  } catch {
-    return timestamp || '';
-  }
-}
-
-function getStateBadgeClass(state: string): string {
-  switch (state.toUpperCase()) {
-    case 'OPEN':
-      return 'bg-accent-green/15 text-accent-green';
-    case 'CLOSED':
-      return 'bg-accent-red/15 text-accent-red';
-    case 'MERGED':
-      return 'bg-[#a371f7]/20 text-[#a371f7]';
-    default:
-      return 'bg-bg-tertiary text-text-muted';
-  }
-}
 
 const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
   projectId,
@@ -95,6 +74,9 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
   const [assigneeSearchQuery, setAssigneeSearchQuery] = useState('');
   const assigneeDropdownRef = useRef<HTMLDivElement>(null);
   const assigneeSearchRef = useRef<HTMLInputElement>(null);
+
+  // 滚动记忆：面板互切（保活期引擎丢位置）与卸载重建都恢复 PR 列表位置；按 workspace 隔离。
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, tabKey));
 
   useEffect(() => {
     console.log('[PullRequestsPanel] Checking gh CLI...');
@@ -695,7 +677,7 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
           </div>
 
           {/* PR List */}
-          <div className="flex-1 overflow-y-auto">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto">
             {loading && filteredPrList.length === 0 ? (
               <div className="p-4 space-y-3 animate-pulse">
                 {Array.from({ length: 5 }).map((_, i) => (

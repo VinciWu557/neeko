@@ -2,6 +2,7 @@ import React from 'react';
 
 import type { CommitEntry, CommitDetail, CommitFileChange } from '@/features/git/types';
 import { cn } from '@/lib/utils';
+import type { WorkspaceKey } from '@/shared/utils/workspaceRef';
 
 import CommitList from './CommitList';
 import LogToolbar from './LogToolbar';
@@ -29,6 +30,8 @@ interface GitLogPanelProps {
   onToggleCombined: (combined: boolean) => void;
   /** Optional: index of file focused via j/k shortcuts */
   focusedFileIndex?: number;
+  /** 本列表渲染的 Workspace key（滚动记忆按工作区隔离）。 */
+  workspaceKey: WorkspaceKey;
 }
 
 const GitLogPanel: React.FC<GitLogPanelProps> = ({
@@ -52,6 +55,7 @@ const GitLogPanel: React.FC<GitLogPanelProps> = ({
   onRefresh,
   onToggleCombined,
   focusedFileIndex,
+  workspaceKey,
 }) => {
   return (
     <div className="flex flex-col h-full p-1.5 gap-1">
@@ -98,6 +102,7 @@ const GitLogPanel: React.FC<GitLogPanelProps> = ({
 
       <div className="flex-1 min-h-0 rounded-md overflow-hidden">
         <CommitList
+          workspaceKey={workspaceKey}
           commits={commits}
           selectedHash={selectedHash}
           selectedExpanded={selectedExpanded}

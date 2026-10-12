@@ -1,6 +1,9 @@
 import React, { useCallback, useMemo, useState } from 'react';
 
 import { ChevronDown, ChevronRight, Loader2 } from '@/shared/components/icons';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { useProjectStore } from '@/shared/store/projectStore';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 
 import { useDebugStore } from '../store/debugStore';
 import { useJavaDebugStore } from '../store/javaDebugStore';
@@ -88,6 +91,12 @@ function DebugVariablesPane() {
   const evaluate = useDebugStore((s) => s.evaluate);
   const javaBackendLabel = useJavaDebugStore((s) => s.backendLabel);
 
+  // 滚动记忆：内部 tab 互切 / 面板重开后恢复变量树位置；按项目隔离。
+  const projectId = useProjectStore((s) => s.activeProject?.id ?? null);
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('panel.debug.variables', projectId),
+  );
+
   const [expr, setExpr] = useState('');
 
   const live = !!session && session.status !== 'terminated' && session.status !== 'ended';
@@ -140,7 +149,7 @@ function DebugVariablesPane() {
         ) : null}
       </SectionLabel>
 
-      <div className="flex-1 overflow-y-auto text-[var(--font-size)] font-mono">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto text-[var(--font-size)] font-mono">
         {variables.length === 0 ? (
           <EmptyHint className="font-sans">
             {isStopped ? 'Variables are not available' : 'Pause to inspect variables'}

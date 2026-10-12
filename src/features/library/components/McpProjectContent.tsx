@@ -1,7 +1,9 @@
 import React, { useMemo } from 'react';
 
 import { useMcpStore } from '@/features/library/store/mcpStore';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import { useProjectStore } from '@/shared/store/projectStore';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import McpListSection from './McpListSection';
@@ -21,6 +23,11 @@ const McpProjectContent: React.FC<McpProjectContentProps> = React.memo(({ projec
   const filteredServers = useMemo(
     () => mcpServers.filter((s) => s.scope === 'project' && s.projectId === projectId),
     [mcpServers, projectId],
+  );
+
+  // 滚动记忆：项目视图列表按项目隔离（与 installed / agent 视图同 surface 不同段）。
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('library.mcp', projectId, 'project'),
   );
 
   return (
@@ -49,7 +56,8 @@ const McpProjectContent: React.FC<McpProjectContentProps> = React.memo(({ projec
           ← Back to all
         </button>
       </div>
-      <div className="flex-1 min-h-0">
+      {/* 此前缺滚动容器：列表超长会被 overflow-hidden 裁掉且无处可滚；补 overflow-y-auto 并接记忆 */}
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
         <McpListSection onEdit={undefined} />
       </div>
     </div>

@@ -1,7 +1,9 @@
 import React, { useCallback, useMemo } from 'react';
 
 import { CircleDot, Eye, EyeOff, X } from '@/shared/components/icons';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import { useProjectStore } from '@/shared/store/projectStore';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 
 import { openSourceAtLine } from '../navigate';
 import { isBreakpointEffective, useDebugStore } from '../store/debugStore';
@@ -16,6 +18,11 @@ function DebugBreakpointsPane() {
   const removeBreakpoint = useDebugStore((s) => s.removeBreakpoint);
   const setBreakpointEnabled = useDebugStore((s) => s.setBreakpointEnabled);
   const muted = useDebugStore((s) => (projectId ? !!s.breakpointsMuted[projectId] : false));
+
+  // 滚动记忆：内部 tab 互切 / 面板重开后恢复断点列表位置；按项目隔离。
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('panel.debug.breakpoints', projectId),
+  );
 
   const breakpointsMap = useDebugStore((s) => (projectId ? s.breakpoints[projectId] : undefined));
   const breakpoints = useMemo(
@@ -42,7 +49,7 @@ function DebugBreakpointsPane() {
   );
 
   return (
-    <div className="flex-1 overflow-y-auto text-[var(--font-size)] bg-bg-secondary">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto text-[var(--font-size)] bg-bg-secondary">
       {breakpoints.length === 0 ? (
         <EmptyHint>
           No breakpoints. Click a line number or the left gutter to set one.

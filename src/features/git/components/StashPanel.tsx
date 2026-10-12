@@ -12,8 +12,14 @@ import {
   Plus,
   Trash2,
 } from '@/shared/components/icons';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
+import type { WorkspaceKey } from '@/shared/utils/workspaceRef';
 
 import { formatRelativeTime } from './gitlog/commitListUtils';
+
+/** 滚动视图身份：全局唯一 surface 常量（owner 段按 Workspace 隔离）。 */
+const SCROLL_SURFACE = 'dock.git.stash';
 
 interface StashPanelProps {
   stashes: StashEntry[];
@@ -31,6 +37,8 @@ interface StashPanelProps {
   onOpenStashDiff: (selector: string, filePath: string) => void;
   onShowToast?: (message: string, type?: 'info' | 'error') => void;
   onRefreshGit: () => Promise<void>;
+  /** 本面板渲染的 Workspace key（滚动记忆按工作区隔离）。 */
+  workspaceKey: WorkspaceKey;
 }
 
 // gitlog 风格状态图标（与 CommitDetailPanel 一致）
@@ -57,9 +65,13 @@ function StashPanel({
   onOpenStashDiff,
   onShowToast,
   onRefreshGit,
+  workspaceKey,
 }: StashPanelProps) {
   const selected = stashes.find((s) => s.selector === expandedSelector) ?? null;
   const busy = actionLoading;
+
+  // 滚动记忆：Dock 面板互切（保活期引擎丢位置）与卸载重建都恢复；按 Workspace 隔离。
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, workspaceKey));
 
   const handleApply = useCallback(async () => {
     if (!selected || busy) return;
@@ -87,7 +99,7 @@ function StashPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto p-2">
         {loading ? (
           <div className="px-2 py-1 text-[calc(var(--font-size)-1px)] text-text-muted">
             Loading stashes…

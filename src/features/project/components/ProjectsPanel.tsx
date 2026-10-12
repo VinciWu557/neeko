@@ -22,14 +22,20 @@ import { useAppContext } from '@/shared/contexts/AppContext';
 import { useRemoteContext } from '@/shared/contexts/RemoteContext';
 import { useWslContext } from '@/shared/contexts/WslContext';
 import { useAheadBehindSync } from '@/shared/hooks/useAheadBehindSync';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useActiveCheckoutPath } from '@/shared/store/workspaceStore';
 import { getDistroIcon } from '@/shared/utils/distros';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import serverIcon from '../../../assets/server.svg';
 import { push, pull, type PushOutcome } from '../../git/api/gitApi';
 import { runGitConsoleOp, GIT_BUSY_MESSAGE } from '../../git/api/gitConsoleRun';
+import { groupProjects } from '../utils/groupProjects';
+
+/** 滚动视图身份：全局唯一 surface 常量（新增面板只在此处加值）。 */
+const SCROLL_SURFACE = 'dock.projects';
 
 const ProjectsPanel: React.FC = () => {
   const { config, agents, ideCommandOverrides, showToast } = useAppContext();
@@ -68,6 +74,8 @@ const ProjectsPanel: React.FC = () => {
   } = useRemoteContext();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [commitProjectId, setCommitProjectId] = useState<string | null>(null);
+  // 滚动记忆：Dock 面板互切（保活期引擎丢位置）与卸载重建都恢复列表位置。
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE));
   const [remoteHomeDir, setRemoteHomeDir] = useState<string>('');
 
   const { commands } = useActiveProject();
@@ -82,60 +90,10 @@ const ProjectsPanel: React.FC = () => {
   const isEmpty = projects.length === 0;
 
   // Derived: WSL projects grouped by distro, Remote projects grouped by host
-  const { localProjects, wslGroups, remoteGroups, lastGroup, lastProjectId } = useMemo(() => {
-    const local: typeof projects = [];
-    const wslMap = new Map<string, typeof projects>();
-    const remoteMap = new Map<
-      string,
-      { entry: (typeof remoteEntries)[number]; projects: typeof projects }
-    >();
-
-    for (const p of projects) {
-      const env = p.environment;
-      if (env.type === 'Wsl') {
-        const group = wslMap.get(env.distro) ?? [];
-        group.push(p);
-        wslMap.set(env.distro, group);
-      } else if (env.type === 'Remote') {
-        const entry = remoteEntries.find((e) => e.host === env.host);
-        if (entry) {
-          const existing = remoteMap.get(entry.id) ?? { entry, projects: [] };
-          existing.projects.push(p);
-          remoteMap.set(entry.id, existing);
-        }
-      } else {
-        local.push(p);
-      }
-    }
-
-    const wslGroups = Array.from(wslMap.entries()).map(([distro, projects]) => ({
-      distro,
-      projects,
-    }));
-    const remoteGroups = Array.from(remoteMap.values());
-
-    // Determine which group has the last project across all sections
-    let lastGroup: 'local' | 'wsl' | 'remote' | null = null;
-    let lastProjectId: string | null = null;
-    if (local.length > 0) {
-      lastGroup = 'local';
-      lastProjectId = local[local.length - 1].id;
-    }
-    for (const g of wslGroups) {
-      if (g.projects.length > 0) {
-        lastGroup = 'wsl';
-        lastProjectId = g.projects[g.projects.length - 1].id;
-      }
-    }
-    for (const g of remoteGroups) {
-      if (g.projects.length > 0) {
-        lastGroup = 'remote';
-        lastProjectId = g.projects[g.projects.length - 1].id;
-      }
-    }
-
-    return { localProjects: local, wslGroups, remoteGroups, lastGroup, lastProjectId };
-  }, [projects, remoteEntries]);
+  const { localProjects, wslGroups, remoteGroups, lastGroup, lastProjectId } = useMemo(
+    () => groupProjects(projects, remoteEntries),
+    [projects, remoteEntries],
+  );
 
   // Derive active dialog key; reset remoteHomeDir during render when dialog becomes inactive
   const dialogRemoteEntryId =
@@ -238,7 +196,7 @@ const ProjectsPanel: React.FC = () => {
 
   return (
     <>
-      <div className="flex flex-col h-full overflow-y-auto">
+      <div ref={scrollRef} className="flex flex-col h-full overflow-y-auto">
         {isEmpty ? (
           <div className="no-projects p-5 text-center text-text-muted text-[0.86em]">
             No projects added

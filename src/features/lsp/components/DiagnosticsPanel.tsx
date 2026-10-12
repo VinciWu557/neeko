@@ -1,5 +1,8 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
+
 import { useLspStore } from '../store/lspStore';
 import type { LspDiagnostic } from '../types';
 import { orderDiagnosticFileGroups } from '../utils/diagnosticGroups';
@@ -38,6 +41,10 @@ interface DiagnosticsPanelProps {
  * `utils/diagnosticGroups`。
  */
 export function DiagnosticsPanel({ projectPath, onJumpToDiagnostic }: DiagnosticsPanelProps) {
+  // 滚动记忆：底部面板关闭重开、面板内诊断刷新都不丢位置；按项目根隔离。
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('panel.problems', projectPath || null),
+  );
   const byUri = useLspStore((s) => s.diagnosticsByProject[projectPath]);
   // 只算「顺序 + 标签」这一层；组内排序/渲染由 DiagnosticGroup 按 uri 增量承接。
   const groups = useMemo(() => orderDiagnosticFileGroups(byUri, projectPath), [byUri, projectPath]);
@@ -67,7 +74,7 @@ export function DiagnosticsPanel({ projectPath, onJumpToDiagnostic }: Diagnostic
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {groups.map((group) => (
           <DiagnosticGroup
             key={group.uri}

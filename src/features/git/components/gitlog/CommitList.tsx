@@ -1,6 +1,9 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 
 import type { CommitDetail, CommitEntry, CommitFileChange } from '@/features/git/types';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
+import type { WorkspaceKey } from '@/shared/utils/workspaceRef';
 
 import CommitGraph, { BRANCH_SPACING, NODE_RADIUS, computeRowMaxX } from './CommitGraph';
 import { CommitListItem } from './CommitListItem';
@@ -29,6 +32,8 @@ interface CommitListProps {
   searchQuery: string;
   focusedFileIndex?: number;
   onClearSearch?: () => void;
+  /** 本列表渲染的 Workspace key（滚动记忆按工作区隔离）。 */
+  workspaceKey: WorkspaceKey;
 }
 
 /**
@@ -53,6 +58,7 @@ const CommitList: React.FC<CommitListProps> = ({
   searchQuery,
   focusedFileIndex = -1,
   onClearSearch,
+  workspaceKey,
 }) => {
   const [hoveredHash, setHoveredHash] = useState<string | null>(null);
 
@@ -93,6 +99,19 @@ const CommitList: React.FC<CommitListProps> = ({
 
   const { menuRef, isMenuOpen, openMenu, closeMenu } = useCommitMenu();
 
+  // 滚动记忆：Dock 面板互切（保活期引擎丢位置）与卸载重建都恢复；按 Workspace 隔离。
+  // 与虚拟化的测量 ref 合并为单一回调 ref（两个 consumer：视口测量 + 记忆机制）。
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('dock.git.history', workspaceKey),
+  );
+  const setContainerRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      containerRef(node);
+      scrollRef(node);
+    },
+    [containerRef, scrollRef],
+  );
+
   // 每行最大 graph X（竖线 + 交叉曲线实际路径），文字恒在其右侧
   const rowMaxX = useMemo(() => computeRowMaxX(filteredCommits), [filteredCommits]);
 
@@ -111,7 +130,7 @@ const CommitList: React.FC<CommitListProps> = ({
   }
 
   return (
-    <div className="h-full overflow-auto" ref={containerRef} onScroll={handleScroll}>
+    <div className="h-full overflow-auto" ref={setContainerRef} onScroll={handleScroll}>
       {/* w-full + min-w-0 保证长路径截断而非撑宽面板 */}
       <div className="relative w-full min-w-0" style={{ height: totalHeight }}>
         {/* Graph 在行背景之上，hover/选中永不遮 dot */}

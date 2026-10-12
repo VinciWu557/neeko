@@ -2,8 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { StashActionResult, StashEntry } from '@/features/git/types';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import StashPanel from '../StashPanel';
+
+const WORKSPACE_KEY = WorkspaceSession.of('p1', null).key;
 
 const STASHES: StashEntry[] = [
   {
@@ -37,6 +40,7 @@ interface RenderOptions {
 
 function renderPanel(overrides: RenderOptions = {}) {
   const props = {
+    workspaceKey: WORKSPACE_KEY,
     stashes: overrides.stashes ?? STASHES,
     loading: overrides.loading ?? false,
     error: overrides.error ?? null,

@@ -2,6 +2,7 @@ import { render as renderRTL, screen, fireEvent, act } from '@testing-library/re
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import type { CommitDetail, CommitEntry, CommitFileChange } from '@/features/git/types';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { createAppProviderWrapper } from '@/testing/AppProviderTestUtils';
 
 import CommitList from '../CommitList';
@@ -97,6 +98,7 @@ const files: CommitFileChange[] = [{ path: 'src/foo.ts', status: 'M', additions:
 
 function baseProps(overrides: Partial<Parameters<typeof CommitList>[0]> = {}) {
   return {
+    workspaceKey: WorkspaceSession.of('p1', null).key,
     commits: makeCommits(20),
     selectedHash: null,
     selectedExpanded: false,
@@ -215,15 +217,18 @@ describe('CommitList 集成', () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(ROMock.instances).toHaveLength(1);
-    const ro = ROMock.instances[0]!;
-    expect(ro.observed).toHaveLength(1);
+    // 容器出现 → 必须有 RO 观察容器（滚动记忆机制也会挂一个 RO 观察同一容器，故此处断言
+    // 「容器被观测」这一意图，不锁实例数量）。视口测量 RO 的回调负责把 clientHeight 写进视口高度。
+    const observing = ROMock.instances.filter((r) => r.observed.length === 1);
+    expect(observing.length).toBeGreaterThanOrEqual(1);
 
     // 模拟真实浏览器：容器有实际高度时 RO 回调 → 视口高度生效 → 窗口扩大补全列表
-    const container = ro.observed[0]!;
+    const container = observing[0]!.observed[0]!;
     Object.defineProperty(container, 'clientHeight', { value: 400, configurable: true });
     act(() => {
-      ro.callback([{} as ResizeObserverEntry], ro as unknown as ResizeObserver);
+      for (const r of observing) {
+        r.callback([{} as ResizeObserverEntry], r as unknown as ResizeObserver);
+      }
     });
     // 400px 视口 → 20 行全部渲染（不再只有 overscan 的 11 行，下方空白）
     expect(screen.getAllByTestId('commit-row')).toHaveLength(20);

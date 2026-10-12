@@ -5,9 +5,14 @@ import { openProjectFile } from '@/features/quick-open/openFile';
 import { useSearch } from '@/features/search/hooks/useSearch';
 import { useSearchStore } from '@/features/search/store/searchStore';
 import { useAppContext } from '@/shared/contexts';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import type { SearchMatch } from '@/shared/types/search';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+
+/** 滚动视图身份：全局唯一 surface 常量。 */
+const SCROLL_SURFACE = 'dock.search';
 
 interface SearchPanelProps {
   projectId: ProjectId | null;
@@ -53,9 +58,21 @@ export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ projectId }
   const next = useSearchStore((s) => s.next);
   const collapsed = useSearchStore((s) => s.collapsed);
   const toggleCollapse = useSearchStore((s) => s.toggleCollapse);
-  const listRef = useRef<HTMLDivElement>(null);
+  // 可写 ref（hook 的合并回调 ref 需要回写 current；useRef<T>(null) 的 current 只读）
+  const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const autoLoadedRef = useRef(false);
+
+  // 滚动记忆：面板互切（保活期引擎丢位置）与卸载重建都恢复列表位置；按项目隔离。
+  // 与既有 listRef 合并成单一回调 ref（两个 consumer：分页逻辑 + 记忆机制）。
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, projectId));
+  const setListRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      listRef.current = node;
+      scrollRef(node);
+    },
+    [scrollRef],
+  );
 
   // Auto-focus the input when the panel mounts.
   useEffect(() => {
@@ -137,7 +154,11 @@ export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ projectId }
       </div>
 
       {/* Results */}
-      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-y-auto scrollbar-thin">
+      <div
+        ref={setListRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto scrollbar-thin"
+      >
         {status === 'running' && fileGroups.length === 0 && (
           <div className="flex items-center justify-center gap-2 py-6 text-[var(--font-size)] text-text-muted">
             <Loader2 className="size-3.5 animate-spin" />

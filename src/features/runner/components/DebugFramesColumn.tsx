@@ -1,6 +1,9 @@
 import React, { useCallback } from 'react';
 
 import { cn } from '@/lib/utils';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { useProjectStore } from '@/shared/store/projectStore';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 
 import { useDebugStore } from '../store/debugStore';
 import type { StackFrameDto } from '../types';
@@ -20,6 +23,12 @@ function DebugFramesColumn({ width, onResizeStart }: DebugFramesColumnProps) {
   const session = useDebugStore((s) => s.session);
   const live = !!session && session.status !== 'terminated' && session.status !== 'ended';
 
+  // 滚动记忆：面板关闭重开 / 内部 tab 互切后恢复帧列表位置；按项目隔离。
+  const projectId = useProjectStore((s) => s.activeProject?.id ?? null);
+  const scrollRef = useScrollMemory<HTMLDivElement>(
+    buildScrollKey('panel.debug.frames', projectId),
+  );
+
   // 点栈帧只需切帧：源码 tab 的打开（`selectFrame` 内部）与编辑器跟随（从 `location` 派生）
   // 都由此驱动 —— 与自动停点走**同一条路径**，不再依赖「手动点击恰好没有竞态」。
   const handleFrameClick = useCallback(
@@ -38,7 +47,7 @@ function DebugFramesColumn({ width, onResizeStart }: DebugFramesColumnProps) {
         Frames
         {frames.length > 0 ? <span className="ml-auto tabular-nums">{frames.length}</span> : null}
       </SectionLabel>
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {frames.length === 0 ? (
           <EmptyHint>{live ? 'No stack frames' : 'Start debugging to inspect frames'}</EmptyHint>
         ) : (

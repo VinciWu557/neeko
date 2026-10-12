@@ -1,17 +1,23 @@
 import { ChevronDown, RefreshCw, Search, X } from 'lucide-react';
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 
 import { AgentIcon } from '@/features/agent';
 import type { AgentConfig } from '@/features/agent/types';
 import { cn } from '@/lib/utils';
+import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 import { Button } from '@/ui/Button';
 
 import { useConversationList } from '../hooks/useConversationList';
 import { useConversationResume } from '../hooks/useConversationResume';
+import { useFilterRowOverflow } from '../hooks/useFilterRowOverflow';
 import type { ConversationMeta } from '../types';
 
 import ConversationList from './ConversationList';
+
+/** 滚动视图身份：全局唯一 surface 常量（owner 段按项目隔离）。 */
+const SCROLL_SURFACE = 'dock.conversations';
 
 interface ConversationPanelProps {
   projectPath: string | null;
@@ -48,7 +54,6 @@ const ConversationPanel: React.FC<ConversationPanelProps> = React.memo(
     const [agentFilter, setAgentFilter] = useState<string | null>(null);
     const [activeId, setActiveId] = useState<string | null>(null);
     const [filterExpanded, setFilterExpanded] = useState(false);
-    const [filterOverflow, setFilterOverflow] = useState(false);
     const filterRowRef = useRef<HTMLDivElement | null>(null);
     const {
       conversations,
@@ -61,6 +66,9 @@ const ConversationPanel: React.FC<ConversationPanelProps> = React.memo(
       loadMore,
     } = useConversationList(projectPath, isActive, agentFilter ?? undefined);
     const { isResuming } = useConversationResume(projectId);
+
+    // 滚动记忆：面板互切（保活期引擎丢位置）与卸载重建都恢复列表位置；按项目隔离。
+    const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, projectId));
 
     // Keep the unfiltered project total for the "All" chip while an agent filter is active.
     const projectTotalRef = useRef(0);
@@ -137,27 +145,8 @@ const ConversationPanel: React.FC<ConversationPanelProps> = React.memo(
       }));
     }, [agents, agentFilter, total]);
 
-    // Detect whether the collapsed filter row overflows a single line.
-    // Measure against the collapsed (single-line) height, so re-measure when
-    // options change or the row width changes.
-    useLayoutEffect(() => {
-      const el = filterRowRef.current;
-      if (!el || agentOptions.length <= 1) {
-        setFilterOverflow(false);
-        return;
-      }
-      const measure = () => {
-        // scrollHeight exceeds one line's height => chips wrapped to >1 row
-        setFilterOverflow(el.scrollHeight - el.clientHeight > 1);
-      };
-      if (!filterExpanded) measure();
-      if (typeof ResizeObserver === 'undefined') return;
-      const ro = new ResizeObserver(() => {
-        if (!filterExpanded) measure();
-      });
-      ro.observe(el);
-      return () => ro.disconnect();
-    }, [agentOptions, filterExpanded]);
+    // 折叠态筛选行是否溢出单行（测量逻辑见 useFilterRowOverflow）。
+    const filterOverflow = useFilterRowOverflow(filterRowRef, agentOptions.length, filterExpanded);
 
     // Agent filter is applied server-side via list_page so infinite scroll stays correct.
     // Search remains client-side over the currently loaded pages.
@@ -321,7 +310,7 @@ const ConversationPanel: React.FC<ConversationPanelProps> = React.memo(
         </div>
 
         {/* List */}
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
           {!(loading && conversations.length === 0) &&
           hasClientSearch &&
           filteredConversations.length === 0 &&

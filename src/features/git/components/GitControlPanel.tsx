@@ -239,6 +239,7 @@ const GitControlPanel: React.FC<GitControlPanelProps> = ({
         </div>
         <div className={cn('h-full min-h-0', tab !== 'history' && 'hidden')}>
           <GitLogPanel
+            workspaceKey={workspaceKey}
             commits={commits}
             loading={loading}
             hasMore={hasMore}
@@ -264,6 +265,7 @@ const GitControlPanel: React.FC<GitControlPanelProps> = ({
         </div>
         <div className={cn('h-full min-h-0', tab !== 'stash' && 'hidden')}>
           <StashPanel
+            workspaceKey={workspaceKey}
             stashes={stashes}
             loading={stashLoading}
             error={stashError}

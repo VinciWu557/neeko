@@ -10,6 +10,7 @@ import { FileContent, Tab } from '@/shared/types';
 import { clearViewSnapshot, clearAllForTabKey } from '@/shared/utils/editorViewState';
 import { canonicalFsPath } from '@/shared/utils/fileRef';
 import { getFileName, getTabId, isFileTab } from '@/shared/utils/fileTree';
+import { dropScrollMemoryForOwner } from '@/shared/utils/scrollMemory';
 import { requireTabWorkspaceSession } from '@/shared/utils/tabIdentity';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -262,7 +263,11 @@ export function useFileViewTabOps({ tabKeyRef, workspaceRef, setError }: UseFile
    */
   const clearFileView = useCallback(() => {
     const tk = tabKeyRef.current;
-    if (tk) clearAllForTabKey(tk);
+    if (tk) {
+      clearAllForTabKey(tk);
+      // 滚动记忆与 editorViewState 同生命周期：切项目 / 关工作区时按 owner 段精确清理。
+      dropScrollMemoryForOwner(tk);
+    }
     useFileStore.getState().reset();
     setError(null);
   }, [tabKeyRef, setError]);
