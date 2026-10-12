@@ -3,7 +3,7 @@
   "name": "git-command-workspace-session",
   "title": "git 命令按 WorkspaceSession 对象寻址（对象化收敛）",
   "description": "把 git 命令的 (projectId, worktreePath) 散参统一为 WorkspaceSession 值对象；依赖 10-09-file-io-workspace-scope。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

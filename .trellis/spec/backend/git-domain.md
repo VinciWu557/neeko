@@ -686,6 +686,57 @@ ignored 根**整体置入（`FSEventStreamSetExclusionPaths` 无否定语义）�
 详见 `tasks/10-09-watcher-boundary-cost-model/design.md` §3.5；与上面的 R6 例外同属「监听集合
 只保证下界」的显式登记，不是缺陷。
 
+## 15. git 命令寻址契约（`WorkspaceSession` 唯一地址）
+
+**第一性原理**：一次 git 操作的真值依赖是 `(Workspace, 操作)`。地址必须能表达「哪个
+Workspace」，且不能比这更少。前端可手搓的散参（`worktreePath?: string | null` 可选且默认错）
+与后端两个可独立缺失的 wire 字段，都是「地址可拆分」的形态 —— 故统一为一个不可拆的地址对象。
+
+**契约**：
+
+1. **唯一地址类型** = `WorkspaceSession`（`common/git/workspace_ref.rs`；`#[serde(rename_all = "camelCase")]`
+   → wire `{ projectId, worktreePath }`，与前端的 `WorkspaceSession` 逐字节同形）。**不新增第二地址类型**。
+2. **唯一解析入口** = `AppStateWrapper::resolve_workspace_target(&WorkspaceSession)`（→ `(ExecTarget, WorkspaceRef)`）。
+   `git/commands/**` 与 `agent/commands_commit.rs` **不得**直调更底层的
+   `resolve_workspace(&str, Option<&str>)`（那是 DAP / watcher 等域仍在用的内部实现，
+   两个外观并存时改校验/归一必然漏一处）。
+3. **前端唯一派生点**：调用点地址来自 `activeWorkspaceSession(projectId)` /
+   `WorkspaceSession.of` / `fromKey` / `fromKeyOrId`；禁止手搓 `{ projectId, worktreePath }` 字面量
+   （class 私有构造已挡直接 `new`，护栏 `check_workspace_session_addressing` 兜底 `as` / 类型标注两形）。
+4. **前端命令面**：`gitApi.ts` 全部函数首参 = `workspace: WorkspaceSession`（invoke 载荷 `{ workspace, … }`，
+   与 file 域同形）；`ProjectCommands`（`commandFactory.ts`）**纯委托** `gitApi`（不再自建 invoke）。
+
+### 15.1 例外：参数语义不是「在哪个 workspace 执行」的命令
+
+逐个判定，**不机械全改**（给不需要地址的命令塞地址对象是 YAGNI 违反）：
+
+| 命令 | `worktreePath` 的语义 | 处置 |
+| --- | --- | --- |
+| `create_worktree` / `remove_worktree` / `rename_worktree` / `is_worktree_dirty` | **被操作的目标**（worktree 名/路径） | 签名不收 `workspace`（目标 ≠ 地址） |
+| `cancelGitSync(runId)` | 按 run id 取消 | 不收 |
+| `isGhInstalled` / `isGhAuthenticated` / `getRemoteHomeDir` | 宿主/环境探测 | 不收 |
+| `canonical_worktree_path` / `is_git_repo` | 只需 project 环境（前者只归一一个给定路径） | 不收 |
+
+**已收对象（含原先被误列为 C 类的）**：`branch.rs`（`checkout_branch` / `create_branch` /
+`delete_branch` / `rename_branch` / `create_and_switch_branch` / `checkout_detached`）与 `pr.rs`
+（`list_prs` / … / `add_comment_reaction` 共 16 个）均改收 `workspace: WorkspaceSession`；
+`set_active_workspace` 亦然（它激活的就是一个具体 Workspace）。
+
+> 例外只针对**命令签名**（参数形态）。**内部**解析仍然收口：worktree 操作命令为「被操作的
+> 单元」解析身份以便 `release_workspace` 时，也经 `resolve_workspace_target`（用
+> `WorkspaceSession::of(project_id, Some(identity))` 构造地址）—— 使「git 域解析入口唯一」成为
+> 无例外的不变量（AC3 的 `rg` 字面零命中）。
+
+### 15.2 护栏与判据
+
+- 护栏 `tools/guards/checks/check_workspace_session_addressing.py`（接入 `local` / `ci`）：
+  A1 判据（无条件：git 域不得直调 `resolve_workspace(`，AC3 字面零命中）、
+  A2 判据（收 `workspace: WorkspaceSession` 的命令不得调 `resolve_project(`，防丢 worktree 维度）、
+  B 判据（`gitApi.ts` 不得留 `worktreePath` 散参形参，C 类例外豁免）、
+  C 判据（不得 `as WorkspaceSession` / 类型标注伪造地址）。
+- 零命中的验收命令：`rg "resolve_workspace\(" src-tauri/src/git/commands/ src-tauri/src/agent/commands_commit.rs`。
+- **行为零变更**：本契约只改「地址怎么传」与「谁解析」，不改超时 / 错误分类 / 只读语义注入 / 事件载荷。
+
 ## 相关文件
 
 - `src-tauri/src/common/git/workspace_ref.rs` — Workspace身份（`WorkspaceRef` / `Checkout` / key 契约）

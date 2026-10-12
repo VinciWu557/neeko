@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "实现期约束：命令层保持极薄（红线 6），签名改动不得把逻辑塞进 command"}
+{"file": ".trellis/spec/backend/type-safety.md", "reason": "WorkspaceSession 的 class+私有构造与品牌类型纪律；新增护栏判据需对齐既有类型安全口径"}
+{"file": ".trellis/spec/backend/git-domain.md", "reason": "迁移目标域的既有契约（§9/§12 寻址与渲染、行为冻结项）；P4 要在此新增寻址契约段与例外表"}
+{"file": ".trellis/spec/frontend/api-layer.md", "reason": "gitApi 是 api wrapper 层，收对象后仍是唯一 invoke 面；对齐既有 wrapper 纪律"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "activeWorkspaceSession 等身份源单点的既有约定，调用点迁移必须走它而非手搓"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "测试 fixtures 只改传参形态不改断言语义（AC4）；对齐既有测试写法"}

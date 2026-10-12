@@ -71,15 +71,24 @@ App
 
 **持久化例外**（改名需迁移，登记为不动）：`worktree_state`（sessions.json 字段）、`repo_key_prefix`（git 缓存键前缀）。
 
-## 寻址根 vs 展示根（文件 IO 契约）
+## 寻址根 vs 展示根（文件 IO + git 契约）
 
-文件读写的**地址 = `WorkspaceSession`**（`{ projectId, worktreePath }`，`worktreePath === null` = 主 checkout）；
-后端由 `AppStateWrapper::resolve_workspace` **唯一解析**出**寻址根**（= `workspace.root`，宿主形态）。
+文件读写与 **git 命令**的**地址 = `WorkspaceSession`**（`{ projectId, worktreePath }`，`worktreePath === null` = 主 checkout）；
+后端由 `AppStateWrapper::resolve_workspace_target` **唯一解析**出**寻址根**（= `workspace.root`，宿主形态）。
 
-- **寻址根**：`workspace` 地址对象 → 后端解析（`read_file` 的 `InProject` scope、watcher/gitignore 根同源）。
+- **寻址根**：`workspace` 地址对象 → 后端解析（`read_file` 的 `InProject` scope、watcher/gitignore 根、git 的 `-C` 同源）。
   前端**不**传任意 root 路径（那会把同一份身份变成散参，且在 worktree 下默认值恒错）。
 - **展示根**：`workspaceRootOf(workspaceKey, projectRoot)`（前端主机绝对路径），只用于路径相对化 / 同文件判定；
   与寻址根**不得**混用为同一个 `rootPath`。
+
+**git 域（10-09 落地）**：`git/commands/**` 与 `agent/commands_commit.rs` 中**凡需表达「在哪个
+Workspace」的命令**（含 branch / PR 两个子域）一律收首参 `workspace: WorkspaceSession`，内部只经
+`resolve_workspace_target(&workspace)` 解析（不得直调更底层的 `resolve_workspace(&str, Option<&str>)`
+—— 后者是 DAP / watcher 等域仍在用的内部实现）。
+无需地址的命令（`create/remove/rename_worktree`、`is_worktree_dirty`：`worktree_path` 是被操作的**目标**；
+`is_git_repo` / `canonical_worktree_path` / `is_gh_*` / `get_remote_home_dir` / `cancel_git_sync`：
+只需 project 环境或 run id）仍用各自参数，逐个登记于
+`.trellis/spec/backend/git-domain.md`「git 命令寻址契约」。
 
 **编辑 tab 组键 = checkout 的身份 `WorkspaceKey`**（唯一编码；`:wt:` 已退役）。
 
