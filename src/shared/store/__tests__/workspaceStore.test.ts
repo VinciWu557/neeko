@@ -13,10 +13,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
   activeWorkspaceKeyOf,
+  activeWorkspaceRootOf,
   activeWorkspaceSession,
   selectActiveWorkspaceKey,
   selectActiveCheckoutPath,
   useActiveWorkspaceKey,
+  useActiveWorkspaceRoot,
   useActiveWorkspaceSession,
   useWorkspaceStore,
 } from '@/shared/store/workspaceStore';
@@ -195,6 +197,39 @@ describe('activeWorkspaceSession —— 当前视图单元的地址值构造', (
     expect(isMainCheckout(activeWorkspaceSession('p1'))).toBe(true);
 
     rerender({ pid: null });
+    expect(result.current).toBeNull();
+  });
+});
+
+describe('activeWorkspaceRootOf / useActiveWorkspaceRoot —— 当前 Workspace 根的唯一派生点', () => {
+  const PROJECT_PATH = '/repo/main';
+
+  it('激活 worktree 时取工作树根（忽略 projectPath），主仓回落 projectPath', () => {
+    useWorkspaceStore.getState().setActiveWorkspace('p1', WT_A, 'feature-a');
+    expect(activeWorkspaceRootOf('p1', PROJECT_PATH)).toBe(WT_A);
+
+    useWorkspaceStore.getState().clearActiveWorkspace('p1');
+    expect(activeWorkspaceRootOf('p1', PROJECT_PATH)).toBe(PROJECT_PATH);
+  });
+
+  it('无 projectId 返回 null（不伪造主仓根）', () => {
+    useWorkspaceStore.getState().setActiveWorkspace('p1', WT_A, 'feature-a');
+    expect(activeWorkspaceRootOf(null, PROJECT_PATH)).toBeNull();
+    expect(activeWorkspaceRootOf(undefined, PROJECT_PATH)).toBeNull();
+  });
+
+  it('响应式形态跟随激活态重算（与命令式同源）', () => {
+    const { result, rerender } = renderHook(({ pid, path }) => useActiveWorkspaceRoot(pid, path), {
+      initialProps: { pid: 'p1' as string | null, path: PROJECT_PATH },
+    });
+    expect(result.current).toBe(PROJECT_PATH);
+
+    act(() => {
+      useWorkspaceStore.getState().setActiveWorkspace('p1', WT_A, 'feature-a');
+    });
+    expect(result.current).toBe(WT_A);
+
+    rerender({ pid: null, path: PROJECT_PATH });
     expect(result.current).toBeNull();
   });
 });

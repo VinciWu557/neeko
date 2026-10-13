@@ -1,7 +1,11 @@
 /**
  * Run/Debug 动作上下文与运行期工具（runner 层共享输入）。
  */
-import { selectActiveCheckoutPath, useWorkspaceStore } from '@/shared/store/workspaceStore';
+import {
+  activeWorkspaceRootOf,
+  selectActiveCheckoutPath,
+  useWorkspaceStore,
+} from '@/shared/store/workspaceStore';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 /** Run/Debug 动作上下文（editor tab + 项目根）。 */
@@ -30,7 +34,8 @@ export function activeWorkspaceRoot(projectId: ProjectId): string | null {
   return selectActiveCheckoutPath(useWorkspaceStore.getState(), projectId);
 }
 
-/** 运行当前生效的工作目录：该项目的当前 Workspace 根优先，否则项目根。 */
+/** 运行当前生效的工作目录：该项目的当前 Workspace 根（主仓回落项目根）。
+ *  经 `activeWorkspaceRootOf` 单一 mint 派生（与任务侧同源）。 */
 export function runCwdOf(ctx: TestActionContext): string {
-  return activeWorkspaceRoot(ctx.projectId) ?? ctx.projectPath ?? '';
+  return activeWorkspaceRootOf(ctx.projectId, ctx.projectPath ?? '') ?? '';
 }

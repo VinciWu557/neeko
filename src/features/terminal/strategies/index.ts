@@ -5,6 +5,7 @@ import { useProjectStore } from '@/shared/store/projectStore';
 import { useActiveWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { AuthMethod } from '@/shared/types';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+import { workspaceRootOf } from '@/shared/utils/workspaceRef';
 
 import { createTerminalSession, resizeTerminal, closeTerminalSession } from '../api/terminalApi';
 import {
@@ -70,7 +71,8 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
 
     // ---- Local ----
     if (env.type === 'Local') {
-      const projectPath = session.worktreePath ?? activeProject.path ?? null;
+      // 文件链接的路径基准 = 该 Workspace 的工作树根（与终端运行根同源）。
+      const projectPath = workspaceRootOf(session.key, activeProject.path ?? '');
 
       return createTerminalStrategy({
         kind: 'local',
@@ -79,12 +81,13 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
         rebuildCallbacks: terminalRebuildCallbacks,
         wrapperRefs: terminalWrapperRefs,
         createSession: async (cols, rows, payload) => {
+          // 运行根由后端从 session 派生；交互终端不传 second run root。
           const created = await createTerminalSession(
-            activeProject.id,
+            session,
             cols,
             rows,
             config.shell || null,
-            projectPath || null,
+            null,
             payload?.command ?? null,
           );
           return created.id;
@@ -115,7 +118,7 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
 
     // ---- WSL ----
     if (env.type === 'Wsl') {
-      const projectPath = session.worktreePath ?? activeProject.path ?? '';
+      const projectPath = workspaceRootOf(session.key, activeProject.path ?? '');
 
       return createTerminalStrategy({
         kind: 'wsl',
@@ -124,7 +127,7 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
         rebuildCallbacks: wslRebuildCallbacks,
         wrapperRefs: wslWrapperRefs,
         createSession: async (cols, rows) => {
-          const created = await createTerminalSession(activeProject.id, cols, rows);
+          const created = await createTerminalSession(session, cols, rows);
           return created.id;
         },
         resize: resizeTerminal,
@@ -149,7 +152,7 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
 
     // ---- Remote ----
     if (!remoteConfig) return null;
-    const projectPath = session.worktreePath ?? activeProject.path;
+    const projectPath = workspaceRootOf(session.key, activeProject.path ?? '');
 
     return createTerminalStrategy({
       kind: 'remote',
@@ -158,7 +161,7 @@ export function useTerminalStrategy(options: UseTerminalStrategyOptions): Termin
       rebuildCallbacks: remoteRebuildCallbacks,
       wrapperRefs: remoteWrapperRefs,
       createSession: async (cols, rows) => {
-        const created = await createTerminalSession(activeProject.id, cols, rows);
+        const created = await createTerminalSession(session, cols, rows);
         return created.id;
       },
       resize: resizeTerminal,

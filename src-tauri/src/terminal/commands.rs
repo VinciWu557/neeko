@@ -6,11 +6,14 @@ use crate::AppError;
 use crate::AppStateWrapper;
 use tauri::State;
 
-/// Creates a new PTY terminal session for a project.
+/// Creates a new PTY terminal session addressed by Workspace.
+///
+/// 运行根（cwd）由后端从 Workspace 身份派生：缺省 = `repo.root()`（工作树根 /
+/// 项目根），`working_dir` 为可选的 Workspace 内子目录覆盖。
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn create_terminal_session(
-    project_id: String,
+    workspace: crate::common::git::WorkspaceSession,
     cols: u16,
     rows: u16,
     shell: Option<String>,
@@ -19,17 +22,27 @@ pub async fn create_terminal_session(
     state: State<'_, AppStateWrapper>,
     app_handle: tauri::AppHandle,
 ) -> Result<TerminalSession, AppError> {
-    // 组合根提供"项目 → (环境, 路径)"快照；路由与后端分派在 terminal 域内。
-    let (environment, project_path) = state.project_context(&project_id)?;
+    // 唯一解析入口：Workspace 身份 → (项目环境, 执行目标, 已解析 WorkspaceRef)——一次读项目取齐。
+    // 禁止退化成按 project 解析（会丢 worktree 维度，worktree 视图静默按主仓执行）。
+    let (environment, target, repo) = state.resolve_workspace_target_with_env(&workspace).await?;
+    // 运行根 = 该 Workspace 的根（子目录覆盖只影响进程 cwd，不影响主题等项目级产物）。
+    let workspace_root = repo.root();
+    // 缺省 cwd = 该 Workspace 的根；可选覆盖须落在根之内（越界 → InvalidInput）。
+    let cwd = crate::terminal::services::resolve_terminal_cwd(
+        &target,
+        workspace_root,
+        working_dir.as_deref(),
+    )
+    .await?;
     state
         .terminal_router
         .create_session(
             &environment,
-            &project_path,
+            workspace_root,
+            &cwd,
             cols,
             rows,
             shell,
-            working_dir,
             command,
             app_handle,
         )

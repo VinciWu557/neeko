@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 /** Mirrors the Rust crate::terminal::types::TerminalSession struct */
 export interface TerminalSession {
@@ -23,8 +23,14 @@ export interface TerminalSession {
   } | null;
 }
 
+/**
+ * Create a terminal session addressed by Workspace.
+ *
+ * 运行根（cwd）由后端从 `workspace` 派生：缺省 = 工作树根 / 项目根；`workingDir`
+ * 为可选的 Workspace 内子目录覆盖（交互终端传 `null`）。
+ */
 export function createTerminalSession(
-  projectId: ProjectId,
+  workspace: WorkspaceSession,
   cols: number,
   rows: number,
   shell?: string | null,
@@ -32,7 +38,7 @@ export function createTerminalSession(
   command?: string | null,
 ): Promise<TerminalSession> {
   return invoke<TerminalSession>('create_terminal_session', {
-    projectId,
+    workspace,
     cols,
     rows,
     shell,

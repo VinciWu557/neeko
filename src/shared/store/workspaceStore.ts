@@ -8,7 +8,12 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/shallow';
 
 import { useProjectStore } from '@/shared/store/projectStore';
-import { ProjectId, WorkspaceSession, type WorkspaceKey } from '@/shared/utils/workspaceRef';
+import {
+  ProjectId,
+  WorkspaceSession,
+  workspaceRootOf,
+  type WorkspaceKey,
+} from '@/shared/utils/workspaceRef';
 
 /** `opened` 清单里的一项：一个被打开过的 workspace 的 checkout 元数据（git worktree 条目）。 */
 export interface CheckoutEntry {
@@ -200,6 +205,36 @@ export function useActiveCheckoutPath(): string | null {
  */
 export function useActiveWorkspaceKey(projectId: ProjectId | null): WorkspaceKey | null {
   return useWorkspaceStore((s) => selectActiveWorkspaceKey(s, projectId));
+}
+
+/**
+ * 命令式读取「指定项目的当前 Workspace 根」（= 工作树根，主仓回落 `projectPath`）——
+ * 运行根 / 相对路径基准的**唯一派生点**（≡ Rust `WorkspaceRef::root()`）。
+ *
+ * 与 [`activeWorkspaceKeyOf`] 同源：先取当前单元 key，再经 [`workspaceRootOf`] 投影为宿主路径。
+ * 只有 `projectId` 的调用方（事件回调 / store 动作）用本函数；**不得**各自
+ * `activeWorkspaceSession(...).key` + `workspaceRootOf(...)` 手拼（那是第二次派生）。
+ */
+export function activeWorkspaceRootOf(
+  projectId: ProjectId | null | undefined,
+  projectPath: string,
+): string | null {
+  const key = selectActiveWorkspaceKey(useWorkspaceStore.getState(), projectId);
+  if (!key) return null;
+  return workspaceRootOf(key, projectPath);
+}
+
+/**
+ * React 侧：某项目当前 Workspace 的根（响应式形态）。与 [`activeWorkspaceRootOf`] 同源 ——
+ * 渲染期需要运行根（任务发现 / 相对路径基准）的消费者用本 hook，**禁止**再手拼。
+ */
+export function useActiveWorkspaceRoot(
+  projectId: ProjectId | null | undefined,
+  projectPath: string | null | undefined,
+): string | null {
+  const key = useActiveWorkspaceKey(projectId ?? null);
+  if (!key) return null;
+  return workspaceRootOf(key, projectPath ?? '');
 }
 
 export function useActiveCheckoutBranch(): string {

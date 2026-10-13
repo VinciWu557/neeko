@@ -8,7 +8,7 @@
 //! 3. **可测**：路由与超时钳制不再需要构造整个 `AppStateWrapper`（含 `AppHandle`）。
 //!
 //! 依赖方向：本模块**不认识 project** —— 调用方（`terminal/commands.rs`）提供
-//! `(环境, 项目路径)` 快照，本模块只做"往哪个后端发"。
+//! `(环境, 已解析运行根 cwd)` 快照，本模块只做"往哪个后端发"。
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -108,35 +108,31 @@ impl TerminalRouter {
 
     /// 按项目环境创建会话，并登记归属。
     ///
+    /// `workspace_root` 是**该 Workspace 的根**（`repo.root()`）—— 项目级产物（主题等）
+    /// 的权威落点；`cwd` 是**进程运行目录**（根，或 Workspace 内子目录覆盖）——
+    /// 三个传输分支统一承接同一个 `cwd`（环境是传输维度，红线 10）。
     /// `command` 有值表示这是**任务终端**（由 task 域创建）—— 主题准备据此跳过。
     #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &self,
         env: &ProjectEnvironment,
-        project_path: &str,
+        workspace_root: &str,
+        cwd: &str,
         cols: u16,
         rows: u16,
         shell: Option<String>,
-        working_dir: Option<String>,
         command: Option<String>,
         app_handle: tauri::AppHandle,
     ) -> Result<TerminalSession, AppError> {
         // 主题产物属主题域，由该域按环境准备（见 `theme::service::prepare_project_theme`）。
-        crate::theme::service::prepare_project_theme(env, project_path, command.is_some()).await;
+        // 项目级配置落在 Workspace 根，**不**随语言 runner 的模块子目录覆盖漂移。
+        crate::theme::service::prepare_project_theme(env, workspace_root, command.is_some()).await;
 
         match env {
             ProjectEnvironment::Local => {
                 let session = self
                     .local
-                    .create_session(
-                        project_path,
-                        cols,
-                        rows,
-                        shell,
-                        working_dir,
-                        command,
-                        app_handle,
-                    )
+                    .create_session(cwd, cols, rows, shell, command, app_handle)
                     .map_err(AppError::from)?;
                 self.register(&session.id, SessionOwner::Pty);
                 Ok(session)
@@ -145,7 +141,7 @@ impl TerminalRouter {
             ProjectEnvironment::Wsl { distro } => {
                 let session = self
                     .local
-                    .create_wsl_session(distro, project_path, cols, rows, app_handle)
+                    .create_wsl_session(distro, cwd, cols, rows, app_handle)
                     .map_err(AppError::from)?;
                 self.register(&session.id, SessionOwner::Pty);
                 Ok(session)
@@ -163,7 +159,8 @@ impl TerminalRouter {
                         *port,
                         username,
                         auth,
-                        project_path,
+                        workspace_root,
+                        cwd,
                         cols,
                         rows,
                         app_handle,
@@ -289,5 +286,29 @@ mod tests {
         // 同一 manager 的两次取用行为一致（不 panic、不产生新实例语义）。
         router.local().close_session("absent");
         router.remote().close_session("absent");
+    }
+
+    /// 拆除必须**释放归属登记**（`close_session` 取 `take_owner` 而非 `owner_of`）。
+    ///
+    /// 回归钉子：绕过 `close_session` 直连某个后端（如 `router.local().close_session(..)`）
+    /// 不会摘表，于是 SSH 会话既关不掉、归属登记又永久泄漏；而只读归属的后端访问器拿不到
+    /// `take_owner` 的摘除语义。本用例钉住「走 router 关闭 = 路由到后端 + 释放登记」。
+    #[test]
+    fn close_session_releases_the_owner_registration() {
+        let router = TerminalRouter::new();
+        let id = "ssh-session-1";
+        router.register(id, SessionOwner::Ssh);
+        assert_eq!(router.owner_of(id), Some(SessionOwner::Ssh));
+
+        router.close_session(id);
+
+        // 登记已摘除 ⇒ 重复关闭走 None 分支（幂等告警，不重复下发后端）。
+        assert_eq!(
+            router.owner_of(id),
+            None,
+            "close must take (not peek) the owner"
+        );
+        router.close_session(id);
+        assert_eq!(router.owner_of(id), None);
     }
 }

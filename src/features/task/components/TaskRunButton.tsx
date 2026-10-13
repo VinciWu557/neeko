@@ -11,6 +11,7 @@ import {
   Download,
 } from '@/shared/components/icons';
 import { useProjectStore } from '@/shared/store/projectStore';
+import { useActiveWorkspaceRoot } from '@/shared/store/workspaceStore';
 import type { DiscoveredTask, TaskConfig } from '@/shared/types/task';
 
 import { useTaskStore } from '../store';
@@ -85,16 +86,15 @@ function TaskRunButton() {
   } = useTaskStore();
 
   const activeProject = useProjectStore((s) => s.activeProject);
+  // 存储口径 = 项目根（跨 worktree 共享，PRD 非目标）；发现口径 = 当前 Workspace 根。
   const projectPath = activeProject?.path ?? null;
+  const workspaceRoot = useActiveWorkspaceRoot(activeProject?.id, activeProject?.path);
   const currentProjectId = activeProject?.id ?? '';
 
-  // Load saved + discover when project changes
+  // Load saved (project-level) + discover (workspace-level) when project/workspace changes
   useEffect(() => {
-    void (async () => {
-      await loadConfigs(projectPath ?? undefined);
-      await loadDiscovered(projectPath);
-    })();
-  }, [projectPath, loadConfigs, loadDiscovered]);
+    void loadConfigs(projectPath ?? undefined).then(() => loadDiscovered(workspaceRoot));
+  }, [projectPath, workspaceRoot, loadConfigs, loadDiscovered]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -182,27 +182,27 @@ function TaskRunButton() {
   const handleDeleteTask = useCallback(
     (e: React.MouseEvent, config: TaskConfig) => {
       e.stopPropagation();
-      void deleteConfig(config.id, config.scope, projectPath ?? undefined);
+      void deleteConfig(config.id, config.scope, projectPath ?? undefined, workspaceRoot);
     },
-    [deleteConfig, projectPath],
+    [deleteConfig, projectPath, workspaceRoot],
   );
 
   const handleImportOne = useCallback(
     (e: React.MouseEvent, task: DiscoveredTask) => {
       e.stopPropagation();
       if (!projectPath) return;
-      void importDiscovered(task, projectPath, activeProject?.id);
+      void importDiscovered(task, projectPath, activeProject?.id, workspaceRoot);
     },
-    [importDiscovered, projectPath, activeProject?.id],
+    [importDiscovered, projectPath, workspaceRoot, activeProject?.id],
   );
 
   const handleImportAll = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!projectPath || discovered.length === 0) return;
-      void importAllDiscovered(projectPath, activeProject?.id);
+      void importAllDiscovered(projectPath, activeProject?.id, workspaceRoot);
     },
-    [importAllDiscovered, projectPath, activeProject?.id, discovered.length],
+    [importAllDiscovered, projectPath, workspaceRoot, activeProject?.id, discovered.length],
   );
 
   const handleOpenAddDialog = useCallback(() => {

@@ -83,20 +83,21 @@ impl TerminalManager {
         crate::common::terminal::drain::wait_drain(&self.drains, session_id, timeout).await
     }
 
-    /// Creates a new PTY terminal session for a local project.
+    /// Creates a new PTY terminal session at the resolved run root `cwd`.
+    ///
+    /// 运行根由调用方（router，再上溯终端命令层）从 Workspace 身份派生；本层不再有
+    /// 「可选 working_dir + 项目路径缺省」的 fail-open 形态（缺省静默回落主仓已退役）。
     #[allow(clippy::too_many_arguments)]
     pub fn create_session(
         &self,
-        project_path: &str,
+        cwd: &str,
         cols: u16,
         rows: u16,
         shell_override: Option<String>,
-        working_dir: Option<String>,
         command: Option<String>,
         app_handle: tauri::AppHandle,
     ) -> Result<TerminalSession> {
         let id = Uuid::new_v4().to_string();
-        let cwd = working_dir.as_deref().unwrap_or(project_path);
         crate::terminal::services::log_info(&format!("[PTY] Session ID: {}", id));
         crate::terminal::services::log_info(&format!("[PTY] Working Dir: {}", cwd));
 
@@ -138,11 +139,11 @@ impl TerminalManager {
         )
     }
 
-    /// Creates a new WSL terminal session for a project.
+    /// Creates a new WSL terminal session at the resolved run root `cwd`.
     pub fn create_wsl_session(
         &self,
         distro: &str,
-        project_path: &str,
+        cwd: &str,
         cols: u16,
         rows: u16,
         app_handle: tauri::AppHandle,
@@ -150,7 +151,7 @@ impl TerminalManager {
         let id = Uuid::new_v4().to_string();
         crate::terminal::services::log_info(&format!("[WSL] Session ID: {}", id));
         crate::terminal::services::log_info(&format!("[WSL] Distro: {}", distro));
-        crate::terminal::services::log_info(&format!("[WSL] Working Dir: {}", project_path));
+        crate::terminal::services::log_info(&format!("[WSL] Working Dir: {}", cwd));
 
         let pair = crate::terminal::services::create_pty(cols, rows)?;
         crate::terminal::services::log_info(&format!("[WSL] PTY opened ({}x{})", cols, rows));
@@ -159,7 +160,7 @@ impl TerminalManager {
         cmd.arg("-d");
         cmd.arg(distro);
         cmd.arg("--cd");
-        cmd.arg(project_path);
+        cmd.arg(cwd);
         cmd.arg("--");
         cmd.arg("bash");
         cmd.arg("-c");

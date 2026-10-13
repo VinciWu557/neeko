@@ -1,11 +1,10 @@
 //! Tauri commands for task configuration CRUD and execution.
 
-use crate::common::terminal::events::terminal_input_event;
 use crate::task::{DiscoveredTask, TaskConfig};
 use crate::AppError;
 use crate::AppStateWrapper;
 use std::path::Path;
-use tauri::{Emitter, State};
+use tauri::State;
 
 /// Get all task configs (app-level and project-level).
 #[tauri::command]
@@ -66,38 +65,11 @@ pub fn delete_task_config(
     crate::task::delete_task(&id, &scope, project_path.as_deref()).map_err(AppError::from)
 }
 
-/// Run a task command in a new PTY session in the given project directory.
-#[tauri::command]
-pub fn run_task(
-    command: String,
-    cwd: String,
-    state: State<AppStateWrapper>,
-    app_handle: tauri::AppHandle,
-) -> Result<String, AppError> {
-    // Create a PTY session in the given working directory and send the command
-    let session = state
-        .terminal_router
-        .local()
-        .create_session(&cwd, 80, 24, None, None, None, app_handle.clone())
-        .map_err(AppError::from)?;
-
-    let session_id = session.id.clone();
-
-    // Send the command + Enter to the PTY via the event system
-    let input_event = terminal_input_event(&session_id);
-    let mut payload = command.into_bytes();
-    payload.push(b'\r');
-    let _ = app_handle.emit(&input_event, &payload);
-
-    Ok(session_id)
-}
-
 /// Stop a running task by closing its PTY session.
 #[tauri::command]
 pub fn stop_task(session_id: String, state: State<AppStateWrapper>) -> Result<(), AppError> {
-    state
-        .terminal_router
-        .local()
-        .close_session_in_background(&session_id);
+    // 拆除单一入口：走 router 按会话归属（PTY / SSH）路由，而不是直连某
+    // 一个后端 —— 后者会静默漏掉 SSH 会话并泄漏 owners 登记。
+    state.terminal_router.close_session(&session_id);
     Ok(())
 }

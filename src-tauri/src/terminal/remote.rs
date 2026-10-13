@@ -58,6 +58,10 @@ impl RemoteTerminalManager {
     }
 
     /// Create a new SSH terminal session connected to the given host.
+    ///
+    /// `workspace_root` 是已解析的 Workspace 根（`repo.root()`）—— 项目级产物（主题）的权威落点；
+    /// `cwd` 是远端会话的实际运行目录（根，或 Workspace 内子目录覆盖）。二者分离，与 Local/WSL
+    /// 的 `prepare_project_theme(env, workspace_root, …)` 对称，避免模块子目录覆盖漂移主题产物。
     #[allow(clippy::too_many_arguments)]
     pub async fn create_session(
         &self,
@@ -65,7 +69,8 @@ impl RemoteTerminalManager {
         port: u16,
         username: &str,
         auth: &AuthMethod,
-        project_path: &str,
+        workspace_root: &str,
+        cwd: &str,
         cols: u16,
         rows: u16,
         app_handle: tauri::AppHandle,
@@ -74,7 +79,7 @@ impl RemoteTerminalManager {
         log_info(&format!("[SSH] Session ID: {}", id));
         log_info(&format!("[SSH] Host: {}:{}", host, port));
         log_info(&format!("[SSH] Username: {}", username));
-        log_info(&format!("[SSH] Working Dir: {}", project_path));
+        log_info(&format!("[SSH] Working Dir: {}", cwd));
 
         // 建立 SSH 连接并认证
         let session = ssh_auth::connect_and_authenticate(host, port, username, auth).await?;
@@ -83,7 +88,7 @@ impl RemoteTerminalManager {
 
         // 安装远程 OpenCode 主题文件和项目 TUI 配置
         // 使用单独的 channel 执行，失败不影响终端创建
-        setup_remote_opencode_theme(&session, project_path).await;
+        setup_remote_opencode_theme(&session, workspace_root).await;
 
         // 打开 channel
         let mut channel = session.channel_open_session().await?;
@@ -104,8 +109,8 @@ impl RemoteTerminalManager {
         // 请求 shell
         channel.request_shell(true).await?;
 
-        // 切换到项目目录并设置 COLORTERM 以启用 truecolor
-        let cd_cmd = format!("export COLORTERM=truecolor; cd {}\n", project_path);
+        // 切换到运行根并设置 COLORTERM 以启用 truecolor
+        let cd_cmd = format!("export COLORTERM=truecolor; cd {}\n", cwd);
         channel.data(cd_cmd.as_bytes()).await?;
 
         // 创建 session 对象

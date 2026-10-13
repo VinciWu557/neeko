@@ -65,6 +65,16 @@ pub struct AppStateWrapper {
     main_window: RwLock<Option<tauri::WebviewWindow>>,
 }
 
+/// Workspace 解析的**完整投影**：`(项目环境, 执行目标, 已解析 Workspace 身份)`。
+///
+/// 单次读项目即可取齐三者，供需要项目级产物落点（终端主题等）的命令使用，
+/// 避免再单独 [`AppStateWrapper::project_environment`] 造成同一事实两次读取。
+pub type ResolvedWorkspace = (
+    crate::core::project::ProjectEnvironment,
+    ExecTarget,
+    WorkspaceRef,
+);
+
 impl AppStateWrapper {
     /// 关闭全部后台服务并退出进程。
     ///
@@ -144,21 +154,22 @@ impl AppStateWrapper {
         Ok((environment.to_exec_target(), path))
     }
 
-    /// 项目 + worktree 路径 → **Workspace身份**（[`WorkspaceRef`]）与执行环境。
+    /// 解析**核心**（唯一实现）：项目 + worktree → [`ResolvedWorkspace`]。
     ///
-    /// git 域所有命令的唯一入口解析器：取代旧的 `path_guard::resolve_validated_work_dir`
-    /// （后者校验时 canonicalize、返回时丢弃结果，于是同一工作树可以有多种字符串身份）。
-    /// 校验、归一化与「路径其实等于项目根 → 主仓」的收敛都在 [`WorkspaceRef::resolve`] 内。
+    /// 单次读项目、单次 `spawn_blocking`，[`Self::resolve_workspace`]
+    /// （git/file 域）与 [`Self::resolve_workspace_target_with_env`]（终端等需要项目环境）
+    /// 都是它的**投影** —— 两个外观共享同一实现，不会漂移。
     ///
     /// **异步**：解析内含 `exists` / `canonicalize`（阻塞 fs），故「项目根 + worktree」两次解析
     /// 在**同一次** `spawn_blocking` 内完成（红线 3）—— 一次线程池 hop，且两次解析共用同一时刻的
     /// fs 视图。线程池 panic / 运行时关停才走 `AppError::Unknown`，领域错误逐字保留。
-    pub async fn resolve_workspace(
+    async fn resolve_workspace_core(
         &self,
         project_id: &str,
         worktree_path: Option<&str>,
-    ) -> Result<(ExecTarget, crate::common::git::WorkspaceRef), AppError> {
-        let (target, project_root) = self.resolve_project(project_id)?;
+    ) -> Result<ResolvedWorkspace, AppError> {
+        let (environment, project_root) = self.project_context(project_id)?;
+        let target = environment.to_exec_target();
         let task_target = target.clone();
         let task_project_id = project_id.to_string();
         let task_worktree_path = worktree_path.map(str::to_string);
@@ -173,6 +184,22 @@ impl AppStateWrapper {
         .await
         .map_err(|e| AppError::Unknown(e.to_string()))?
         .map_err(AppError::from)?;
+        Ok((environment, target, repo))
+    }
+
+    /// 项目 + worktree 路径 → **Workspace身份**（[`WorkspaceRef`]）与执行环境。
+    ///
+    /// 取代旧的 `path_guard::resolve_validated_work_dir`（校验时 canonicalize、返回时丢弃，
+    /// 于是同一工作树可有多种字符串身份）。校验、归一化与「路径等于项目根 → 主仓」的收敛都在
+    /// [`WorkspaceRef::resolve`] 内；本方法只是 [`Self::resolve_workspace_core`] 的投影。
+    pub async fn resolve_workspace(
+        &self,
+        project_id: &str,
+        worktree_path: Option<&str>,
+    ) -> Result<(ExecTarget, crate::common::git::WorkspaceRef), AppError> {
+        let (_environment, target, repo) = self
+            .resolve_workspace_core(project_id, worktree_path)
+            .await?;
         Ok((target, repo))
     }
 
@@ -185,6 +212,18 @@ impl AppStateWrapper {
         workspace: &crate::common::git::WorkspaceSession,
     ) -> Result<(ExecTarget, crate::common::git::WorkspaceRef), AppError> {
         self.resolve_workspace(&workspace.project_id, workspace.worktree_path.as_deref())
+            .await
+    }
+
+    /// [`Self::resolve_workspace_target`] 的**全投影**：额外返回项目环境。
+    ///
+    /// 需要项目级产物落点（终端主题等）的命令用本入口一次解析取齐，不必再单独
+    /// [`Self::project_environment`]（那会二次读项目）。与前者同源（同一 `resolve_workspace_core`）。
+    pub async fn resolve_workspace_target_with_env(
+        &self,
+        workspace: &crate::common::git::WorkspaceSession,
+    ) -> Result<ResolvedWorkspace, AppError> {
+        self.resolve_workspace_core(&workspace.project_id, workspace.worktree_path.as_deref())
             .await
     }
 

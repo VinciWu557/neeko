@@ -288,7 +288,6 @@ macro_rules! neeko_invoke_handler {
             $crate::task::commands::import_discovered_task,
             $crate::task::commands::save_task_config,
             $crate::task::commands::delete_task_config,
-            $crate::task::commands::run_task,
             $crate::task::commands::stop_task,
             // ── browser ──────────────────────────────────────────────────────
             $crate::browser::commands::create_browser_webview,

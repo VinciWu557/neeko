@@ -14,7 +14,7 @@ import {
 import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { safeUnlisten } from '@/shared/utils/safeUnlisten';
 import { terminalClosedEvent, terminalInputEvent } from '@/shared/utils/terminalEvents';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import {
   drainTaskProcessOutput,
@@ -31,8 +31,10 @@ export interface TaskProcessHandle {
 
 export interface StartTaskProcessOptions {
   command: string;
-  cwd: string;
-  projectId: ProjectId;
+  /** 运行根由后端从 `workspace` 派生；`cwd` 为可选的 Workspace 内子目录覆盖。 */
+  cwd?: string;
+  /** 该任务所属的 Workspace 地址（唯一运行根来源）。 */
+  workspace: WorkspaceSession;
   cols?: number;
   rows?: number;
   onOutput: (chunk: string) => void;
@@ -51,7 +53,7 @@ export async function startTaskProcess(opts: StartTaskProcessOptions): Promise<T
   const rows = opts.rows ?? DEFAULT_ROWS;
 
   const session = await startTaskProcessSession(
-    opts.projectId,
+    opts.workspace,
     cols,
     rows,
     opts.cwd || null,

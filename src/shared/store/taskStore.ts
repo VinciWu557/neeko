@@ -19,17 +19,19 @@ import {
 } from '@/features/task/taskRunner';
 /* eslint-enable import/no-restricted-paths */
 import { useProjectStore } from '@/shared/store/projectStore';
+import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { DiscoveredTask, TaskConfig, TaskRun } from '@/shared/types/task';
 import {
   exclusiveOpenTaskConsole,
   registerTaskConsoleCloser,
 } from '@/shared/utils/bottomPanelExclusive';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
+import { workspaceRootOf } from '@/shared/utils/workspaceRef';
 
 /** Optional cwd override + output/exit observers for programmatic runs (editor test Run/Debug). */
 export interface RunTaskOptions {
-  /** Working directory override; defaults to the active project path. */
+  /** cwd 覆盖（语言 runner 的模块子目录，须落在运行根之内）；缺省 = 激活 Workspace 的运行根。 */
   cwd?: string;
   onOutput?: (chunk: string) => void;
   onExit?: (exitCode: number) => void;
@@ -88,16 +90,31 @@ interface TaskStoreState {
   activeConsoleId: string | null;
 
   loadConfigs: (projectPath?: string) => Promise<void>;
+  /** `projectPath` = **发现根**（worktree 视图下 = workspace root；主仓回落项目根）。 */
   loadDiscovered: (projectPath?: string | null) => Promise<void>;
+  /**
+   * `projectPath` = 配置**存储**根（`<project>/.neeko/tasks.json`，跨 worktree 共享）；
+   * `discoveryRoot` = 发现根（默认回落 `projectPath`）——worktree 视图下二者不同。
+   */
   importDiscovered: (
     task: DiscoveredTask,
     projectPath: string,
     projectId?: ProjectId,
+    discoveryRoot?: string | null,
   ) => Promise<void>;
-  importAllDiscovered: (projectPath: string, projectId?: ProjectId) => Promise<void>;
+  importAllDiscovered: (
+    projectPath: string,
+    projectId?: ProjectId,
+    discoveryRoot?: string | null,
+  ) => Promise<void>;
   addConfig: (config: TaskConfig, projectPath?: string) => Promise<void>;
   updateConfig: (config: TaskConfig, projectPath?: string) => Promise<void>;
-  deleteConfig: (id: string, scope: string, projectPath?: string) => Promise<void>;
+  deleteConfig: (
+    id: string,
+    scope: string,
+    projectPath?: string,
+    discoveryRoot?: string | null,
+  ) => Promise<void>;
 
   /** Start (or re-run) a task; process + buffer live independent of panel mount. */
   runTask: (command: string, configId: string, options?: RunTaskOptions) => string | null;
@@ -221,7 +238,11 @@ function finalizeRun(runId: string, exitCode: number) {
   }));
 }
 
-async function launchProcessForRun(run: TaskRun) {
+async function launchProcessForRun(
+  run: TaskRun,
+  workspace: WorkspaceSession,
+  cwdOverride?: string,
+) {
   // Tear down any previous handle for this run id (re-run case)
   const prev = processHandles.get(run.id);
   if (prev) {
@@ -237,8 +258,10 @@ async function launchProcessForRun(run: TaskRun) {
   try {
     const handle = await startTaskProcess({
       command: run.command,
-      cwd: run.projectPath,
-      projectId: run.projectId,
+      workspace,
+      // 缺省 = 该 session 的运行根（`run.projectPath`，已由 `workspaceRootOf` 派生）；
+      // 语言 runner 的模块子目录经 `cwdOverride` 覆盖。
+      cwd: cwdOverride ?? run.projectPath,
       onOutput: (chunk) => {
         appendOutput(run.id, chunk);
         runObservers.get(run.id)?.onOutput?.(chunk);
@@ -346,18 +369,18 @@ export const useTaskStore = create<TaskStoreState>((rawSet, get) => {
       }
     },
 
-    importDiscovered: async (task, projectPath, projectId) => {
+    importDiscovered: async (task, projectPath, projectId, discoveryRoot) => {
       try {
         await importDiscoveredTaskApi(task, projectPath, projectId);
         await get().loadConfigs(projectPath);
-        await get().loadDiscovered(projectPath);
+        await get().loadDiscovered(discoveryRoot ?? projectPath);
         set({ selectedConfigId: task.id });
       } catch (e) {
         console.error('Failed to import discovered task:', e);
       }
     },
 
-    importAllDiscovered: async (projectPath, projectId) => {
+    importAllDiscovered: async (projectPath, projectId, discoveryRoot) => {
       const list = [...get().discovered];
       for (const task of list) {
         try {
@@ -367,7 +390,7 @@ export const useTaskStore = create<TaskStoreState>((rawSet, get) => {
         }
       }
       await get().loadConfigs(projectPath);
-      await get().loadDiscovered(projectPath);
+      await get().loadDiscovered(discoveryRoot ?? projectPath);
       if (list[0]) set({ selectedConfigId: list[0].id });
     },
 
@@ -390,11 +413,16 @@ export const useTaskStore = create<TaskStoreState>((rawSet, get) => {
       }
     },
 
-    deleteConfig: async (id: string, scope: string, projectPath?: string) => {
+    deleteConfig: async (
+      id: string,
+      scope: string,
+      projectPath?: string,
+      discoveryRoot?: string | null,
+    ) => {
       try {
         await deleteTaskConfigApi(id, scope, projectPath ?? null);
         await get().loadConfigs(projectPath);
-        await get().loadDiscovered(projectPath ?? null);
+        await get().loadDiscovered((discoveryRoot ?? projectPath) || null);
         const state = get();
         if (state.selectedConfigId === id) {
           const next = state.configs[0] ?? state.discovered[0];
@@ -413,7 +441,9 @@ export const useTaskStore = create<TaskStoreState>((rawSet, get) => {
       }
 
       const projectId = activeProject.id;
-      const projectPath = options?.cwd || activeProject.path || '';
+      // 运行根由 Workspace 身份派生（worktree 视图下不得用项目根）。
+      const workspace = activeWorkspaceSession(projectId);
+      const projectPath = workspaceRootOf(workspace.key, activeProject.path || '');
 
       const name = resolveTaskName(get, configId, command);
       const sessions = get().consoleSessions;
@@ -461,7 +491,7 @@ export const useTaskStore = create<TaskStoreState>((rawSet, get) => {
           selectedConfigId: configId,
           consoleSessions: sessions.map((s) => (s.id === finished.id ? updated : s)),
         });
-        void launchProcessForRun(updated);
+        void launchProcessForRun(updated, workspace, options?.cwd);
         return finished.id;
       }
 
@@ -492,7 +522,7 @@ export const useTaskStore = create<TaskStoreState>((rawSet, get) => {
         selectedConfigId: configId,
         consoleSessions: [...sessions, run],
       });
-      void launchProcessForRun(run);
+      void launchProcessForRun(run, workspace, options?.cwd);
       return id;
     },
 

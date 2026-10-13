@@ -1,3 +1,52 @@
+// ─── Run Root Resolution ──────────────────────────────────────────────────
+
+/// 工作目录是否落在工作区根之内（**纯字符串**判据，宿主与远端 POSIX 形态通用）。
+///
+/// 判据：相等，或 `child` 以 `root` 开头且紧跟一个路径分隔符（`/` 或 `\`）——
+/// 后者防止 `/repo-other` 被误判为 `/repo` 的子目录。按红线 12/8，通用层不做大小写
+/// 折叠或 Unicode 归一（那会造出同一对象的第二种身份）。
+#[must_use]
+pub fn is_within_workspace_root(root: &str, child: &str) -> bool {
+    let root = root.trim_end_matches(['/', '\\']);
+    let child = child.trim_end_matches(['/', '\\']);
+    if child == root {
+        return true;
+    }
+    match child.strip_prefix(root) {
+        Some(rest) => rest.starts_with('/') || rest.starts_with('\\'),
+        None => false,
+    }
+}
+
+/// 解析终端会话的运行根 cwd：缺省为该 Workspace 的根（`repo.root()`），可选
+/// `work_dir` 覆盖（语言 runner 的模块子目录）必须落在根之内 —— 越界返回
+/// `InvalidInput`，**绝不静默回落主仓**。
+///
+/// 两个路径都经 [`crate::common::git::CheckoutPath`] 归一（红线 8/12），因此 Local 的
+/// 宿主形态与 WSL/SSH 的 POSIX 形态各自自洽。
+pub async fn resolve_terminal_cwd(
+    target: &crate::common::executor::factory::ExecTarget,
+    workspace_root: &str,
+    work_dir: Option<&str>,
+) -> Result<String, crate::AppError> {
+    let base = crate::common::git::CheckoutPath::resolve_async(target, workspace_root)
+        .await
+        .map_err(crate::AppError::from)?;
+    let Some(dir) = work_dir else {
+        return Ok(base.exec().to_string());
+    };
+    let resolved = crate::common::git::CheckoutPath::resolve_async(target, dir)
+        .await
+        .map_err(crate::AppError::from)?;
+    if !is_within_workspace_root(base.exec(), resolved.exec()) {
+        return Err(crate::AppError::InvalidInput(format!(
+            "Working directory `{dir}` is outside the workspace root `{}`",
+            base.exec()
+        )));
+    }
+    Ok(resolved.exec().to_string())
+}
+
 // ─── PTY Pipeline Services ────────────────────────────────────────────────
 //
 // Pure business logic extracted from mod.rs. Contains all PTY orchestration
@@ -616,4 +665,76 @@ pub fn log_info(msg: &str) {
 /// Log an error message via the `log` crate.
 pub fn log_error(msg: &str) {
     log::error!("{}", msg);
+}
+
+#[cfg(test)]
+mod run_root_tests {
+    use super::{is_within_workspace_root, resolve_terminal_cwd};
+    use crate::common::executor::factory::ExecTarget;
+
+    /// 缺省（无覆盖）= 工作区根；主仓与工作树两态同构。
+    #[tokio::test]
+    async fn resolve_defaults_to_workspace_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let cwd = resolve_terminal_cwd(&ExecTarget::Local, &root, None)
+            .await
+            .unwrap();
+        // 根经 CheckoutPath 归一（macOS 临时目录是符号链接根），期望值同源推导。
+        let expected = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(cwd, expected);
+    }
+
+    /// 覆盖值为根之内的子目录 → 归一后返回该子目录。
+    #[tokio::test]
+    async fn resolve_accepts_subdirectory_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("module-a");
+        std::fs::create_dir_all(&sub).unwrap();
+        let root = dir.path().to_string_lossy().to_string();
+        let cwd = resolve_terminal_cwd(&ExecTarget::Local, &root, Some(&sub.to_string_lossy()))
+            .await
+            .unwrap();
+        let canonical_root = dir
+            .path()
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            is_within_workspace_root(&canonical_root, &cwd),
+            "cwd {cwd} 必须在根 {canonical_root} 内"
+        );
+    }
+
+    /// 覆盖值落在根之外 → 显式 `InvalidInput`（不静默回落主仓）。
+    #[tokio::test]
+    async fn resolve_rejects_override_outside_root() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        let root = root_dir.path().to_string_lossy().to_string();
+        let outside = outside_dir.path().to_string_lossy().to_string();
+        let err = resolve_terminal_cwd(&ExecTarget::Local, &root, Some(&outside))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::AppError::InvalidInput(_)),
+            "越界覆盖必须 InvalidInput，实为 {err:?}"
+        );
+    }
+
+    /// 纯判据：相等 / 子目录 / 前缀碰撞（`/repo-other`）/ 根尾分隔符。
+    #[test]
+    fn within_root_boundary_cases() {
+        assert!(is_within_workspace_root("/repo", "/repo"));
+        assert!(is_within_workspace_root("/repo", "/repo/mod"));
+        assert!(is_within_workspace_root("/repo/", "/repo/mod"));
+        assert!(!is_within_workspace_root("/repo", "/repo-other"));
+        assert!(!is_within_workspace_root("/repo", "/elsewhere"));
+    }
 }

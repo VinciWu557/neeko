@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { TaskConfig } from '@/shared/types';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import type { DiscoveredTask } from '../types';
 
@@ -37,14 +37,6 @@ export function deleteTaskConfig(
   return invoke<void>('delete_task_config', { id, scope, projectPath });
 }
 
-/**
- * @deprecated Prefer {@link startTaskProcessSession} — spawns a shell then injects
- * the command as input; the dedicated process session path is more reliable.
- */
-export function runTask(command: string, cwd: string): Promise<string> {
-  return invoke<string>('run_task', { command, cwd });
-}
-
 /** Stop a process session started for a task (shared terminal manager close). */
 export function stopTask(sessionId: string): Promise<void> {
   return invoke<void>('stop_task', { sessionId });
@@ -58,18 +50,22 @@ export interface TaskProcessSession {
 }
 
 /**
- * Start a dedicated process for a task command (`sh -c` / `cmd /c` via terminal manager).
+ * Start a dedicated process for a task command at the Workspace run root
+ * (`sh -c` / `cmd /c` via terminal manager).
+ *
+ * 运行根由后端从 `workspace` 派生：`workingDir` 为可选的 Workspace 内子目录覆盖
+ * （语言 runner 模块根），缺省传 `null` ⇒ 用工作树根 / 项目根。
  * Output is streamed on `terminal-output-{id}`; exit on `terminal-closed-{id}`.
  */
 export function startTaskProcessSession(
-  projectId: ProjectId,
+  workspace: WorkspaceSession,
   cols: number,
   rows: number,
   workingDir: string | null,
   command: string,
 ): Promise<TaskProcessSession> {
   return invoke<TaskProcessSession>('create_terminal_session', {
-    projectId,
+    workspace,
     cols,
     rows,
     shell: null,
