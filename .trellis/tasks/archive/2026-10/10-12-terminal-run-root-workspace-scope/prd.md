@@ -90,16 +90,29 @@ Workspace 内绝对路径；后端须校验其位于 `repo.root()` 之内（越�
 
 ## Acceptance Criteria
 
-- [ ] 后端 `create_terminal_session` 首参 = `workspace: WorkspaceSession`，内部只经
-  `resolve_workspace_target` 解析；`rg "resolve_project\(" src-tauri/src/terminal/` 在命令层零命中；
-- [ ] Local 终端/任务在 worktree 下 cwd = worktree 根（单测 + 真机）；
-- [ ] WSL / Remote 分支的 cwd/cd 目标改为 workspace root（注入断言：`router` 把 `repo.root()` 传到三后端）；
-- [ ] 任务运行缺省 cwd 不再等于 `activeProject.path`（前端单测：worktree 激活时 `runTask` 的 cwd = worktree 路径）；
-- [ ] `strategies/index.ts` 三环境路径不再自算 `projectPath`；`grep -rn "session.worktreePath ?? activeProject.path" src/features/terminal` 归零；
-- [ ] `runCwdOf` 与任务侧共用 `workspaceRootOf` 单一 mint；
-- [ ] `run_task` / `taskApi.runTask` 零残留（含注册表）；
-- [ ] 新护栏 `check_terminal_run_root` 生效；`pnpm lint` 全绿；
-- [ ] `pnpm test:fe` / `pnpm test:rust` 全绿；`pnpm check` 全绿。
+- [x] 后端 `create_terminal_session` 首参 = `workspace: WorkspaceSession`，只经单一解析入口
+  （`resolve_workspace_target_with_env`，与 `resolve_workspace_target` 同核）；
+  `rg "resolve_project\(" src-tauri/src/terminal/` 命令层零命中；
+- [~] Local 终端/任务在 worktree 下 cwd = worktree 根 —— **单测已闭**（`taskStore.runRoot.test.ts`
+  断言 cwd == 工作树路径且≠项目根；`resolve_terminal_cwd` 纯函数四态），**真机待验**（见下）；
+- [~] WSL / Remote 分支的 cwd/cd 目标改为 workspace root —— 代码层已统（三分支消费同一已解析
+  `cwd`）；“router 注入断言”**降级为 env-blind 纯函数覆盖**（WSL/Remote 分支起真实 PTY/SSH，
+  不可注入；design §R2 / implement §18 允许该降级），**真机待验**；
+- [x] 任务运行缺省 cwd 不再等于 `activeProject.path`（worktree 激活时 `runTask` 的 cwd = 工作树路径）；
+- [x] `strategies/index.ts` 三环境不再自算 `projectPath`；`"session.worktreePath ?? activeProject.path"` 归零；
+- [x] `runCwdOf` 与任务侧共用单一 mint（新增 `activeWorkspaceRootOf` / `useActiveWorkspaceRoot` 委托 `workspaceRootOf`）；
+- [x] `run_task` / `taskApi.runTask` 零残留（含 `lib.rs` 注册表）；
+- [x] 新护栏 `check_terminal_run_root` 生效（G1–G4，13 条自测）；`pnpm lint` 全绿；
+- [x] `pnpm test:fe` / `pnpm test:rust` 全绿；`pnpm check` 27/27 全绿。
+
+**三轮复审超出原 PRD 的额外收口（已实现 + 已测）**
+- [x] 任务拆除不再绕过路由：`stop_task` 原先 `terminal_router.local()` 直连，对 SSH 会话永远关不掉
+  且泄漏 `owners` 登记；现走 `close_session`（`take_owner` 路由 + 释放），并由护栏 G4 +
+  `close_session_releases_the_owner_registration`（已变异验证）钉住；
+- [x] 主题等**项目级产物**不再随语言 runner 的子目录覆盖漂移（`workspace_root` 与 `cwd` 分开传递，
+  Remote 侧与 Local/WSL 对称）；
+- [x] 发现口径与存储口径分离（Q2）：发现/执行 = workspace root，任务配置存储 = 项目根；
+  import/delete 后的刷新不再误用存储根抹掉 worktree 的发现列表。
 
 ### 待真机确认（需 `pnpm tauri dev`，本会话无 GUI）
 
