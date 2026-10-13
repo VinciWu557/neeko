@@ -107,6 +107,15 @@ Workspace」的命令**（含 branch / PR 两个子域）一律收首参 `worksp
 session** 在 `tabs[session.key]` 内仲裁前台 terminal tab，无前台则落到同 session 首个（**禁跨 session**）。
 其他模块不得从 terminal key 反解身份：分量解析走 `decodeTerminalKey`，日志/提示走 `terminalKeyLabel`。
 
+**terminal / task 运行根（cwd）= 由 Workspace 身份派生**（10-12 落地）：进程启动的 cwd 是 Workspace 的
+纯函数 `cwd(session) = session.worktreePath ?? project.path ≡ WorkspaceRef::root()`。`create_terminal_session`
+首参收 `workspace: WorkspaceSession`，后端唯一经 `resolve_workspace_target` 解析出 `repo.root()` 作缺省；
+Local/WSL/Remote 三环境承接同一 `cwd`（环境是传输维度），项目级产物（主题）另收 `workspace_root`；
+可选的 `working_dir` 覆盖须落在根之内（越界 → `InvalidInput`）。前端不再自算终端 cwd（任务侧经
+`workspaceRootOf` 唯一 mint）。任务配置**存储**口径仍为项目根（`<project>/.neeko/tasks.json`），仅
+发现/展示/执行路径 Workspace 化。契约与判据：`.trellis/spec/backend/git-domain.md` §15.3、护栏
+`check_terminal_run_root`。
+
 ## 未完成（登记）
 
 - 若某子系统的状态键仍是 `Project`（如 debug 活动会话、LSP 会话根），它尚未达到「按 `Workspace` 隔离」——

@@ -737,6 +737,131 @@ Workspace」，且不能比这更少。前端可手搓的散参（`worktreePath?
 - 零命中的验收命令：`rg "resolve_workspace\(" src-tauri/src/git/commands/ src-tauri/src/agent/commands_commit.rs`。
 - **行为零变更**：本契约只改「地址怎么传」与「谁解析」，不改超时 / 错误分类 / 只读语义注入 / 事件载荷。
 
+### 15.3 运行根（cwd）按 Workspace 寻址（terminal / task 域）
+
+#### 1. Scope / Trigger
+
+- Trigger：交互终端与任务运行（Task Console）的**进程运行根 `cwd`** 是 Workspace 的纯函数
+  （`cwd(session) = session.worktreePath ?? project.path ≡ WorkspaceRef::root()`），而历史实现把它当
+  Project 级属性：前端 `taskStore.runTask` 缺省 `activeProject.path`；后端 `create_terminal_session`
+  身份是 `project_id` + 不透明 `working_dir`，缺省 `unwrap_or(project_path)` fail-open；WSL/Remote
+  分支直接丢弃 `working_dir`。结果：worktree 下任务在主仓执行、WSL/Remote worktree 无解。
+- Scope：`terminal/commands.rs::create_terminal_session`、`terminal/router.rs`、`terminal/manager.rs`、
+  `terminal/remote.rs`、`terminal/services.rs::resolve_terminal_cwd`；前端 `terminalApi` / `taskApi` /
+  `strategies/index.ts` / `taskStore.runTask` / `taskRunner` / `TaskRunButton` / `runner/exec/context.ts`。
+
+#### 2. Signatures
+
+```rust
+// 命令：首参 = Workspace 地址（不再是 project_id + 裸路径）
+create_terminal_session(workspace: WorkspaceSession, cols, rows,
+                        shell: Option<String>, working_dir: Option<String>,
+                        command: Option<String>, state, app_handle) -> Result<TerminalSession, AppError>
+
+// 解析：单一核心 + 按需投影（避免同一事实两次读项目）
+//   resolve_workspace_core(project_id, worktree_path) -> (ProjectEnvironment, ExecTarget, WorkspaceRef)
+//   resolve_workspace               -> (ExecTarget, WorkspaceRef)      // git/file 域
+//   resolve_workspace_target_with_env -> ResolvedWorkspace             // 终端等需要项目环境
+
+// 纯函数（可单测，env-blind）：缺省 = workspace_root；覆盖须在该 Workspace 内
+async fn resolve_terminal_cwd(target: &ExecTarget, workspace_root: &str,
+                              work_dir: Option<&str>) -> Result<String, AppError>
+
+// 传输分发：workspace_root（项目级产物/主题）与 cwd（进程运行目录）分离
+router.create_session(env, workspace_root, cwd, cols, rows, shell, command, app_handle)
+remote.create_session(host, port, username, auth, workspace_root, cwd, cols, rows, app_handle)
+```
+
+```ts
+// 前端命令面（invoke 载荷 `{ workspace, … }`，workspace = { projectId, worktreePath }）
+createTerminalSession(workspace: WorkspaceSession, cols, rows, shell, workingDir, command)
+startTaskProcessSession(workspace: WorkspaceSession, cols, rows, workingDir, command)
+// 运行根派生唯一 mint（workspaceStore 内提供两种形态，均委托 workspaceRootOf）
+activeWorkspaceRootOf(projectId, projectPath)        // 命令式
+useActiveWorkspaceRoot(projectId, projectPath)       // 渲染期
+// runCwdOf(ctx) === activeWorkspaceRootOf(ctx.projectId, ctx.projectPath ?? '')
+```
+
+#### 3. Contracts
+
+- **身份**：命令边界只收 `WorkspaceSession`；后端唯一经 `resolve_workspace_target(&workspace)` 解析，
+  **禁止** `resolve_project(`（丢 worktree 维度）。
+- **缺省 cwd**：`repo.root()`（工作树根 / 项目根）。删除 `working_dir.unwrap_or(project_path)` fail-open。
+- **`working_dir` 覆盖**：可选，语义 = 该 Workspace 内的绝对路径；经 `CheckoutPath::resolve_async` 归一
+  并校验 within `repo.root()`，越界 → `AppError::InvalidInput`（显式失败，不静默回落）。
+- **会话拆除同样只走 router**：`stop_task` 等侧拆除必经 `TerminalRouter::close_session`
+  （它 `take_owner` 既路由到 PTY/SSH 又释放归属登记）；**禁止** `terminal_router.local()` /
+  `.remote()` 直连关闭（会静默漏掉 SSH 会话并泄漏 `owners` 项）。回归测试：
+  `router::tests::close_session_releases_the_owner_registration`（`take_owner` 退回 `owner_of` 即红）；
+  护栏 **G4**（`check_terminal_run_root`）把旁路形态钉成机器判据（豁免：router 自身 /
+  `app_state.rs` 取实例 / `connection/commands.rs` 连接级能力）。
+- **已知缺口（另列任务）**：`remove_project` 已收敛到 `close_session(&project_id)`（不再绕过路由），
+  但会话主键是 UUID session id ⇒ 它实际关不到任何会话（行为与修正前一致：原 `.local()` 亦永不命中）。
+  真正修需要 project→sessions 索引。
+- **三环境同构**：Local / WSL / Remote 承接同一个已解析 `cwd`（环境是传输维度，红线 10）；
+  `workspace_root` 单独传给主题准备（`prepare_project_theme` / `setup_remote_opencode_theme`），
+  避免语言 runner 的模块子目录覆盖把主题产物写进子目录。
+- **前端零运行根**：交互终端不传 cwd（后端从 session 派生）；任务侧 cwd 经 `workspaceRootOf` 派生。
+- **任务配置存储口径不变**：saved task 仍在 `<project>/.neeko/tasks.json`（跨 worktree 共享），
+  仅「发现 / 展示 / 执行」路径 Workspace 化。
+
+#### 4. Validation & Error Matrix
+
+| 条件 | 结果 |
+| --- | --- |
+| `working_dir = None` | cwd = `repo.root()` |
+| `working_dir` 在根之内 | cwd = 归一后的子目录 |
+| `working_dir` 越界（`..` 逃出根） | `Err(AppError::InvalidInput)`（不静默） |
+| worktree 激活 | cwd = 工作树根（Local/WSL/Remote 同） |
+| 无 active project | 前端不发起（`runTask` 返回 null） |
+
+#### 5. Good / Base / Bad Cases
+
+- Good：worktree 下点 Run Task，`pwd` = 工作树根，产物落工作树，主仓 git 工作区不受影响。
+- Base：主仓任务行为不变（cwd = 项目根）。
+- Bad：`taskStore.runTask` 缺省用 `activeProject.path`（worktree 下命令打在主仓）；后端
+  `unwrap_or(project_path)`（缺省 fail-open）。
+
+#### 6. Tests Required
+
+- Rust：`terminal/services.rs` 的 `resolve_terminal_cwd`（None→root / 子目录→within / 越界→Err / 边界）。
+- 前端：`shared/store/__tests__/taskStore.runRoot.test.ts`（worktree cwd = 工作树路径，主仓 = 项目根，
+  `options.cwd` 覆盖优先）。
+- 护栏：`tools/guards/checks/check_terminal_run_root.py`（G1 身份 / G2 禁 fail-open /
+  G3 前端禁裸 project 运行根）+ `tools/guards/tests/test_check_terminal_run_root.py`。
+- 验收零命中：`rg "resolve_project\(" src-tauri/src/terminal/`、
+  `rg "unwrap_or\(project_path\)" src-tauri/src/terminal/`、
+  `rg "session\.worktreePath \?\? activeProject\.path" src/features/terminal`。
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```rust
+// 身份 project 级 + 缺省静默回落主仓 + WSL/Remote 丢弃 working_dir
+create_terminal_session(project_id, …, working_dir)
+let cwd = working_dir.as_deref().unwrap_or(project_path);   // fail-open
+```
+
+```ts
+// 前端自算运行根 / 用项目级 path 当缺省
+const projectPath = options?.cwd || activeProject.path || '';  // runTask cwd 缺省
+```
+
+##### Correct
+
+```rust
+// 身份 WorkspaceSession → 唯一解析 → repo.root() 缺省；覆盖 within-root
+let (target, repo) = state.resolve_workspace_target(&workspace).await?;
+let cwd = resolve_terminal_cwd(&target, repo.root(), working_dir.as_deref()).await?;
+```
+
+```ts
+// 运行根由 Workspace 身份派生（唯一 mint）
+const workspace = activeWorkspaceSession(activeProject.id);
+startTaskProcess({ workspace, cwd: options?.cwd, … });   // taskStore 内部缺省 = workspaceRootOf
+```
+
 ## 相关文件
 
 - `src-tauri/src/common/git/workspace_ref.rs` — Workspace身份（`WorkspaceRef` / `Checkout` / key 契约）
