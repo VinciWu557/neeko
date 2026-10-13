@@ -622,3 +622,39 @@ terminal 缓存键统一为 terminalAddress(session,...)；读侧/③ 面（前�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 274: 运行根按 Workspace 寻址：终端/任务 cwd 身份化 + 三环境统一
+
+**Date**: 2026-10-13
+**Task**: 运行根按 Workspace 寻址：终端/任务 cwd 身份化 + 三环境统一
+**Branch**: `main`
+
+### Summary
+
+从用户报障（worktree 下 Run Task 实际在主仓执行）出发做第一性原理归因：运行根是 Workspace 的纯函数 cwd(session)=workspace.root，却被三处当 Project 属性使用——前端 taskStore 缺省 activeProject.path、后端 create_terminal_session 身份是 project_id + 不透明 working_dir + unwrap_or(project_path) fail-open、WSL/Remote 分支整个丢弃 working_dir。命令边界收 WorkspaceSession，解析收敛为单一核心 resolve_workspace_core + 按需投影（resolve_workspace / 新增 resolve_workspace_target_with_env），消除命令层二次读项目；Local/WSL/Remote 消费同一已解析 cwd，workspace_root 另传给主题准备，使语言 runner 的子目录覆盖不再搬迁项目级产物；working_dir 越界显式 InvalidInput。前端运行根统一经 activeWorkspaceRootOf / useActiveWorkspaceRoot 委托既有 workspaceRootOf mint，交互终端不再自带第二份 cwd；任务配置存储保持项目根、发现与执行走 workspace 根。拆除侧同样收口：stop_task 原经 terminal_router.local() 直连，对 SSH 会话永远关不掉且泄漏 owners 登记，改走 close_session（take_owner 路由+释放）。删除零消费者的 run_task。新增护栏 check_terminal_run_root（G1 身份/G2 禁 fail-open/G3 前端禁裸 project 根/G4 禁绕过 router 拆除，13 条自测含逐条 Red 形态）。三轮 neeko-check 复核分别发现并修复：prepare_project_theme 收到 post-override cwd、import/delete 后刷新误用存储根抹掉 worktree 发现列表、以及本轮的 SSH 拆除旁路（含 take_owner 退回 owner_of 的变异验证）；另撤回一条自己的误判避免脏改。pnpm check 27/27 全绿；真机 worktree/WSL/Remote 验证仍待办。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fbe6f4de` | (see git log) |
+| `ce4f76ba` | (see git log) |
+| `c29b3395` | (see git log) |
+| `efb04ba6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
