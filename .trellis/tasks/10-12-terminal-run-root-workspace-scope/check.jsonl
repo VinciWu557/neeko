@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查后端代码质量与命名/平台规则"}
+{"file": ".trellis/spec/backend/git-domain.md", "reason": "核验 terminal 命令寻址与 git-domain §15 契约一致（唯一解析入口、禁 project 级解析）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查前端变更是否符合门禁与禁止模式"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "前端测试写法（store 单测 / 环境边界 / 竞态假绿防线）"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "Rust 测试写法（纯函数单测 / tempfile）"}
+{"file": "docs/domain-model.md", "reason": "核验运行根 = workspace.root 的领域不变量是否被满足"}
