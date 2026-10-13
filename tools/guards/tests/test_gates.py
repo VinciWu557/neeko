@@ -344,7 +344,8 @@ class ContextCommandSetTest(unittest.TestCase):
         # + check_platform_cfg_placement（测试域平台门控附着位置，L2 禁令）
         # + check_workspace_session_addressing（git 命令按 WorkspaceSession 寻址）
         # + check_terminal_key_mint（terminal 键唯一 mint）
-        self.assertEqual(self.in_process_count("local"), 21)
+        # + check_terminal_run_root（终端/任务运行根按 Workspace 寻址）
+        self.assertEqual(self.in_process_count("local"), 22)
 
     def test_coverage_entry_is_the_manual_stage(self):
         self.assertEqual(
@@ -368,7 +369,7 @@ class ContextCommandSetTest(unittest.TestCase):
 
     def test_ci_guards_job_stays_in_process_only(self):
         self.assertEqual(self.command_ids("ci", suite="lint", source="python"), [])
-        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 21)
+        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 22)
 
 
 if __name__ == "__main__":
