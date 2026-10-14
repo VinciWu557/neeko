@@ -6,12 +6,18 @@ import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { safeDisposeTerminal } from '@/shared/utils/terminal';
 import { terminalInputEvent } from '@/shared/utils/terminalEvents';
 import type { TerminalInputController } from '@/shared/utils/terminalInput';
-import { WorkspaceSession, workspaceKeyLabel } from '@/shared/utils/workspaceRef';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { getAgent } from '../../agent/api/agentApi';
 import { closeTerminalSession } from '../api/terminalApi';
 
+import {
+  terminalAddress,
+  terminalAddressPrefix,
+  terminalAddressPrefixOfTab,
+  terminalKeyLabel,
+} from './terminalAddress';
 import type { TerminalCache } from './terminalTypes';
 
 // =============================================================================
@@ -70,7 +76,8 @@ export function createTerminalCacheBackend<TCache extends CacheEntry>(
     rebuildCallbacks.delete(key);
     wrapperRefs.delete(key);
 
-    log(`Cache destroyed for ${key}`);
+    // 键含 NUL / SEP（不可读且会让日志文件被 `file(1)` 判成 data），一律经 `terminalKeyLabel`。
+    log(`Cache destroyed for ${terminalKeyLabel(key)}`);
   }
 
   /** 精确键刷新（键由 terminal 寻址层 mint，本层不再做前缀消解）。 */
@@ -97,7 +104,7 @@ export function createTerminalCacheBackend<TCache extends CacheEntry>(
     rebuildCallbacks.delete(key);
     wrapperRefs.delete(key);
 
-    log(`Cache destroyed for ${key}`);
+    log(`Cache destroyed for ${terminalKeyLabel(key)}`);
 
     rebuildCb?.();
   }
@@ -196,68 +203,10 @@ export const remoteWrapperRefs = remoteBackend.wrapperRefs;
 // =============================================================================
 // Terminal addressing — env-blind address → physical cache key (single mint)
 // =============================================================================
-
-/**
- * 段分隔符（唯一）：`session.key` + SEP + `tabId` + SEP + `paneId`。
- *
- * **不用 `:` 作段界**：editor tabId 本身含 `:`（如 `proj:src/a.ts`）——
- * `…SEP A :p1`（tab=A, pane=p1）与 `…SEP A:p1 :p2`（tab=`A:p1`）前缀同形，
- * 按 tab 清理会过度命中。统一 SEP 后 tab 前缀是 `…SEP A SEP`，两者不可混淆。
- * `session.key` 的内部分隔符是 NUL（`WORKSPACE_KEY_SEP`），与 SEP 不同，反解无歧义。
- */
-export const TERMINAL_KEY_SEP = '\u0001';
-
-/** 唯一 mint：terminal 地址（env-blind，身份唯一输入是 `session`）。 */
-export function terminalAddress(session: WorkspaceSession, tabId: string, paneId = 'p1'): string {
-  return `${session.key}${TERMINAL_KEY_SEP}${tabId}${TERMINAL_KEY_SEP}${paneId}`;
-}
-
-/** session 级扫描前缀（③ 面：生命周期销毁 / 刷新）。 */
-export function terminalAddressPrefix(session: WorkspaceSession): string {
-  return `${session.key}${TERMINAL_KEY_SEP}`;
-}
-
-/** tab 级扫描前缀（③ 面：按 tab 清理）。 */
-export function terminalAddressPrefixOfTab(session: WorkspaceSession, tabId: string): string {
-  return `${terminalAddressPrefix(session)}${tabId}${TERMINAL_KEY_SEP}`;
-}
-
-export interface DecodedTerminalKey {
-  session: WorkspaceSession;
-  tabId: string;
-  paneId: string;
-}
-
-/**
- * 唯一 codec（terminal key → 分量）。
- *
- * **不得复用 `WorkspaceSession.fromKey`**：它会把 `\u0001tabId\u0001p1` 当成
- * `worktreePath`（非 null）⇒ 伪 worktree session。本函数只从第一个 SEP 切分。
- */
-export function decodeTerminalKey(key: string): DecodedTerminalKey | null {
-  const first = key.indexOf(TERMINAL_KEY_SEP);
-  if (first < 0) return null;
-  const session = WorkspaceSession.fromKey(key.slice(0, first));
-  if (!session) return null;
-  const rest = key.slice(first + 1);
-  const second = rest.indexOf(TERMINAL_KEY_SEP);
-  if (second <= 0) return null;
-  const paneId = rest.slice(second + 1);
-  if (paneId === '') return null;
-  return { session, tabId: rest.slice(0, second), paneId };
-}
-
-/**
- * 日志 / 提示用可读标签（对照 `workspaceKeyLabel`）。
- * NUL 与 SEP 直接进日志会让日志文件被 `file(1)` 判成 data（同 workspaceKeyLabel 的既有理由）。
- */
-export function terminalKeyLabel(key: string): string {
-  const decoded = decodeTerminalKey(key);
-  if (decoded) {
-    return `${workspaceKeyLabel(decoded.session.key)} :: ${decoded.tabId} :: ${decoded.paneId}`;
-  }
-  return '<invalid terminal key>';
-}
+// 地址材质（分隔符常量 / `terminalAddress` / `decodeTerminalKey` / `terminalKeyLabel`）
+// 已抽出到同级 `terminalAddress.ts`（唯一 mint 文件，护栏 `check_terminal_key_mint` 的
+// MINT_FILE 随之迁移）。本文件只**消费**地址，不再铸造 —— 因此只 import 而不 re-export
+// 材质符号（re-export 会让分隔符标识符再次出现在本文件而被 G3 拦下）。
 
 interface TerminalBackendHandle {
   cache: Map<string, CacheEntry>;
@@ -301,23 +250,6 @@ export function resolveTerminalEntry(
   return backendForKey(key)?.cache.get(key) ?? null;
 }
 
-/** 该 session 内首个终端键（按 Map 插入顺序）；无 → null。跨 session 不可表达。 */
-export function firstTerminalKeyOfSession(session: WorkspaceSession): string | null {
-  const prefix = terminalAddressPrefix(session);
-  for (const bk of allBackends()) {
-    for (const key of bk.cache.keys()) {
-      if (key.startsWith(prefix)) return key;
-    }
-  }
-  return null;
-}
-
-/** 该 session 内首个终端条目；无 → null。 */
-export function firstTerminalEntryOfSession(session: WorkspaceSession): CacheEntry | null {
-  const key = firstTerminalKeyOfSession(session);
-  return key ? (backendForKey(key)?.cache.get(key) ?? null) : null;
-}
-
 /**
  * ③ 面：切换该 session 内某 tab 的 agent（WSL/Remote 共用——键唯一命中其物理 Map）。
  *
@@ -326,12 +258,11 @@ export function firstTerminalEntryOfSession(session: WorkspaceSession): CacheEnt
  */
 export async function switchAgentInSessionTerminal(
   session: WorkspaceSession,
-  tabId: string | null,
+  tabId: string,
   agentId: string,
   agentCommandOverrides?: Record<string, string>,
 ): Promise<void> {
-  const resolvedKey = tabId ? terminalAddress(session, tabId) : firstTerminalKeyOfSession(session);
-  if (!resolvedKey) return;
+  const resolvedKey = terminalAddress(session, tabId);
   const bk = backendForKey(resolvedKey);
   if (!bk) return;
 
@@ -399,9 +330,9 @@ export function destroyTerminalsForTab(session: WorkspaceSession, tabId: string)
 }
 
 /** ③ 面：刷新该 session 的终端；给定 tabId 精确，否则首个（agent 切换 / 重建自愈）。 */
-export function refreshTerminalForSession(session: WorkspaceSession, tabId?: string | null): void {
-  const key = tabId ? terminalAddress(session, tabId) : firstTerminalKeyOfSession(session);
-  if (key) backendForKey(key)?.refreshTerminal(key);
+export function refreshTerminalForSession(session: WorkspaceSession, tabId: string): void {
+  const key = terminalAddress(session, tabId);
+  backendForKey(key)?.refreshTerminal(key);
 }
 
 /**

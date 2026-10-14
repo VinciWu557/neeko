@@ -1,31 +1,27 @@
 import { emit } from '@tauri-apps/api/event';
 
 import { terminalInputEvent } from '@/shared/utils/terminalEvents';
+import { workspaceKeyLabel } from '@/shared/utils/workspaceRef';
 import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
-import {
-  firstTerminalEntryOfSession,
-  log,
-  resolveTerminalEntry,
-  terminalKeyLabel,
-} from './terminalCache';
+import { log, resolveTerminalEntry } from './terminalCache';
 
 /**
  * 写侧执行路径统一入口。地址一律由 `session` 派生（`terminalAddress`），
  * 不再有裸 `projectId` 前缀扫描 —— 跨 session 串写在前缀上不可表达。
+ *
+ * `tabId` **必填**（决议 R3）：可选性只会喂养「Map 插入顺序首个」这条第二口径，
+ * 而「该往哪个 tab」的唯一答案是 `terminalRouting.foregroundTerminalTab`（order 升序）。
+ * 四个生产调用方本来就全部显式传 tabId。
  */
-export function sendToTerminal(
-  session: WorkspaceSession,
-  text: string,
-  tabId?: string | null,
-): void {
-  const entry = tabId ? resolveTerminalEntry(session, tabId) : firstTerminalEntryOfSession(session);
+export function sendToTerminal(session: WorkspaceSession, text: string, tabId: string): void {
+  const entry = resolveTerminalEntry(session, tabId);
   const sessionId = entry?.sessionId ?? null;
 
   if (!sessionId) {
-    log(
-      `sendToTerminal: no session for ${terminalKeyLabel(session.key)}${tabId ? `:${tabId}` : ''}`,
-    );
+    // 入参是 **session.key**（不是 terminal 地址），送 `terminalKeyLabel` 会恒返回
+    // `<invalid terminal key>` 而丢掉全部身份信息 —— 两个命名空间各有自己的 label 函数。
+    log(`sendToTerminal: no session for ${workspaceKeyLabel(session.key)}:${tabId}`);
     return;
   }
 
@@ -57,30 +53,4 @@ export function pasteToTerminalSession(sessionId: string, text: string): void {
   emit(terminalInputEvent(sessionId), bytes).catch((err) => {
     log(`pasteToTerminalSession error: ${err}`);
   });
-}
-
-/**
- * Paste text into the active terminal's PTY without executing it
- * (bracketed-paste wrapped). Same session lookup as sendToTerminal;
- * sendToTerminal itself is untouched (its trailing-`\r` paths stay intact).
- *
- * @returns true when a session matched and bytes were emitted, false otherwise.
- */
-export function pasteToTerminal(
-  session: WorkspaceSession,
-  text: string,
-  tabId?: string | null,
-): boolean {
-  const entry = tabId ? resolveTerminalEntry(session, tabId) : firstTerminalEntryOfSession(session);
-  const sessionId = entry?.sessionId ?? null;
-
-  if (!sessionId) {
-    log(
-      `pasteToTerminal: no session for ${terminalKeyLabel(session.key)}${tabId ? `:${tabId}` : ''}`,
-    );
-    return false;
-  }
-
-  pasteToTerminalSession(sessionId, text);
-  return true;
 }

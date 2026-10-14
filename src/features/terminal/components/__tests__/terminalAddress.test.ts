@@ -20,15 +20,17 @@ import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import {
   TERMINAL_KEY_SEP,
   decodeTerminalKey,
+  terminalAddress,
+  terminalAddressPrefix,
+  terminalAddressPrefixOfTab,
+  terminalKeyLabel,
+} from '../terminalAddress';
+import {
   destroyTerminalsForSession,
   destroyTerminalsForTab,
   refreshTerminalForSession,
   resolveTerminalEntry,
-  terminalAddress,
-  terminalAddressPrefix,
-  terminalAddressPrefixOfTab,
   terminalCache,
-  terminalKeyLabel,
   wslTerminalCache,
 } from '../terminalCache';
 

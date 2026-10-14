@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 
-import { sendToTerminal } from '@/features/terminal';
+import { foregroundAgentCliTab, sendToTerminal } from '@/features/terminal';
 import { BROWSER_PROMPT_SUBMITTED_EVENT, GIT_CHANGED_EVENT } from '@/shared/events';
 import { useFileChangedEvent } from '@/shared/hooks/useFileChangedEvent';
 import { useTauriEvent } from '@/shared/hooks/useTauriEvent';
@@ -21,12 +21,7 @@ import { pathsContainFile } from '@/shared/utils/fileRef';
 import { canGoBack, canGoForward, recordNavigation } from '@/shared/utils/historyStack';
 import { ProjectId, workspaceRootOf } from '@/shared/utils/workspaceRef';
 
-import {
-  findAgentCliTab,
-  formatPickerMessage,
-  getThemeColors,
-  type PickerElement,
-} from '../components/pickerUtils';
+import { formatPickerMessage, getThemeColors, type PickerElement } from '../components/pickerUtils';
 import { ensureBrowserTabCleanupRegistered } from '../utils/browserTabCleanup';
 
 import { getBrowserTabLabel } from './useBrowserConstants';
@@ -168,10 +163,10 @@ export function useBrowserTab({
         if (!data?.label || data.label !== label) return;
         if (!data?.prompt || !Array.isArray(data.elements) || data.elements.length === 0) return;
 
-        const editorState = useEditorStore.getState();
-        const targetTabId = findAgentCliTab(
-          editorState.tabs[activeWorkspaceSession(projectId).key],
-        );
+        // 前台仲裁只有一处（决议 Q2）：此前 `pickerUtils.findAgentCliTab` 自带
+        // 「order 降序（最近新增优先）」的第二套口径，与插入落点的「order 升序」不一致。
+        const targetTabId =
+          foregroundAgentCliTab(activeWorkspaceSession(projectId))?.tab.id ?? null;
         if (!targetTabId) {
           showToast('Please open an Agent CLI tab to receive the modification', 'error');
           reinjectPicker();

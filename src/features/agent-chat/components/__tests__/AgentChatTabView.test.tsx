@@ -8,6 +8,7 @@ import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { SequencedEvent, StreamEvent } from '@/shared/types/agentChat';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
+import { insertAgentInput } from '../../api/agentInputRegistry';
 import AgentChatTabView, { clearMessageCache } from '../AgentChatTabView';
 
 /** 测试身份源：项目 id → WorkspaceSession（主仓形态）。 */
@@ -72,6 +73,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 const BASE_DATA = { kind: 'agent-chat' as const, agentId: 'opencode', sessionId: 's1' };
 
+/**
+ * 组件级测试的 tab 身份本体。生产形态下 `tabKey` 恒等于 `session.key`
+ * （`tabSpaceKeyOf(activeTab.scope)`），测试因此按同一关系构造，不造 `"p1"` 这种假键。
+ */
+const TAB_SESSION = WorkspaceSession.of('test-project', null);
+
 // 可控 rAF：流式批处理（text/reasoning delta 合并渲染）依赖它。
 let rafCallbacks: Array<() => void> = [];
 const rafStub = vi.fn((cb: FrameRequestCallback) => {
@@ -108,8 +115,15 @@ function emitEvent(payload: StreamEvent) {
 
 /** 渲染视图并冲刷异步 promise（listChatAgents / listen 等），避免 act 警告。 */
 async function renderView(projectId = 'test-project') {
+  const session = WorkspaceSession.of(projectId, null);
   const utils = render(
-    <AgentChatTabView tabKey="p1" tabId="t1" projectId={projectId} data={BASE_DATA} />,
+    <AgentChatTabView
+      tabKey={session.key}
+      session={session}
+      tabId="t1"
+      projectId={projectId}
+      data={BASE_DATA}
+    />,
   );
   await screen.findByTestId('agent-chat-tab');
   return utils;
@@ -885,7 +899,8 @@ describe('AgentChatTabView', () => {
     // 否则新 agent 的 prompt 会被后端路由到旧 agent 的会话（旧模型）。
     utils.rerender(
       <AgentChatTabView
-        tabKey="p1"
+        tabKey={TAB_SESSION.key}
+        session={TAB_SESSION}
         tabId="t1"
         projectId="test-project"
         data={{ kind: 'agent-chat', agentId: 'mockAgent', sessionId: 's1' }}
@@ -945,5 +960,113 @@ describe('AgentChatTabView', () => {
 
     // 横幅可见工作目录路径
     expect(screen.getByText(/\/Users\/demo\/RustroverProjects\/neeko/)).toBeInTheDocument();
+  });
+
+  /**
+   * 接线断言（本任务 defect 的直接反证）：渲染 composer 即成为 agent 投递的**接收端**。
+   *
+   * 现状曾是「三个派发点、零个监听者」—— 类型通过、214 条用例全绿都证明不了有人登记，
+   * 所以必须显式断言「registry 能被这次渲染打中」。
+   */
+  describe('agent 投递接收端登记（Q5=A）', () => {
+    // 登记身份 = 组件 props 下传的 WorkspaceSession 本体（与生产同源，tabKey 仅作 store 键）。
+    const COMPOSER_PLACEHOLDER = 'Type a message...';
+
+    /**
+     * 按下标取 composer：同一用例内可并存两个页面，所以不能用单数 getBy。
+     * 卸载后其 DOM 节点移除，存活页自然落到 index 0 —— 断言因此更直白。
+     */
+    function composerAt(index = 0) {
+      return screen.getAllByPlaceholderText(COMPOSER_PLACEHOLDER)[index];
+    }
+
+    /** 挂一个 agent-chat 页面并等它渲染完成。 */
+    async function renderAt(tabId: string, tabSession = TAB_SESSION) {
+      const utils = render(
+        <AgentChatTabView
+          tabKey={tabSession.key}
+          session={tabSession}
+          tabId={tabId}
+          projectId="test-project"
+          data={BASE_DATA}
+        />,
+      );
+      await waitFor(() => expect(composerAt()).toBeTruthy());
+      return utils;
+    }
+
+    /** 由测试直接发起投递（非 React 事件链）：必须包 act 才观察得到 setState 落地。 */
+    function deliver(tabId: string, text: string): boolean {
+      return deliverOn(TAB_SESSION, tabId, text);
+    }
+
+    /** 同一形态，但投递到调用方指定的 session（主仓 / worktree 并存用例）。 */
+    function deliverOn(tabSession: WorkspaceSession, tabId: string, text: string): boolean {
+      let ok = false;
+      act(() => {
+        ok = insertAgentInput(tabSession, tabId, text);
+      });
+      return ok;
+    }
+
+    it('渲染后 insertAgentInput 命中并把文本并入输入框', async () => {
+      await renderAt('t1');
+
+      expect(deliver('t1', 'review this diff')).toBe(true);
+      expect(composerAt()).toHaveValue('review this diff');
+    });
+
+    it('未渲染 → 显式 false，不谎报成功（本 defect 的反证）', () => {
+      expect(insertAgentInput(TAB_SESSION, 't1', 'x')).toBe(false);
+    });
+
+    it('tabId 不同 → 不串到其他 tab 的 composer', async () => {
+      await renderAt('t1');
+      expect(insertAgentInput(TAB_SESSION, 'other-tab', 'x')).toBe(false);
+    });
+
+    /** 同一 (session, tabId) 挂两个页面 = StrictMode 双挂载形态。 */
+    it('双挂载：先卸载的那个不得摘掉存活页面的 handler（引用计数）', async () => {
+      const { unmount: unmountFirst } = await renderAt('t1');
+      const { unmount: unmountSecond } = await renderAt('t1'); // count=2，handler 覆盖为第二个
+
+      unmountFirst(); // count 2 → 1：登记必须保留，此时存活页是唯一 composer
+
+      expect(deliver('t1', 'still alive')).toBe(true);
+      expect(composerAt()).toHaveValue('still alive');
+
+      unmountSecond(); // count 1 → 0：彻底注销
+      expect(insertAgentInput(TAB_SESSION, 't1', 'nobody home')).toBe(false);
+    });
+
+    /** 防泄漏：关闭 tab 的 handler 不得继续收到投递（登记与注销的身份必须同源）。 */
+    it('单页面卸载后 → 注销生效（不留死亡 handler）', async () => {
+      const utils = await renderAt('t1');
+      expect(deliver('t1', 'x')).toBe(true);
+      utils.unmount();
+      expect(insertAgentInput(TAB_SESSION, 't1', 'after unmount')).toBe(false);
+    });
+
+    /**
+     * 主仓 + worktree 两个 composer 并存（PRD R6）：登记身份必须来自 props 下传的
+     * `session` 本体。旧写法从 `tabKey` 反解（`WorkspaceSession.fromKeyOrId`）——
+     * 已持分量处逆向重建身份，红线 12 禁止；而换成 `activeWorkspaceSession(projectId)`
+     * （「当前视图」的单元）在本用例里会让两个页面都登到同一个键 → 投递串页。
+     */
+    it('worktree 与主仓 composer 并存 → 投递只命中各自 session', async () => {
+      const wtSession = WorkspaceSession.of('test-project', '/wt/a');
+      await renderAt('t-main', TAB_SESSION);
+      await renderAt('t-wt', wtSession);
+
+      expect(deliverOn(wtSession, 't-wt', 'to-worktree')).toBe(true);
+      const [mainComposer, wtComposer] = screen.getAllByPlaceholderText(COMPOSER_PLACEHOLDER);
+      expect(wtComposer).toHaveValue('to-worktree');
+      expect(mainComposer).toHaveValue('');
+
+      // tabId 在两个 session 下可以同名，身份仍不得串。
+      await renderAt('t-wt-dup', wtSession);
+      expect(insertAgentInput(TAB_SESSION, 't-wt-dup', 'wrong unit')).toBe(false);
+      expect(deliverOn(wtSession, 't-wt-dup', 'right unit')).toBe(true);
+    });
   });
 });

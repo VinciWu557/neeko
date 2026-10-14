@@ -19,9 +19,9 @@ import { useProjectStore } from '@/shared/store/projectStore';
 import type { Project } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
+import { terminalAddress } from '../terminalAddress';
 import {
   switchAgentInSessionTerminal,
-  terminalAddress,
   wslRebuildCallbacks,
   wslTerminalCache,
   wslWrapperRefs,

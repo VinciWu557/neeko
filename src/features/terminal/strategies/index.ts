@@ -8,8 +8,8 @@ import type { ProjectId } from '@/shared/utils/workspaceRef';
 import { workspaceRootOf } from '@/shared/utils/workspaceRef';
 
 import { createTerminalSession, resizeTerminal, closeTerminalSession } from '../api/terminalApi';
+import { terminalAddress } from '../components/terminalAddress';
 import {
-  terminalAddress,
   terminalCache,
   terminalRebuildCallbacks,
   terminalWrapperRefs,

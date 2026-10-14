@@ -23,6 +23,17 @@ describe('useTerminalTabs', () => {
   const PROJECT_ID = 'test-project';
   const SPACE = WorkspaceSession.of(PROJECT_ID, null).key;
 
+  /**
+   * 该 tab 空间的激活 tabId —— 直读 store。
+   *
+   * 此前断言走 `getActiveTabId`，那个 helper 自带「无激活终端则回退数组首个 terminal」
+   * 的第二套口径（与 foregroundTerminalTab 的 order 升序不一致），本任务按 R4 删除它；
+   * 测试要保护的是**关闭后的激活态回退**这一 store 行为，直读 store 反而更贴切。
+   */
+  function activeId(tabKey: string): string | null {
+    return useEditorStore.getState().tabs[tabKey]?.activeTabId ?? null;
+  }
+
   beforeEach(() => {
     // Clear the unified store tabs between tests
     useEditorStore.setState({ tabs: {}, activeTabId: null });
@@ -33,18 +44,18 @@ describe('useTerminalTabs', () => {
 
     let tabId = '';
     act(() => {
-      tabId = result.current.ensureDefaultTab(PROJECT_ID);
+      tabId = result.current.addTab(PROJECT_ID)!.id;
     });
 
     expect(result.current.getTabs(SPACE)).toHaveLength(1);
-    expect(result.current.getActiveTabId(SPACE)).toBe(tabId);
+    expect(activeId(SPACE)).toBe(tabId);
 
     act(() => {
       result.current.closeTab(SPACE, tabId);
     });
 
     expect(result.current.getTabs(SPACE)).toHaveLength(0);
-    expect(result.current.getActiveTabId(SPACE)).toBeNull();
+    expect(activeId(SPACE)).toBeNull();
   });
 
   it('should activate adjacent tab when closing a middle tab', () => {
@@ -53,7 +64,7 @@ describe('useTerminalTabs', () => {
     let tab2Id = '';
     let tab3Id = '';
     act(() => {
-      result.current.ensureDefaultTab(PROJECT_ID);
+      result.current.addTab(PROJECT_ID);
       const tab2 = result.current.addTab(PROJECT_ID);
       tab2Id = tab2!.id;
       const tab3 = result.current.addTab(PROJECT_ID);
@@ -61,14 +72,14 @@ describe('useTerminalTabs', () => {
     });
 
     expect(result.current.getTabs(SPACE)).toHaveLength(3);
-    expect(result.current.getActiveTabId(SPACE)).toBe(tab3Id);
+    expect(activeId(SPACE)).toBe(tab3Id);
 
     act(() => {
       result.current.closeTab(SPACE, tab2Id);
     });
 
     expect(result.current.getTabs(SPACE)).toHaveLength(2);
-    expect(result.current.getActiveTabId(SPACE)).toBe(tab3Id);
+    expect(activeId(SPACE)).toBe(tab3Id);
   });
 
   it('should switch to previous tab when closing the last tab in list', () => {
@@ -77,19 +88,19 @@ describe('useTerminalTabs', () => {
     let tab1Id = '';
     let tab2Id = '';
     act(() => {
-      tab1Id = result.current.ensureDefaultTab(PROJECT_ID);
+      tab1Id = result.current.addTab(PROJECT_ID)!.id;
       const tab2 = result.current.addTab(PROJECT_ID);
       tab2Id = tab2!.id;
     });
 
-    expect(result.current.getActiveTabId(SPACE)).toBe(tab2Id);
+    expect(activeId(SPACE)).toBe(tab2Id);
 
     act(() => {
       result.current.closeTab(SPACE, tab2Id);
     });
 
     expect(result.current.getTabs(SPACE)).toHaveLength(1);
-    expect(result.current.getActiveTabId(SPACE)).toBe(tab1Id);
+    expect(activeId(SPACE)).toBe(tab1Id);
   });
 
   describe('handleAgentClick', () => {
@@ -98,7 +109,7 @@ describe('useTerminalTabs', () => {
 
       let firstTab: string | undefined;
       act(() => {
-        firstTab = result.current.ensureDefaultTab(PROJECT_ID);
+        firstTab = result.current.addTab(PROJECT_ID)!.id;
       });
 
       const agent = { id: 'claude-code', name: 'Claude Code', command: 'claude', args: [] };
@@ -109,7 +120,7 @@ describe('useTerminalTabs', () => {
 
       expect(created).not.toBeNull();
       expect(result.current.getTabs(SPACE)).toHaveLength(2);
-      expect(result.current.getActiveTabId(SPACE)).not.toBe(firstTab);
+      expect(activeId(SPACE)).not.toBe(firstTab);
     });
 
     it('新 tab 携带正确的 agentId', () => {
@@ -118,7 +129,7 @@ describe('useTerminalTabs', () => {
       const agent = { id: 'cursor-agent', name: 'Cursor Agent', command: 'cursor', args: [] };
       let created: ReturnType<typeof result.current.handleAgentClick> = null;
       act(() => {
-        result.current.ensureDefaultTab(PROJECT_ID);
+        result.current.addTab(PROJECT_ID);
         created = result.current.handleAgentClick(PROJECT_ID, agent);
       });
 

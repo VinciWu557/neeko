@@ -18,13 +18,9 @@ import { useEditorStore } from '@/shared/store/editorStore';
 import type { TerminalTabData } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
+import { terminalAddress } from '../terminalAddress';
 import { switchAgentInTerminal } from '../terminalAgentSwitch';
-import {
-  terminalAddress,
-  terminalCache,
-  terminalRebuildCallbacks,
-  terminalWrapperRefs,
-} from '../terminalCache';
+import { terminalCache, terminalRebuildCallbacks, terminalWrapperRefs } from '../terminalCache';
 
 const session = WorkspaceSession.of('proj1', null);
 const key = terminalAddress(session, 'tab1');
@@ -91,17 +87,37 @@ describe('switchAgentInTerminal（唯一 env-blind 能力）', () => {
     expect(closeSessionMock).toHaveBeenCalledWith('s1');
   });
 
-  it('tabId=null 时按 session 首个终端派生 tab 身份', async () => {
-    terminalCache.set(key, makeEntry('s1'));
+  /**
+   * 旧形态是「传 null → 内部用 `firstTerminalKeyOfSession` 取 Map 插入顺序首个」，
+   * 那与本任务 R1/R3 删除的第二口径同罪（同一时刻「插入落哪个 tab」按 order 升序、
+   * 「切 agent 落哪个 PTY」按 Map 插入顺序 → 两个答案）。
+   * 现在 `tabId` 必填（null 在类型层面不可写），调用方必须先经
+   * `foregroundTerminalTab` 仲裁 —— 该链路的验收在 `terminalRouting.test.ts` 与
+   * `useWslActions.test.ts` / `useRemoteActions.test.ts`。
+   * 本用例只钉住剩下的那件事：**给定精确 tabId 时不得碰别的终端**。
+   */
+  it('只动给定 tabId 的终端，不波及其他 session/其他 tab', async () => {
+    const wt = WorkspaceSession.of('proj1', '/wt/a');
+    const wtKey = terminalAddress(wt, 'tab1');
+    const otherTabKey = terminalAddress(session, 'tab2');
+    terminalCache.set(key, makeEntry('s-main'));
+    terminalCache.set(wtKey, makeEntry('s-wt'));
+    terminalCache.set(otherTabKey, makeEntry('s-other'));
     terminalWrapperRefs.set(key, document.createElement('div'));
 
-    await switchAgentInTerminal(session, null, 'agentX');
+    await switchAgentInTerminal(session, 'tab1', 'agentX');
 
+    // 目标键被清（无 rebuild 回调时仍走 wrapper 拆除路径），其余两键必须存活。
+    expect(terminalCache.has(key)).toBe(false);
+    expect(terminalCache.has(wtKey)).toBe(true);
+    expect(terminalCache.has(otherTabKey)).toBe(true);
+    // tab 身份只落在被指定的那个 tab 上。
     expect(tabAgentId()).toBe('agentX');
   });
 
-  it('session 内无终端 → 空转（不写 tab、不抛错）', async () => {
-    await expect(switchAgentInTerminal(session, null, 'agentX')).resolves.toBeUndefined();
-    expect(tabAgentId()).toBeNull();
+  /** 目标键在缓存里不存在（PTY 尚未建立）→ 空转，不抛、不写别的终端。 */
+  it('tabId 指向不存在的终端 → 空转（不抛错）', async () => {
+    await expect(switchAgentInTerminal(session, 'not-there', 'agentX')).resolves.toBeUndefined();
+    expect(terminalCache.size).toBe(0);
   });
 });

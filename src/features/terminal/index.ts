@@ -1,24 +1,13 @@
 export { default as TerminalView } from './components/TerminalView';
 export {
-  terminalCache,
-  terminalRebuildCallbacks,
-  terminalWrapperRefs,
-  wslTerminalCache,
-  wslRebuildCallbacks,
-  wslWrapperRefs,
-  remoteTerminalCache,
-  remoteRebuildCallbacks,
-  remoteWrapperRefs,
-} from './components/terminalCache';
-export {
   terminalAddress,
   terminalAddressPrefix,
   terminalAddressPrefixOfTab,
   terminalKeyLabel,
   decodeTerminalKey,
+} from './components/terminalAddress';
+export {
   resolveTerminalEntry,
-  firstTerminalEntryOfSession,
-  firstTerminalKeyOfSession,
   destroyTerminalsForProject,
   destroyTerminalsForSession,
   destroyTerminalsForTab,
@@ -27,7 +16,6 @@ export {
 } from './components/terminalCache';
 export {
   sendToTerminal,
-  pasteToTerminal,
   pasteToTerminalSession,
   wrapBracketedPaste,
   BRACKETED_PASTE_START,
@@ -42,8 +30,11 @@ export {
 } from './components/terminalTabCleanup';
 export {
   foregroundTerminalTab,
+  foregroundAgentCliTab,
+  foregroundAgentChatTabs,
+  insertToTerminalTarget,
   insertToSessionTerminal,
-  type ForegroundTerminal,
+  type ForegroundTarget,
   type InsertToSessionTerminalResult,
 } from './components/terminalRouting';
 

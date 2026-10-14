@@ -14,20 +14,26 @@ import { useQuickOpenStore } from '@/features/quick-open/store/quickOpenStore';
 import { useTabCycleStore } from '@/features/quick-open/store/tabCycleStore';
 // eslint-disable-next-line import/no-restricted-paths -- keyboard shortcuts need terminal cache for refresh
 import { refreshTerminalForSession } from '@/features/terminal/components/terminalCache';
+// 门面（@/features/terminal）会形成 import/no-cycle：index → SplitLayout → @/shared/hooks。
+// 与上一行同一口径直导（既有先例），前台仲裁只有一处实现（决议 R1/Q2）。
+// eslint-disable-next-line import/no-restricted-paths -- needs the single foreground arbitration
+import { foregroundTerminalTab } from '@/features/terminal/components/terminalRouting';
 // eslint-disable-next-line import/no-restricted-paths
+import {
+  cycleTab,
+  splitActiveTabRight,
+  unsplitActiveEditor,
+} from '@/shared/hooks/shortcutTabCommands';
 import { useAppViewStore } from '@/shared/store/appViewStore';
 // eslint-disable-next-line import/no-restricted-paths
 import { useDockStore } from '@/shared/store/dockStore';
-import { useEditorStore } from '@/shared/store/editorStore';
 import { useNavHistoryStore } from '@/shared/store/navigationHistoryStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
-  activeWorkspaceKeyOf,
   activeWorkspaceSession,
   selectWorkspaceStateOf,
   useWorkspaceStore,
 } from '@/shared/store/workspaceStore';
-import { resolveNextTabId } from '@/shared/utils/cycleEditorTab';
 import {
   resolveBindings,
   matchesBinding,
@@ -157,7 +163,11 @@ export function useKeyboardShortcuts({
             const proj = useProjectStore.getState();
             if (proj.activeProjectId && proj.isTerminalView) {
               const session = activeWorkspaceSession(proj.activeProjectId);
-              refreshTerminalForSession(session, activeTabIdRef.current);
+              // tabId 必须来自前台仲裁，**不能**用 store 顶层 `activeTabId`：
+              // 那是全仓唯一「跨 tab 空间」的激活态（跨项目/跨单元都会留旧值），
+              // 配 session 内的 tabs 属于同一 defect 家族（10-12 已判死、design §1.3）。
+              const target = foregroundTerminalTab(session);
+              if (target) refreshTerminalForSession(session, target.tab.id);
             }
             break;
           }
@@ -335,44 +345,4 @@ function findCurrentIndex(items: ProjectListItem[]): number {
 function switchToItem(item: ProjectListItem) {
   const store = useProjectStore.getState();
   store.selectProject?.(item.id);
-}
-
-function resolveActiveTabKey(): string | null {
-  const currentProjectId = useProjectStore.getState().activeProjectId ?? null;
-  if (!currentProjectId) return null;
-  return activeWorkspaceKeyOf(currentProjectId);
-}
-
-/** Cycle tabs in the focused editor group (IDEA Alt+Left/Right). */
-function cycleTab(direction: 1 | -1) {
-  const editor = useEditorStore.getState();
-  const tabKey = resolveActiveTabKey();
-  if (!tabKey) return;
-
-  const projectTabs = editor.tabs[tabKey];
-  if (!projectTabs || projectTabs.tabs.length === 0) return;
-
-  const nextId = resolveNextTabId({
-    tabIds: projectTabs.tabs.map((t) => t.id),
-    activeTabId: projectTabs.activeTabId,
-    layout: editor.editorLayout[tabKey] ?? null,
-    direction,
-  });
-  if (nextId) editor.activateTab(tabKey, nextId);
-}
-
-function splitActiveTabRight() {
-  const editor = useEditorStore.getState();
-  const tabKey = resolveActiveTabKey();
-  if (!tabKey) return;
-  const projectTabs = editor.tabs[tabKey];
-  const tabId = projectTabs?.activeTabId;
-  if (!tabId) return;
-  editor.splitRight(tabKey, tabId);
-}
-
-function unsplitActiveEditor() {
-  const tabKey = resolveActiveTabKey();
-  if (!tabKey) return;
-  useEditorStore.getState().unsplit(tabKey);
 }

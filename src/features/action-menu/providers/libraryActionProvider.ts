@@ -51,8 +51,13 @@ function buildRecentItems(prompts: PromptResource[], ctx: ActionContext): Action
       icon: MessageSquare,
       keywords: ['prompt', 'recent', item.name],
       execute: () => {
-        if (prompt) {
-          ctx.insertToAgentInput?.(prompt.content);
+        // 成败必须被处理：agent 目标一个都没有（既无 agent-chat composer 也无
+        // Agent CLI tab）时给出可见反馈 —— 静默 no-op 是本次事故的原始症状
+        // （决议 Q5=A 之后返回值才结构上可回答）。
+        // 注意不写「prompt 已不可用」分支：recent 项由 prompts 自身派生，那个查找恒命中，
+        // 那个分支不可达（本任务 TDD 的一条失败用例把它抓了出来）。
+        if (prompt && !ctx.insertToAgentInput?.(prompt.content)) {
+          ctx.showToast?.('无可用 agent 输入（agent-chat 或 Agent CLI 终端）', 'info');
         }
         ctx.closeMenu();
       },

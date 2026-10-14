@@ -44,90 +44,6 @@ export function useTerminalTabs() {
     [storeTabs],
   );
 
-  const getActiveTab = useCallback(
-    (projectId: string): TerminalTab | null => {
-      const projectTabs = storeTabs[projectId];
-      if (!projectTabs) return null;
-
-      const terminalTabs = projectTabs.tabs.filter(isTerminalTab);
-      if (terminalTabs.length === 0) return null;
-
-      // If activeTabId points to a terminal tab, use it
-      const active = terminalTabs.find((t) => t.id === projectTabs.activeTabId);
-      if (active) return tabToTerminalTab(active);
-
-      // Otherwise, return the first terminal tab
-      return tabToTerminalTab(terminalTabs[0]);
-    },
-    [storeTabs],
-  );
-
-  const getActiveTabId = useCallback(
-    (projectId: string): string | null => {
-      const projectTabs = storeTabs[projectId];
-      if (!projectTabs) return null;
-
-      const terminalTabs = projectTabs.tabs.filter(isTerminalTab);
-      if (terminalTabs.length === 0) return null;
-
-      // If activeTabId points to a terminal tab, use it
-      if (terminalTabs.some((t) => t.id === projectTabs.activeTabId)) {
-        return projectTabs.activeTabId;
-      }
-
-      // Otherwise, return the first terminal tab's ID
-      return terminalTabs[0].id;
-    },
-    [storeTabs],
-  );
-
-  const ensureDefaultTab = useCallback(
-    (projectId: ProjectId, agentId?: string | null, agentName?: string): string => {
-      const state = useEditorStore.getState();
-      // 配额与既有 tab 检查按 store 键（= tab.scope 推导键）寻址，与 addTab 落键同形
-      const existing = state.tabs[activeWorkspaceSession(projectId).key];
-      const terminalTabs = existing?.tabs.filter(isTerminalTab) ?? [];
-
-      if (terminalTabs.length > 0) {
-        // Backfill agentId only on the sole auto-created terminal tab
-        if (agentId && terminalTabs.length === 1 && terminalTabs[0].data.agentId === null) {
-          state.updateTab(activeWorkspaceSession(projectId).key, terminalTabs[0].id, {
-            agentId,
-            title: agentName ?? agentId,
-          });
-        }
-
-        // 如果当前 active tab 是terminal tab，返回它
-        const activeTerminal = terminalTabs.find((t) => t.id === existing?.activeTabId);
-        if (activeTerminal) return activeTerminal.id;
-
-        // 如果 active tab 不是 terminal tab，不要强制激活terminal tab
-        // 保留用户当前的tab 选择（例如file/diff tab）
-        return terminalTabs[0].id;
-      }
-
-      // Create a default terminal tab
-      const tabId = generateTabId();
-      const defaultTab: Tab = {
-        id: tabId,
-        scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
-        title: agentName ?? agentId ?? 'Terminal',
-        order: existing?.tabs.length ?? 0,
-        data: {
-          kind: 'terminal',
-          agentId: agentId ?? null,
-          status: 'Idle',
-        },
-      };
-
-      state.addTab(defaultTab);
-      // 激活键 = tab 空间键（session.key），不是裸 projectId —— 否则 worktree 下激活错单元
-      state.activateTab(activeWorkspaceSession(projectId).key, tabId);
-      return tabId;
-    },
-    [],
-  );
-
   const addTab = useCallback(
     (projectId: ProjectId, agentId?: string | null, agentName?: string): TerminalTab | null => {
       const state = useEditorStore.getState();
@@ -209,9 +125,6 @@ export function useTerminalTabs() {
 
   return {
     getTabs,
-    getActiveTab,
-    getActiveTabId,
-    ensureDefaultTab,
     addTab,
     closeTab,
     activateTab,

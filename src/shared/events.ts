@@ -52,12 +52,6 @@ export const DAP_EVENT = 'dap-event';
 /** 调试会话状态变更事件：`dap-session-status` */
 export const DAP_SESSION_STATUS_EVENT = 'dap-session-status';
 
-/**
- * 插入到 agent 输入框事件（DOM CustomEvent，best-effort 桥接）：`neeko:insert-to-agent-input`
- * ProjectView dispatch，agent 输入组件可监听。统一此处单一事实源，禁止硬编码。
- */
-export const INSERT_TO_AGENT_INPUT_EVENT = 'neeko:insert-to-agent-input';
-
 // ── Browser 事件（与 src-tauri/src/browser/events.rs 常量保持同步）──
 
 /** 浏览器导航 URL 变化事件：`browser://url-changed` */

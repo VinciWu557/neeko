@@ -98,6 +98,26 @@ function dispatchKey(code: string, opts: { ctrlKey?: boolean; altKey?: boolean }
   return { event, preventSpy };
 }
 
+/**
+ * Seed a tab space whose **前台是终端**（`tab1`）—— Ctrl+Alt+R 的新契约要求
+ * tabId 来自 `foregroundTerminalTab` 仲裁，而不是 store 顶层 `activeTabId`。
+ */
+function seedTerminalEditor(activeTabId: string | null = 'tab1') {
+  const session = WorkspaceSession.of('p1', null);
+  const mk = (id: string, order: number): never =>
+    ({
+      id,
+      scope: { kind: 'workspace', session },
+      title: id,
+      order,
+      data: { kind: 'terminal', agentId: null, status: 'Idle' },
+    }) as never;
+  useEditorStore.setState({
+    tabs: { [session.key]: { tabs: [mk('tab1', 0), mk('tab2', 1)], activeTabId } },
+    activeTabId,
+  });
+}
+
 /** Seed an editor store with two file tabs (t0 / t1) where t1 is active. */
 function seedTwoTabEditor() {
   useEditorStore.setState({
@@ -657,12 +677,19 @@ describe('useKeyboardShortcuts', () => {
     expect(params.onCloseTab).not.toHaveBeenCalled();
   });
 
-  it('Ctrl+Alt+R 刷新当前 tab 终端', async () => {
+  /**
+   * 新契约（决议 R1/R3 + design §1.3）：tabId 来自 `foregroundTerminalTab` 仲裁。
+   * 旧实现传 store **顶层** `activeTabId`（跨 tab 空间的全局态，切项目/切单元会留旧值），
+   * 配 session 内的 tabs 属 10-12 已判死的同一 defect 家族。
+   */
+  it('Ctrl+Alt+R 刷新该 session 仲裁出的前台终端', async () => {
     const { refreshTerminalForSession } = await import(
       // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
       '@/features/terminal/components/terminalCache'
     );
-    params.activeTabId = 'tab1';
+    seedTerminalEditor('tab1');
+    // 顶层 activeTabId 故意给一个**不属于本 session** 的旧值：必须不被采用。
+    params.activeTabId = 'stale-from-another-project';
     storeState = seedStore({
       ...storeState,
       activeProjectId: 'p1',
@@ -679,11 +706,17 @@ describe('useKeyboardShortcuts', () => {
     );
   });
 
-  it('Ctrl+Alt+R 无活跃 tab 时刷新项目终端', async () => {
+  /**
+   * 旧断言是 `refreshTerminalForSession(session, null)` —— 即「让内部去取 Map 插入顺序
+   * 首个」，那正是 R3 删掉的第二口径。新契约：前台不是终端时落到 session 内**首个终端**
+   * （order 升序，`foregroundTerminalTab` 的 fallback），tabId 恒为精确值。
+   */
+  it('Ctrl+Alt+R 前台非终端 → 刷新该 session 首个终端（精确 tabId）', async () => {
     const { refreshTerminalForSession } = await import(
       // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
       '@/features/terminal/components/terminalCache'
     );
+    seedTerminalEditor(null); // 无激活 tab
     params.activeTabId = null;
     storeState = seedStore({
       ...storeState,
@@ -697,8 +730,32 @@ describe('useKeyboardShortcuts', () => {
 
     expect(refreshTerminalForSession).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: 'p1', worktreePath: null }),
-      null,
+      'tab1',
     );
+  });
+
+  /** 该 session 一个终端都没有 → **什么都不刷新**（显式 no-op，不再猜「Map 首个」）。 */
+  it('Ctrl+Alt+R 无终端 tab 时不刷新', async () => {
+    const { refreshTerminalForSession } = await import(
+      // eslint-disable-next-line import/no-restricted-paths -- test uses terminal cache for mock
+      '@/features/terminal/components/terminalCache'
+    );
+    // 模块级 mock 在用例间不重置（mock-strategies.md 常见错误 #1）——
+    // 「not.toHaveBeenCalled」必须先清零，否则前面用例的调用会让它假红/假绿。
+    refreshTerminalForSession.mockClear();
+    seedTwoTabEditor(); // 只有 file tabs
+    params.activeTabId = 't1';
+    storeState = seedStore({
+      ...storeState,
+      activeProjectId: 'p1',
+      isTerminalView: true,
+      activeProject: createProject({ id: 'p1' }),
+    });
+    renderHook(() => useKeyboardShortcuts(params));
+
+    dispatchKey('KeyR', { ctrlKey: true, altKey: true });
+
+    expect(refreshTerminalForSession).not.toHaveBeenCalled();
   });
 
   it('Ctrl+Shift+2 在 Library Skills 页时切回 normal（toggle-off）', () => {

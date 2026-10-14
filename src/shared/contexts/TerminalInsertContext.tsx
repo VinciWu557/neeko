@@ -13,8 +13,12 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 export interface TerminalInsertApi {
   /** 写入活动终端 PTY；成功返回 true；无活动终端/失败返回 false。 */
   insertToTerminal?: (text: string) => boolean;
-  /** 插入到 agent 输入（best-effort 事件桥接，无返回值）。 */
-  insertToAgentInput?: (text: string) => void;
+  /**
+   * 插入到 agent 输入（composer 优先，内部降级 Agent CLI 终端）。
+   * 成功返回 true；**没有可用目标返回 false**（调用方据此降级 clipboard + toast）。
+   * 旧签名 `(text) => void` 配「无监听者的 DOM 广播」= 静默 no-op，本任务闭合。
+   */
+  insertToAgentInput?: (text: string) => boolean;
 }
 
 interface TerminalInsertContextValue {

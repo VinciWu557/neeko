@@ -11,7 +11,7 @@ const hoisted = vi.hoisted(() => ({
   api: {
     current: {} as {
       insertToTerminal?: (t: string) => boolean;
-      insertToAgentInput?: (t: string) => void;
+      insertToAgentInput?: (t: string) => boolean;
     },
   },
 }));
@@ -70,7 +70,9 @@ describe('useInsertPromptToWorkspace', () => {
 
   it('terminal 目标但无活动终端：提示降级并转投 agent 输入', () => {
     const insertToTerminal = vi.fn(() => false);
-    const insertToAgentInput = vi.fn();
+    // 返回 true = agent 真的接住了（旧用例写 `vi.fn()` 默认返回 undefined，
+    // 在新语义下等价于「没落地」，会落进 clipboard 分支）。
+    const insertToAgentInput = vi.fn(() => true);
     hoisted.api.current = { insertToTerminal, insertToAgentInput };
     const { result } = renderHook(() => useInsertPromptToWorkspace());
 
@@ -84,8 +86,8 @@ describe('useInsertPromptToWorkspace', () => {
     expect(hoisted.clipboard).not.toHaveBeenCalled();
   });
 
-  it('agent 目标：直接写 agent 输入，零 toast', () => {
-    const insertToAgentInput = vi.fn();
+  it('agent 目标且 composer 接住：直接写 agent 输入，零 toast', () => {
+    const insertToAgentInput = vi.fn(() => true);
     hoisted.api.current = { insertToAgentInput };
     const { result } = renderHook(() => useInsertPromptToWorkspace());
 
@@ -93,6 +95,52 @@ describe('useInsertPromptToWorkspace', () => {
 
     expect(insertToAgentInput).toHaveBeenCalledWith('review this diff');
     expect(hoisted.toast).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **本任务 defect 的显式反证**（PRD R6 / design §5.1）：`insertToAgentInput` 恒存在
+   * （ProjectView 恒注册），但「无 agent-chat composer 且无 Agent CLI tab」时它返回 false。
+   *
+   * 旧实现判的是「函数存在吗」（恒真）而非「落地了吗」，于是连 clipboard 兜底都进不去、
+   * 也不弹 toast —— 用户按 Enter 什么也没发生。本用例在修复前**必须先红**。
+   */
+  it('agent 函数存在但返回 false（无接收端）→ clipboard 兜底重新可达 + 提示', async () => {
+    const insertToAgentInput = vi.fn(() => false);
+    hoisted.api.current = { insertToAgentInput };
+    const { result } = renderHook(() => useInsertPromptToWorkspace());
+
+    result.current(prompt, 'agent');
+
+    expect(insertToAgentInput).toHaveBeenCalledWith('review this diff');
+    await vi.waitFor(() =>
+      expect(hoisted.toast).toHaveBeenCalledWith('Prompt copied to clipboard', 'info'),
+    );
+    expect(hoisted.clipboard).toHaveBeenCalledWith('review this diff', 'prompt');
+  });
+
+  /** terminal 目标降级到 agent 后，agent 也没接住 → 仍必须落到 clipboard（不双重静默）。 */
+  it('terminal 不可用 → agent 也不可用 → clipboard 兜底', async () => {
+    hoisted.api.current = {
+      insertToTerminal: vi.fn(() => false),
+      insertToAgentInput: vi.fn(() => false),
+    };
+    const { result } = renderHook(() => useInsertPromptToWorkspace());
+
+    result.current(prompt, 'terminal');
+
+    await vi.waitFor(() =>
+      expect(hoisted.clipboard).toHaveBeenCalledWith('review this diff', 'prompt'),
+    );
+  });
+
+  /** agent 命中时不得再走 clipboard（双写 = 用户看到两份）。 */
+  it('agent 返回 true → 不碰 clipboard', () => {
+    hoisted.api.current = { insertToAgentInput: vi.fn(() => true) };
+    const { result } = renderHook(() => useInsertPromptToWorkspace());
+
+    result.current(prompt, 'agent');
+
+    expect(hoisted.clipboard).not.toHaveBeenCalled();
   });
 
   it('既无终端也无 agent 输入：clipboard 兜底并提示', async () => {
@@ -118,7 +166,7 @@ describe('useInsertPromptToWorkspace', () => {
 
   it('默认目标是 agent（调用方省略 target 时不静默走终端）', () => {
     const insertToTerminal = vi.fn(() => true);
-    const insertToAgentInput = vi.fn();
+    const insertToAgentInput = vi.fn(() => true);
     hoisted.api.current = { insertToTerminal, insertToAgentInput };
     const { result } = renderHook(() => useInsertPromptToWorkspace());
 

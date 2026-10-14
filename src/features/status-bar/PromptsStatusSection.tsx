@@ -3,15 +3,16 @@ import { createPortal } from 'react-dom';
 
 import { usePromptInsert } from '@/features/library';
 import { useLibraryStore } from '@/features/library/store/libraryStore';
+import { foregroundTerminalTab } from '@/features/terminal';
 import { cn } from '@/lib/utils';
 import { MessageSquare } from '@/shared/components/icons';
 import { useAppContext, useTerminalInsert } from '@/shared/contexts';
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { selectActiveCheckoutPath, useWorkspaceStore } from '@/shared/store/workspaceStore';
+import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { PromptResource } from '@/shared/types/library';
 import { filterPromptsByQuery } from '@/shared/utils/promptQuery';
-import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
+import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 /** 描述规则：description 优先，为空回退 content 首 120 字（换行转空格）。 */
 function promptDescription(prompt: PromptResource): string {
@@ -29,23 +30,27 @@ function sortPrompts(prompts: PromptResource[]): PromptResource[] {
 /**
  * 插入成功后把终端推到前台。
  *
- * dock 注册表（app/dock/registry.ts + shared/dock/panelMeta.ts）没有终端面板——
- * 终端是中央编辑器区的 `terminal` kind tab——因此不走 dockStore.togglePanel /
- * activatePanel（无明确 panelId 可查，硬编码猜测只会静默 no-op），而是直接激活
- * 本项目 tab 组里的终端 tab。已在终端上或找不到终端 tab 时静默跳过
- * （写入本身已成功，不打扰用户）。
+ * dock 注册表（app/dock/registry.ts + shared/dock/panelMeta.ts）没有终端面板 ——
+ * 终端是中央编辑器区的 `terminal` kind tab —— 因此不走 dockStore.togglePanel /
+ * activatePanel（无明确 panelId 可查，硬编码猜测只会静默 no-op），而是直接激活 tab 组里的
+ * 那个 tab。已在它上面时静默跳过（写入已成功，不打扰用户）。
+ *
+ * 落点由**唯一仲裁器** `foregroundTerminalTab` 给出（决议 R1/Q2）：这里不再自己拼
+ * session、也不再 `tabs.find(kind === 'terminal')` —— 那是同一问题的第二套**实现**
+ * （10-12 审查 S3 / design §1.2 #5）。
+ *
+ * 与插入用的是**同一个纯函数**，且插入到本函数之间没有任何 tab 状态变化，
+ * 因此结论必然与刚才的落点一致。（不是把落点从返回值里取来：那要求
+ * `insertToTerminal` 从 boolean 改成对象，会让现存 20+ 处真值判断静默失效 ——
+ * `{ok:false}` 也是 truthy。为省一次纯函数调用引入那种坑不划算。）
  */
 function revealTerminalTab(projectId: ProjectId): void {
-  const editorState = useEditorStore.getState();
-  const tabKey = WorkspaceSession.of(
-    projectId,
-    selectActiveCheckoutPath(useWorkspaceStore.getState(), projectId) ?? null,
-  ).key;
-  const group = editorState.tabs[tabKey];
-  const tabs = group?.tabs ?? [];
-  if (tabs.some((t) => t.id === group?.activeTabId && t.data.kind === 'terminal')) return;
-  const terminalTab = tabs.find((t) => t.data.kind === 'terminal');
-  if (terminalTab) editorState.activateTab(tabKey, terminalTab.id);
+  // session 只派生一次（旧写法在相邻两行各算一遍同一个键）。
+  const session = activeWorkspaceSession(projectId);
+  const target = foregroundTerminalTab(session);
+  if (!target) return;
+  if (useEditorStore.getState().tabs[session.key]?.activeTabId === target.tab.id) return;
+  useEditorStore.getState().activateTab(session.key, target.tab.id);
 }
 
 /**

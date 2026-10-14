@@ -8,6 +8,7 @@ import { buildLayoutId } from '@/app/utils/layoutId';
 import { ActionPalette, SaveFileDialog } from '@/features/action-menu';
 import type { ActionRegistryItem, ActionContext } from '@/features/action-menu/types/actionMenu';
 import { setProjectAgents } from '@/features/agent/api/agentApi';
+import { insertToSessionAgent } from '@/features/agent-chat/api/insertToSessionAgent';
 import { useRemoteContext } from '@/features/connection';
 import { EditorGroupLayout } from '@/features/editor';
 import { useFileDrop } from '@/features/file';
@@ -19,7 +20,6 @@ import { useRecentFilesStore } from '@/features/quick-open/store/recentFilesStor
 import { insertToSessionTerminal } from '@/features/terminal';
 import { KeyRound } from '@/shared/components/icons';
 import { useEditorContext, useAppContext, useTerminalInsert } from '@/shared/contexts';
-import { INSERT_TO_AGENT_INPUT_EVENT } from '@/shared/events';
 import { useDockStore } from '@/shared/store/dockStore';
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
@@ -179,12 +179,28 @@ function ProjectView() {
   // 挂载/卸载生命周期管理。
   const { register } = useTerminalInsert();
 
+  /**
+   * agent 目标投递（composer 优先 → 降级 Agent CLI 终端 → 显式 false，决议 Q1/Q5）
+   * —— **两个派发点（dock 面板 Context / 命令面板）共用这一个实现**。
+   * 返回真实成败，降级与提示归调用方（`useInsertPromptToWorkspace` 走 clipboard + toast）；
+   * 旧实现派发「零监听者的 DOM 广播」，函数恒存在却什么都不做，连兜底都进不去。
+   * 身份一律命令式现取 store（不读渲染闭包，见 hook-guidelines「Store 快照模式」），
+   * 因此引用永久稳定，两个消费方拿到的是同一个函数。
+   */
+  const insertToAgentInput = useCallback((text: string): boolean => {
+    const activeProject = useProjectStore.getState().activeProject;
+    if (!activeProject) return false;
+    try {
+      return insertToSessionAgent(activeWorkspaceSession(activeProject.id), text).ok;
+    } catch (err) {
+      console.error('[ProjectView] insertToAgentInput failed:', err);
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     const unregister = register({
-      // Best-effort: emit an event the agent input listens to.
-      insertToAgentInput: (text: string) => {
-        window.dispatchEvent(new CustomEvent(INSERT_TO_AGENT_INPUT_EVENT, { detail: { text } }));
-      },
+      insertToAgentInput,
       /** Write text to the active terminal's PTY (secondary insert target). */
       insertToTerminal: (text: string) => {
         const activeProject = useProjectStore.getState().activeProject;
@@ -202,7 +218,7 @@ function ProjectView() {
       },
     });
     return unregister;
-  }, [register, showToast]);
+  }, [register, showToast, insertToAgentInput]);
 
   const paletteCtx: ActionContext = useMemo(
     () => ({
@@ -216,9 +232,8 @@ function ProjectView() {
             .map((r) => r.filePath)
         : [],
       closeMenu: () => {},
-      insertToAgentInput: (text: string) => {
-        window.dispatchEvent(new CustomEvent(INSERT_TO_AGENT_INPUT_EVENT, { detail: { text } }));
-      },
+      insertToAgentInput,
+      showToast,
       openLibrary: (opts) => {
         const kind = opts?.kind ?? 'skill';
         // 'action' predates the skill/prompt/mcp tabs — falls back to skills.
@@ -226,7 +241,7 @@ function ProjectView() {
         openLibraryAt({ kind: kind === 'prompt' ? 'prompt' : 'skill' });
       },
     }),
-    [currentProjectId, tabKey, agents],
+    [currentProjectId, tabKey, agents, showToast, insertToAgentInput],
   );
 
   return (

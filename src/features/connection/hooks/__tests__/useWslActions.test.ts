@@ -11,6 +11,7 @@ import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { WSLEntrySession } from '@/shared/types';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 vi.mock('@/features/terminal', () => ({
   switchAgentInTerminal: vi.fn().mockResolvedValue(undefined),
@@ -78,6 +79,34 @@ function seedStore(
   useEditorStore.setState({
     tabs: {},
   });
+}
+
+/**
+ * 在该项目的 tab 空间里放一个前台终端 tab。
+ *
+ * `handleSelectAgent` 现在必须先经 `foregroundTerminalTab` 仲裁拿到精确 tabId
+ * （决议 R1/R3）；没有终端 tab 时它**什么都不做**（design T6）—— 所以本组用例
+ * 需要一个真实可仲裁的目标，而不是指望旧的「Map 插入顺序首个」。
+ */
+function seedTerminalTab(activeTabId: string | null = 'wp1-term'): void {
+  const session = WorkspaceSession.of('wp1', null);
+  useEditorStore.setState((state) => ({
+    tabs: {
+      ...state.tabs,
+      [session.key]: {
+        tabs: [
+          {
+            id: 'wp1-term',
+            scope: { kind: 'workspace', session },
+            title: 'Terminal 1',
+            order: 0,
+            data: { kind: 'terminal', agentId: null, status: 'Idle' },
+          } as never,
+        ],
+        activeTabId,
+      },
+    },
+  }));
 }
 
 describe('useWslActions', () => {
@@ -233,6 +262,7 @@ describe('useWslActions', () => {
 
   describe('handleSelectAgent', () => {
     it('传入 agent 时调用 switchAgentInTerminal', async () => {
+      seedTerminalTab(); // 仲裁需要真实可命中的前台终端（R1/R3）
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -253,7 +283,7 @@ describe('useWslActions', () => {
 
       expect(mockSwitchAgent).toHaveBeenCalledWith(
         expect.objectContaining({ projectId: 'wp1', worktreePath: null }),
-        null,
+        'wp1-term',
         'claude-code',
         {},
       );
@@ -296,7 +326,8 @@ describe('useWslActions', () => {
       expect(mockSwitchAgent).not.toHaveBeenCalled();
     });
 
-    it('传入 null 时通过 setTimeout 调用 refreshTerminalForSession', async () => {
+    it('传入 null 时通过 setTimeout 刷新该 session 的前台终端', async () => {
+      seedTerminalTab();
       const { result } = renderHook(() =>
         useWslActions({ config: DEFAULT_CONFIG, showToast: vi.fn(), saveSession: mockSaveSession }),
       );
@@ -309,9 +340,11 @@ describe('useWslActions', () => {
         vi.advanceTimersByTime(50);
       });
 
+      // 旧断言传 null =「让内部去取 Map 插入顺序首个」，那条第二口径已按 R3 删除；
+      // 现在 tabId 恒为 `foregroundTerminalTab` 仲裁出的精确值。
       expect(mockRefreshTerminal).toHaveBeenCalledWith(
         expect.objectContaining({ projectId: 'wp1', worktreePath: null }),
-        null,
+        'wp1-term',
       );
     });
   });

@@ -26,14 +26,17 @@ export function useInsertPromptToWorkspace() {
         showToast('No active terminal — inserting to agent input', 'info');
       }
 
-      if (api.insertToAgentInput) {
-        api.insertToAgentInput(prompt.content);
-      } else {
-        // Fallback: copy to clipboard.
-        void copyToClipboard(prompt.content, 'prompt').then((ok) => {
-          if (ok) showToast('Prompt copied to clipboard', 'info');
-        });
-      }
+      // 判据是**「落地了吗」**，不是「函数存在吗」。旧写法判后者 —— 而
+      // `insertToAgentInput` 由 ProjectView 恒注册（恒存在），于是「composer 优先 →
+      // 降级 Agent CLI → 两边都没」这条链返回 false 时仍被当成成功，
+      // 连 clipboard 兜底都进不去、也不弹 toast：用户按 Enter 什么也没发生。
+      // （决议 Q5=A：投递接收端改为身份注册表后，成败才是结构上能回答的问题。）
+      if (api.insertToAgentInput?.(prompt.content)) return;
+
+      // Fallback: copy to clipboard.
+      void copyToClipboard(prompt.content, 'prompt').then((ok) => {
+        if (ok) showToast('Prompt copied to clipboard', 'info');
+      });
     },
     [showToast, copyToClipboard, api],
   );

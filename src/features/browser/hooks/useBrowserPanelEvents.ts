@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 
-import { sendToTerminal } from '@/features/terminal';
+import { foregroundAgentCliTab, sendToTerminal } from '@/features/terminal';
 import {
   BROWSER_OPEN_URL_EVENT,
   BROWSER_PAGE_LOADED_EVENT,
@@ -12,7 +12,6 @@ import {
 import { useFileChangedEvent } from '@/shared/hooks/useFileChangedEvent';
 import { useTauriEvent } from '@/shared/hooks/useTauriEvent';
 import { useProjectBrowserStore, type BrowserPanelState } from '@/shared/store/browserStore';
-import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { FileChangedEvent, GitChangedEvent } from '@/shared/types';
@@ -22,7 +21,7 @@ import { recordNavigation } from '@/shared/utils/historyStack';
 import { ProjectId, workspaceRootOf } from '@/shared/utils/workspaceRef';
 
 import { browserNavigate } from '../api/browserApi';
-import { isAgentCliTab, formatPickerMessage, type PickerElement } from '../components/pickerUtils';
+import { formatPickerMessage, type PickerElement } from '../components/pickerUtils';
 
 import { getProjectBrowserLabel } from './useBrowserConstants';
 
@@ -149,14 +148,18 @@ export function useBrowserPanelEvents({
         if (data.label && data.label !== label) return;
 
         const projectState = useProjectStore.getState();
-        const editorState = useEditorStore.getState();
         const projectId = projectState.activeProjectId;
         if (!projectId) {
           reinjectPicker();
           return;
         }
-        const projectTabs = editorState.tabs[activeWorkspaceSession(projectId).key];
-        if (!isAgentCliTab(projectTabs, editorState.activeTabId)) {
+        // 目标由唯一前台仲裁给出（决议 R1/Q2 + design §2）：此前这里是
+        // 「isAgentCliTab(session 内 tabs, **store 顶层** activeTabId)」—— 顶层 activeTabId
+        // 是跨 tab 空间的激活态（切项目/切单元都会留旧值），与 session 内 tabs 配对
+        // 属于 10-12 已判死的同一 defect 家族（design §1.3）。
+        // 门控语义随之统一为「有任一 agent CLI tab，前台优先」（design §7 T9）。
+        const target = foregroundAgentCliTab(activeWorkspaceSession(projectId));
+        if (!target) {
           showToastRef.current('Please switch to an Agent CLI tab', 'error');
           reinjectPicker();
           return;
@@ -164,7 +167,7 @@ export function useBrowserPanelEvents({
 
         const browserUrl = useProjectBrowserStore.getState().getPanelState(projectId)?.url ?? '';
         const message = formatPickerMessage(data.prompt, data.elements, browserUrl);
-        sendToTerminal(activeWorkspaceSession(projectId), message + '\r', editorState.activeTabId);
+        sendToTerminal(activeWorkspaceSession(projectId), message + '\r', target.tab.id);
         armAutoRefresh();
         reinjectPicker();
       },

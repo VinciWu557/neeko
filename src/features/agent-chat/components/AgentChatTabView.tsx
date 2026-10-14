@@ -1,17 +1,16 @@
 import { ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { readFileContent, readDirTree } from '@/features/file/api/fileApi';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { readDirTree } from '@/features/file/api/fileApi';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { FileNode } from '@/shared/types';
 import type { AgentChatTabData } from '@/shared/types/tab';
-import { canonicalFsPath } from '@/shared/utils/fileRef';
-import { getFileName, getTabId } from '@/shared/utils/fileTree';
 import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { useAgentChat } from '../hooks/useAgentChat';
+import { useAgentInputRegistration } from '../hooks/useAgentInputRegistration';
+import { useOpenAgentFile } from '../hooks/useOpenAgentFile';
 
 import ApprovalPanel from './ApprovalPanel';
 import ChatComposer from './ChatComposer';
@@ -24,6 +23,8 @@ export { clearMessageCache } from './messageCache';
 
 interface AgentChatTabViewProps {
   tabKey: string;
+  /** 本 tab 的 Workspace 地址本体（登记投递接收端用；不得从 tabKey 反解，红线 12）。 */
+  session: WorkspaceSession;
   tabId: string;
   projectId: ProjectId;
   data: AgentChatTabData;
@@ -33,6 +34,7 @@ interface AgentChatTabViewProps {
 
 export default function AgentChatTabView({
   tabKey,
+  session,
   tabId,
   projectId,
   data,
@@ -122,44 +124,10 @@ export default function AgentChatTabView({
     if (emptyChat) setResumeOpen(false);
   }
 
-  /** 点击 read_file 路径 → 在编辑器打开该文件（复用 editorStore + readFileContent，对齐 terminalLinks）。 */
-  const openAgentFile = useCallback(
-    (rawPath: string) => {
-      void (async () => {
-        // 一次捕获当前视图单元的值：身份基准、组键、读取地址全部由它派生。
-        // 基准若用项目根而读取用 worktree 根，后端 InProject containment 拒绝
-        // —— 相对路径被拼成主仓同名文件身份，worktree 下静默打不开。
-        const workspace = activeWorkspaceSession(projectId);
-        const filePath = canonicalFsPath(workspace.worktreePath ?? projectPath, rawPath);
-        const tabKey = WorkspaceSession.of(projectId, workspace.worktreePath ?? null).key;
-        const tabId = getTabId(tabKey, filePath);
-        const existing = useEditorStore.getState().tabs[tabKey];
-        if (existing?.tabs.some((t) => t.id === tabId)) {
-          useEditorStore.getState().activateTab(tabKey, tabId);
-          return;
-        }
-        try {
-          const content = await readFileContent(workspace, filePath);
-          useEditorStore.getState().addTab({
-            id: tabId,
-            scope: { kind: 'workspace', session: workspace },
-            title: getFileName(filePath),
-            order: existing?.tabs.length ?? 0,
-            data: {
-              kind: 'file',
-              filePath,
-              fileName: getFileName(filePath),
-              content,
-              isDirty: false,
-            },
-          });
-        } catch {
-          // 读取失败时忽略：不阻塞流式渲染，等待下一次事件或手动重试。
-        }
-      })();
-    },
-    [projectId, projectPath],
-  );
+  // 登记本 composer 为 agent 投递的接收端（Q1=(a) · Q5=A，详见该 hook 的 docstring）。
+  useAgentInputRegistration({ session, tabId, setInput });
+
+  const openAgentFile = useOpenAgentFile({ projectId, projectPath });
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

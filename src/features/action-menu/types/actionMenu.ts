@@ -25,8 +25,14 @@ export interface ActionContext {
   agents: { id: string; name: string; icon?: string | null; enabled: boolean; command?: string }[];
   recentFiles: string[];
   closeMenu: () => void;
-  /** Insert text into the active agent input (when available). */
-  insertToAgentInput?: (text: string) => void;
+  /**
+   * 插入到 agent 输入（composer 优先 → 降级 Agent CLI 终端）。
+   * @returns true = 真的落地；false = 没有可用目标 —— **调用方必须按「没落地」处理**，
+   * 不得忽略返回值（忽略 = 重演「函数存在但静默 no-op」这条本任务修掉的 defect）。
+   */
+  insertToAgentInput?: (text: string) => boolean;
+  /** 可见反馈（AppContext 的 showToast；palette 路径没有 clipboard 降级链，故由 ctx 提供）。 */
+  showToast?: (message: string, type?: 'info' | 'error') => void;
   /** Open the Resource Library panel at a specific kind. */
   openLibrary?: (opts?: { kind?: 'skill' | 'prompt' | 'action' }) => void;
 }

@@ -246,14 +246,19 @@ export function useProjectActions({
       if (activeProject.environment.type !== envType) return;
 
       const session = activeWorkspaceSession(activeProject.id);
-      const tabId = foregroundTerminalTab(session)?.tab.id ?? null;
+      // 前台仲裁唯一入口（决议 R1/Q2）；无终端 → 不切换也不刷新（T6：旧写法用 null
+      // 吃「Map 插入顺序首个」，会在别的 tab 上静默动 PTY）。
+      const target = foregroundTerminalTab(session);
 
-      if (agent) {
-        void switchAgentInTerminal(session, tabId, agent.id, config.agentCommandOverrides);
+      // 与改造前逐行等形：switch 在 update 之前、refresh 在 update 之后，
+      // `updateProjectAgent` 恒只调一次（我一度在这里加了 early-return，
+      // 会让 agent 非空但无终端时把它调两遍 —— 已修）。
+      if (agent && target) {
+        void switchAgentInTerminal(session, target.tab.id, agent.id, config.agentCommandOverrides);
       }
       updateProjectAgent(agent);
-      if (!agent) {
-        setTimeout(() => refreshTerminalForSession(session, tabId), 50);
+      if (!agent && target) {
+        setTimeout(() => refreshTerminalForSession(session, target.tab.id), 50);
       }
     },
     [isWsl, config, updateProjectAgent],

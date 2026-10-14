@@ -37,7 +37,8 @@ import { useProjectStore } from '@/shared/store/projectStore';
 import type { Project } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
-import { terminalAddress, terminalCache } from '../terminalCache';
+import { terminalAddress } from '../terminalAddress';
+import { terminalCache } from '../terminalCache';
 import {
   cleanupTerminalsForTab,
   cleanupTerminalsForTabKey,

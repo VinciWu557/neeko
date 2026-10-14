@@ -66,17 +66,18 @@ export function useAgentActions({
         };
       });
 
+      // 前台仲裁唯一入口（决议 R1/Q2）：先定 tab，再精确操作该 tab 的 PTY。
+      // 仲裁给不出目标 = 该 session 没有终端 —— 此时**什么都不做**（旧写法把 null
+      // 喂给「取 Map 首个」的第二口径，会在别的单元/别的 tab 上静默起进程）。
+      const target = foregroundTerminalTab(session);
+      if (!target) return;
+
       if (agent) {
-        void switchAgentInTerminal(
-          session,
-          foregroundTerminalTab(session)?.tab.id ?? null,
-          agent.id,
-          agentCommandOverrides,
-        );
+        void switchAgentInTerminal(session, target.tab.id, agent.id, agentCommandOverrides);
         return;
       }
 
-      setTimeout(() => refreshTerminalForSession(session), 50);
+      setTimeout(() => refreshTerminalForSession(session, target.tab.id), 50);
     },
     [agentCommandOverrides],
   );

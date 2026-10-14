@@ -1,37 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import type { ProjectTabs, Tab } from '@/shared/types/tab';
-import { WorkspaceSession } from '@/shared/utils/workspaceRef';
+import { formatPickerMessage, getThemeColors } from '../pickerUtils';
 
-import {
-  findAgentCliTab,
-  isAgentCliTab,
-  formatPickerMessage,
-  getThemeColors,
-} from '../pickerUtils';
-
-/** 测试身份源：项目 id → WorkspaceSession（主仓形态）。 */
-function mkSession(projectId: string) {
-  return WorkspaceSession.of(projectId, null);
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function makeTab(overrides: Partial<Tab> & { data: Tab['data'] }): Tab {
-  return {
-    id: 'tab-1',
-    scope: { kind: 'workspace', session: mkSession('proj-1') },
-    title: 'Terminal',
-    order: 0,
-    ...overrides,
-  };
-}
-
-function makeProjectTabs(tabs: Tab[], activeTabId: string | null = 'tab-1'): ProjectTabs {
-  return { tabs, activeTabId };
-}
+/*
+ * 本文件原有用例覆盖 `isAgentCliTab` / `findAgentCliTab`，两符号已按决议 Q2/Q7 删除
+ * （tab 仲裁只留 `terminalRouting` 一处实现）；其顺序口径的验收已迁到
+ * `terminal/components/__tests__/terminalRouting.test.ts` 的 foregroundAgentCliTab 组。
+ */
 
 // ---------------------------------------------------------------------------
 // getThemeColors
@@ -68,96 +43,6 @@ describe('getThemeColors', () => {
       'textMuted',
       'textPrimary',
     ]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// isAgentCliTab
-// ---------------------------------------------------------------------------
-
-describe('isAgentCliTab', () => {
-  it('returns true when active tab is a terminal with agentId', () => {
-    const tabs = makeProjectTabs([
-      makeTab({ id: 'tab-1', data: { kind: 'terminal', agentId: 'claude', status: 'Running' } }),
-    ]);
-    expect(isAgentCliTab(tabs, 'tab-1')).toBe(true);
-  });
-
-  it('returns false when active tab is a terminal without agentId', () => {
-    const tabs = makeProjectTabs([
-      makeTab({ id: 'tab-1', data: { kind: 'terminal', agentId: null, status: 'Idle' } }),
-    ]);
-    expect(isAgentCliTab(tabs, 'tab-1')).toBe(false);
-  });
-
-  it('returns false when active tab is a file tab', () => {
-    const tabs = makeProjectTabs([
-      makeTab({
-        id: 'tab-1',
-        data: {
-          kind: 'file',
-          filePath: '/a.ts',
-          fileName: 'a.ts',
-          content: { text: '' },
-          isDirty: false,
-        },
-      }),
-    ]);
-    expect(isAgentCliTab(tabs, 'tab-1')).toBe(false);
-  });
-
-  it('returns false when activeTabId is null', () => {
-    const tabs = makeProjectTabs([
-      makeTab({ id: 'tab-1', data: { kind: 'terminal', agentId: 'claude', status: 'Running' } }),
-    ]);
-    expect(isAgentCliTab(tabs, null)).toBe(false);
-  });
-
-  it('returns false when projectTabs is undefined', () => {
-    expect(isAgentCliTab(undefined, 'tab-1')).toBe(false);
-  });
-
-  it('returns false when activeTabId does not match any tab', () => {
-    const tabs = makeProjectTabs([
-      makeTab({ id: 'tab-1', data: { kind: 'terminal', agentId: 'claude', status: 'Running' } }),
-    ]);
-    expect(isAgentCliTab(tabs, 'nonexistent')).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// findAgentCliTab
-// ---------------------------------------------------------------------------
-
-describe('findAgentCliTab', () => {
-  const agentTab = (id: string, order: number) =>
-    makeTab({ id, order, data: { kind: 'terminal', agentId: 'claude', status: 'Idle' } });
-  const plainTab = (id: string, order: number) =>
-    makeTab({ id, order, data: { kind: 'terminal', agentId: null, status: 'Idle' } });
-
-  it('returns null when there are no agent CLI tabs', () => {
-    const tabs = makeProjectTabs([plainTab('t-plain', 0)], 't-plain');
-    expect(findAgentCliTab(tabs)).toBeNull();
-  });
-
-  it('returns null when projectTabs is undefined', () => {
-    expect(findAgentCliTab(undefined)).toBeNull();
-  });
-
-  it('prefers the active agent CLI tab', () => {
-    const tabs = makeProjectTabs([agentTab('t1', 0), agentTab('t2', 1)], 't2');
-    expect(findAgentCliTab(tabs)).toBe('t2');
-  });
-
-  it('falls back to the highest-order agent CLI tab when none is active', () => {
-    const tabs = makeProjectTabs([agentTab('t-old', 0), agentTab('t-new', 3), plainTab('t-x', 2)]);
-    expect(findAgentCliTab(tabs)).toBe('t-new');
-  });
-
-  it('ignores plain terminal tabs (agentId === null)', () => {
-    const tabs = makeProjectTabs([plainTab('t-plain', 5), agentTab('t-agent', 1)], 't-plain');
-    // 激活的 t-plain 不是 agent CLI → 回退到 t-agent
-    expect(findAgentCliTab(tabs)).toBe('t-agent');
   });
 });
 

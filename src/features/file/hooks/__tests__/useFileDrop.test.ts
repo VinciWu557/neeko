@@ -1,220 +1,167 @@
 import { renderHook, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { sendToTerminal } from '@/features/terminal';
-import { INSERT_TO_AGENT_INPUT_EVENT } from '@/shared/events';
-import { useEditorStore } from '@/shared/store/editorStore';
-import { WorkspaceSession } from '@/shared/utils/workspaceRef';
+import { insertToSessionAgent } from '@/features/agent-chat/api/insertToSessionAgent';
+import { insertToSessionTerminal } from '@/features/terminal';
 
 import { setDragFile, useFileDrop } from '../useFileDrop';
 
-// Mock the terminal module
+/**
+ * 投递一律经 terminal 域的**唯一编排**（决议 R1/Q1/Q5）：
+ * Priority 1 = `insertToSessionAgent`（composer 优先，内部降级 Agent CLI），
+ * Priority 2 = `insertToSessionTerminal`（同 session 前台终端）。
+ */
+vi.mock('@/features/agent-chat/api/insertToSessionAgent', () => ({
+  insertToSessionAgent: vi.fn(),
+}));
 vi.mock('@/features/terminal', () => ({
-  sendToTerminal: vi.fn(),
+  insertToSessionTerminal: vi.fn(),
 }));
 
-// Mock editor store
-vi.mock('@/shared/store/editorStore', () => ({
-  useEditorStore: {
-    getState: vi.fn(),
-  },
-}));
+const mockAgent = vi.mocked(insertToSessionAgent);
+const mockTerminal = vi.mocked(insertToSessionTerminal);
 
-describe('useFileDrop', () => {
-  let dispatchedEvents: CustomEvent[] = [];
+/** 让 agent 路径命中 / 不命中。 */
+function agentHits(ok: boolean) {
+  mockAgent.mockReturnValue(ok ? { ok: true } : { ok: false });
+}
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    dispatchedEvents = [];
+function dragEnd(path = '/some/path', projectId = 'proj-1') {
+  act(() => {
+    setDragFile(path, projectId);
+  });
+  act(() => {
+    document.dispatchEvent(new Event('dragend'));
+  });
+}
 
-    // Capture dispatched CustomEvents
-    const originalDispatch = window.dispatchEvent;
-    vi.spyOn(window, 'dispatchEvent').mockImplementation((event: Event) => {
-      if (event instanceof CustomEvent) {
-        dispatchedEvents.push(event);
-      }
-      return originalDispatch.call(window, event);
-    });
+beforeEach(() => {
+  vi.clearAllMocks();
+  agentHits(false);
+  mockTerminal.mockReturnValue({ ok: false });
+});
+
+describe('useFileDrop · 双目标编排', () => {
+  it('Priority 1 命中（composer / Agent CLI）→ 不再走终端分支', () => {
+    agentHits(true);
+    mount();
+    dragEnd('/some/directory');
+
+    expect(mockAgent).toHaveBeenCalledTimes(1);
+    expect(mockTerminal).not.toHaveBeenCalled();
   });
 
-  afterEach(() => {
-    vi.restoreAllMocks();
+  it('Priority 1 未命中 → 落 Priority 2（前台终端）', () => {
+    mount();
+    dragEnd('/some/file.txt');
+
+    expect(mockAgent).toHaveBeenCalledTimes(1);
+    expect(mockTerminal).toHaveBeenCalledTimes(1);
   });
 
-  function mountHook() {
-    return renderHook(() => useFileDrop());
-  }
+  /**
+   * **本任务连带 defect 的显式反证**（design §1.1）：旧实现用
+   * `isTextInputElement(document.activeElement)` 判「是不是 agent 输入」，而 xterm 的
+   * 输入载体本身就是 `<textarea class="xterm-helper-textarea">` ⇒ 终端聚焦时该判据
+   * 恒为 true，文本被投给零监听者的 DOM 事件后丢弃，Priority 2 **在最主要场景下永不执行**。
+   *
+   * 现在仲裁只看身份，与焦点在哪个元素无关。
+   */
+  it('终端正被聚焦（xterm helper textarea）→ 终端分支仍然执行', () => {
+    const termTextarea = document.createElement('textarea');
+    termTextarea.className = 'xterm-helper-textarea';
+    document.body.appendChild(termTextarea);
+    termTextarea.focus();
+    try {
+      mount();
+      dragEnd('/path/in/terminal');
 
-  it('should dispatch INSERT_TO_AGENT_INPUT_EVENT when focus is in a textarea', () => {
-    mountHook();
-
-    // Setup: textarea is focused
-    const textarea = document.createElement('textarea');
-    document.body.appendChild(textarea);
-    textarea.focus();
-
-    // Set a pending drag (simulating dragStart on a directory node)
-    act(() => {
-      setDragFile('/some/directory', 'proj-1');
-    });
-
-    // Simulate dragend
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    // Verify: INSERT_TO_AGENT_INPUT_EVENT was dispatched
-    expect(dispatchedEvents).toHaveLength(1);
-    expect(dispatchedEvents[0].type).toBe(INSERT_TO_AGENT_INPUT_EVENT);
-    expect(dispatchedEvents[0].detail).toEqual({ text: '/some/directory ' });
-
-    // Verify: sendToTerminal was NOT called
-    expect(sendToTerminal).not.toHaveBeenCalled();
-
-    document.body.removeChild(textarea);
+      expect(mockAgent).toHaveBeenCalledTimes(1);
+      expect(mockTerminal).toHaveBeenCalledTimes(1);
+    } finally {
+      termTextarea.remove();
+    }
   });
 
-  it('should dispatch INSERT_TO_AGENT_INPUT_EVENT when focus is in a contenteditable', () => {
-    mountHook();
-
-    // Setup: contenteditable is focused
-    const editable = document.createElement('div');
-    editable.setAttribute('contenteditable', 'true');
-    document.body.appendChild(editable);
-    editable.focus();
-
-    // Set a pending drag
-    act(() => {
-      setDragFile('/another/dir', 'proj-2');
-    });
-
-    // Simulate dragend
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    // Verify: event dispatched
-    expect(dispatchedEvents).toHaveLength(1);
-    expect(dispatchedEvents[0].type).toBe(INSERT_TO_AGENT_INPUT_EVENT);
-    expect(dispatchedEvents[0].detail).toEqual({ text: '/another/dir ' });
-
-    expect(sendToTerminal).not.toHaveBeenCalled();
-
-    document.body.removeChild(editable);
-  });
-
-  it('should sendToTerminal when active tab is a terminal and no text input is focused', () => {
-    mountHook();
-
-    // Setup: store returns a terminal tab
-    vi.mocked(useEditorStore.getState).mockReturnValue({
-      tabs: {
-        [WorkspaceSession.of('proj-1', null).key]: {
-          tabs: [{ id: 'tab-1', data: { kind: 'terminal' } }],
-          activeTabId: 'tab-1',
-        },
-      },
-      activeTabId: 'tab-1',
-    } as any);
-
-    // No text input focused
-    act(() => {
-      setDragFile('/some/file.txt', 'proj-1');
-    });
-
-    // Simulate dragend
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    // Verify: sendToTerminal was called
-    expect(sendToTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'proj-1', worktreePath: null }),
-      '/some/file.txt ',
-      'tab-1',
-    );
-
-    // Verify: no CustomEvent dispatched
-    expect(dispatchedEvents).toHaveLength(0);
-  });
-
-  it('should NOT send to agent input when focus is in a non-text INPUT (e.g. checkbox)', () => {
-    mountHook();
-
-    // Setup: checkbox is focused (not a text input)
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    document.body.appendChild(checkbox);
-    checkbox.focus();
-
-    // Setup: store returns a terminal tab
-    vi.mocked(useEditorStore.getState).mockReturnValue({
-      tabs: {
-        [WorkspaceSession.of('proj-1', null).key]: {
-          tabs: [{ id: 'tab-1', data: { kind: 'terminal' } }],
-          activeTabId: 'tab-1',
-        },
-      },
-      activeTabId: 'tab-1',
-    } as any);
-
-    act(() => {
-      setDragFile('/some/path', 'proj-1');
-    });
-
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    // Verify: sendToTerminal was called (not agent input)
-    expect(sendToTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: 'proj-1', worktreePath: null }),
-      '/some/path ',
-      'tab-1',
-    );
-    expect(dispatchedEvents).toHaveLength(0);
-
-    document.body.removeChild(checkbox);
-  });
-
-  it('should do nothing when no pending drag', () => {
-    mountHook();
-
-    // No setDragFile called, just dispatch dragend
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    expect(sendToTerminal).not.toHaveBeenCalled();
-    expect(dispatchedEvents).toHaveLength(0);
-  });
-
-  it('should clear pendingDrag after handling', () => {
-    mountHook();
-
-    // Setup: textarea focused
-    const textarea = document.createElement('textarea');
-    document.body.appendChild(textarea);
-    textarea.focus();
-
-    act(() => {
-      setDragFile('/dir/path', 'proj-1');
-    });
-
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    // First dragend handled
-    expect(dispatchedEvents).toHaveLength(1);
-
-    // Second dragend should do nothing (pendingDrag cleared)
-    act(() => {
-      document.dispatchEvent(new Event('dragend'));
-    });
-
-    expect(dispatchedEvents).toHaveLength(1); // Still 1, no new event
-
-    document.body.removeChild(textarea);
+  /** 任何其他输入框聚焦（commit message / LSP 配置）同样不再被当成 agent 目标。 */
+  it('普通 textarea 聚焦 → 不劫持：仍按 agent → terminal 顺序仲裁', () => {
+    const box = document.createElement('textarea');
+    document.body.appendChild(box);
+    box.focus();
+    try {
+      mount();
+      dragEnd('/path');
+      expect(mockAgent).toHaveBeenCalledTimes(1);
+      expect(mockTerminal).toHaveBeenCalledTimes(1);
+    } finally {
+      box.remove();
+    }
   });
 });
+
+describe('useFileDrop · 身份与文本形态', () => {
+  it('两个目标都收到由 activeWorkspaceSession 派生的 session 身份（红线 12）', () => {
+    mount();
+    dragEnd('/some/path');
+
+    expect(mockAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-1', worktreePath: null }),
+      '/some/path ',
+    );
+    expect(mockTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-1', worktreePath: null }),
+      '/some/path ',
+    );
+    // 同一次拖拽两个分支必须用同一个 session 对象（不是各算一遍「等价键」）。
+    expect(mockAgent.mock.calls[0][0]).toBe(mockTerminal.mock.calls[0][0]);
+  });
+
+  it('路径原样 + 一个尾空格：不加引号、不加尾斜杠、不补 \\r（可继续输入）', () => {
+    mount();
+    dragEnd('/dir/with space.txt');
+
+    const text = mockAgent.mock.calls[0][1];
+    expect(text).toBe('/dir/with space.txt ');
+    expect(text.startsWith('"')).toBe(false);
+    expect(text.endsWith('/')).toBe(false);
+    expect(text.endsWith('\r')).toBe(false);
+  });
+});
+
+describe('useFileDrop · pendingDrag 生命周期', () => {
+  it('无 pendingDrag → 两个分支都不调用', () => {
+    mount();
+    act(() => {
+      document.dispatchEvent(new Event('dragend'));
+    });
+
+    expect(mockAgent).not.toHaveBeenCalled();
+    expect(mockTerminal).not.toHaveBeenCalled();
+  });
+
+  it('pendingDrag 单次消费：第二次 dragend 不重复投递', () => {
+    mount();
+    dragEnd('/dir/path');
+    act(() => {
+      document.dispatchEvent(new Event('dragend'));
+    });
+
+    expect(mockAgent).toHaveBeenCalledTimes(1);
+    expect(mockTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it('卸载后不再响应 dragend（监听器已摘）', () => {
+    const { unmount } = mount();
+    unmount();
+    act(() => {
+      setDragFile('/after/unmount', 'proj-1');
+      document.dispatchEvent(new Event('dragend'));
+    });
+
+    expect(mockAgent).not.toHaveBeenCalled();
+  });
+});
+
+function mount() {
+  return renderHook(() => useFileDrop());
+}

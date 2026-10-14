@@ -63,8 +63,9 @@ function PaneContent({
   if (!activeTab) return null;
 
   // 以下各 kind 的 props 均要求必有项目（这些 tab 只在 workspace 空间创建）——
-  // 经不变量收窄取 projectId（不制造伪身份、不用非空断言）。
-  const projectId = requireTabWorkspaceSession(activeTab).projectId;
+  // 经不变量收窄取 session 本体（不制造伪身份、不用非空断言）；项目粒度由它投影。
+  const tabSession = requireTabWorkspaceSession(activeTab);
+  const projectId = tabSession.projectId;
   // tab 空间键显式下传（TerminalView 不再从缓存键解析身份）
   const tabSpaceKey = tabSpaceKeyOf(activeTab.scope);
 
@@ -173,6 +174,7 @@ function PaneContent({
         <AgentChatTabView
           key={activeTab.id}
           tabKey={tabKey}
+          session={tabSession}
           tabId={activeTab.id}
           projectId={projectId}
           data={activeTab.data}

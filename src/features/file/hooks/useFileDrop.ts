@@ -1,19 +1,21 @@
 /**
  * File/Directory drag-to-input: stores the dragged path in a module-level
- * variable during dragStart, then pastes it into the **currently active**
- * terminal tab or agent input when the drag ends.
+ * variable during dragStart, then pastes it into the agent composer (优先)
+ * 或当前 session 的前台终端 when the drag ends.
  *
  * - Uses "dragend" (guaranteed to fire, no preventDefault needed).
- * - Sends to the active tab if it's a terminal (agent or plain).
- * - If focus is in a textarea / contenteditable (agent input), inserts there.
  * - Does NOT auto-submit (no \r) — path is pasted, user can edit.
+ *
+ * **不再有「焦点在文本元素」这条启发式**（原 `isTextInputElement`）：xterm 的输入载体
+ * 本身就是 `<textarea class="xterm-helper-textarea">`，终端聚焦时该判据恒为 true，
+ * 于是文本被投给一个零监听者的 DOM 事件后丢弃 —— 拖文件到终端与拖到 agent 输入
+ * **两端都是静默 no-op**。见 design §1.1（连带 defect）。仲裁一律走身份（红线 12）。
  */
 
 import { useEffect } from 'react';
 
-import { sendToTerminal } from '@/features/terminal';
-import { INSERT_TO_AGENT_INPUT_EVENT } from '@/shared/events';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { insertToSessionAgent } from '@/features/agent-chat/api/insertToSessionAgent';
+import { insertToSessionTerminal } from '@/features/terminal';
 import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
@@ -43,39 +45,17 @@ export function useFileDrop(): void {
       const { path, projectId } = pendingDrag;
       pendingDrag = null;
 
-      // Priority 1: if focus is in a textarea / contenteditable (agent input),
-      // dispatch the insert event so the agent input receives the path.
-      const activeEl = document.activeElement;
-      if (activeEl && isTextInputElement(activeEl)) {
-        window.dispatchEvent(
-          new CustomEvent(INSERT_TO_AGENT_INPUT_EVENT, { detail: { text: path + ' ' } }),
-        );
-        return;
-      }
+      const session = activeWorkspaceSession(projectId);
+      const text = path + ' ';
 
-      // Priority 2: find the currently active tab for this project
-      const entry = useEditorStore.getState().tabs[activeWorkspaceSession(projectId).key];
-      if (!entry) return;
-
-      const activeTab = entry.tabs.find((t) => t.id === entry.activeTabId);
-      if (!activeTab || activeTab.data.kind !== 'terminal') return;
-
-      sendToTerminal(activeWorkspaceSession(projectId), path + ' ', activeTab.id);
+      // Priority 1: agent 目标（composer 优先，内部降级 Agent CLI 终端）。
+      // Priority 2: 本 session 的前台终端。两者都走唯一仲裁（决议 R1/Q2），
+      // 不再有任何「猜焦点在哪个元素」的代理判据。
+      if (insertToSessionAgent(session, text).ok) return;
+      insertToSessionTerminal(session, text);
     };
 
     document.addEventListener('dragend', handleDragEnd);
     return () => document.removeEventListener('dragend', handleDragEnd);
   }, []);
-}
-
-/** Whether the given element is a text input that can receive inserted text. */
-function isTextInputElement(el: Element): boolean {
-  const tag = el.tagName;
-  if (tag === 'TEXTAREA') return true;
-  if (tag === 'INPUT') {
-    const type = (el as HTMLInputElement).type?.toLowerCase();
-    return type === 'text' || type === 'search' || type === 'url' || type === '';
-  }
-  if (el.getAttribute('contenteditable') === 'true') return true;
-  return false;
 }
