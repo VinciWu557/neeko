@@ -210,6 +210,7 @@ tabs ⇒ 只有当前 workspace 空间的 pane 被挂载 ⇒ 写侧用当前视�
 | R5 | wsl/remote 无本地复现环境 | 精确键 + 前缀扫描纯函数单测；local 真机；三环境同一函数（env-blind 红利：测一处即测三处） |
 | R6 | 写侧身份源假设（§3 不变量）不成立 | 批 1 实测确认；不成立则报停并回写 design §3，改 tabSpaceKey 线程化 |
 | R7 | 调用方漏改 | TS 签名改 session 首参即编译期清单；批 3 附 grep 清零（见 implement 命令速查） |
+| R8 | **pane 精度不对称（本任务只声明「paneId 只支持 p1 级精度」，未写后果）**：写侧 `terminalAddress(session, tabId, paneId)` 携带 paneId（`SplitLayout` 最多 4 pane），而读侧 `resolveTerminalEntry` / `switchAgentInSessionTerminal` / `refreshTerminalForSession` 一律缺省 `'p1'` ⇒ 分屏后切 agent 只清 p1 的 PTY，**p2 内旧 agent 进程继续跑**（用户可见「一个 tab 两个 agent」） | 本任务不修（§4 的边界声明仍成立）。后果、取证与正解（`SplitLayout.activePaneId` → tab 身份）见 **`.trellis/tasks/10-13-agent-insert-addressing-arbitration/design.md` §4**（决议 Q6：显式非目标，禁止以「未声明」形式留给下一个人） |
 
 ## 附录：R4 护栏判据（给批 4）
 

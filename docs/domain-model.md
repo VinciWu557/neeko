@@ -98,14 +98,41 @@ Workspace」的命令**（含 branch / PR 两个子域）一律收首参 `worksp
 唯一铸造点是 `WorkspaceSession#key`（≡ Rust `WorkspaceRef::key()`）。
 
 **terminal 插入链路 = 地址由 `WorkspaceSession` 派生**（10-12 落地）：terminal 域唯一的地址铸造点是
-`terminalAddress(session, tabId, paneId)`（`src/features/terminal/components/terminalCache.ts`），
+`terminalAddress(session, tabId, paneId)`（10-13 S4 起落 `src/features/terminal/components/terminalAddress.ts`，
+`terminalCache.ts` 只消费不再铸造），
 物理键 = `session.key` + `TERMINAL_KEY_SEP` + `tabId` + SEP + `paneId`。**env（local / wsl / remote）
 不进键** —— 物理 Map 三分是存储/传输归属；键在三个 Map 间**唯一**，地址层按键/前缀直接命中，
 **不读 projectStore**（无 env 查表、无 env 缺失 fail-closed；见 10-12 实现注记）；
 旧的手搓 `wt:` / `wsl:` / `remote:` 键与 `terminalCacheKey` / `findSessionIdForProject` / 前缀销毁
-`destroy*CachesByPrefix` 已退役（护栏 `check_terminal_key_mint` 防回潮）。插入路由按**当前 workspace
-session** 在 `tabs[session.key]` 内仲裁前台 terminal tab，无前台则落到同 session 首个（**禁跨 session**）。
-其他模块不得从 terminal key 反解身份：分量解析走 `decodeTerminalKey`，日志/提示走 `terminalKeyLabel`。
+`destroy*CachesByPrefix` 已退役（护栏 `check_terminal_key_mint` 防回潮）。其他模块不得从 terminal key
+反解身份：分量解析走 `decodeTerminalKey`，日志/提示走 `terminalKeyLabel`。
+
+**「该往哪个 tab 插」= 全仓只有一处答案**（10-13 落地）：`terminalRouting.foregroundTerminalTab(session)`
+是唯一的 foreground 仲裁入口，口径 = **tab `order` 升序**（前台终端置顶），无前台终端则落同 session
+首个终端（`isFallback: true`，由调用方 toast 告知实际落点）；session 内一个终端都没有 → `null`（显式失败）。
+**禁跨 session**（`tabs` 的键就是 `session.key`，跨单元串写在构造上不可表达）。
+
+需要「某一类 tab」（Agent CLI 终端 / agent-chat composer）时，**在同一有序序列上 filter**
+（`foregroundAgentCliTab`），不自带 `sort`、不取 `tabs[0]`、不依赖 Map 插入顺序。历史病根：同一问题
+曾有 7 个答案（order 升序 / order 降序 / 数组顺序 / **Map 插入顺序**），导致「插入落哪个 tab」与
+「刷新 / 切 agent 落哪个 PTY」不同解。`firstTerminalKeyOfSession` / `firstTerminalEntryOfSession`
+（Map 插入顺序那条）已**整体删除**而非降为私有；`sendToTerminal` / `refreshTerminalForSession` /
+`switchAgentInSessionTerminal` 的 `tabId` 改**必填**（可选性对现有调用方在 TS 上完全合法、编译期无声，
+却会让「缺省取首个」复活 —— 所以除类型外另有护栏）。护栏
+`tools/guards/checks/check_terminal_foreground_arbitration.py`（A1 口径唯一 + 台账、A2 第二口径退出、
+A3 tabId 必填不回退、A4 声明的 DOM 事件必须有消费点）。
+
+**agent 投递目标 = 身份注册表，不是 DOM 广播**（10-13 落地，决议 Q1/Q5）：投递链路的正确形态由
+「发送方能否知道结果」决定 —— `dispatchEvent(CustomEvent)` 的返回值只表示「有无 preventDefault」，
+**不表示有无接收者**，因此旧的 `INSERT_TO_AGENT_INPUT_EVENT`（三个派发点、全历史零个监听者，见
+`git log --all -S"addEventListener(INSERT_TO_AGENT_INPUT_EVENT"` → 0 条）是机制性不可达，已**删除常量**。
+现由 `src/features/agent-chat/api/agentInputRegistry.ts` 承接：`Map<session.key, Map<tabId, {handler, count}>>`
+（外层键直接是 `WorkspaceKey` 投影，**不拼第二个键命名空间**，因此无需反解 —— 红线 12 自然成立），
+引用计数与 `editor/api/aiActionRegistry.ts` / `editorViews.ts` 同构。投递优先级：
+**agent-chat composer → Agent CLI 终端 tab → 显式 false**；返回 false 时调用方降级 clipboard + toast。
+**「焦点在文本元素」不能用来区分 agent composer 与终端**：xterm 的输入载体本身就是
+`<textarea class="xterm-helper-textarea">`，所以旧的 `isTextInputElement` 启发式在终端聚焦时恒为 true，
+使两端都静默失效；该判据已删除，投递目标一律由身份仲裁给出。
 
 **terminal / task 运行根（cwd）= 由 Workspace 身份派生**（10-12 落地）：进程启动的 cwd 是 Workspace 的
 纯函数 `cwd(session) = session.worktreePath ?? project.path ≡ WorkspaceRef::root()`。`create_terminal_session`
@@ -118,6 +145,11 @@ Local/WSL/Remote 三环境承接同一 `cwd`（环境是传输维度），项目
 
 ## 未完成（登记）
 
+- **分屏 p2+ 的终端精度（登记为显式非目标）**：写侧 `terminalAddress(session, tabId, paneId)` 携带
+  paneId，而读侧（`resolveTerminalEntry` / `switchAgentInSessionTerminal` / `refreshTerminalForSession`）
+  一律缺省 `'p1'` ⇒ 分屏后切 agent 只清 p1 的 PTY，**p2 内旧 agent 进程继续跑**（一个 tab 两个 agent）。
+  后果与正解（`SplitLayout.activePaneId` → tab 身份）见
+  `.trellis/tasks/10-13-agent-insert-addressing-arbitration/design.md` §4。
 - 若某子系统的状态键仍是 `Project`（如 debug 活动会话、LSP 会话根），它尚未达到「按 `Workspace` 隔离」——
   这是能力边界缺口，与命名无关。**editor tab 已补上**（见上：`TabScope` + `WorkspaceSession`）。
 - 命名迁移（`App → Project → Workspace`、`RepoKey`→`WorkspaceKey`、`RepoRef`→`WorkspaceRef`、

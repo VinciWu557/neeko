@@ -1323,6 +1323,14 @@ addTab: (tab: Tab, targetGroup?: EditorGroupId | 'pinned') => void; // 内部 ta
    store 读取）。**禁止**的是「按裸 `projectId` 查按单元存的表」或「拿无关分量拼一个键」——
    那才是本场景要消灭的「组装」。非 tab 域（git status / 文件树 / 终端缓存）因手头只有
    `(projectId, worktreePath)`，统一经 `WorkspaceSession.of(...).key` 这一**唯一 mint** 取键。
+11. **持有 session 本体的组件下传本体，不传 tabKey 字符串再反解**：`PaneContent` 经
+   `requireTabWorkspaceSession(activeTab)`（=`tab.scope.session` 的非空收窄）拿到本体后，
+   需要 session 的子组件/hook（如 `useAgentInputRegistration`）收 `session: WorkspaceSession` prop，
+   **禁止**只传 `tabKey: string` 再 `WorkspaceSession.fromKeyOrId(tabKey)` 反解 —— 那是同一身份的
+   第二种表示，且 `fromKeyOrId` 的宽容分支（裸 id → 主仓）会把传错的键静默归一为主仓，
+   worktree 下错配而不报错（2026-10-13 实证，见本任务 `design.md` §8.1 注记 14）。
+   `fromKey` / `fromKeyOrId` 只允许出现在 wire 边界（事件载荷、分量解析、日志/golden），
+   手头有 `Tab` 对象时一律用 `tabWorkspaceSession(tab)` / `requireTabWorkspaceSession(tab)`。
 
 ### 4. Validation & Error Matrix
 
@@ -1410,6 +1418,21 @@ useEditorStore.getState().addTab({
 });
 // 键 = session.key（投影）；项目粒度消费 = tabProjectId(tab)
 ```
+
+#### Wrong（已持本体处逆向重建 —— 契约 11）
+
+```ts
+// PaneContent 手头已有本体，却只下传字符串，子层再反解：多一层耦合 + 宽容分支静默归一
+<AgentChatTabView tabKey={tabSpaceKeyOf(activeTab.scope)} ... />
+const session = WorkspaceSession.fromKeyOrId(tabKey); // worktree 下传错键 → 落主仓，不报错
+```
+
+#### Correct（本体下传）
+
+```ts
+// 本体只解析一次，下传对象；tabKey 仍按需另传（store 键位），但身份只认 session
+const tabSession = requireTabWorkspaceSession(activeTab);
+<AgentChatTabView session={tabSession} tabKey={tabSpaceKeyOf(activeTab.scope)} ... />
 
 ## 常见错误
 

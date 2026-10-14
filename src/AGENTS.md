@@ -96,6 +96,12 @@ Feature-Based 架构，`src/` 顶层：
 扫描集为空四种情况均判失败；**改代码前先跑 `pnpm guards list check_path_identity_scope` 看全量台账**。
 细则见 `.trellis/spec/frontend/state-management.md`。
 
+同一判据在 **terminal 寻址域**的对应物：投递/刷新/销毁的目标身份只能由 `WorkspaceSession` 派生
+（地址唯一 mint = `terminalAddress.ts::terminalAddress`，物理键内不编环境），禁止消费侧手
+`wt:` / `wsl:` / `remote:` 形态的键或从键串反解身份；护栏
+`tools/guards/checks/check_terminal_key_mint.py`（已接 `pnpm lint` 与 CI），契约全文见
+`docs/domain-model.md` 的 terminal 小节。
+
 ## 测试
 
 Vitest + `@testing-library/react` + jsdom。目录约定：`src/testing/`（`setup.ts` 全局 setup、

@@ -401,34 +401,38 @@ export function stripImeSegmentationSpaces(data: string): string;
 | `×` 上 pointerdown 后移动 | 不触发 reorder |
 
 ---
-
-## 文件/目录拖拽到输入框（HTML5 dragend + 双目标分发，2026-08-17）
+## 文件/目录拖拽到输入框（HTML5 dragend + 身份仲裁双目标，2026-10-13 重写）
 
 ### 1. 背景
 
 文件树中的节点（文件 + 目录）支持拖拽到输入框：松开后将被拖拽的路径粘贴到目标输入框。与 dnd-kit 拖拽排序不同，此场景使用原生 HTML5 `draggable` + `dragend` 事件（不冲突、无需 `preventDefault`、保证 fire）。
 
+> **本节为何重写**：原版（2026-08-17）描述的「焦点在文本元素 ⇒ 判定为 agent 输入」这条启发式
+> 已被实测证伪并删除，且 `INSERT_TO_AGENT_INPUT_EVENT` 已整体退出（决议 Q5=A）。
+> 留着它 = 文档与实现相反，读者会照抄一个静默失效的形态。旧组件名也写错了
+> （`FileTreeNode.tsx` 不存在，实为 `FileTreeRow.tsx`）。
+
 ### 2. 核心架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  FileTreeNode                                                │
-│  draggable={!!projectId}                                    │
-│  onDragStart → setDragFile(path, projectId)                 │
-│  （文件 + 目录均触发，is_dir 不再门控）                        │
+│  FileTreeRow.tsx                                             │
+│  draggable={!!projectId}  onDragStart → setDragFile(path, projectId)
+│  （文件 + 目录均触发，is_dir 不门控）                          │
 └──────────────────────┬──────────────────────────────────────┘
                        │ 模块级 pendingDrag: { path, projectId }
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  useFileDrop hook（ProjectView 顶层挂载）                │
+│  useFileDrop hook（ProjectView 顶层挂载一次）                 │
 │  document.addEventListener('dragend', handleDragEnd)         │
 │                                                              │
-│  Priority 1: document.activeElement 是 textarea /            │
-│              contenteditable / text input →                  │
-│              dispatchEvent(INSERT_TO_AGENT_INPUT_EVENT)       │
-│                                                              │
-│  Priority 2: editorStore 激活 tab 是 terminal →              │
-│              sendToTerminal(projectId, path + ' ', tabId)     │
+│  session = activeWorkspaceSession(projectId)   ← 身份唯一来源 │
+│  Priority 1: insertToSessionAgent(session, text)             │
+│              （agent-chat/api/insertToSessionAgent.ts 编排）   │
+│              ├ agent-chat composer（已登记在注册表）          │
+│              └ 降级 Agent CLI 终端 tab（terminal + agentId）   │
+│  Priority 2: insertToSessionTerminal(session, text)          │
+│              └ 本 session 前台终端（无前台则 order 升序首个）  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -436,40 +440,28 @@ export function stripImeSegmentationSpaces(data: string): string;
 
 1. **`dragend` 而非 `drop`**：`dragend` 保证在源元素上 fire（无论落点在哪），无需 `preventDefault`，无 `data-tauri-drag-region` 冲突。
 2. **模块级 `pendingDrag`**：`setDragFile` 写入、`handleDragEnd` 消费并清零，天然配对。
-3. **双目标分发**：优先判断焦点是否在文本输入元素（agent input），否则回退到 terminal tab。复用既有 `INSERT_TO_AGENT_INPUT_EVENT` 事件机制，agent 输入组件监听该事件接收路径。
+3. **仲裁走身份，不走焦点**：目标由 `terminalRouting` 的唯一前台仲裁给出（决议 R1/Q2），
+   与「此刻哪个元素有焦点」无关。
 4. **路径格式化**：统一 `path + ' '`（尾部空格，方便继续输入），不自动提交（无 `\r`），不额外加引号/转义。
-5. **isTextInputElement 判定**：`TEXTAREA` → true；`INPUT` → 仅 `text`/`search`/`url`/空类型；`contenteditable=true` → true；其他（`checkbox`/`radio`/`button` 等）→ false。
 
 ### 4. 组件契约
 
-```ts
-// FileTreeNode.tsx
-// 文件 + 目录均可拖动，is_dir 不再门控
+```tsx
+// FileTreeRow.tsx —— 文件 + 目录均可拖动，is_dir 不门控
 const handleDragStart = useCallback(
   (e: React.DragEvent) => {
-    if (!projectId) return;  // 仅 projectId 缺失时阻止
+    if (!projectId) return;            // 仅 projectId 缺失时阻止
     e.dataTransfer.effectAllowed = 'copy';
     setDragFile(node.path, projectId);
   },
-  [node.path, projectId],  // 依赖不含 node.is_dir
+  [projectId, node],                    // 依赖不含 node.is_dir
 );
 
-// JSX
-<div
-  draggable={!!projectId}  // 文件 + 目录均 true
-  onDragStart={handleDragStart}
-  ...
-/>
+// <div draggable={!!projectId} onDragStart={handleDragStart} … />
 ```
 
 ```ts
-// useFileDrop.ts
-// 模块级 pendingDrag 存储
-export function setDragFile(path: string, projectId: string): void {
-  pendingDrag = { path, projectId };
-}
-
-// hook 内部分发
+// useFileDrop.ts —— 两个分支都走唯一仲裁，不再有代理判据
 export function useFileDrop(): void {
   useEffect(() => {
     const handleDragEnd = () => {
@@ -477,21 +469,13 @@ export function useFileDrop(): void {
       const { path, projectId } = pendingDrag;
       pendingDrag = null;
 
-      // Priority 1: agent input（textarea / contenteditable）
-      const activeEl = document.activeElement;
-      if (activeEl && isTextInputElement(activeEl)) {
-        window.dispatchEvent(
-          new CustomEvent(INSERT_TO_AGENT_INPUT_EVENT, { detail: { text: path + ' ' } }),
-        );
-        return;
-      }
+      const session = activeWorkspaceSession(projectId);
+      const text = path + ' ';
 
-      // Priority 2: terminal tab
-      const entry = useEditorStore.getState().tabs[projectId];
-      if (!entry) return;
-      const activeTab = entry.tabs.find((t) => t.id === entry.activeTabId);
-      if (!activeTab || activeTab.data.kind !== 'terminal') return;
-      sendToTerminal(projectId, path + ' ', activeTab.id);
+      // Priority 1: agent 目标（composer 优先 → 降级 Agent CLI 终端）
+      // Priority 2: 本 session 的前台终端
+      if (insertToSessionAgent(session, text).ok) return;
+      insertToSessionTerminal(session, text);
     };
 
     document.addEventListener('dragend', handleDragEnd);
@@ -501,6 +485,34 @@ export function useFileDrop(): void {
 ```
 
 ### 5. 反模式
+
+#### ❌ 用「焦点在文本元素」判定 agent 输入（已删除的缺陷）
+
+```ts
+// 不要这样做 —— 该判据在终端聚焦时恒为 true
+const activeEl = document.activeElement;
+if (activeEl && isTextInputElement(activeEl)) { /* 投给 agent */ }
+```
+
+xterm 的输入载体本身就是 `<textarea class="xterm-helper-textarea">`（且 attach 时调
+`entry.term.focus()`），所以「焦点在 textarea」**不能区分 agent composer 与终端**。
+旧实现据此分流，结果是文本被投给一个零监听者的 DOM 事件后丢弃 —— 拖到 agent 输入与拖到
+终端**两端都是静默 no-op**，Priority 2 在最主要的场景下永不执行。
+
+#### ❌ 用 DOM CustomEvent 做「必须知道成败」的投递
+
+```ts
+// 不要这样做 —— dispatchEvent 的返回值只表示「有无 preventDefault」，不表示「有无接收者」
+window.dispatchEvent(new CustomEvent(SOME_INSERT_EVENT, { detail: { text } }));
+```
+
+需要「有人接住了吗」就用身份注册表（`agent-chat/api/agentInputRegistry.ts`，与
+`editor/api/aiActionRegistry.ts` / `editorViews.ts` 同构：身份键 + handler + 引用计数卸载 +
+未命中返回 false）。`INSERT_TO_AGENT_INPUT_EVENT` 有三个派发点、**全历史零个监听者**
+（`git log --all -S"addEventListener(INSERT_TO_AGENT_INPUT_EVENT"` → 0 条），
+而派发方判的是「函数存在吗」（恒真），于是连 clipboard 兜底都进不去。
+护栏 A4 拦「声明了没人听的 `neeko:*` 事件」，护栏本体见
+`tools/guards/checks/check_terminal_foreground_arbitration.py`。
 
 #### ❌ 用 `drop` / `onDrop` 替代 `dragend`
 
@@ -516,34 +528,43 @@ export function useFileDrop(): void {
 if (node.is_dir) return;
 ```
 
-路径是 opaque 字符串，终端与 agent input 对文件/目录路径的处理一致（无需 shell 转义，直接写 PTY / 插入文本）。
+路径是 opaque 字符串，终端与 composer 对文件/目录路径的处理一致（无需 shell 转义，直接写 PTY / 插入文本）。
 
-#### ❌ 在 dispatchEvent 中硬编码事件名
+#### ❌ 在消费侧自己找「首个终端」
 
 ```ts
-// 不要这样做 — 事件名必须来自 @/shared/events 常量
-window.dispatchEvent(new CustomEvent('neeko:insert-to-agent-input', ...));
+// 不要这样做 — 这是同一问题的第二套实现（护栏 A1/A2 会拦）
+const tabs = useEditorStore.getState().tabs[session.key];
+const target = tabs.tabs.find((t) => t.data.kind === 'terminal');
 ```
+
+一律走 `foregroundTerminalTab` / `foregroundAgentCliTab`（order 升序，唯一实现处）。
 
 #### ❌ 路径加引号或尾部斜杠
 
 ```ts
 // 不要这样做 — 破坏用户连续输入
-sendToTerminal(projectId, `"${path}" `, tabId);  // 多余引号
-sendToTerminal(projectId, `${path}/`, tabId);   // 多余斜杠（目录）
+insertToSessionTerminal(session, `"${path}" `);  // 多余引号
+insertToSessionTerminal(session, `${path}/`);    // 多余斜杠（目录）
 ```
 
 ### 6. 测试断言
 
 | 场景 | 期望行为 |
 |------|---------|
-| 文件节点 `draggable` 属性 | `draggable="true"`（projectId 非空时） |
-| 目录节点 `draggable` 属性 | `draggable="true"`（与文件一致） |
-| 拖拽目录 → `setDragFile` 调用 | `setDragFile('/dir/path', projectId)` |
-| `dragend` 时 textarea 聚焦 | `INSERT_TO_AGENT_INPUT_EVENT` 被 dispatch，`sendToTerminal` 不调用 |
-| `dragend` 时 contenteditable 聚焦 | `INSERT_TO_AGENT_INPUT_EVENT` 被 dispatch |
-| `dragend` 时 checkbox 聚焦 | 不走 agent input，回退到 terminal（非文本 input） |
-| `dragend` 时 terminal tab 激活 | `sendToTerminal` 被调用，带 `path + ' '` |
-| `dragend` 时无 pendingDrag | 不调用任何分发 |
-| 第二次 `dragend`（pendingDrag 已清空） | 不重复分发 |
+| 文件 / 目录节点 `draggable` 属性 | `"true"`（projectId 非空时；两者一致） |
+| 拖拽目录 → `setDragFile` | `setDragFile('src', projectId)` |
 | `projectId` 为空 | 节点 `draggable="false"`，不触发 `setDragFile` |
+| agent 目标命中（composer 或 Agent CLI） | `insertToSessionAgent` 返回 ok → **不调**终端分支 |
+| agent 目标不可用 | 落 `insertToSessionTerminal`（同 session 前台终端） |
+| **终端正被聚焦**（xterm helper textarea） | 终端分支**仍然执行**（反证 `isTextInputElement` 已删） |
+| 普通 textarea 聚焦（commit message 等） | 不劫持：按 agent → terminal 顺序仲裁 |
+| 两分支收到的身份 | 同一个 `activeWorkspaceSession(projectId)` 对象（非各算一遍等价键） |
+| 文本形态 | `path + ' '`，无引号 / 无尾斜杠 / 无 `\r` |
+| 无 pendingDrag / 第二次 dragend | 不重复投递 |
+| hook 卸载后 dragend | 不响应（监听器已摘） |
+
+对应文件：`src/features/file/hooks/__tests__/useFileDrop.test.ts`（编排与生命周期）、
+`src/features/file/components/__tests__/FilesPanel.test.tsx`（`draggable` 与 `setDragFile`）、
+`src/features/terminal/components/__tests__/terminalRouting.test.ts`（仲裁 + 编排降级链）、
+`src/features/agent-chat/api/__tests__/agentInputRegistry.test.ts`（注册表显式成败）。

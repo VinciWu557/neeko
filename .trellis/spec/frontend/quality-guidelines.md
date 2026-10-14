@@ -239,6 +239,12 @@ const lspKeymap = useMemo(() => ..., [projectPath, tab, ...]);                  
 
 **回归测试**：`lspDiagnosticsProjection.test.ts`（reconfigure 后波浪线自愈 / 推送本身不触发重放 / 镜像位置映射与塌缩丢弃 / 连续重配置合并 / 销毁后不抛）；身份稳定用例在 `UseEditorSave.test.tsx` 与 `useLspNavigation.test.ts`。
 
+### 11. JSDoc 举例没有实现支撑的语义（声明了却没人实现 = 静默功能缺失的文档版）
+
+类型/注册表的 docstring 写「handler 自行判断是否接收（例如流式进行中不许改写输入框）」，但全仓唯一生产 handler 恒 `return true` —— 声明的能力没有消费点，与红线 14 同型（2026-10-13 实证：`agentInputRegistry.ts`，修法是删掉该举例并写明「今日 false 的唯一原因是未登记」）。
+
+**判据**：docstring 里的每个「例如」必须能在生产代码里 grep 到对应分支；找不到 = 删例或补实现，二选一。不接受「以后可能用到」的举例 —— 那是 YAGNI 在文档层的形态。
+
 ---
 
 ## 必需模式
