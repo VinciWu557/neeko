@@ -21,7 +21,11 @@ def ledger() -> dict:
 LED = ledger()
 MAX_LINES = LED["max_lines"]
 BASELINE = LED["baseline"]
-A_BASELINED = next(iter(BASELINE))
+# 取一个**基线值真的高于 max_lines** 的条目做夹具。
+# 不用 next(iter(BASELINE))：那会让用例的语义随台账内容漂移 —— 当首个条目被合法
+# 缩到 max_lines 时，"缩小通过" 那条连未登记文件都能通过（测不出 ratchet 的语义），
+# 变成恒绿装饰。这里显式挑一个仍带欠债的条目，保证断言有判别力。
+A_BASELINED = next(k for k, v in BASELINE.items() if v > LED["max_lines"])
 
 
 def body(lines: int) -> str:
@@ -48,7 +52,13 @@ class ComponentSizeTest(unittest.TestCase):
 
     def test_baselined_file_shrinking_passes(self):
         root = temp_repo(self)
-        make_repo(root, {A_BASELINED: body(304)})
+        # 从台账派生，不写魔数：原先钉 `body(304)`，隐式假设「首个基线条目 ≥ 305」。
+        # 那个假设没人写也没人守 —— 把一个既存文件合法缩到 300 行，本用例就会
+        # 反过来判红（把数据改善伪装成代码违规）。缩到「基线值 - 1」才是这条判据
+        # 真正的语义（ratchet 只许缩小）。
+        shrunk = BASELINE[A_BASELINED] - 1
+        assert shrunk > MAX_LINES, '夹具失效：该值必须仍在 max_lines 之上才谈得上 ratchet'
+        make_repo(root, {A_BASELINED: body(shrunk)})
         self.assertEqual(subject.check(context(root)).verdict, PASS)
 
     def test_baselined_file_growing_is_a_violation(self):

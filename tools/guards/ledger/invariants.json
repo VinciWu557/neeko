@@ -352,6 +352,64 @@
         }
       ],
       "red_line": null
+    },
+    {
+      "id": "terminal-foreground-arbitration-single-source",
+      "title": "「该往哪个 tab」只有一处实现（order 升序），tabId 必填不回退",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_terminal_foreground_arbitration",
+          "note": "A1 口径唯一（台账）+ A2 第二口径（Map 插入顺序）退出 + A3 tabId 必填 —— A3 是 TS 给不了的那条：把已必填的 tabId 改回可选对现有调用方完全合法、编译期无声"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_terminal_foreground_arbitration.py"
+        },
+        {
+          "kind": "test",
+          "ref": "src/features/terminal/components/__tests__/terminalRouting.test.ts"
+        }
+      ],
+      "red_line": 12
+    },
+    {
+      "id": "declared-dom-event-must-have-consumer",
+      "title": "shared/events.ts 声明的 neeko:* DOM 事件必须有 addEventListener 消费点",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_terminal_foreground_arbitration",
+          "note": "A4：红线 14 的判据（声明了却没人实现 = 静默功能缺失）从 LSP capability 扩到 DOM 事件；INSERT_TO_AGENT_INPUT_EVENT 三派发点、全历史零监听者即此形态的实例"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_terminal_foreground_arbitration.py"
+        }
+      ],
+      "red_line": [
+        5,
+        14
+      ]
+    },
+    {
+      "id": "terminal-key-material-single-source",
+      "title": "terminal 段保留分隔符只活在唯一 mint 文件（10-12 R6 的纸面不变量落地）",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_terminal_key_mint",
+          "note": "G3 双档材质：TERMINAL_KEY_SEP 标识符无条件拦、\\u0001 转义需 terminal 语境词同行（否则误伤 fileTree.ts 的子树指纹分隔）"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_terminal_key_mint.py"
+        }
+      ],
+      "red_line": 12
     }
   ]
 }
