@@ -1089,3 +1089,36 @@ Windows/Linux CI 矩阵一编译即红。修法 = 门面签名改 `&str`（借�
   零重叠），更名 `uri_base` 待办
 - 自有 PTY 的 `NEEKO_SESSION_ID/PROJECT_ID` env 注入未接线（归属链第 1 级数据源）
 - B4 WSL / E5 SSH 可达性；AC11/13/14 人工目视项；代码待用户授权后提交
+
+
+## Session 287: opencode-2x插件与通知兼容
+
+**Date**: 2026-10-14
+**Task**: opencode-2x插件与通知兼容
+**Branch**: `main`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c5d84e6f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

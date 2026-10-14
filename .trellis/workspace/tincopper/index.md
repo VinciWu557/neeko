@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 286
+- **Total Sessions**: 287
 - **Last Active**: 2026-10-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1091 | Active |
+| `journal-6.md` | ~1124 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 287 | 2026-10-14 | opencode-2x插件与通知兼容 | `c5d84e6f` | `main` |
 | 286 | 2026-10-13 | Agent 通知第四轮 /neeko-check 审计与整改 | - | `neeko-notify` |
 | 285 | 2026-10-12 | macOS 系统通知修复：UNUserNotificationCenter 后端替换失效的 NSUserNotification | - | `neeko-notify` |
 | 284 | 2026-10-12 | CLI hooks 开启报错修复（opencode 目录事实源 + 开机收敛） | - | `neeko-notify` |
