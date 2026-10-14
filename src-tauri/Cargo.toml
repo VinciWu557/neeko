@@ -1,6 +1,6 @@
 [package]
 name = "neeko"
-version = "1.0.6"
+version = "1.0.9"
 edition = "2021"
 license = "Apache-2.0"
 default-run = "neeko"
@@ -75,7 +75,6 @@ libproc = "0.14.11"
 # 直接依赖以访问 tauri with_webview 暴露的 WKWebView 句柄(强制 Inspector 独立窗口)
 objc2 = "0.6"
 objc2-web-kit = "0.3"
-
 # 系统通知 macOS 后端：NSUserNotification 已被移除（macOS 26+），必须走 UNUserNotificationCenter
 # （platform/system_notify 消费，红线 10）
 objc2-foundation = { version = "0.3", features = ["NSString", "NSBundle", "NSError"] }
