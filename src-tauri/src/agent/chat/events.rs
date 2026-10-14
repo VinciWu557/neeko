@@ -257,6 +257,12 @@ pub enum StreamEvent {
         turn_id: String,
         /// Question posed by the agent.
         prompt: String,
+        /// 候选答案（opencode question 工具的 `options[].label`）。空 = 自由文本输入。
+        /// 前端 `UserInputPanel` 据此渲染单选/多选；缺这个字段时用户只能手打答案，
+        /// 而 agent 给的明明是可选项（TS 镜像 `agentChat.ts` 早已声明 `options?`，
+        /// 只是 Rust 侧从来没有生产者 —— 2026-10-14 第二遍复核补齐）。
+        #[serde(default)]
+        options: Vec<String>,
     },
     /// Command the agent wants to run (optional Dock terminal echo).
     CommandRun {
