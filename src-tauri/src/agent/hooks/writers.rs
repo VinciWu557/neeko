@@ -397,12 +397,10 @@ mod tests {
         );
         // 「等待用户行动」在 opencode 2.x 走权限门（permission.asked，2.0.28 二进制仍在发射）；
         // V1 的 question.asked 在 2.x 无对应事件（ask 阻塞走权限族统一上报）。
-        for anchor in ["permission.asked"] {
-            assert!(
-                opencode.template.contains(anchor),
-                "opencode 模板缺少 {anchor} 订阅（等待用户行动的通知会静默丢失）"
-            );
-        }
+        assert!(
+            opencode.template.contains("permission.asked"),
+            "opencode 模板缺少 permission.asked 订阅（等待用户行动的通知会静默丢失）"
+        );
         let pi = HOOK_TARGETS
             .iter()
             .find(|t| t.source == "pi")
