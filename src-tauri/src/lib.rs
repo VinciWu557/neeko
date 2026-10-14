@@ -49,6 +49,9 @@ pub mod git;
 pub mod library;
 /// Language Server Protocol client management.
 pub mod lsp;
+/// Application-level notification domain (business-agnostic policy + dispatch).
+/// 业务域单向依赖其门面，本域禁止 import 任何业务域（design.md T4/D6）。
+pub mod notification;
 /// Platform difference centralization (Platform Adapter).
 pub mod platform;
 /// Project management (add, remove, list, config).
@@ -188,6 +191,10 @@ macro_rules! neeko_invoke_handler {
             $crate::agent::chat::commands::agent_context_set,
             $crate::agent::chat::commands::agent_chat_context,
             $crate::agent::chat::translation::translation_stream,
+            // ── notification（应用级通知域薄命令）─────────────────────────────
+            $crate::notification::commands::notification_settings_get,
+            $crate::notification::commands::notification_settings_set,
+            $crate::notification::commands::notification_test_send,
             // ── search ────────────────────────────────────────────────────────
             $crate::search::commands::search_run,
             $crate::search::commands::search_stop,

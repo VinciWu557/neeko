@@ -26,6 +26,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .register_uri_scheme_protocol("neeko", crate::browser::uri_scheme::create_handler())
         .manage(Arc::clone(&library_store))
         .manage(AppStateWrapper::new_with_library_store(library_store))
@@ -38,6 +39,15 @@ pub fn run() {
             crate::app_menu::handle_menu_event(app, event.id().0.as_str(), &menu_close_tab);
         })
         .on_window_event(move |window, event| {
+            // 焦点态是通知抑制判定的输入（R2.1）：组合根在此一行转发给应用级通知中心，
+            // 关闭协议本身（close.rs）不承载业务事实。
+            if let tauri::WindowEvent::Focused(focused) = event {
+                window
+                    .state::<AppStateWrapper>()
+                    .notification
+                    .focus_tracker()
+                    .set(*focused);
+            }
             super::close::on_window_event(window, event, &window_close_tab);
         })
         .invoke_handler(crate::neeko_invoke_handler!())

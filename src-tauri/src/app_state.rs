@@ -50,6 +50,8 @@ pub struct AppStateWrapper {
     pub library_store: Arc<library::LibraryStore>,
     /// Language Server Protocol session manager.
     pub lsp_manager: Arc<crate::lsp::LspManager>,
+    /// 应用级通知中心（业务无关裁决+投递；业务域单向依赖其门面，design.md T4/D6）。
+    pub notification: Arc<crate::notification::NotificationCenter>,
     /// Debug Adapter Protocol session manager.
     ///
     /// 语言编排后端（Java 等）经 `DapManager::register_backend` 注入 —— 组合根不
@@ -311,6 +313,12 @@ impl AppStateWrapper {
             WatcherManager::new().with_watcher_excludes(move || storage.watcher_excludes())
         };
 
+        // 通知设置只读一次（构造期），运行期由薄命令 update_settings 刷新快照 ——
+        // 与 watcher_excludes 同源的「配置域读取、组合根注入」模式。
+        let notification = Arc::new(crate::notification::NotificationCenter::new(
+            storage_manager.notification_settings(),
+        ));
+
         Self {
             runtime,
             project_manager: Mutex::new(ProjectManager::new(persist)),
@@ -331,6 +339,7 @@ impl AppStateWrapper {
             conversation_manager: ConversationManager::new(
                 crate::conversation::adapters::all_adapters(),
             ),
+            notification: Arc::clone(&notification),
             main_window: RwLock::new(None),
         }
     }

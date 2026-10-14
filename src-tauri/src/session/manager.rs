@@ -196,6 +196,33 @@ impl StorageManager {
             .unwrap_or_default()
     }
 
+    /// 用户通知设置（config.json `notification` 对象，缺省/损坏一律回默认值 ——
+    /// 与 [`watcher_excludes`] 同源的「损坏回默认」哲学；serde 反序列化即字段校验，
+    /// 未知字段忽略、缺失字段取默认；数值越界经 `normalized()` 回默认）。
+    #[must_use]
+    pub fn notification_settings(&self) -> crate::notification::types::NotificationSettings {
+        self.load_config()
+            .ok()
+            .and_then(|c| c.get("notification").cloned())
+            .and_then(|v| {
+                serde_json::from_value::<crate::notification::types::NotificationSettings>(v).ok()
+            })
+            .unwrap_or_default()
+            .normalized()
+    }
+
+    /// 持久化通知设置（整体替换 `notification` 键）。
+    pub fn save_notification_settings(
+        &self,
+        settings: &crate::notification::types::NotificationSettings,
+    ) -> Result<()> {
+        let mut config = self.load_config()?;
+        if let Some(obj) = config.as_object_mut() {
+            obj.insert("notification".into(), serde_json::to_value(settings)?);
+        }
+        self.save_config(&config)
+    }
+
     /// Upsert a single built-in agent override into `agentOverrides`（空值 = 删除）。
     pub fn save_agent_override(&self, agent_id: &str, agent: Option<&AgentConfig>) -> Result<()> {
         let mut config = self.load_config()?;
