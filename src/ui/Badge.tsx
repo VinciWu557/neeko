@@ -14,9 +14,8 @@ const badgeVariants = cva(
         destructive:
           'border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80',
         outline: 'text-foreground',
-        added: 'bg-accent-green/20 text-accent-green',
-        modified: 'bg-accent-yellow/20 text-accent-yellow',
-        deleted: 'bg-accent-red/20 text-accent-red',
+        /** 仅结构基类、无颜色；供上层注入语义色（如 git 状态 chip）。 */
+        plain: '',
       },
     },
     defaultVariants: {
@@ -32,4 +31,4 @@ function Badge({ className, variant, ...props }: BadgeProps) {
   return <div className={cn(badgeVariants({ variant }), className)} {...props} />;
 }
 
-export { Badge, badgeVariants };
+export { Badge };

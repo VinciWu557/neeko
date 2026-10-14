@@ -70,7 +70,7 @@ const REAL_CHANGED: FileChange[] = [
 const TARGET = 'src/features/file/components/__tests__/FileTreeNodeRenderCount.test.tsx';
 
 describe('gitFileDecoration real payload', () => {
-  it('untracked file resolves to text-accent-brick with real backend payload', () => {
+  it('untracked file resolves to text-git-status-untracked with real backend payload', () => {
     const fileSummaries = buildFileSummaryMap(REAL_CHANGED);
     const collapsedDirs = collectCollapsedDirs(REAL_CHANGED);
     const folderSummaries = buildFolderSummaryMap(fileSummaries, collapsedDirs);
@@ -84,7 +84,7 @@ describe('gitFileDecoration real payload', () => {
       undefined,
       false,
     );
-    expect(fileDeco?.color).toBe('text-accent-brick');
+    expect(fileDeco?.color).toBe('text-git-status-untracked');
     expect(fileDeco?.badge).toBe('U');
 
     // 祖先目录链：链上存在 Modified 文件 → 聚合主导状态为 Modified（优先级 M > U）→ 蓝
@@ -103,7 +103,7 @@ describe('gitFileDecoration real payload', () => {
         undefined,
         false,
       );
-      expect(dirDeco?.color).toBe('text-accent-blue');
+      expect(dirDeco?.color).toBe('text-git-status-modified');
     }
 
     // 纯 untracked 目录 → 砖红
@@ -115,7 +115,7 @@ describe('gitFileDecoration real payload', () => {
       undefined,
       false,
     );
-    expect(pureDir?.color).toBe('text-accent-brick');
+    expect(pureDir?.color).toBe('text-git-status-untracked');
 
     // Modified 文件 → 蓝
     const modDeco = resolveDecoration(
@@ -126,6 +126,6 @@ describe('gitFileDecoration real payload', () => {
       undefined,
       false,
     );
-    expect(modDeco?.color).toBe('text-accent-blue');
+    expect(modDeco?.color).toBe('text-git-status-modified');
   });
 });

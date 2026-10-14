@@ -178,7 +178,7 @@ describe('未受影响行不重渲染（S4 扁平行 render count 兜底）', ()
     expect(harness.counts.get('src')).toBe(1);
     expect(harness.counts.get('src/a.ts')).toBe(1);
     expect(harness.counts.get('b.ts') ?? 0).toBe(0);
-    expect(screen.getByText('a.ts')).toHaveClass('text-accent-green');
+    expect(screen.getByText('a.ts')).toHaveClass('text-git-status-added');
   });
 
   it('清空变更列表：颜色回退默认色且重渲染限定在受影响链路', () => {

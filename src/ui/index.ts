@@ -38,7 +38,7 @@ export {
   DropdownMenuRadioGroup,
 } from './DropdownMenu';
 export { Checkbox } from './Checkbox';
-export { Badge, badgeVariants } from './Badge';
+export { Badge } from './Badge';
 export { MarkdownPreview } from './MarkdownPreview';
 export {
   Card,

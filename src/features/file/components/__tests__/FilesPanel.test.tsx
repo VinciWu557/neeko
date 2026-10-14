@@ -433,7 +433,7 @@ describe('FilesPanel 文件管理', () => {
     seedDirs(treeWithIgnored);
     render(<FilesPanel {...baseProps} changedFiles={changed} />);
 
-    expect(screen.getByText('.env')).toHaveClass('text-accent-blue');
+    expect(screen.getByText('.env')).toHaveClass('text-git-status-modified');
   });
 
   it('未提供创建回调时不渲染创建按钮', () => {
@@ -580,19 +580,19 @@ describe('目录 git 状态装饰（P1：目录级着色；需求演进：不渲
     // 变更位于未加载的深层路径：folderSummary 基于 changed 全集而非展开态
     render(<FilesPanel {...baseProps} changedFiles={[fc('src/features/git/a.ts', 'Modified')]} />);
 
-    expect(screen.getByText('src')).toHaveClass('text-accent-blue');
+    expect(screen.getByText('src')).toHaveClass('text-git-status-modified');
   });
 
   it('Untracked 聚合为砖红（JetBrains Unversioned）', () => {
     render(<FilesPanel {...baseProps} changedFiles={[fc('src/new-file.ts', 'Untracked')]} />);
 
-    expect(screen.getByText('src')).toHaveClass('text-accent-brick');
+    expect(screen.getByText('src')).toHaveClass('text-git-status-untracked');
   });
 
-  it('Renamed 聚合为黄色', () => {
+  it('Renamed 聚合到 modified 语义色', () => {
     render(<FilesPanel {...baseProps} changedFiles={[fc('src/moved.ts', 'Renamed')]} />);
 
-    expect(screen.getByText('src')).toHaveClass('text-accent-blue');
+    expect(screen.getByText('src')).toHaveClass('text-git-status-modified');
   });
 
   it('deleted 文件不向目录传播：父目录无着色', () => {
@@ -602,7 +602,7 @@ describe('目录 git 状态装饰（P1：目录级着色；需求演进：不渲
   });
 
   it('多状态共存时 modified 优先于 added', () => {
-    // 目录摘要同时含 Added + Modified → 主导状态取 modified（黄色）
+    // 目录摘要同时含 Added + Modified → 主导状态取 modified
     render(
       <FilesPanel
         {...baseProps}
@@ -610,14 +610,14 @@ describe('目录 git 状态装饰（P1：目录级着色；需求演进：不渲
       />,
     );
 
-    expect(screen.getByText('src')).toHaveClass('text-accent-blue');
+    expect(screen.getByText('src')).toHaveClass('text-git-status-modified');
   });
 
   it('展开后子文件按自身 status 着色，且无变更的目录不携带徽标', () => {
     render(<FilesPanel {...baseProps} changedFiles={[fc('src/a.ts', 'Modified')]} />);
 
     fireEvent.click(screen.getByText('src'));
-    expect(screen.getByText('a.ts')).toHaveClass('text-accent-blue');
+    expect(screen.getByText('a.ts')).toHaveClass('text-git-status-modified');
     // b.ts 所在根列表无目录徽标污染：普通文件保持默认色
     expect(screen.getByText('b.ts')).toHaveClass('text-text-primary');
   });

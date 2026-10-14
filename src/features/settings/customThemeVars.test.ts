@@ -32,4 +32,11 @@ describe('customThemeVars', () => {
     clearCustomCssVars();
     expect(document.documentElement.style.getPropertyValue('--bg-primary')).toBe('');
   });
+
+  it('应用 git 状态色板键（与 UI accent 解耦的独立词表）', () => {
+    applyCustomCssVars({ 'git-status-modified': '#123456' });
+    expect(document.documentElement.style.getPropertyValue('--git-status-modified')).toBe(
+      '#123456',
+    );
+  });
 });

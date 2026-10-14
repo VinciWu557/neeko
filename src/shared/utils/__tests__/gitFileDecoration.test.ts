@@ -9,6 +9,8 @@ import {
   collectCollapsedDirs,
   resolveDecoration,
   resolveNodeStatus,
+  statusLetterToChipClass,
+  statusLetterToTextClass,
   statusToNameColorClass,
   summaryToBadge,
   summaryToDotClass,
@@ -194,13 +196,54 @@ describe('summaryToBadge', () => {
     expect(summaryToBadge(summary({ added: 1 }))).toMatchObject({ badge: 'A' });
   });
 
-  it('映射正确 variant（conflict 用 deleted 红色 variant，renamed 用灰色 variant）', () => {
-    expect(summaryToBadge(summary({ conflict: 1 }))).toEqual({ badge: '!', variant: 'deleted' });
-    expect(summaryToBadge(summary({ deleted: 1 }))).toEqual({ badge: 'D', variant: 'deleted' });
-    expect(summaryToBadge(summary({ modified: 1 }))).toEqual({ badge: 'M', variant: 'modified' });
-    expect(summaryToBadge(summary({ renamed: 1 }))).toEqual({ badge: 'R', variant: 'default' });
-    expect(summaryToBadge(summary({ untracked: 1 }))).toEqual({ badge: 'U', variant: 'default' });
-    expect(summaryToBadge(summary({ added: 1 }))).toEqual({ badge: 'A', variant: 'added' });
+  it('映射正确 chip（全部来自 --git-status-* 单一色板）', () => {
+    expect(summaryToBadge(summary({ conflict: 1 }))).toEqual({
+      badge: '!',
+      chip: 'text-git-status-conflict bg-git-status-conflict/15',
+    });
+    expect(summaryToBadge(summary({ deleted: 1 }))).toEqual({
+      badge: 'D',
+      chip: 'text-git-status-deleted bg-git-status-deleted/15',
+    });
+    expect(summaryToBadge(summary({ modified: 1 }))).toEqual({
+      badge: 'M',
+      chip: 'text-git-status-modified bg-git-status-modified/15',
+    });
+    expect(summaryToBadge(summary({ renamed: 1 }))).toEqual({
+      badge: 'R',
+      chip: 'text-git-status-modified bg-git-status-modified/15',
+    });
+    expect(summaryToBadge(summary({ untracked: 1 }))).toEqual({
+      badge: 'U',
+      chip: 'text-git-status-untracked bg-git-status-untracked/15',
+    });
+    expect(summaryToBadge(summary({ added: 1 }))).toEqual({
+      badge: 'A',
+      chip: 'text-git-status-added bg-git-status-added/15',
+    });
+  });
+});
+
+describe('statusLetterToTextClass / statusLetterToChipClass — 字母形态唯一回落', () => {
+  it('M/A/D/R/U/! 全表映射到对应状态色', () => {
+    expect(statusLetterToTextClass('M')).toBe('text-git-status-modified');
+    expect(statusLetterToTextClass('R')).toBe('text-git-status-modified');
+    expect(statusLetterToTextClass('A')).toBe('text-git-status-added');
+    expect(statusLetterToTextClass('D')).toBe('text-git-status-deleted');
+    expect(statusLetterToTextClass('U')).toBe('text-git-status-untracked');
+    expect(statusLetterToTextClass('!')).toBe('text-git-status-conflict');
+  });
+
+  it('chip 全表 text+bg；未知字母回落 modified', () => {
+    expect(statusLetterToChipClass('M')).toBe('text-git-status-modified bg-git-status-modified/15');
+    expect(statusLetterToChipClass('A')).toBe('text-git-status-added bg-git-status-added/15');
+    expect(statusLetterToChipClass('D')).toBe('text-git-status-deleted bg-git-status-deleted/15');
+    expect(statusLetterToChipClass('U')).toBe(
+      'text-git-status-untracked bg-git-status-untracked/15',
+    );
+    expect(statusLetterToChipClass('!')).toBe('text-git-status-conflict bg-git-status-conflict/15');
+    expect(statusLetterToChipClass('Z')).toBe('text-git-status-modified bg-git-status-modified/15');
+    expect(statusLetterToTextClass('Z')).toBe('text-git-status-modified');
   });
 });
 
@@ -239,7 +282,7 @@ describe('resolveDecoration — 折叠 untracked 目录的后代继承', () => {
       false,
       cCollapsedDirs,
     );
-    expect(deco?.color).toBe('text-accent-brick');
+    expect(deco?.color).toBe('text-git-status-untracked');
   });
 
   it('中间层目录已有 folder 聚合色时语义不变', () => {
@@ -252,7 +295,7 @@ describe('resolveDecoration — 折叠 untracked 目录的后代继承', () => {
       false,
       cCollapsedDirs,
     );
-    expect(deco?.color).toBe('text-accent-brick');
+    expect(deco?.color).toBe('text-git-status-untracked');
   });
 
   it('非后代路径不受折叠条目影响', () => {
@@ -280,7 +323,7 @@ describe('resolveDecoration — 折叠 untracked 目录的后代继承', () => {
     expect(
       resolveDecoration('ab/c.txt', false, fileSummaries, folderSummaries, undefined, false, dirs)
         ?.color,
-    ).toBe('text-accent-brick');
+    ).toBe('text-git-status-untracked');
   });
 });
 
@@ -291,12 +334,18 @@ describe('summaryToLabelClass', () => {
 
   it('优先级 conflict > deleted > modified > untracked > added', () => {
     expect(summaryToLabelClass(summary({ conflict: 1, deleted: 1 }), false, false)).toBe(
-      'text-accent-red',
+      'text-git-status-conflict',
     );
-    expect(summaryToLabelClass(summary({ deleted: 1 }), false, false)).toBe('text-accent-orange');
-    expect(summaryToLabelClass(summary({ modified: 1 }), false, false)).toBe('text-accent-blue');
-    expect(summaryToLabelClass(summary({ untracked: 1 }), false, false)).toBe('text-accent-brick');
-    expect(summaryToLabelClass(summary({ added: 1 }), false, false)).toBe('text-accent-green');
+    expect(summaryToLabelClass(summary({ deleted: 1 }), false, false)).toBe(
+      'text-git-status-deleted',
+    );
+    expect(summaryToLabelClass(summary({ modified: 1 }), false, false)).toBe(
+      'text-git-status-modified',
+    );
+    expect(summaryToLabelClass(summary({ untracked: 1 }), false, false)).toBe(
+      'text-git-status-untracked',
+    );
+    expect(summaryToLabelClass(summary({ added: 1 }), false, false)).toBe('text-git-status-added');
   });
 
   it('无状态时 ignored → dimmed 灰，否则默认', () => {
@@ -305,19 +354,41 @@ describe('summaryToLabelClass', () => {
   });
 
   it('ignored 与变更共存时 git 状态优先（不灰化）', () => {
-    expect(summaryToLabelClass(summary({ modified: 1 }), true, false)).toBe('text-accent-blue');
+    expect(summaryToLabelClass(summary({ modified: 1 }), true, false)).toBe(
+      'text-git-status-modified',
+    );
   });
 });
 
 describe('summaryToDotClass', () => {
-  it('各状态映射到 bg-accent-*', () => {
-    expect(summaryToDotClass(summary({ conflict: 1 }))).toBe('bg-accent-red');
-    expect(summaryToDotClass(summary({ deleted: 1 }))).toBe('bg-accent-orange');
-    expect(summaryToDotClass(summary({ modified: 1 }))).toBe('bg-accent-blue');
-    expect(summaryToDotClass(summary({ renamed: 1 }))).toBe('bg-accent-blue');
-    expect(summaryToDotClass(summary({ untracked: 1 }))).toBe('bg-accent-brick');
-    expect(summaryToDotClass(summary({ added: 1 }))).toBe('bg-accent-green');
+  it('各状态映射到 bg-git-status-*', () => {
+    expect(summaryToDotClass(summary({ conflict: 1 }))).toBe('bg-git-status-conflict');
+    expect(summaryToDotClass(summary({ deleted: 1 }))).toBe('bg-git-status-deleted');
+    expect(summaryToDotClass(summary({ modified: 1 }))).toBe('bg-git-status-modified');
+    expect(summaryToDotClass(summary({ renamed: 1 }))).toBe('bg-git-status-modified');
+    expect(summaryToDotClass(summary({ untracked: 1 }))).toBe('bg-git-status-untracked');
+    expect(summaryToDotClass(summary({ added: 1 }))).toBe('bg-git-status-added');
     expect(summaryToDotClass(zeroSummary())).toBe('');
+  });
+});
+
+describe('git 状态色与 UI accent 解耦（回归护栏）', () => {
+  const allStatuses: ReadonlyArray<{ name: string; s: GitStatusSummary }> = [
+    { name: 'conflict', s: summary({ conflict: 1 }) },
+    { name: 'deleted', s: summary({ deleted: 1 }) },
+    { name: 'modified', s: summary({ modified: 1 }) },
+    { name: 'renamed', s: summary({ renamed: 1 }) },
+    { name: 'untracked', s: summary({ untracked: 1 }) },
+    { name: 'added', s: summary({ added: 1 }) },
+  ];
+
+  it('文字色 / 圆点色一律来自 --git-status-*，绝不借用 --accent-*', () => {
+    const labels = allStatuses.map(({ s }) => summaryToLabelClass(s, false, false));
+    const dots = allStatuses.map(({ s }) => summaryToDotClass(s));
+    expect(labels.every((c) => /^text-git-status-/.test(c))).toBe(true);
+    expect(dots.every((c) => /^bg-git-status-/.test(c))).toBe(true);
+    expect(labels.some((c) => c.includes('accent-'))).toBe(false);
+    expect(dots.some((c) => c.includes('accent-'))).toBe(false);
   });
 });
 
@@ -335,15 +406,15 @@ describe('resolveDecoration', () => {
     ).toBeNull();
   });
 
-  it('变更文件返回全量展示（color/badge/variant/dot）', () => {
+  it('变更文件返回全量展示（color/badge/chip/dot）', () => {
     const { fileSummaries, folderSummaries } = buildMaps([fc('src/a.ts', 'Modified')]);
     expect(
       resolveDecoration('src/a.ts', false, fileSummaries, folderSummaries, undefined, false),
     ).toEqual({
-      color: 'text-accent-blue',
+      color: 'text-git-status-modified',
       badge: 'M',
-      variant: 'modified',
-      dot: 'bg-accent-blue',
+      chip: 'text-git-status-modified bg-git-status-modified/15',
+      dot: 'bg-git-status-modified',
       dimmed: false,
     });
   });
@@ -353,10 +424,10 @@ describe('resolveDecoration', () => {
     expect(
       resolveDecoration('src', true, fileSummaries, folderSummaries, undefined, false),
     ).toEqual({
-      color: 'text-accent-green',
+      color: 'text-git-status-added',
       badge: 'A',
-      variant: 'added',
-      dot: 'bg-accent-green',
+      chip: 'text-git-status-added bg-git-status-added/15',
+      dot: 'bg-git-status-added',
       dimmed: false,
     });
   });
@@ -365,7 +436,11 @@ describe('resolveDecoration', () => {
     const { fileSummaries, folderSummaries } = buildMaps([fc('src/a.ts', 'Renamed')]);
     expect(
       resolveDecoration('src/a.ts', false, fileSummaries, folderSummaries, undefined, false),
-    ).toMatchObject({ color: 'text-accent-blue', badge: 'R', variant: 'default' });
+    ).toMatchObject({
+      color: 'text-git-status-modified',
+      badge: 'R',
+      chip: 'text-git-status-modified bg-git-status-modified/15',
+    });
   });
 
   it('被忽略文件返回 dimmed', () => {
@@ -411,7 +486,7 @@ describe('resolveDecoration', () => {
       ignored,
       false,
     );
-    expect(deco).toMatchObject({ color: 'text-accent-green', badge: 'A', dimmed: false });
+    expect(deco).toMatchObject({ color: 'text-git-status-added', badge: 'A', dimmed: false });
   });
 
   it('active 文件返回 accent 色', () => {
@@ -421,8 +496,8 @@ describe('resolveDecoration', () => {
     ).toEqual({
       color: 'text-accent',
       badge: 'M',
-      variant: 'modified',
-      dot: 'bg-accent-blue',
+      chip: 'text-git-status-modified bg-git-status-modified/15',
+      dot: 'bg-git-status-modified',
       dimmed: false,
     });
   });
@@ -542,17 +617,17 @@ describe('statusToNameColorClass — 叶子级名字色（优先级链单处收�
   });
 
   it('状态优先于 ignored（共存不灰化）', () => {
-    expect(statusToNameColorClass('modified', true, false)).toBe('text-accent-blue');
-    expect(statusToNameColorClass('untracked', true, false)).toBe('text-accent-brick');
+    expect(statusToNameColorClass('modified', true, false)).toBe('text-git-status-modified');
+    expect(statusToNameColorClass('untracked', true, false)).toBe('text-git-status-untracked');
   });
 
   it('各状态映射 JetBrains 词表色', () => {
-    expect(statusToNameColorClass('conflict', false, false)).toBe('text-accent-red');
-    expect(statusToNameColorClass('deleted', false, false)).toBe('text-accent-orange');
-    expect(statusToNameColorClass('modified', false, false)).toBe('text-accent-blue');
-    expect(statusToNameColorClass('renamed', false, false)).toBe('text-accent-blue');
-    expect(statusToNameColorClass('untracked', false, false)).toBe('text-accent-brick');
-    expect(statusToNameColorClass('added', false, false)).toBe('text-accent-green');
+    expect(statusToNameColorClass('conflict', false, false)).toBe('text-git-status-conflict');
+    expect(statusToNameColorClass('deleted', false, false)).toBe('text-git-status-deleted');
+    expect(statusToNameColorClass('modified', false, false)).toBe('text-git-status-modified');
+    expect(statusToNameColorClass('renamed', false, false)).toBe('text-git-status-modified');
+    expect(statusToNameColorClass('untracked', false, false)).toBe('text-git-status-untracked');
+    expect(statusToNameColorClass('added', false, false)).toBe('text-git-status-added');
   });
 
   it('无状态：ignored 灰显，否则默认色', () => {

@@ -71,4 +71,44 @@ describe('theme token integrity', () => {
     expect(root?.has('--mono-fg')).toBe(true);
     expect(root?.has('--mono-fg-dim')).toBe(true);
   });
+
+  /** git 文件状态色板：与 UI accent 解耦，必须每个主题块自带，否则 var 静默回退。 */
+  const GIT_STATUS_TOKENS = [
+    '--git-status-added',
+    '--git-status-modified',
+    '--git-status-deleted',
+    '--git-status-untracked',
+    '--git-status-conflict',
+  ];
+
+  it('defines the full --git-status-* palette in every accent-bearing theme block', () => {
+    const accentBlocks = [...themes.entries()].filter(([, vars]) => {
+      let accentCount = 0;
+      for (const v of vars) if (v.startsWith('--accent-')) accentCount += 1;
+      return accentCount >= 3;
+    });
+    expect(accentBlocks.length).toBeGreaterThanOrEqual(5);
+
+    const missing = accentBlocks.flatMap(([selector, vars]) =>
+      GIT_STATUS_TOKENS.filter((token) => !vars.has(token)).map(
+        (token) => `${selector} 缺少 ${token}`,
+      ),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it('defines the --git-status-* fallback in :root (unknown data-theme)', () => {
+    const root = themes.get(':root');
+    const missing = GIT_STATUS_TOKENS.filter((token) => !root?.has(token));
+    expect(missing).toEqual([]);
+  });
+
+  it('mirrors every --git-status-* token into the Tailwind bridge', () => {
+    // 缺一条桥接 ⇒ text-git-status-* 静默不生成（与「声明了不生效」同型，必须机器守）。
+    const tailwindCss = readFileSync(resolve(__dirname, '../tailwind.css'), 'utf8');
+    const missing = GIT_STATUS_TOKENS.filter(
+      (token) => !tailwindCss.includes(`--color-${token.slice(2)}:`),
+    );
+    expect(missing).toEqual([]);
+  });
 });

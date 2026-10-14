@@ -276,7 +276,9 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = React.memo(
           />
         )}
         {showBadge && decoration?.badge && (
-          <Badge variant={decoration.variant ?? 'default'}>{decoration.badge}</Badge>
+          <Badge variant="plain" className={decoration.chip}>
+            {decoration.badge}
+          </Badge>
         )}
       </div>
     );

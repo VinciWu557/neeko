@@ -54,6 +54,15 @@
   --cm-punctuation: #abb2bf;
   --cm-bracket: #abb2bf;
 
+  /* Git 文件状态色板（独立于 UI accent：改状态色不再牵动主题主色，反之亦然）。
+     renamed 与 modified 同色，STATUS_PRESENTATION 中二者复用同一令牌。
+     此处为未知 data-theme 的兜底（= dark 值），内置主题各自显式覆盖。 */
+  --git-status-added:     #30d158;
+  --git-status-modified:  #2997ff;
+  --git-status-deleted:   #ff9f0a;
+  --git-status-untracked: #d1675a;
+  --git-status-conflict:  #ff453a;
+
   /* Default: dark UI chrome (native scrollbars, form controls) */
   color-scheme: dark;
 }
@@ -110,6 +119,13 @@
   /* 砖红（JetBrains Unversioned）：与 accent-red 区分冲突态 */
   --accent-brick:  #d1675a;
   --accent-brick-rgb: 209, 103, 90;
+
+  /* Git 文件状态色板（独立于 accent） */
+  --git-status-added:     #30d158;
+  --git-status-modified:  #2997ff;
+  --git-status-deleted:   #ff9f0a;
+  --git-status-untracked: #d1675a;
+  --git-status-conflict:  #ff453a;
 
   /* Text on accent backgrounds */
   --text-on-accent: #ffffff;
@@ -188,6 +204,13 @@
   --accent-brick:  #cd6a60;
   --accent-brick-rgb: 205, 106, 96;
 
+  /* Git 文件状态色板（独立于 accent） */
+  --git-status-added:     #98c379;
+  --git-status-modified:  #61afef;
+  --git-status-deleted:   #d19a66;
+  --git-status-untracked: #cd6a60;
+  --git-status-conflict:  #e06c75;
+
   /* Text on accent backgrounds */
   --text-on-accent: #111111;
 
@@ -252,12 +275,9 @@
   /* Terminal selection */
   --terminal-selection: rgba(201, 100, 66, 0.2);
 
-  /* Accent colors — Claude 暖色调
-     accent-blue 承载「修改 / 重命名」语义（gitFileDecoration + 编辑器 git 变更高亮），
-     必须与 accent-brick(untracked) / accent-orange(deleted) 可区分，
-     故用钢青蓝而非品牌赭红（#c96442 曾令 modified 与 untracked/deleted 视觉同色）。 */
-  --accent-blue:       #2f6f9f;
-  --accent-blue-rgb:   47, 111, 159;
+  /* Accent colors — Claude 暖色调（品牌主色，与文件状态色解耦） */
+  --accent-blue:       #c96442;
+  --accent-blue-rgb:   201, 100, 66;
   --accent-green:  #5a8a5e;
   --accent-green-rgb: 90, 138, 94;
   --accent-yellow: #b8860b;
@@ -267,6 +287,15 @@
   /* 砖红（JetBrains Unversioned） */
   --accent-brick:  #a85248;
   --accent-brick-rgb: 168, 82, 72;
+
+  /* Git 文件状态色板（独立于 accent）：modified 取钢青蓝，
+     与 untracked(#a85248) / deleted(#c96442 赭红) 可区分；
+     品牌主色 accent-blue 仍是赭红，二者不再相互牵动。 */
+  --git-status-added:     #5a8a5e;
+  --git-status-modified:  #2f6f9f;
+  --git-status-deleted:   #c96442;
+  --git-status-untracked: #a85248;
+  --git-status-conflict:  #c0392b;
 
   /* Text on accent backgrounds */
   --text-on-accent: #f5f0e8;
@@ -345,6 +374,13 @@
   --accent-brick:  oklch(0.66 0.125 22);
   --accent-brick-rgb: 209, 103, 90;
 
+  /* Git 文件状态色板（独立于 accent） */
+  --git-status-added:     oklch(0.7 0.15 150);
+  --git-status-modified:  oklch(0.7 0.1 250);
+  --git-status-deleted:   oklch(0.75 0.15 65);
+  --git-status-untracked: oklch(0.66 0.125 22);
+  --git-status-conflict:  oklch(0.704 0.191 22.216);
+
   /* Text on accent backgrounds */
   --text-on-accent: oklch(0.205 0 0);
 
@@ -420,6 +456,13 @@
   --accent-orange: #d9730d;
   --accent-brick:  #a85248;
   --accent-brick-rgb: 168, 82, 72;
+
+  /* Git 文件状态色板（独立于 accent） */
+  --git-status-added:     #4a9e3f;
+  --git-status-modified:  #2f7cd3;
+  --git-status-deleted:   #d9730d;
+  --git-status-untracked: #a85248;
+  --git-status-conflict:  #d32f2f;
 
   /* Text on accent backgrounds */
   --text-on-accent: #ffffff;

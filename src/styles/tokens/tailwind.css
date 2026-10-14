@@ -18,6 +18,11 @@
   --color-accent-red: var(--accent-red);
   --color-accent-orange: var(--accent-orange);
   --color-accent-brick: var(--accent-brick);
+  --color-git-status-added: var(--git-status-added);
+  --color-git-status-modified: var(--git-status-modified);
+  --color-git-status-deleted: var(--git-status-deleted);
+  --color-git-status-untracked: var(--git-status-untracked);
+  --color-git-status-conflict: var(--git-status-conflict);
   --color-status-idle: var(--status-idle);
   --color-status-running: var(--status-running);
   --color-status-failed: var(--status-failed);

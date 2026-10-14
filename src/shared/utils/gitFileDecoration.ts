@@ -18,7 +18,7 @@ import type { FileChange, FileTreeGitStatus } from '@/shared/types';
  * 禁止任何组件私持 STATUS 颜色或徽标对照表——这是防止词汇再分裂为两处定义的结构性保证。
  *
  * ## 扩展点（本期 Non-Goal，不接入）
- * - tab 徽标：`summaryToBadge` 的 `{ badge, variant }` 可直接作为 tab 行尾徽标（R4）。
+ * - tab 徽标：`summaryToBadge` 的 `{ badge, chip }` 可直接作为 tab 行尾徽标（R4）。
  * - LSP error badge / dirty 标记：只需给 `resolveDecoration` 增加一路输入信号，
  *   在 `Decoration` 上追加字段，不改架构。
  */
@@ -44,17 +44,14 @@ export interface GitStatusSummary {
 /** 行尾徽标字母（与 Badge 组件解耦，仅表达「哪个状态」） */
 export type BadgeLetter = 'M' | 'A' | 'D' | 'R' | 'U' | '!';
 
-/** Badge 组件的 variant 子集（与 ui/Badge 对齐，勿在组件内私建映射） */
-export type StatusVariant = 'added' | 'modified' | 'deleted' | 'default';
-
 export interface Decoration {
-  /** 文件名文字颜色 class（text-accent-* / text-text-*） */
+  /** 文件名文字颜色 class（text-git-status-* / text-text-* / text-accent 激活态） */
   color?: string;
   /** 行尾徽标字母 */
   badge?: BadgeLetter;
-  /** 徽标色系（ui/Badge 的 variant；供 PR 变更树等 chip 形态消费方取用） */
-  variant?: StatusVariant;
-  /** 圆点色 class（bg-accent-*；供 status dot 消费方取用） */
+  /** 徽标 chip 类（text + 半透明底色，均来自 --git-status-* 单一色板） */
+  chip?: string;
+  /** 圆点色 class（bg-git-status-*；供 status dot 消费方取用） */
   dot?: string;
   /** tooltip 说明（预留，当前未使用） */
   tooltip?: string;
@@ -79,54 +76,81 @@ export type ResolveNodeDecoration = (
 type DominantStatus = FileTreeGitStatus;
 
 /**
- * 状态 → 展示词表的单一事实源（badge 字母 / Badge variant / 文字色 / 圆点色）。
+ * 状态 → 展示词表的单一事实源（badge 字母 / 文字色 / 圆点色 / 徽标 chip）。
  *
  * 颜色惯例（需求演进记录）：对齐 JetBrains 官方文件状态色 —— added=绿、
- * modified/renamed=蓝、untracked(Unversioned)=砖红（accent-brick）、deleted=橙、
- * conflict=亮红（accent-red）、ignored=灰。badge/variant 为 PR 变更树的 diff
- * 徽标体系（M/A/D 黄绿红），不随工作树文字色变动。
+ * modified/renamed=蓝、untracked(Unversioned)=砖红、deleted=橙、conflict=亮红、ignored=灰。
+ *
+ * 所有颜色类一律走 `--git-status-*` 专用令牌（不借用 UI 的 `--accent-*`）：
+ * git 状态色与主题主色是两套语义，混用会导致「改状态色 = 改全主题」。
+ * 映射见 `src/styles/tokens/theme.css` 的 `--git-status-*` 段。
+ * 文件树名字色 / dot / diff 徽标 chip / commit log 图标 均从本表派生，
+ * 禁止任何消费方私持 `text-accent-*` 或徽标对照表。
  */
 const STATUS_PRESENTATION: Record<
   DominantStatus,
-  { badge: BadgeLetter; variant: StatusVariant; textClass: string; dotClass: string }
+  { badge: BadgeLetter; textClass: string; dotClass: string; chipClass: string }
 > = {
   conflict: {
     badge: '!',
-    variant: 'deleted',
-    textClass: 'text-accent-red',
-    dotClass: 'bg-accent-red',
+    textClass: 'text-git-status-conflict',
+    dotClass: 'bg-git-status-conflict',
+    chipClass: 'text-git-status-conflict bg-git-status-conflict/15',
   },
   deleted: {
     badge: 'D',
-    variant: 'deleted',
-    textClass: 'text-accent-orange',
-    dotClass: 'bg-accent-orange',
+    textClass: 'text-git-status-deleted',
+    dotClass: 'bg-git-status-deleted',
+    chipClass: 'text-git-status-deleted bg-git-status-deleted/15',
   },
   modified: {
     badge: 'M',
-    variant: 'modified',
-    textClass: 'text-accent-blue',
-    dotClass: 'bg-accent-blue',
+    textClass: 'text-git-status-modified',
+    dotClass: 'bg-git-status-modified',
+    chipClass: 'text-git-status-modified bg-git-status-modified/15',
   },
   renamed: {
     badge: 'R',
-    variant: 'default',
-    textClass: 'text-accent-blue',
-    dotClass: 'bg-accent-blue',
+    textClass: 'text-git-status-modified',
+    dotClass: 'bg-git-status-modified',
+    chipClass: 'text-git-status-modified bg-git-status-modified/15',
   },
   untracked: {
     badge: 'U',
-    variant: 'default',
-    textClass: 'text-accent-brick',
-    dotClass: 'bg-accent-brick',
+    textClass: 'text-git-status-untracked',
+    dotClass: 'bg-git-status-untracked',
+    chipClass: 'text-git-status-untracked bg-git-status-untracked/15',
   },
   added: {
     badge: 'A',
-    variant: 'added',
-    textClass: 'text-accent-green',
-    dotClass: 'bg-accent-green',
+    textClass: 'text-git-status-added',
+    dotClass: 'bg-git-status-added',
+    chipClass: 'text-git-status-added bg-git-status-added/15',
   },
 };
+
+/** 变更字母 → 主导状态（字母是状态的投影，不携带独立色板）。 */
+const LETTER_TO_STATUS = new Map<string, DominantStatus>([
+  ['!', 'conflict'],
+  ['D', 'deleted'],
+  ['M', 'modified'],
+  ['R', 'renamed'],
+  ['U', 'untracked'],
+  ['A', 'added'],
+]);
+
+/**
+ * 变更字母（M/A/D/R/U/!）→ 名字色 class。commit log 图标等字母形态消费方
+ * 统一经此回落；未知字母回落到 modified（与既有 diff 徽标默认一致），返回值永不为空。
+ */
+export function statusLetterToTextClass(letter: string): string {
+  return STATUS_PRESENTATION[LETTER_TO_STATUS.get(letter) ?? 'modified'].textClass;
+}
+
+/** 变更字母 → 徽标 chip 类（text + 半透明底色）；未知字母回落 modified。 */
+export function statusLetterToChipClass(letter: string): string {
+  return STATUS_PRESENTATION[LETTER_TO_STATUS.get(letter) ?? 'modified'].chipClass;
+}
 
 // ─── Monoid ───────────────────────────────────────────────────────────────────
 
@@ -393,14 +417,12 @@ function stripDeletedPropagation(s: GitStatusSummary): GitStatusSummary {
   };
 }
 
-/** summary → 行尾徽标（badge 字母 + Badge variant）；无状态返回 null */
-export function summaryToBadge(
-  s: GitStatusSummary,
-): { badge: BadgeLetter; variant: StatusVariant } | null {
+/** summary → 行尾徽标（badge 字母 + chip 类）；无状态返回 null */
+export function summaryToBadge(s: GitStatusSummary): { badge: BadgeLetter; chip: string } | null {
   const d = dominantStatus(s);
   if (d === null) return null;
   const p = STATUS_PRESENTATION[d];
-  return { badge: p.badge, variant: p.variant };
+  return { badge: p.badge, chip: p.chipClass };
 }
 
 /**
@@ -524,7 +546,7 @@ export function resolveDecoration(
     return {
       color: statusToNameColorClass(status, ignored, isActive),
       badge: p.badge,
-      variant: p.variant,
+      chip: p.chipClass,
       dot: p.dotClass,
       dimmed: false,
     };
