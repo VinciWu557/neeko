@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 274
-- **Last Active**: 2026-10-13
+- **Total Sessions**: 277
+- **Last Active**: 2026-10-14
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~660 | Active |
+| `journal-6.md` | ~757 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 277 | 2026-10-14 | 10-13 S1/S2/S4结构拆分+主会话校验 | `a73c0f0a` | `main` |
+| 276 | 2026-10-14 | 10-13 B1-B3修复+校验+spec沉淀 | `d947ec72` | `main` |
+| 275 | 2026-10-13 | agent 插入接通 + 前台仲裁归一（10-13 批 1–5） | - | `main` |
 | 274 | 2026-10-13 | 运行根按 Workspace 寻址：终端/任务 cwd 身份化 + 三环境统一 | `fbe6f4de`, `ce4f76ba`, `c29b3395`, `efb04ba6` | `main` |
 | 273 | 2026-10-12 | terminal 插入链路 WorkspaceSession 寻址迁移（env-blind 键 + session 内路由 + 护栏） | - | `main` |
 | 272 | 2026-10-12 | 收尾 10-08 命名收敛：核验 AC 并归档 | `f784b8e7` | `main` |

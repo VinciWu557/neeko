@@ -658,3 +658,100 @@ terminal 缓存键统一为 terminalAddress(session,...)；读侧/③ 面（前�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 275: agent 插入接通 + 前台仲裁归一（10-13 批 1–5）
+
+**Date**: 2026-10-13
+**Task**: agent 插入接通 + 前台仲裁归一（10-13 批 1–5）
+**Branch**: `main`
+
+### Summary
+
+接通 agent 投递（agentInputRegistry 身份注册表，决议 Q1/Q5=A）并把「该往哪个 tab」收敛为 terminalRouting 唯一 order 升序仲裁（决议 Q2）；删 INSERT_TO_AGENT_INPUT_EVENT / isTextInputElement / pasteToTerminal 与 Map 插入顺序第二口径；新护栏 check_terminal_foreground_arbitration（A1 口径唯一+台账 / A2 第二口径退出 / A3 tabId 必填 / A4 声明的 DOM 事件必须有消费点）与 check_terminal_key_mint G3 材质双档，三条不变量登台账；交互 spec 整节重写。pnpm check 28/28 全绿；pnpm tauri dev 真机核验未执行（无 GUI），PTY 回收与多 pane 行为仍待真机确认。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 276: 10-13 B1-B3修复+校验+spec沉淀
+
+**Date**: 2026-10-14
+**Task**: 10-13 B1-B3修复+校验+spec沉淀
+**Branch**: `main`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d947ec72` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 277: 10-13 S1/S2/S4结构拆分+主会话校验
+
+**Date**: 2026-10-14
+**Task**: 10-13 S1/S2/S4结构拆分+主会话校验
+**Branch**: `main`
+
+### Summary
+
+(Add summary)
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a73c0f0a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
