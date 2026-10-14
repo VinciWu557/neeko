@@ -1,11 +1,20 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { Info, CircleCheckBig, CircleAlert, CircleX, Copy, Check } from 'lucide-react';
+import {
+  Info,
+  CircleCheckBig,
+  CircleAlert,
+  CircleX,
+  Copy,
+  Check,
+  ExternalLink,
+} from 'lucide-react';
 import { useState, useCallback } from 'react';
 
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
 import { useNotificationStore } from '@/shared/store/notificationStore';
+import type { Notification, NotificationType } from '@/shared/store/notificationTypes';
 
-import type { Notification, NotificationType } from '../notificationTypes';
+import { reflowFromDeepLink } from '../reflow';
 
 interface NotificationDetailProps {
   notification: Notification | null;
@@ -41,12 +50,13 @@ function formatDateTime(ts: number): string {
 export function NotificationDetail({ notification, onClose }: NotificationDetailProps) {
   const [copied, setCopied] = useState(false);
   const addNotification = useNotificationStore((s) => s.addNotification);
+  const markAsRead = useNotificationStore((s) => s.markAsRead);
   const copyToClipboard = useCopyToClipboard();
 
   const handleCopy = useCallback(async () => {
     if (!notification) return;
     const ok = await copyToClipboard(
-      `[${notification.title}]\n${notification.message}\n\n${formatDateTime(notification.timestamp)}`,
+      `[${notification.title}]\n${notification.subtitle ? notification.subtitle + '\n' : ''}${notification.message}\n\n${formatDateTime(notification.timestamp)}`,
       'notification',
     );
     if (ok) {
@@ -60,6 +70,14 @@ export function NotificationDetail({ notification, onClose }: NotificationDetail
       });
     }
   }, [notification, addNotification, copyToClipboard]);
+
+  /** 精确回流（D9）：复用既有 selectProject+activateTab 路径；找不到目标（会话已关）静默关闭。 */
+  const handleOpenSession = useCallback(() => {
+    if (!notification?.deepLink) return;
+    markAsRead(notification.id);
+    reflowFromDeepLink(notification.deepLink);
+    onClose();
+  }, [notification, markAsRead, onClose]);
 
   if (!notification) return null;
 
@@ -99,6 +117,9 @@ export function NotificationDetail({ notification, onClose }: NotificationDetail
           </div>
 
           <div className="px-4 py-3">
+            {notification.subtitle && (
+              <p className="text-[11px] text-text-muted mb-2 truncate">{notification.subtitle}</p>
+            )}
             <p className="text-xs text-text-primary whitespace-pre-wrap break-words leading-relaxed select-text">
               {notification.message}
             </p>
@@ -108,6 +129,16 @@ export function NotificationDetail({ notification, onClose }: NotificationDetail
           </div>
 
           <div className="px-4 py-3 border-t border-border flex justify-end gap-2">
+            {notification.deepLink && (
+              <button
+                type="button"
+                onClick={handleOpenSession}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md bg-popover border border-border text-text-primary hover:bg-hover transition-colors cursor-pointer"
+              >
+                <ExternalLink size={12} />
+                Open session
+              </button>
+            )}
             <button
               type="button"
               onClick={handleCopy}

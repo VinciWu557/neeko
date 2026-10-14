@@ -25,6 +25,8 @@
     "core:webview:allow-webview-close",
     "core:webview:allow-set-webview-focus",
     "dialog:allow-open",
+    "notification:allow-register-listener",
+    "notification:allow-remove-listener",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "core:path:default"

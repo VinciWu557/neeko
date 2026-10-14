@@ -20,6 +20,7 @@ import EditorSettingsPanel from './EditorSettingsPanel';
 import GitPanel from './GitPanel';
 import IdePanel from './IdePanel';
 import LspPanel from './LspPanel';
+import NotificationSettingsSection from './NotificationSettingsSection';
 import ProjectPanel from './ProjectPanel';
 import SettingsSidebar from './SettingsSidebar';
 import ShortcutPanel from './ShortcutPanel';
@@ -229,6 +230,9 @@ function SettingsView() {
 
       case 'shortcuts':
         return <ShortcutPanel config={config} onConfigChange={onConfigChange} />;
+
+      case 'notifications':
+        return <NotificationSettingsSection />;
 
       case 'about':
         return <AboutPanel />;

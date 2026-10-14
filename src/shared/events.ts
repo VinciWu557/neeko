@@ -25,6 +25,10 @@ export const GIT_OPERATION_OUTPUT_EVENT = 'git-operation-output';
 /** 应用关闭请求事件（后端阻止关闭后通知前端弹「确认退出」框）：`app-close-requested` */
 export const APP_CLOSE_REQUESTED_EVENT = 'app-close-requested';
 
+/** 通知投递事件（后端投递系统通知的同时携带 draft 载荷，前端写 in-app 列表 + deep link 映射；
+ * 与 `src-tauri/src/notification/dispatch.rs` 常量保持同步）：`notification-delivered` */
+export const NOTIFICATION_DELIVERED_EVENT = 'notification-delivered';
+
 // ── LSP 事件（与 src-tauri/src/lsp/types.rs 常量保持同步）──
 
 /** LSP 自动安装进度事件：`lsp-install-progress` */

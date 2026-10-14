@@ -1,3 +1,4 @@
+import { Bell } from 'lucide-react';
 import React from 'react';
 
 import {
@@ -22,6 +23,7 @@ export type NavCategory =
   | 'shortcuts'
   | 'appearance'
   | 'lsp'
+  | 'notifications'
   | 'about';
 
 export type SettingsNavId = NavCategory | `project:${string}`;
@@ -52,6 +54,11 @@ export const NAV_ITEMS: NavItem[] = [
     id: 'terminal',
     label: 'Terminal',
     icon: React.createElement(TerminalIcon, { size: 16 }),
+  },
+  {
+    id: 'notifications',
+    label: 'Notifications',
+    icon: React.createElement(Bell, { size: 16 }),
   },
   {
     id: 'agents',
