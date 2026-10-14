@@ -821,3 +821,271 @@ terminal 缓存键统一为 terminalAddress(session,...)；读侧/③ 面（前�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 280: Agent 通知 Phase A 实施（应用级 notification 域）
+
+**Date**: 2026-10-12
+**Task**: Agent 通知 Phase A 实施（应用级 notification 域）
+**Branch**: `neeko-notify`
+
+### Summary
+
+核心交付：notification/{types,policy,center,dispatch,commands}.rs 应用级核心域（语义闭集 enum + 来源开集数据、纯函数裁决 15 单测）、agent/chat/notify.rs 投影 + spawn_session_pipeline 旁路挂接、FocusTracker 挂 on_window_event、AgentChatManager 可见会话槽 + agent_chat_set_visible、三层开关设置挂 config.json、tauri-plugin-notification 2.6.0 全链路 + extra.deepLink 点击精确回流（onAction）、前端 NotificationSettingsSection + 投递列表。pnpm check 24/24 护栏全绿（Rust 1579 + 前端 4675）；useAgentChat 按 ratchet 拆两个单职责 hook 并下调基线 834→824。待办：三平台人工肉眼验收、Phase B（CLI hook 摄入）实施。详见 .trellis/tasks/10-12-agent-notify。未提交代码。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 281: Agent 通知 /neeko-check 审核整改
+
+**Date**: 2026-10-12
+**Task**: Agent 通知 /neeko-check 审核整改
+**Branch**: `neeko-notify`
+
+### Summary
+
+按审核清单修复：①capabilities notification:default 收紧为 3 项最小权限；②notification/ 依赖方向防腐护栏 check_notification_core_direction + 自测 5 例 + 不变量台账登记（本地首个吃狗粮案例：护栏命中并修正了 mod.rs 注释自复述字面量）；③NotificationSettings::normalized() 边界归一（命令 set + config 读盘双入口，含 4 项 types 单测与 camelCase 契约钉子）；④双端常量镜像测试补齐：notification-delivered 事件名、extra deepLink 键、event_keys↔NOTIFIABLE_EVENTS；⑤测试投递构造下沉 dispatch（红线 6）；⑥设置前端保存串行链（RMW 丢更新防护）+ Switch 可访问名；⑦补 useVisibleChatSession/useMessagesCacheSync/NotificationSettingsSection 测试 11 例 + manager 可见槽 Rust 单测；⑧Focused 转发从 close.rs 移至 boot.rs 组合层。test_gates 计数 19→20 同步。pnpm check 25/25 全绿。未提交代码。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 282: Agent 通知第三轮复检（能力面精确化 + 覆盖表有界）
+
+**Date**: 2026-10-12
+**Task**: Agent 通知第三轮复检（能力面精确化 + 覆盖表有界）
+**Branch**: `neeko-notify`
+
+### Summary
+
+深检上轮整改自身，发现并修复：①capabilities 收紧不彻底——对照 @tauri-apps/api PluginListener.unregister() 源码确认 JS 侧真实用量仅 register/remove-listener 两条（allow-notify 是 JS sendNotification 的权限，无调用点；Rust 原生 API 不经 ACL 校验），移除 allow-notify；②NotificationSettings.event_overrides 无体积上限（磁盘可触达边界输入）→ MAX_EVENT_OVERRIDES=64，超限整体回空=跟随类别（确定性降级），+2 单测；③修复过程中引入并被编译器当场拦下：结构体模式不支持「..绑定其余字段」，且 FRU ..self 在部分移动后会重复移动（E0425/E0382）——normalized() 改为显式全字段解构重建。复核确认：SettingsPanel revert 为零 diff、护栏正则无假阳性、event_keys/deepLink 镜像测试内容匹配。pnpm check 25/25 复绿（Rust notification 27 测）。未提交代码。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 283: Phase B 实装：外部 Agent CLI hook 摄入（源 B）
+
+**Date**: 2026-10-12
+**Task**: Phase B 实装：外部 Agent CLI hook 摄入（源 B）
+**Branch**: `neeko-notify`
+
+### Summary
+
+响应用户「启动时 hooks 没注册」的反馈：诊断确认 Phase B 未实施（用户目录无 hook 文件），随即完成 B0-B3。B0 实测推翻设计假设：opencode 1.19 事件为 session.status(idle)/permission.asked、pi 1.1 为 agent_end/tool_call(askuserquestion|requestuserinput)/ui_prompt_start，design 映射表已修订。B1：agent/hooks/{attribution,endpoint,notify,server}.rs —— std TCP 手写最小 HTTP（零新依赖），ingest 纯内核 + fail-open 204；新 platform 主题 private_file（unix 0600+rename / windows 先删后改名）；27 单测。B2：writers 受管文件语义（标记/幂等/他人文件保护/三态状态）+ 两模板（endpoint 重读+mtime 缓存+800ms fail-open+hints）+ agent_hooks_apply/status 薄命令（命令归 agent 域，依赖方向护栏逼出的正确落位）+ 设置页 cliHooks 开关串行链。B3 真机验证：dev 启动 endpoint.env 0600 发布、curl 三向 204/403/204、无投递失败。pnpm check 25/25。遗留：自有 PTY env 注入（D8 第 1 级接线）、AC11/13/14 人工项（遵守客人义务未替用户安装）、B4 WSL。未提交代码。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 284: CLI hooks 开启报错修复（opencode 目录事实源 + 开机收敛）
+
+**Date**: 2026-10-12
+**Task**: CLI hooks 开启报错修复（opencode 目录事实源 + 开机收敛）
+**Branch**: `neeko-notify`
+
+### Summary
+
+用户设置页开启 hooks 报错「opencode skipped dir not initialized」。根因两条：①opencode_plugins_dir 误用 dirs::config_dir()（macOS 指到 Library/Application Support），opencode 实际约定 XDG_CONFIG_HOME/~/.config/opencode（用户机 open-island.js 实证）；②「目录不存在即跳过」策略过保守，用户显式同意安装却半套失败还被弹错误。修复：目录解析改 opencode 自身约定（+XDG 约定测试钉子）、install 自动 create_dir_all（客人边界守在文件内容不碰他人文件）、FE 结果三级分类（failed=error/skipped=info 中性/成功=简报）、新增 reconcile_action 开机收敛纯函数（设置是意图文件是事实，双向对齐，+5 断言）接 boot on_setup。真机验证：重启后日志 reconciling install → opencode: ok + pi unchanged，两文件落盘带标记，第二次启动零冗余（幂等）。29 Rust hooks 测 + FE 93 测 + 25/25 全绿。未提交代码。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 285: macOS 系统通知修复：UNUserNotificationCenter 后端替换失效的 NSUserNotification
+
+**Date**: 2026-10-12
+**Task**: macOS 系统通知修复：UNUserNotificationCenter 后端替换失效的 NSUserNotification
+**Branch**: `neeko-notify`
+
+### Summary
+
+用户反馈通知只在应用内可见、系统层无横幅。根因取证：tauri-plugin-notification 2.6.0 的 macOS 底座是 notify-rust 4.18 的 NSUserNotificationCenter 路径（Apple 已在 macOS 26+ 移除，调用成功但静默无显示，与日志零错误吻合；Linux/Windows 底座仍活）。修复：新 platform 主题 system_notify（红线 10 三平台形态：macos=UNUserNotificationCenter via objc2+block2，default=插件路径），dispatch 平台后端优先回退插件；裸 dev 二进制 bundleIdentifier 守卫防 UN abort（dev 无系统横幅为诚实现状，打包后走通）；thread_local 主线程缓存 center + 一次授权请求（denied 时区分弹窗未答/系统拒绝注册并带 NSError 描述）。真机验证：tauri build --debug 产 Neeko.app，注入 hook 事件 → 链路打到 requestAuthorization，系统授权弹窗挂起等待用户（上一轮未签名时报 denied 带出错误路径工作正常）。25/25 门禁全绿。遗留：用户在弹窗点允许后做最终横幅目视；UN 点击 delegate（userInfo deepLink 精确回流）登记后续。未提交代码。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 286: Agent 通知第四轮 /neeko-check 审计与整改
+
+**Date**: 2026-10-13
+**Task**: Agent 通知第四轮 /neeko-check 审计与整改
+**Branch**: `neeko-notify`
+
+### Summary
+
+增量审计 68 个文件，重点覆盖前三轮未审的 `agent/hooks/*`（Phase B 全域）、
+`platform/{system_notify,private_file}/*`、`dispatch.rs` 平台回退、`app/boot.rs` 接线与前端
+设置分区，产出 2 Block + 8 Warning + 6 Nit，本轮全部整改完毕。
+
+### Main Changes
+
+**Block 1 · 跨平台编译（红线 10 / CI 阻断）** —— `platform/system_notify/default.rs` 的 stub 被
+clippy `missing_const_for_fn` 逼成 `const fn`，却按值收 `String` → 参数在函数尾要跑 `Drop` →
+`E0493: destructor of String cannot be evaluated at compile-time`。在工作区内用同签名最小样本
+实测复现。本地 `pnpm check` 25/25 是假绿：macOS 走 `macos.rs`，该文件根本不进编译单元，
+Windows/Linux CI 矩阵一编译即红。修法 = 门面签名改 `&str`（借用无析构，`const fn` 合法且
+红线 10 仍满足），owned 化下沉进真要跳主线程的 macOS 腿内部，`dispatch.rs` 两处 `.clone()`
+随之消失（Win/Linux 不再为空 stub 白克隆）。陷阱已固化进
+`.trellis/spec/backend/quality-guidelines.md`「平台差异集中化」。
+
+**Block 2 · 域启动不变量** —— ingest 启动 + 开机收敛内联在组合根 `on_setup`（还在裸块里
+`use ...writers`），违反 `src-tauri/AGENTS.md`「每域启动期只暴露一个 boot 入口，组合根只管
+顺序与失败策略」；实测四域都有 `boot.rs`，唯独 `agent/hooks` 没有。新增
+`agent/hooks/boot.rs::boot(app, neeko_dir, want_cli_hooks)`，入参给「具体事实」而非
+`&AppStateWrapper`（对齐 `lsp::boot::attach` 既有写法），组合根降到一次调用。
+
+**Warning 整改**
+- 红线 13：`endpoint.rs` 的 `/tmp/x`、`writers.rs` 的 `/xdg-base-test` 夹具改 `tempdir()` 派生；
+  `XDG_CONFIG_HOME` 改写包进 `ScopedEnv`（Drop 还原，断言 panic 也不污染同进程）。
+- DRY / 开闭：`(source, 目录, 文件名, 模板)` 三处手抄 + `HOOK_TARGET_CLIS` 计数常量 +
+  `server::KNOWN_SOURCES` 白名单（接第三个 CLI 要改 5 处，一致性只剩注释级约定）→ 合并为
+  `targets::HOOK_TARGETS` 单表；writers 三动作变成对表的遍历，目录解析（环境事实）与文件动作
+  （纯逻辑）分层为 `*_all` / `*_at`，后者可 tempdir 直测；ingest 路由白名单由表派生。
+- 跨语言契约：hook 回执从 `Vec<String>`（前端 `includes('failed')` 嗅英文散文）改为机器可读
+  `HookApplyOutcome{source,status,detail}` + `HookApplyStatus` 枚举，前端按 status 分类且只呈现
+  失败/跳过项；补 Rust↔TS 镜像测试（5 枚举值 + 字段名），模板锚点测试改为引用 `TOKEN_HEADER` /
+  `ENV_KEY_*` 常量本身。`HookInstallStatus.cli` 更名 `source`，与路由段同一个事实只留一个名字。
+- 资源底线：accept 循环每连接无条件 `thread::spawn` 且无上限 → `InflightGuard`（RAII，拒绝路径
+  必须归还 `fetch_add` 的计数，否则永久泄漏名额），上限 16 + 单测证明不泄漏。
+- 护栏与文档一致：`check_notification_core_direction` docstring 声称禁 `app/core/…` 而元组里没有
+  （`crate::app::` 静默漏检）→ docstring 改为「清单 = 元组本身」，元组补 `app`、删已不存在的
+  `skill`，selftest 补 `crate::app::` 违规 / `crate::app_state::` 允许两条边界。
+- 文档漂移：`dispatch.rs` 头「平台差异全部由插件处理」（UN 后端上线后为假）、`notification/mod.rs`
+  同句、`endpoint.rs` 指向不存在的 `IngestServer::start`、design.md「官方插件即平台层」判断行
+  → 全部按实测改写，design 增 v3.2 修订记录；`head_complete` 去掉无用入参；opencode 模板
+  `sessionDirs` 加 200 上限防常驻进程无界增长。
+
+### Git Commits
+
+(No commits - 仓库约定「不要主动提交代码」)
+
+### Testing
+
+- [OK] `pnpm check` 25/25 全绿（Rust 单测 + 前端 + 461 条护栏用例 + eslint/tsc + clippy -D warnings）
+- [OK] 新增/改写：`writers` 9 条（目录缺失创建 / 幂等 Applied+Unchanged / 他人文件与非 UTF-8
+  双拒覆盖 / 状态四态 / 卸载三态 / 查询不建目录 / 模板锚点引常量 / 收敛决策 / 双端镜像契约）、
+  `targets` 4 条（XDG 约定 + 空值兜底 + pi 目录 + 表自洽唯一性）、`server` 2 条
+  （路由白名单派生自表 + InflightGuard 不泄漏名额）
+- [--] 未做真机启动验证：另一工作树 `~/RustroverProjects/neeko` 有正在运行的 Neeko 实例，再起一个
+  会用新端口/token 覆盖共享的 `~/.neeko/agent-hooks/endpoint.env`，打断用户当前实例的 hook 摄入，
+  并与 `sessions.json` 抢同一份状态 —— 属侵入性副作用，停在单测 + 门禁层
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- macOS UN 后端点击 delegate（`userInfo.deepLink` 精确回流）未接，当前应用内列表兜底
+- **已知限制（本轮新发现，未改语义）**：`version_current` 只比归属标记里的应用版本、不比模板正文
+  → 同版本号内改模板不会自动推到用户机器（本轮 `sessionDirs` 上限即属此类）。改成与 `render()`
+  全文比对可自愈，但会覆盖用户对受管文件的手改；模板头写的是「请勿原地编辑」，两种语义都说得通，
+  留给下次决策
+- `platform/notify_base` 与新增 `system_notify` 名字相邻易误读（实为浏览器注入 URI 基地址，
+  零重叠），更名 `uri_base` 待办
+- 自有 PTY 的 `NEEKO_SESSION_ID/PROJECT_ID` env 注入未接线（归属链第 1 级数据源）
+- B4 WSL / E5 SSH 可达性；AC11/13/14 人工目视项；代码待用户授权后提交

@@ -14,6 +14,7 @@ use crate::agent::chat::events::{
 };
 
 use crate::agent::chat::manager::SessionHandle;
+use crate::agent::chat::notify;
 use crate::agent::chat::session_store::{ResumeCursor, SessionStatus};
 use crate::common::agent::types::AgentConfig;
 use crate::core::project::ProjectEnvironment;
@@ -48,6 +49,10 @@ pub struct StreamRequest {
     /// to the agent's configured default.
     #[serde(default)]
     pub model_id: Option<String>,
+    /// 会话主题（R7.4）：恢复既有会话时由前端传入 agent 原生标题
+    /// （conversation 扫描得到的 `userTitle` / `title`）；新会话留空，由首轮 prompt 兜底。
+    #[serde(default)]
+    pub topic: Option<String>,
 }
 
 /// Map a project environment to the protocol's `env` string.
@@ -293,16 +298,57 @@ pub(crate) fn spawn_session_pipeline(
     // 方案 B1（合帧）：bridge 按 16ms 窗口聚合成批 emit —— 一次 emit = 一次
     // evaluateJavaScript（macOS 上 Tauri 事件送达），batch 内事件一次送达，
     // eval 频率从「每增量一次」降到「每帧一次」。
+    //
+    // 通知旁路 sink（design T2，源 A）：仅 chat 通道订阅 —— 翻译事件不产生系统通知。
+    // 投影是 agent 域知识（notify.rs），裁决/投递属应用级核心域（crate::notification）；
+    // 锁内同步纯函数（微秒级）+ 异步投递，不反压主链路。
+    let notify_ctx = (event_name == AGENT_CHAT_EVENT).then(|| {
+        notify::SessionNotifyContext::new(
+            session_id.clone(),
+            req.agent_id.clone(),
+            resolve_project_ctx(state, &req.project_id)
+                .map(|(name, _, _)| name)
+                .unwrap_or_else(|_| req.project_id.clone()),
+            req.topic.clone(),
+            &req.prompt,
+        )
+    });
+    let center = state.notification.clone();
     let handle = app_handle.clone();
     let manager = state.agent_chat_manager.clone();
     let sid = session_id.clone();
     tauri::async_runtime::spawn(async move {
+        let notify_handle = handle.clone();
+        let visible_manager = manager.clone();
         let emit = move |seq_evs: Vec<SequencedEvent>| {
             let _ = handle.emit(event_name, &seq_evs);
+            let Some(ctx) = &notify_ctx else { return };
+            let visible = visible_manager.visible_session();
+            for seq in &seq_evs {
+                if let Some(signal) = notify::project(&seq.event, ctx) {
+                    let instance_visible =
+                        visible.as_deref() == Some(signal.source.instance_id.as_str());
+                    center.observe(&notify_handle, signal, instance_visible);
+                }
+                if notify::is_session_terminal(&seq.event) {
+                    center.release_instance("agent", &ctx.session_id);
+                }
+            }
         };
         let _ = AgentChatBridge::run(sid.clone(), session, emit).await;
         manager.unregister(&sid);
     });
+}
+
+/// Report the chat session currently visible to the user (R2.1 focus-suppression
+/// fact source; `None` = user is not looking at a chat session).
+#[tauri::command]
+pub fn agent_chat_set_visible(
+    session_id: Option<String>,
+    state: State<'_, AppStateWrapper>,
+) -> Result<(), AppError> {
+    state.agent_chat_manager.set_visible_session(session_id);
+    Ok(())
 }
 
 /// Build the resume cursor for chat session persistence (P2).

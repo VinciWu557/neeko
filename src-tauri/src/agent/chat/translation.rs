@@ -100,6 +100,7 @@ pub async fn translation_stream(
         mode: Some("auto".into()),
         session_id: None,
         model_id: req.model_id.clone(),
+        topic: None, // 翻译会话不产生系统通知（translate 通道不投影，见 spawn_session_pipeline）
     };
 
     let context = build_translation_context(&req, &project_path, &project_name, &env, &session_id);

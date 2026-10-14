@@ -1,6 +1,6 @@
 {
   "name": "neeko",
-  "version": "1.0.6",
+  "version": "1.0.9",
   "private": true,
   "type": "module",
   "scripts": {
@@ -67,9 +67,10 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-virtual": "^3.14.10",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "2.12.3",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-notification": "^2",
     "@uiw/codemirror-themes": "^4.25.9",
     "@uiw/react-codemirror": "^4.23.10",
     "@xterm/addon-canvas": "0.8.0-beta.48",
@@ -101,7 +102,7 @@
     "@commitlint/config-conventional": "^21.2.0",
     "@rolldown/pluginutils": "^1.0.1",
     "@tailwindcss/vite": "^4.2.2",
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "2.12.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

@@ -11,6 +11,7 @@
 //! | 主题 | 统一接口 | 主要来源 |
 //! |------|---------|---------|
 //! | `reveal` | `build_reveal_command` / `normalize_path` | `file/commands.rs` |
+//! | `private_file` | `write_private_atomic` | `agent/hooks/endpoint.rs`（0600 + 原子替换） |
 //! | `process_tree` | `snapshot_process_tree` | `terminal/process_reaper.rs` |
 //! | `process_memory` | `sample_process_memory_mb` | `lsp/session/utils.rs` |
 //! | `host_path` | `resolve_host_path` | `core/exec_env.rs` |
@@ -26,6 +27,7 @@
 //! | `watch_backend` | `watch_backend` / `create_file_watcher` / `PlatformWatcher` | `common/file/watcher/registration/strategy.rs` + `manager/core.rs` |
 //! | `fonts` | `get_system_fonts` | `common/utils/fonts.rs` |
 //! | `close_tab` | `CloseTabFlag`（`mark` / `take`） | `app/close.rs` |
+//! | `system_notify` | `try_deliver` | `notification/dispatch.rs`（macOS=UNUserNotificationCenter；其余同签名 stub 回退官方插件） |
 
 pub mod close_tab;
 pub mod devtools;
@@ -37,9 +39,12 @@ pub mod ide_launch;
 pub mod menu;
 pub mod notify_base;
 pub mod path_identity;
+pub mod private_file;
 pub mod process_memory;
 pub mod process_spawn;
 pub mod process_tree;
 pub mod reveal;
 pub mod shell_launch;
+/// 系统通知投递的平台后端（macOS=UNUserNotificationCenter；其余回退官方插件）。
+pub mod system_notify;
 pub mod watch_backend;

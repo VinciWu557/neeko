@@ -26,6 +26,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .register_uri_scheme_protocol("neeko", crate::browser::uri_scheme::create_handler())
         .manage(Arc::clone(&library_store))
         .manage(AppStateWrapper::new_with_library_store(library_store))
@@ -38,6 +39,15 @@ pub fn run() {
             crate::app_menu::handle_menu_event(app, event.id().0.as_str(), &menu_close_tab);
         })
         .on_window_event(move |window, event| {
+            // 焦点态是通知抑制判定的输入（R2.1）：组合根在此一行转发给应用级通知中心，
+            // 关闭协议本身（close.rs）不承载业务事实。
+            if let tauri::WindowEvent::Focused(focused) = event {
+                window
+                    .state::<AppStateWrapper>()
+                    .notification
+                    .focus_tracker()
+                    .set(*focused);
+            }
             super::close::on_window_event(window, event, &window_close_tab);
         })
         .invoke_handler(crate::neeko_invoke_handler!())
@@ -110,6 +120,15 @@ fn on_setup(app: &tauri::App) {
     }
 
     crate::library::boot::ensure_default_tag_group(&state.library_store);
+
+    // 外部 Agent CLI hook（源 B，design §2.5）：本域启动只暴露一个入口，与四域对称。
+    // 旁路能力 —— 域内自记日志，失败只降级 CLI hook 通知，绝不阻断启动。
+    crate::agent::hooks::boot::boot(
+        app.handle().clone(),
+        state.storage_manager.get_config_dir().to_path_buf(),
+        state.notification.settings_snapshot().cli_hooks,
+        state.runtime.clone(),
+    );
 }
 
 /// 注入主窗口句柄：菜单/事件统一从 AppState 取，避免运行时查找依赖 Tauri 内部

@@ -154,6 +154,11 @@ fn translate_event(
             translate_part_updated(session_id, properties, part_kinds, tool_started)
         }
         "permission.asked" => translate_permission_asked(session_id, properties),
+        // opencode 的「等待用户行动」是**两个独立事件族**：permission（权限门）与
+        // question（ask 类工具阻塞，`que_` id）。serve 侧同样会发 question.asked ——
+        // 实测：serve 会话里模型调 question 工具后 `/question` 挂起待答。
+        // 缺这一条 = 自有会话的提问既不显示内联面板、也不会产生任何通知。
+        "question.asked" => translate_question_asked(session_id, properties),
         "todo.updated" => translate_todo_updated(session_id, properties),
         "session.idle" => vec![StreamEvent::TurnEnd {
             session_id: session_id.into(),
@@ -475,6 +480,54 @@ fn translate_permission_asked(
     }]
 }
 
+/// `question.asked` — ask 类工具的阻塞等待。与 `permission.asked` 是**两个独立事件族**：
+/// 权限门回答 allow/deny，提问要的是**答案文本**，故投影为 [`StreamEvent::UserInput`]
+/// （前端内联面板 → `agent_input` → 本适配器的 [`SessionRequest::Input`] →
+/// [`question_reply_url`]），而不是审批 Gate。
+///
+/// 实测（2026-10-13 发现缺口；2026-10-14 修正路由 —— 曾误写 `/api/session/...`，
+/// 该形态实测 404）：serve 会话里模型调 question 工具后 `/question` 挂起待答；
+/// 缺这一条 = 自有会话的提问既不显示面板、也不产生「等待用户行动」通知。
+fn translate_question_asked(session_id: &str, properties: &serde_json::Value) -> Vec<StreamEvent> {
+    // 提问 id（`que_…`）即回执路由键 —— 复用 `turn_id` 槽位承载（Input 只带 prompt/turn_id）。
+    let call_id = match properties.get("id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return Vec::new(),
+    };
+    // 首问：header（短标签）优先，回落 question 正文 —— 与 hook 模板同一取值口径。
+    let first = properties
+        .get("questions")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first());
+    let pick = |key: &str| {
+        first
+            .and_then(|q| q.get(key))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+    };
+    let prompt = match pick("header").or_else(|| pick("question")) {
+        Some(text) => text.to_string(),
+        None => "Agent 需要你的输入".to_string(),
+    };
+    // 候选项：`questions[0].options[].label` —— 前端面板据此渲染可点选项（无则自由文本）。
+    let options: Vec<String> = first
+        .and_then(|q| q.get("options"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|o| o.get("label").and_then(|v| v.as_str()))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    vec![StreamEvent::UserInput {
+        session_id: session_id.into(),
+        turn_id: call_id,
+        prompt,
+        options,
+    }]
+}
+
 // ── Process-level serve connection (lazy, shared) ───────────────────────────
 
 /// A shared, process-level connection to `opencode serve`.
@@ -743,10 +796,18 @@ async fn attach_streaming(
     let req_serve_sid = serve_sid.clone();
     let req_inner_sid = ctx.session_id.clone();
     let req_event_tx = event_tx.clone();
+    // question 回执按目录分片路由（`directory` 是必填 query 参数，实测缺失即 404）。
+    let req_directory = ctx.project_id.clone();
     tokio::spawn(async move {
+        // scope 在任务内构造：owned 的 base_url / directory 随闭包移入 'static 未来，
+        // 借用才合法（与 run_event_pump 的调用点同形）。
+        let scope = ServeScope {
+            base_url: &req_base,
+            directory: &req_directory,
+        };
         run_request_loop(
             &req_client,
-            &req_base,
+            scope,
             &req_serve_sid,
             &req_inner_sid,
             &req_event_tx,
@@ -774,6 +835,26 @@ async fn attach_streaming(
 pub fn event_stream_url(base_url: &str, directory: &str) -> String {
     format!(
         "{base_url}/event?directory={}",
+        urlencoding::encode(directory)
+    )
+}
+
+/// 提问回执 URL。
+///
+/// **实测（opencode 1.19.0，真 `opencode serve` + 真挂起的 question）**：
+/// - `POST /question/{requestID}/reply?directory=…` → `200 true`，问题被消费；
+/// - `POST /api/session/{sid}/question/{rid}/reply`（带或不带 directory）→ `404
+///   QuestionNotFoundError` —— 路由表里那一族是**内部 SDK 面**，serve 的公开面不带 `/api`
+///   前缀且不带 session 段。
+///
+/// `directory` 是**必填** query 参数（serve 按目录分片路由，缺失即查不到该 question）。
+/// 调用方另须检查状态码：serve 对未知路由回落 SPA `index.html`（200 + HTML），而 reqwest
+/// 默认对 4xx/5xx 返回 `Ok` —— 只看 `Err` 会把失败当成功，表现为「用户已回答但 agent
+/// 永久挂起」且零日志。
+#[must_use]
+pub fn question_reply_url(base_url: &str, directory: &str, request_id: &str) -> String {
+    format!(
+        "{base_url}/question/{request_id}/reply?directory={}",
         urlencoding::encode(directory)
     )
 }
@@ -915,16 +996,67 @@ async fn process_buffered_lines(
     }
 }
 
+/// POST 一个 serve 回执并**校验响应**（approve / question reply / prompt 共用）。
+///
+/// 为什么不能只判 `Err`（实测 opencode 1.19.0）：
+/// - reqwest 默认对 4xx/5xx 返回 `Ok` → `404 QuestionNotFoundError` 会被当成投递成功；
+/// - serve 对**未匹配路由**回落 SPA `index.html`（`200 + text/html`）→ 连状态码都是绿的。
+///
+/// 两者叠加的故障形态：用户点了「回答」，Neeko 记一条成功日志都没有，agent 永久挂起。
+/// 故这里额外把 html 回落判为失败（正确回执是 `200 application/json` 或 `204`）。
+async fn post_serve(
+    client: &reqwest::Client,
+    url: &str,
+    body: Option<&serde_json::Value>,
+    what: &str,
+) {
+    let request = match body {
+        Some(body) => client.post(url).json(body),
+        None => client.post(url),
+    };
+    match request.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let html_fallback = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.contains("text/html"));
+            if !status.is_success() || html_fallback {
+                log::warn!(
+                    "[ServeAdapter] {what} 未生效: HTTP {status} html_fallback={html_fallback} {url}"
+                );
+            }
+        }
+        Err(e) => log::warn!("[ServeAdapter] {what} 请求失败: {e} {url}"),
+    }
+}
+
+/// serve 请求作用域：实例地址 + 项目目录。
+///
+/// 二者共同决定一条会话的路由（serve 按 `directory` 分片，实测缺 directory 的 question
+/// 回执返回 404），故合成一个参数：既表达「这是一个概念」，也让 `run_request_loop`
+/// 待在 clippy `too_many_arguments`（≤7）内。
+#[derive(Clone, Copy)]
+struct ServeScope<'a> {
+    base_url: &'a str,
+    directory: &'a str,
+}
+
 /// Page → agent request loop: approve / turn / input / cancel.
 async fn run_request_loop(
     client: &reqwest::Client,
-    base_url: &str,
+    scope: ServeScope<'_>,
     serve_sid: &str,
     session_id: &str,
     event_tx: &mpsc::Sender<StreamEvent>,
     model_id: Option<String>,
     mut req_rx: mpsc::Receiver<SessionRequest>,
 ) {
+    let ServeScope {
+        base_url,
+        directory,
+    } = scope;
     while let Some(req) = req_rx.recv().await {
         match req {
             SessionRequest::Approve { call_id, allow } => {
@@ -932,9 +1064,13 @@ async fn run_request_loop(
                 let body = serde_json::json!({
                     "response": if allow { "once" } else { "reject" }
                 });
-                if let Err(e) = client.post(&url).json(&body).send().await {
-                    log::warn!("[ServeAdapter] permission reply failed for {call_id}: {e}");
-                }
+                post_serve(
+                    client,
+                    &url,
+                    Some(&body),
+                    &format!("permission reply {call_id}"),
+                )
+                .await;
             }
             SessionRequest::Turn {
                 prompt,
@@ -944,22 +1080,32 @@ async fn run_request_loop(
                 // otherwise keep the session's initial model (or serve default).
                 let url = format!("{base_url}/session/{serve_sid}/prompt_async");
                 let body = prompt_body(&prompt, turn_model_id.as_deref().or(model_id.as_deref()));
-                if let Err(e) = client.post(&url).json(&body).send().await {
-                    log::warn!("[ServeAdapter] prompt_async failed: {e}");
-                }
+                post_serve(client, &url, Some(&body), "prompt_async").await;
             }
-            SessionRequest::Input { prompt, .. } => {
-                let url = format!("{base_url}/session/{serve_sid}/prompt_async");
-                let body = prompt_body(&prompt, model_id.as_deref());
-                if let Err(e) = client.post(&url).json(&body).send().await {
-                    log::warn!("[ServeAdapter] prompt_async failed: {e}");
+            SessionRequest::Input { turn_id, prompt } => {
+                // 提问回执（`que_…` id，见 translate_question_asked）走 question 专用端点。
+                // 权限门（allow/deny）与提问（答案文本）是两套协议、两个路由，不可混用。
+                if turn_id.starts_with("que_") {
+                    let url = question_reply_url(base_url, directory, &turn_id);
+                    let body = serde_json::json!({ "answers": [[prompt]] });
+                    post_serve(
+                        client,
+                        &url,
+                        Some(&body),
+                        &format!("question reply {turn_id}"),
+                    )
+                    .await;
+                } else {
+                    let url = format!("{base_url}/session/{serve_sid}/prompt_async");
+                    let body = prompt_body(&prompt, model_id.as_deref());
+                    post_serve(client, &url, Some(&body), "prompt_async (input)").await;
                 }
             }
             SessionRequest::Cancel => {
+                // abort 无请求体；同样必须校验响应 —— 静默失败时前端已显示「已停止」
+                // 但 serve 侧模型仍在跑并继续计费。
                 let url = format!("{base_url}/session/{serve_sid}/abort");
-                if let Err(e) = client.post(&url).send().await {
-                    log::warn!("[ServeAdapter] abort failed: {e}");
-                }
+                post_serve(client, &url, None, "abort").await;
                 let _ = event_tx
                     .send(StreamEvent::SessionDone {
                         session_id: session_id.into(),
@@ -1070,6 +1216,29 @@ mod tests {
             event_stream_url("http://127.0.0.1:55652", "/Users/demo/my proj"),
             "http://127.0.0.1:55652/event?directory=%2FUsers%2Fdemo%2Fmy%20proj"
         );
+    }
+
+    /// 提问回执路由（实测钉死，2026-10-14）：serve 的公开面是
+    /// `POST /question/{requestID}/reply?directory=…`（`200 application/json` + `true`）。
+    ///
+    /// 曾经写错的形态 `POST /api/session/{sid}/question/{rid}/reply` 实测返回
+    /// `404 QuestionNotFoundError` —— 那一族是内部 SDK 面。写错时用户点「回答」后
+    /// agent 永久挂起，故连 URL 形状一起钉住。
+    #[test]
+    fn question_reply_url_uses_public_route_with_directory() {
+        assert_eq!(
+            question_reply_url("http://127.0.0.1:55652", "/Users/demo/my proj", "que_abc"),
+            "http://127.0.0.1:55652/question/que_abc/reply?directory=%2FUsers%2Fdemo%2Fmy%20proj"
+        );
+    }
+
+    /// 回执路由**不得**带 `/api` 前缀，也**不得**漏 `directory`（两者实测都是 404）。
+    #[test]
+    fn question_reply_url_shape_guards() {
+        let url = question_reply_url("http://h:1", "/tmp/p", "que_1");
+        assert!(!url.contains("/api/"), "serve 公开面无 /api 前缀：{url}");
+        assert!(url.contains("directory="), "directory 必填：{url}");
+        assert!(url.starts_with("http://h:1/question/que_1/reply?"), "{url}");
     }
 
     #[test]
@@ -1216,24 +1385,88 @@ mod tests {
         );
     }
 
+    /// `question.asked`（ask 类工具阻塞）→ `UserInput`。
+    ///
+    /// 载荷是 **2026-10-14 从真 `opencode serve` 的 `GET /event` SSE 流抓下来的逐字样本**
+    /// （`question.asked` 1 条，见 `/tmp/sse3.txt`），不是照二进制猜的形状 —— 实测差异：
+    /// `options[]` 元素带 `description`，且**没有** `multiple` 字段。
+    /// 缺这条路由时自有会话的提问既不显示内联面板、也不产生「等待用户行动」通知。
     #[test]
-    fn permission_asked_translates_to_request_approval() {
+    fn question_asked_translates_to_user_input() {
         let event = sse_event(
-            r#"{"type":"permission.asked","properties":{"id":"per_1","sessionID":"ses_1","permission":"bash","patterns":["echo hi"],"metadata":{"command":"echo hi"},"tool":{"messageID":"msg_1","callID":"bash_0"}}}"#,
+            r#"{"id":"evt_138828573001lOkACjg0X0LELX","type":"question.asked","properties":{"id":"que_138828572001SACyo0ucRUWNvM","sessionID":"ses_ec77e6947ffegOTypRWn4THThq","questions":[{"question":"Which file should I edit?","header":"File to edit","options":[{"label":"Option A","description":"First file option"},{"label":"Option B","description":"Second file option"},{"label":"Option C","description":"Third file option"}]}],"tool":{"messageID":"msg_138827c2e001ytw2Xf8cJY8lNo","callID":"call_01a1388282d77360a7315548c045d7e5"}}}"#,
         );
         let mut kinds = HashMap::new();
         let mut started = HashSet::new();
         let ev = single(translate_event("ac_1", &event, &mut kinds, &mut started));
         match ev {
-            StreamEvent::RequestApproval {
-                call_id, tool, cmd, ..
+            StreamEvent::UserInput {
+                session_id,
+                turn_id,
+                prompt,
+                options,
             } => {
-                assert_eq!(call_id, "per_1");
-                assert_eq!(tool, "bash");
-                assert_eq!(cmd.as_deref(), Some("echo hi"));
+                assert_eq!(session_id, "ac_1");
+                // 提问 id 承载在 turn_id：回执路由键（`que_` 前缀判定 question 端点）。
+                assert_eq!(turn_id, "que_138828572001SACyo0ucRUWNvM");
+                // header 优先（短标签），与 hook 模板同一口径。
+                assert_eq!(prompt, "File to edit");
+                // 候选项必须透传且**只取 label**：前端 UserInputPanel 据此渲染可点选项，
+                // 丢了就只能让用户手打 agent 已经给了的答案；description 是面板不消费的噪声。
+                assert_eq!(
+                    options,
+                    vec![
+                        "Option A".to_string(),
+                        "Option B".to_string(),
+                        "Option C".to_string()
+                    ]
+                );
             }
-            other => panic!("expected RequestApproval, got {other:?}"),
+            other => panic!("expected UserInput, got {other:?}"),
         }
+        // 无 options（纯开放问题）→ 空 vec，前端落自由文本输入而非空选项列表。
+        let plain = sse_event(
+            r#"{"type":"question.asked","properties":{"id":"que_9","sessionID":"ses_1","questions":[{"header":"分支名","question":"用哪个分支？"}]}}"#,
+        );
+        match single(translate_event("ac_1", &plain, &mut kinds, &mut started)) {
+            StreamEvent::UserInput { options, .. } => assert!(options.is_empty()),
+            other => panic!("expected UserInput, got {other:?}"),
+        }
+    }
+
+    /// header 缺失时回落 question 正文；两者都缺 → 类别兜底（不产出空 prompt）。
+    #[test]
+    fn question_asked_falls_back_to_question_text_then_default() {
+        let with_text = sse_event(
+            r#"{"type":"question.asked","properties":{"id":"que_2","sessionID":"ses_1","questions":[{"question":"分支名是什么？"}]}}"#,
+        );
+        let defaulted = sse_event(
+            r#"{"type":"question.asked","properties":{"id":"que_3","sessionID":"ses_1","questions":[{"header":"  "}]}}"#,
+        );
+        let mut kinds = HashMap::new();
+        let mut started = HashSet::new();
+        let prompts: Vec<String> = [with_text, defaulted]
+            .iter()
+            .map(
+                |e| match single(translate_event("ac_1", e, &mut kinds, &mut started)) {
+                    StreamEvent::UserInput { prompt, .. } => prompt,
+                    other => panic!("expected UserInput, got {other:?}"),
+                },
+            )
+            .collect();
+        assert_eq!(prompts[0], "分支名是什么？");
+        assert_eq!(prompts[1], "Agent 需要你的输入");
+    }
+
+    /// 缺 id → 无可回执的路由键，静默丢弃（不产生无法回答的面板）。
+    #[test]
+    fn question_asked_without_id_is_ignored() {
+        let event = sse_event(
+            r#"{"type":"question.asked","properties":{"sessionID":"ses_1","questions":[{"header":"x"}]}}"#,
+        );
+        let mut kinds = HashMap::new();
+        let mut started = HashSet::new();
+        assert!(translate_event("ac_1", &event, &mut kinds, &mut started).is_empty());
     }
 
     #[test]

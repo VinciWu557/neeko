@@ -410,6 +410,22 @@
         }
       ],
       "red_line": 12
+    },
+    {
+      "id": "notification-core-business-agnostic",
+      "title": "notification 核心域业务无关：禁止 import 业务模块（依赖方向：业务 → 门面）",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_notification_core_direction"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_notification_core_direction.py"
+        }
+      ],
+      "red_line": null
     }
   ]
 }

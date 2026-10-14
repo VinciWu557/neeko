@@ -31,6 +31,9 @@ pub struct SessionHandle {
 /// Registry of live agent chat sessions, keyed by session id.
 pub struct AgentChatManager {
     sessions: Mutex<HashMap<String, SessionHandle>>,
+    /// 当前对用户可见的 chat 会话（前端切换会话时上报；通知焦点抑制 R2.1 的事实来源）。
+    /// `None` = 无可见 chat 会话 —— 保守语义「不可见」，聚焦与否由通知核心域裁决。
+    visible_session: Mutex<Option<String>>,
     /// Session persistence backend (cursors + events).
     store: Arc<dyn SessionStore>,
 }
@@ -47,6 +50,7 @@ impl AgentChatManager {
     pub fn with_store(store: Arc<dyn SessionStore>) -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            visible_session: Mutex::new(None),
             store,
         }
     }
@@ -59,6 +63,7 @@ impl AgentChatManager {
         {
             Self {
                 sessions: Mutex::new(HashMap::new()),
+                visible_session: Mutex::new(None),
                 store: Arc::new(
                     crate::agent::chat::session_store::SqliteSessionStore::open_in_memory()
                         .expect("in-memory store"),
@@ -69,12 +74,31 @@ impl AgentChatManager {
         {
             Self {
                 sessions: Mutex::new(HashMap::new()),
+                visible_session: Mutex::new(None),
                 store: Arc::new(
                     crate::agent::chat::session_store::SqliteSessionStore::open_in_memory()
                         .unwrap_or_else(|e| panic!("in-memory store fallback: {e}")),
                 ),
             }
         }
+    }
+
+    /// 上报当前对用户可见的 chat 会话（`None` = 当前看的不 chat 会话）。
+    /// 薄命令 `agent_chat_set_visible` 的唯一落点。
+    pub fn set_visible_session(&self, session_id: Option<String>) {
+        *self
+            .visible_session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = session_id;
+    }
+
+    /// 当前可见的 chat 会话 id（通知焦点抑制读取；克隆返回，不持锁跨调用）。
+    #[must_use]
+    pub fn visible_session(&self) -> Option<String> {
+        self.visible_session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Register a session under `session_id` and persist its cursor.
@@ -208,5 +232,16 @@ mod tests {
         m.unregister("s1");
         assert!(!m.owns("s1", "opencode", "p1"));
         assert!(!m.owns("missing", "opencode", "p1"));
+    }
+
+    /// 可见会话槽（通知焦点抑制 R2.1 事实源）：set/get 往返、None 清空。
+    #[test]
+    fn visible_session_roundtrip_and_clear() {
+        let m = manager();
+        assert_eq!(m.visible_session(), None);
+        m.set_visible_session(Some("s1".into()));
+        assert_eq!(m.visible_session().as_deref(), Some("s1"));
+        m.set_visible_session(None);
+        assert_eq!(m.visible_session(), None);
     }
 }

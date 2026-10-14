@@ -346,7 +346,8 @@ class ContextCommandSetTest(unittest.TestCase):
         # + check_terminal_key_mint（terminal 键唯一 mint）
         # + check_terminal_run_root（终端/任务运行根按 Workspace 寻址）
         # + check_terminal_foreground_arbitration（前台仲裁口径唯一 + 声明的 DOM 事件要有消费点）
-        self.assertEqual(self.in_process_count("local"), 23)
+        # + check_notification_core_direction（notification 核心域业务无关，依赖方向单向）
+        self.assertEqual(self.in_process_count("local"), 24)
 
     def test_coverage_entry_is_the_manual_stage(self):
         self.assertEqual(
@@ -372,7 +373,7 @@ class ContextCommandSetTest(unittest.TestCase):
         self.assertEqual(self.command_ids("ci", suite="lint", source="python"), [])
         # 与 local 档同源（同一批进程内判据）：新增一条就要同时改这里 ——
         # 这两个数字互不相等时，意味着某条护栏只在本地跑、对 PR 零约束力（历史事故）。
-        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 23)
+        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 24)
 
 
 if __name__ == "__main__":

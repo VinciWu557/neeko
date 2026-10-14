@@ -4,8 +4,7 @@ import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/shallow';
 
 import { useNotificationStore } from '@/shared/store/notificationStore';
-
-import type { NotificationType } from '../notificationTypes';
+import type { NotificationType } from '@/shared/store/notificationTypes';
 
 import { NotificationDetail } from './NotificationDetail';
 
@@ -111,6 +110,12 @@ export function NotificationList({ buttonRef }: NotificationListProps) {
                           <span className="w-1.5 h-1.5 rounded-full bg-accent-foreground shrink-0" />
                         )}
                       </div>
+                      {/* 主题行（R7）：与原生通知第二行同源；无主题时不占位。 */}
+                      {n.subtitle && (
+                        <p className="text-[11px] text-text-primary truncate mt-0.5">
+                          {n.subtitle}
+                        </p>
+                      )}
                       <p className="text-[11px] text-text-muted truncate mt-0.5">{n.message}</p>
                     </div>
                     <span className="text-[10px] text-text-muted shrink-0 whitespace-nowrap">

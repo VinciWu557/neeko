@@ -5,6 +5,7 @@ import { useAgentActions, useAgentClickHandler } from '@/features/agent';
 import { useRemoteAuthActions } from '@/features/connection';
 import { useFileTabRefresh, useFileView, useTabManagement } from '@/features/editor';
 import { useGitConsoleBridge } from '@/features/git';
+import { useNotificationDelivered, useNotificationReflow } from '@/features/notification';
 import {
   useConnectionProjects,
   useCrossTypeSelection,
@@ -60,6 +61,9 @@ export function useAppShellData(): UseAppShellDataResult {
   }, []);
   const local = useLocalProjects();
   const session = useSessionPersistence();
+  // 系统通知投递 → in-app 通知列表 + 点击精确回流（app 级挂载一次；badge 走 status-bar）。
+  useNotificationDelivered();
+  useNotificationReflow();
   const wsl = useConnectionProjects({ environment: 'wsl', saveSession: session.saveSession });
   const remote = useConnectionProjects({
     environment: 'remote',

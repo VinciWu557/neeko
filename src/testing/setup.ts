@@ -65,6 +65,11 @@ vi.mock('@tauri-apps/api/event', () => ({
   emit: vi.fn(() => Promise.resolve()),
 }));
 
+// 全局 mock：@tauri-apps/plugin-notification（浏览器测试无 Tauri IPC，onAction 仅注册句柄）
+vi.mock('@tauri-apps/plugin-notification', () => ({
+  onAction: vi.fn(() => Promise.resolve({ unregister: vi.fn() })),
+}));
+
 // 全局 mock：@tauri-apps/api/window
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: vi.fn(() => ({

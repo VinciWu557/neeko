@@ -1,0 +1,13 @@
+# cargo target runner（仅 macOS）：让 `cargo run` 的产物跑在 .app 里。
+#
+# 为什么必须包：`UNUserNotificationCenter` 要求进程有 bundle 身份，裸 Mach-O 调用它直接 abort；
+# 而无 bundle 身份时的插件回退（`NSUserNotificationCenter`）在 macOS 26+ 已静默失效 ——
+# 开发态于是拿不到任何系统通知。逐项实测见 `scripts/macos-dev-bundle.sh` 头注释。
+#
+# 为什么放在 `src-tauri/.cargo/` 而不是仓库根：cargo 只从 **cwd 向上** 找配置，于是
+# `pnpm tauri dev` / `cargo run`（cwd=src-tauri）命中本文件；而 CI 与
+# `pnpm lint:rust:all-targets` / `pnpm test:rust` 从仓库根带 `--manifest-path` 跑
+# （cwd=仓库根）不命中 —— 门禁与测试行为零变化。
+
+[target.'cfg(target_os = "macos")']
+runner = "scripts/macos-dev-bundle.sh"

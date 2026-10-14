@@ -11,6 +11,8 @@ pub mod commands;
 pub mod events;
 pub mod manager;
 pub mod mock;
+/// Agent Chat → 通知信号投影（源 A，agent 域知识；通知核心域在 `crate::notification`）。
+pub mod notify;
 pub mod session_store;
 pub mod translation;
 

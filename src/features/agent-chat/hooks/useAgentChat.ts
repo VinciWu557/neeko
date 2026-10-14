@@ -26,9 +26,10 @@ import {
   startAgentChat,
   supportsAgentChatResume,
 } from '../api/agentChatApi';
-import { loadCachedMessages, saveCachedMessages } from '../components/messageCache';
+import { loadCachedMessages } from '../components/messageCache';
 import {
   appendDelta,
+  clipToolOutput,
   nextBlockId,
   nextMsgId,
   type Attachment,
@@ -43,20 +44,9 @@ import { normalizeToolName } from '../utils/toolNames';
 
 import { appendBlock, appendCommandBlock, attachFileDiff, findToolBlock } from './streamReducers';
 import { useDeltaBatcher, type PendingDelta } from './useDeltaBatcher';
+import { useMessagesCacheSync } from './useMessagesCacheSync';
 import { useMockEventSchedule } from './useMockEventSchedule';
-
-/** 单个 tool 输出字符上限：超过后保留尾部窗口，防无界拼接（内存治理 P2）。 */
-const MAX_TOOL_OUTPUT_CHARS = 128 * 1024;
-/** tool 输出截断标记。 */
-const TOOL_OUTPUT_TRUNCATED_MARK = '\n[output truncated - showing tail]\n';
-/** 追加 tool 输出并限制上限：超限后滑动保留尾部窗口，标记仅注入一次。 */
-function clipToolOutput(existing: string | undefined, delta: string): string {
-  const next = (existing ?? '') + delta;
-  if (next.length <= MAX_TOOL_OUTPUT_CHARS) return next;
-  const tail = next.slice(-MAX_TOOL_OUTPUT_CHARS);
-  const alreadyMarked = (existing ?? '').includes(TOOL_OUTPUT_TRUNCATED_MARK);
-  return (alreadyMarked ? '' : TOOL_OUTPUT_TRUNCATED_MARK) + tail;
-}
+import { useVisibleChatSession } from './useVisibleChatSession';
 
 export interface UseAgentChatParams {
   tabKey: string;
@@ -127,10 +117,9 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     }
   }, [agentId, selectedModel?.id, tabKey, tabId]);
 
-  // 消息变更时同步写入缓存（解决切换 tab 后消息丢失问题）
-  useEffect(() => {
-    saveCachedMessages(tabId, messages);
-  }, [tabId, messages]);
+  // 消息缓存同步 / 通知可见性事实源上报（两个单职责小 hook，见各自文件头）。
+  useMessagesCacheSync(tabId, messages);
+  useVisibleChatSession(data.sessionId);
 
   const pendingEventsRef = useRef<SequencedEvent[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -732,6 +721,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
             skills: [],
             mode: 'auto',
             modelId: targetModel?.id,
+            topic: meta.userTitle || meta.title || undefined, // R7.4：原生标题（无首轮 prompt 可回退）
           },
           meta.nativeSessionId,
         );

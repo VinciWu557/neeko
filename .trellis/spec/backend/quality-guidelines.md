@@ -249,6 +249,12 @@ pub const fn build_edit_submenu(
 }
 ```
 
+- **`const fn` stub 的参数不得带析构**：`String` / `Vec` / `PathBuf` / `Arc` 等在函数作用域末端
+  需要跑 `Drop`，而 const fn 不能求值析构 → 非目标平台报 `E0493: destructor of ... cannot be
+  evaluated at compile-time`。因为「必须 const」与「本地不编译」两条同时成立，这类签名在 mac
+  上 `cargo check`/`clippy` 全绿、CI 矩阵一编译即红（2026-10-13 实测：
+  `platform/system_notify/default.rs` 收 `String` 参数）。**门面签名优先借用入参**（`&str` /
+  `&Path`），owned 化留在真正需要 `'static` 的那条平台腿内部做。
 - 每个主题一个目录，目录内每平台一个实现文件（`macos.rs` / `linux.rs` / `windows.rs` / `unix.rs`）。
 - `mod` 声明与 `pub use` **必须同时 cfg 门控**：非活动平台的模块不编译，避免 `dead_code` 警告（clippy `-D warnings` 会拦截）。各平台实现由 CI 三平台矩阵分别编译验证。
 - **平台专属 import 只允许出现在专属实现文件内**（如 `macos.rs` 的 `use tauri::menu::PredefinedMenuItem`）；`mod.rs` 门面与业务代码禁止引入任何平台专属 import，否则非目标平台触发 `unused_imports`。
@@ -449,6 +455,29 @@ cargo fmt --check      # 格式检查
 cargo build            # Debug 构建
 pnpm tauri dev         # 完整开发环境（前端 + 后端）
 ```
+
+**macOS 开发态走 dev .app 包装**（`src-tauri/.cargo/config.toml` 的 target runner →
+`src-tauri/scripts/macos-dev-bundle.sh`）：`cargo run` 的产物先被包进 adhoc 签名的
+`target/dev-bundle/NeekoDev.app` 再执行。原因：`UNUserNotificationCenter` 要求进程有 bundle
+身份，裸二进制调用它直接 abort（`bundleProxyForCurrentProcess is nil`）；而回退路径
+（插件的 `NSUserNotificationCenter` 底座）在 macOS 26+ 已静默失效 —— 不包装 = 开发态拿不到
+任何系统通知。验证：`NEEKO_DEV_BUNDLE_TRACE=1 pnpm tauri dev` 可见
+`[dev-bundle] exec …/NeekoDev.app/Contents/MacOS/neeko`；脚本 fail-open，包装失败时打 warn
+并裸执行（只是无系统通知，应用内通知不受影响）。逐项实测与最小充分条件见脚本头注释。
+
+**前台横幅必须挂 `UNUserNotificationCenterDelegate`**（2026-10-13 实测，usernoted 日志为证）：
+`willPresentNotification` 缺席时系统对前台应用的呈现选项退化为**空集** —— 通知被收下、写进
+通知中心，但不弹横幅，且**编译/运行都不报错**：
+
+| 场景 | usernoted 记录 |
+|------|----------------|
+| 无 delegate + 应用不在前台 | `Presenting … as banner (["badge","sound","alert"])` |
+| 无 delegate + 应用在前台 | `Presenting … as banner ([])` ← 静默丢失 |
+| 有 delegate + 应用在前台 | `Presenting … as banner (["sound","list","banner"])` |
+
+Neeko 是常驻前台的应用，故 `platform/system_notify/macos.rs` 的 `NotificationDelegate` 不可删；
+回归守卫在 `macos.rs` 的 `tests` 模块（断言呈现掩码非空且含 `Banner`、委托确实实现该选择器）。
+诊断命令：`log show --last 5m --predicate 'process == "usernoted"' --style compact | grep -i neeko`。
 
 ### 质量门禁脚本
 
