@@ -46,6 +46,7 @@ import { appendBlock, appendCommandBlock, attachFileDiff, findToolBlock } from '
 import { useDeltaBatcher, type PendingDelta } from './useDeltaBatcher';
 import { useMessagesCacheSync } from './useMessagesCacheSync';
 import { useMockEventSchedule } from './useMockEventSchedule';
+import { useVisibleChatSession } from './useVisibleChatSession';
 
 export interface UseAgentChatParams {
   tabKey: string;
@@ -116,8 +117,9 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     }
   }, [agentId, selectedModel?.id, tabKey, tabId]);
 
-  // 消息缓存同步（解决切换 tab 后消息丢失问题）
+  // 消息缓存同步 / 通知可见性事实源上报（两个单职责小 hook，见各自文件头）。
   useMessagesCacheSync(tabId, messages);
+  useVisibleChatSession(data.sessionId);
 
   const pendingEventsRef = useRef<SequencedEvent[]>([]);
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -719,6 +721,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
             skills: [],
             mode: 'auto',
             modelId: targetModel?.id,
+            topic: meta.userTitle || meta.title || undefined, // R7.4：原生标题（无首轮 prompt 可回退）
           },
           meta.nativeSessionId,
         );

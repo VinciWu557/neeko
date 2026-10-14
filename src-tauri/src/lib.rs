@@ -190,6 +190,8 @@ macro_rules! neeko_invoke_handler {
             $crate::agent::chat::commands::agent_input,
             $crate::agent::chat::commands::agent_context_set,
             $crate::agent::chat::commands::agent_chat_context,
+            // chat 可见会话上报（通知焦点抑制事实源）
+            $crate::agent::chat::commands::agent_chat_set_visible,
             $crate::agent::chat::translation::translation_stream,
             // ── notification（应用级通知域薄命令）─────────────────────────────
             $crate::notification::commands::notification_settings_get,

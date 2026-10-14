@@ -20,6 +20,11 @@ export interface StreamChatRequest {
   sessionId?: string;
   /** 用户选择的模型 ID（serve 传输层按 `providerID/modelID` 传给 opencode serve）。 */
   modelId?: string;
+  /**
+   * 会话主题（R7.4）：恢复既有会话时传 agent 原生标题（conversation 的
+   * `userTitle` 优先，回退 `title`）；新会话留空 —— 后端回退首轮 prompt。
+   */
+  topic?: string;
 }
 
 /** 启动（或续写）一个流式会话，返回 sessionId。 */
@@ -58,4 +63,12 @@ export function cancelAgentStream(sessionId: string): Promise<void> {
 /** 重绑上下文（agent_context_set，A4）。 */
 export function setAgentContext(sessionId: string, manifest: ContextManifest): Promise<void> {
   return invoke<void>('agent_context_set', { sessionId, manifest });
+}
+
+/**
+ * 上报当前对用户可见的 chat 会话（通知焦点抑制 R2.1 的事实来源；
+ * `null` = 用户当前看的不 chat 会话）。失败静默 —— 不影响会话本身。
+ */
+export function setVisibleChatSession(sessionId: string | null): Promise<void> {
+  return invoke<void>('agent_chat_set_visible', { sessionId });
 }
