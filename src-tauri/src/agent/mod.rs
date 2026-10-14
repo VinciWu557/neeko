@@ -9,6 +9,8 @@ pub mod chat;
 
 pub mod commands;
 pub mod commands_commit;
+/// 外部 Agent CLI hook 摄入（源 B：endpoint/归属/投影/ingest/writers）。
+pub mod hooks;
 pub mod manager;
 pub mod model_discovery;
 pub mod path_resolver;

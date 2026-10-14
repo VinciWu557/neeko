@@ -120,6 +120,15 @@ fn on_setup(app: &tauri::App) {
     }
 
     crate::library::boot::ensure_default_tag_group(&state.library_store);
+
+    // 外部 Agent CLI hook（源 B，design §2.5）：本域启动只暴露一个入口，与四域对称。
+    // 旁路能力 —— 域内自记日志，失败只降级 CLI hook 通知，绝不阻断启动。
+    crate::agent::hooks::boot::boot(
+        app.handle().clone(),
+        state.storage_manager.get_config_dir().to_path_buf(),
+        state.notification.settings_snapshot().cli_hooks,
+        state.runtime.clone(),
+    );
 }
 
 /// 注入主窗口句柄：菜单/事件统一从 AppState 取，避免运行时查找依赖 Tauri 内部
