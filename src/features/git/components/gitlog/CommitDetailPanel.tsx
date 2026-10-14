@@ -2,15 +2,9 @@ import React, { useCallback } from 'react';
 
 import type { CommitDetail, CommitFileChange } from '@/features/git/types';
 import { cn } from '@/lib/utils';
-import {
-  GitCommitHorizontal,
-  FileText,
-  Plus,
-  Minus,
-  Pencil,
-  Trash2,
-  FilePlus,
-} from '@/shared/components/icons';
+import { GitCommitHorizontal, Minus, Plus } from '@/shared/components/icons';
+
+import { commitStatusIcon } from './commitStatusIcon';
 
 interface CommitDetailPanelProps {
   detail: CommitDetail | null;
@@ -182,13 +176,6 @@ function typeBadgeStyle(type: string): string {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-const STATUS_ICONS: Record<string, { icon: React.ReactNode; color: string }> = {
-  M: { icon: <Pencil size={10} />, color: 'text-accent-blue' },
-  A: { icon: <FilePlus size={10} />, color: 'text-accent-green' },
-  D: { icon: <Trash2 size={10} />, color: 'text-accent-red' },
-  R: { icon: <FileText size={10} />, color: 'text-accent-orange' },
-};
-
 const CommitDetailPanel: React.FC<CommitDetailPanelProps> = ({
   detail,
   files,
@@ -285,7 +272,7 @@ const CommitDetailPanel: React.FC<CommitDetailPanelProps> = ({
           </div>
         ) : (
           files.map((file) => {
-            const statusInfo = STATUS_ICONS[file.status] ?? STATUS_ICONS.M;
+            const statusInfo = commitStatusIcon(file.status, 10);
             return (
               <div
                 key={file.path}

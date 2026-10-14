@@ -41,14 +41,14 @@ describe('statusLetter', () => {
 
 describe('statusBadgeClass', () => {
   it('should_map_letter_to_badge_color', () => {
-    expect(statusBadgeClass('A')).toBe('text-accent-green bg-accent-green/15');
-    expect(statusBadgeClass('D')).toBe('text-accent-red bg-accent-red/15');
-    expect(statusBadgeClass('R')).toBe('text-accent-yellow bg-accent-yellow/15');
+    expect(statusBadgeClass('A')).toBe('text-git-status-added bg-git-status-added/15');
+    expect(statusBadgeClass('D')).toBe('text-git-status-deleted bg-git-status-deleted/15');
+    expect(statusBadgeClass('R')).toBe('text-git-status-modified bg-git-status-modified/15');
   });
 
   it('should_default_unknown_letters_to_modified_color', () => {
-    expect(statusBadgeClass('X')).toBe('text-accent-blue bg-accent-blue/15');
-    expect(statusBadgeClass('M')).toBe('text-accent-blue bg-accent-blue/15');
+    expect(statusBadgeClass('X')).toBe('text-git-status-modified bg-git-status-modified/15');
+    expect(statusBadgeClass('M')).toBe('text-git-status-modified bg-git-status-modified/15');
   });
 });
 

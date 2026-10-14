@@ -105,7 +105,7 @@ describe('ChangesSection — 冲突文件行级标记', () => {
     );
 
     expect(screen.getByTitle('Merge conflict')).toBeInTheDocument();
-    expect(screen.getByText('a.ts')).toHaveClass('text-accent-red');
+    expect(screen.getByText('a.ts')).toHaveClass('text-git-status-conflict');
   });
 
   it('非冲突文件不显示冲突图标、不标红', () => {
@@ -125,14 +125,14 @@ describe('ChangesSection — 冲突文件行级标记', () => {
     );
 
     expect(screen.queryByTitle('Merge conflict')).not.toBeInTheDocument();
-    expect(screen.getByText('a.ts')).not.toHaveClass('text-accent-red');
-    expect(screen.getByText('b.ts')).not.toHaveClass('text-accent-red');
+    expect(screen.getByText('a.ts')).not.toHaveClass('text-git-status-conflict');
+    expect(screen.getByText('b.ts')).not.toHaveClass('text-git-status-conflict');
   });
 
   it('缺 XY 的旧 payload 无法判定冲突，不标红', () => {
     render(<Section {...baseProps} files={[file({ status: 'Modified' })]} />);
 
     expect(screen.queryByTitle('Merge conflict')).not.toBeInTheDocument();
-    expect(screen.getByText('a.ts')).not.toHaveClass('text-accent-red');
+    expect(screen.getByText('a.ts')).not.toHaveClass('text-git-status-conflict');
   });
 });

@@ -11,9 +11,13 @@ import {
 } from '@/shared/components/icons';
 import type { FileChange } from '@/shared/types';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
+import { statusToNameColorClass } from '@/shared/utils/gitFileDecoration';
 import { Checkbox } from '@/ui/Checkbox';
 
 import { isConflictedEntry } from '../utils/gitStatusGroups';
+
+/** 冲突状态名字色（单一来源 gitFileDecoration，禁止本模块私持状态色）。 */
+const CONFLICT_TEXT_CLASS = statusToNameColorClass('conflict', false, false);
 
 // ── Path utilities ───────────────────────────────────────────────────────────
 
@@ -148,10 +152,10 @@ const Section: React.FC<SectionProps> = ({
                   width={14}
                   height={14}
                 />
-                {/* G6 简化契约：冲突文件行级红色警示（不再单独分组） */}
+                {/* G6 简化契约：冲突文件行级警示（不再单独分组）；色走 --git-status-conflict */}
                 {isConflictedEntry(file) && (
                   <span title="Merge conflict">
-                    <TriangleAlert size={12} className="shrink-0 text-accent-red" />
+                    <TriangleAlert size={12} className={cn('shrink-0', CONFLICT_TEXT_CLASS)} />
                   </span>
                 )}
                 {/* G6 契约：rename 条目显示 old → new（renamed_from 为 porcelain 旧路径） */}
@@ -170,8 +174,8 @@ const Section: React.FC<SectionProps> = ({
                     'shrink-0 max-w-[9rem] truncate text-[calc(var(--font-size)-1px)] font-mono text-text-primary',
                     // 已删除文件：删除线 + 弱化（文件已不存在于工作区）
                     file.status === 'Deleted' && 'line-through text-text-muted',
-                    // 未合并文件：红色警示（行级冲突标记，tailwind-merge 覆盖 Deleted 弱化色）
-                    isConflictedEntry(file) && 'text-accent-red',
+                    // 未合并文件：冲突警示（行级冲突标记，tailwind-merge 覆盖 Deleted 弱化色）
+                    isConflictedEntry(file) && CONFLICT_TEXT_CLASS,
                   )}
                 >
                   {name}

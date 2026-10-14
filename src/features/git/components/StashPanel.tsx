@@ -1,22 +1,14 @@
-import React, { useCallback } from 'react';
+import { useCallback } from 'react';
 
 import type { CommitFileChange, StashActionResult, StashEntry } from '@/features/git/types';
 import { cn } from '@/lib/utils';
-import {
-  ChevronDown,
-  ChevronRight,
-  FilePlus,
-  FileText,
-  Minus,
-  Pencil,
-  Plus,
-  Trash2,
-} from '@/shared/components/icons';
+import { ChevronDown, ChevronRight, Minus, Plus } from '@/shared/components/icons';
 import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { WorkspaceKey } from '@/shared/utils/workspaceRef';
 
 import { formatRelativeTime } from './gitlog/commitListUtils';
+import { commitStatusIcon } from './gitlog/commitStatusIcon';
 
 /** 滚动视图身份：全局唯一 surface 常量（owner 段按 Workspace 隔离）。 */
 const SCROLL_SURFACE = 'dock.git.stash';
@@ -40,14 +32,6 @@ interface StashPanelProps {
   /** 本面板渲染的 Workspace key（滚动记忆按工作区隔离）。 */
   workspaceKey: WorkspaceKey;
 }
-
-// gitlog 风格状态图标（与 CommitDetailPanel 一致）
-const STATUS_ICONS: Record<string, { icon: React.ReactNode; color: string }> = {
-  M: { icon: <Pencil size={10} />, color: 'text-accent-blue' },
-  A: { icon: <FilePlus size={10} />, color: 'text-accent-green' },
-  D: { icon: <Trash2 size={10} />, color: 'text-accent-red' },
-  R: { icon: <FileText size={10} />, color: 'text-accent-orange' },
-};
 
 /** Stash 页签：列表 + 展开文件变更 + 底部 Apply/Pop 操作栏；点击文件打开 diff tab。 */
 function StashPanel({
@@ -160,7 +144,7 @@ function StashPanel({
                       ) : (
                         <ul className="flex flex-col">
                           {expandedFiles.map((file) => {
-                            const statusInfo = STATUS_ICONS[file.status] ?? STATUS_ICONS.M;
+                            const statusInfo = commitStatusIcon(file.status, 10);
                             const i = file.path.lastIndexOf('/');
                             const name = i >= 0 ? file.path.slice(i + 1) : file.path;
                             const dir = i >= 0 ? file.path.slice(0, i) : '';

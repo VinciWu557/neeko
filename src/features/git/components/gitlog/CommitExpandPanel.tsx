@@ -1,24 +1,18 @@
 import { useMemo } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { RefObject } from 'react';
 
 import type { CommitDetail, CommitFileChange } from '@/features/git/types';
 import { cn } from '@/lib/utils';
-import { FilePlus, FileText, Minus, Pencil, Plus, Trash2 } from '@/shared/components/icons';
+import { Minus, Plus } from '@/shared/components/icons';
 
 import { commitBodyPreview, splitFilePath } from './commitListUtils';
+import { commitStatusIcon } from './commitStatusIcon';
 
 /** 展开面板最大高度——限制列表跳动并保证 graph 偏移可预测。 */
 const EXPAND_MAX_HEIGHT = 280;
 
 /** 面板主体滚动区（常量样式，避免 JSX 内联对象重建） */
 const EXPAND_BODY_STYLE = { maxHeight: EXPAND_MAX_HEIGHT, overflowY: 'auto' as const };
-
-const STATUS_ICONS: Record<string, { icon: ReactNode; color: string }> = {
-  M: { icon: <Pencil size={11} />, color: 'text-accent-blue' },
-  A: { icon: <FilePlus size={11} />, color: 'text-accent-green' },
-  D: { icon: <Trash2 size={11} />, color: 'text-accent-red' },
-  R: { icon: <FileText size={11} />, color: 'text-accent-orange' },
-};
 
 export interface CommitExpandPanelProps {
   detail: CommitDetail | null;
@@ -99,7 +93,7 @@ export function CommitExpandPanel({
           </div>
           <div>
             {files.map((f, idx) => {
-              const statusInfo = STATUS_ICONS[f.status] ?? STATUS_ICONS.M;
+              const statusInfo = commitStatusIcon(f.status, 11);
               const isFocused = idx === focusedFileIndex;
               const { name, dir } = splitFilePath(f.path);
               return (

@@ -1,3 +1,5 @@
+import { statusLetterToChipClass } from '@/shared/utils/gitFileDecoration';
+
 import type { CommitFileChange } from './types';
 
 /**
@@ -38,17 +40,7 @@ export function statusLetter(status: string): string {
 }
 
 export function statusBadgeClass(letter: string): string {
-  switch (letter) {
-    case 'A':
-      return 'text-accent-green bg-accent-green/15';
-    case 'D':
-      return 'text-accent-red bg-accent-red/15';
-    case 'R':
-      return 'text-accent-yellow bg-accent-yellow/15';
-    case 'M':
-    default:
-      return 'text-accent-blue bg-accent-blue/15';
-  }
+  return statusLetterToChipClass(letter);
 }
 
 export function sumFileStats(files: CommitFileChange[]): {
