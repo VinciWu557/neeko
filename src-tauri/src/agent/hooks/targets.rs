@@ -8,12 +8,11 @@
 
 use std::path::{Path, PathBuf};
 
-/// opencode 插件模板（1.19.0 实测事件面：session.created / session.updated /
-/// session.status(idle) / permission.asked / question.asked）。
-///
-/// 「等待用户行动」在 opencode 是**两个独立事件族**：`permission.asked`（权限门）与
-/// `question.asked`（ask 类工具阻塞）—— 只订阅前者时后者在任何通知里都不出现（实测）。
-const OPENCODE_TEMPLATE: &str = include_str!("templates/neeko-opencode-status.js");
+/// opencode 插件模板（2.x，`{id, setup}` + `ctx.event.subscribe`）。
+/// V1 模板（`templates/neeko-opencode-status.js`，1.19.0 事件面）冻结存档，不再安装。
+/// V2 事件面（2.0.28 实测 + 二进制核对）：session.created / session.execution.* /
+/// permission.asked（权限门；V1 的 question.asked 在 2.x 无对应事件，ask 阻塞走权限族）。
+const OPENCODE_TEMPLATE: &str = include_str!("templates/neeko-opencode-status-v2.js");
 
 /// pi 扩展模板（1.1.0 实测事件面：agent_end / tool_call(ask 类工具) / ui_prompt_start）。
 const PI_TEMPLATE: &str = include_str!("templates/neeko-pi-status.ts");
