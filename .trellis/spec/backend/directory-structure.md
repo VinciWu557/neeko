@@ -17,6 +17,11 @@ src-tauri/
 ├── Cargo.toml                # 依赖与构建配置
 ├── Cargo.lock
 ├── build.rs                  # 极简：仅调用 tauri_build::build()
+├── .cargo/
+│   └── config.toml           # cargo target runner（仅 macOS）：cwd=src-tauri 的 `cargo run`
+│                             # 命中 scripts/macos-dev-bundle.sh，把产物包成 dev .app 再执行
+├── scripts/
+│   └── macos-dev-bundle.sh   # dev .app 包装（UNUserNotificationCenter 要求 bundle 身份）
 ├── tauri.conf.json           # 主 Tauri 配置
 ├── tauri.macos.conf.json     # macOS 特定的 bundle 配置
 ├── tauri.linux.conf.json     # Linux 特定的 bundle 配置
