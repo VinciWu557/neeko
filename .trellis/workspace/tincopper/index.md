@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 272
-- **Last Active**: 2026-10-12
+- **Total Sessions**: 279
+- **Last Active**: 2026-10-13
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~593 | Active |
+| `journal-6.md` | ~810 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,13 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 279 | 2026-10-13 | Agent 通知第四轮 /neeko-check 审计与整改 | - | `neeko-notify` |
+| 278 | 2026-10-12 | macOS 系统通知修复：UNUserNotificationCenter 后端替换失效的 NSUserNotification | - | `neeko-notify` |
+| 277 | 2026-10-12 | CLI hooks 开启报错修复（opencode 目录事实源 + 开机收敛） | - | `neeko-notify` |
+| 276 | 2026-10-12 | Phase B 实装：外部 Agent CLI hook 摄入（源 B） | - | `neeko-notify` |
+| 275 | 2026-10-12 | Agent 通知第三轮复检（能力面精确化 + 覆盖表有界） | - | `neeko-notify` |
+| 274 | 2026-10-12 | Agent 通知 /neeko-check 审核整改 | - | `neeko-notify` |
+| 273 | 2026-10-12 | Agent 通知 Phase A 实施（应用级 notification 域） | - | `neeko-notify` |
 | 272 | 2026-10-12 | 收尾 10-08 命名收敛：核验 AC 并归档 | `f784b8e7` | `main` |
 | 271 | 2026-10-12 | 收尾 10-07 统一命令执行：核验全部 AC 并归档 | `60ebbed1`, `c41902ae`, `a1241401`, `f9467699`, `d6726ea0`, `62cf8f7e`, `b3b08ce1`, `a0d33d94`, `93b8bff5` | `main` |
 | 270 | 2026-10-11 | neeko-check 评审修复：台账措辞收窄 + 守卫 arm 提前 + A4 注释剥除 + pending staleness 对齐 | - | `main` |
