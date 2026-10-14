@@ -4,13 +4,8 @@
     "./extensions/trellis/index.ts"
   ],
   "packages": [
-    {
-      "extensions": [],
-      "prompts": [],
-      "skills": [],
-      "source": "npm:pi-subagents",
-      "themes": []
-    }
+    "npm:@tintinweb/pi-subagents",
+    "npm:pi-timing"
   ],
   "prompts": [
     "./prompts"
