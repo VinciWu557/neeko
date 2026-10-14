@@ -384,20 +384,20 @@ mod tests {
                 target.source
             );
         }
-        // 主题的**原生来源**各 CLI 不同，锚点分别钉死：opencode 靠 Session.title 增量事件，
+        // 主题的**原生来源**各 CLI 不同，锚点分别钉死：opencode 靠 created/execution 携带
+        // 的 title + 上报时的 session.get 懒回查（2.x 无 session.updated，标题后到只能现取）；
         // pi 靠 session_info 命名 + 首条用户消息回退。
         let opencode = HOOK_TARGETS
             .iter()
             .find(|t| t.source == "opencode")
             .expect("opencode target");
         assert!(
-            opencode.template.contains("session.updated"),
-            "opencode 模板缺少 session.updated 订阅（标题后到时拿不到真名）"
+            opencode.template.contains("session.execution"),
+            "opencode 模板缺少 session.execution 订阅（2.x 生命周期，任务完成通知断流）"
         );
-        // 「等待用户行动」在 opencode 1.19 是**两个独立事件族**：permission.asked（权限门）
-        // 与 question.asked（ask 类工具阻塞）。实测只订阅前者时，question 类阻塞在任何系统
-        // 通知里都不出现 —— 两条锚点都必须钉住。
-        for anchor in ["permission.asked", "question.asked"] {
+        // 「等待用户行动」在 opencode 2.x 走权限门（permission.asked，2.0.28 二进制仍在发射）；
+        // V1 的 question.asked 在 2.x 无对应事件（ask 阻塞走权限族统一上报）。
+        for anchor in ["permission.asked"] {
             assert!(
                 opencode.template.contains(anchor),
                 "opencode 模板缺少 {anchor} 订阅（等待用户行动的通知会静默丢失）"
@@ -419,6 +419,53 @@ mod tests {
             assert!(
                 pi.template.contains(anchor),
                 "pi 模板缺少 {anchor:?}（等待输入的详情会静默丢失）"
+            );
+        }
+    }
+
+    /// V2 模板契约（opencode 2.x loader 只认 `{id, setup}` + `ctx.event.subscribe`）：
+    /// 形状锚点 + V2 生命周期事件 + 上报硬约束锚点（endpoint 重读 / 超时 / loopback / title）。
+    #[test]
+    fn opencode_v2_template_keep_contract_anchors() {
+        const V2: &str = include_str!("templates/neeko-opencode-status-v2.js");
+        for anchor in [
+            "neeko-status",      // Plugin id（storage 隔离 + 诊断辨识）
+            "setup",             // setup(ctx) 入口
+            "event.subscribe",   // V2 事件订阅（替代 V1 的 event 回调）
+            "session.execution", // V2 生命周期族（started/succeeded/failed/interrupted）
+            "permission.asked",  // 权限门（2.0.28 二进制仍在发射）
+            "endpoint.env",      // endpoint 重读
+            "127.0.0.1",         // loopback 锚点
+            "title:",            // 主题上报（R7.5）
+        ] {
+            assert!(V2.contains(anchor), "V2 模板缺少契约锚点 {anchor:?}");
+        }
+        // V1 已死形态不得出现在 V2 模板 —— 否则 loader 拒载或事件静默丢失。
+        for dead in [
+            "session.status",
+            "session.updated",
+            "question.asked",
+            "event: async",
+        ] {
+            assert!(
+                !V2.contains(dead),
+                "V2 模板含 V1 已死形态 {dead:?}（loader 拒载 / 静默无通知的根源）"
+            );
+        }
+    }
+
+    /// V1 模板冻结钉子：1.x 保持现状，任何改动必须显式有意（改了这里就红）。
+    #[test]
+    fn opencode_v1_template_stays_frozen() {
+        const V1: &str = include_str!("templates/neeko-opencode-status.js");
+        for anchor in [
+            "export default async ()",
+            "event.properties",
+            "question.asked",
+        ] {
+            assert!(
+                V1.contains(anchor),
+                "V1 模板被改动（冻结契约破坏）：缺少 {anchor:?}"
             );
         }
     }
