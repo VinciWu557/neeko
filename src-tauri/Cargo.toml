@@ -13,9 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools", "macos-private-api", "protocol-asset", "unstable"] }
+tauri = { version = "=2.12.3", features = ["devtools", "macos-private-api", "protocol-asset", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-notification = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 parking_lot = "0.12"
@@ -74,6 +75,12 @@ libproc = "0.14.11"
 # 直接依赖以访问 tauri with_webview 暴露的 WKWebView 句柄(强制 Inspector 独立窗口)
 objc2 = "0.6"
 objc2-web-kit = "0.3"
+
+# 系统通知 macOS 后端：NSUserNotification 已被移除（macOS 26+），必须走 UNUserNotificationCenter
+# （platform/system_notify 消费，红线 10）
+objc2-foundation = { version = "0.3", features = ["NSString", "NSBundle", "NSError"] }
+objc2-user-notifications = { version = "0.3", features = ["UNNotification", "UNNotificationRequest", "UNNotificationContent", "UNNotificationTrigger", "UNNotificationSound", "UNUserNotificationCenter", "block2"] }
+block2 = "0.6"
 
 [lints.clippy]
 # --- 正确性（Phase 4 完成：production unwrap 已消除）---
