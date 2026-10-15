@@ -27,7 +27,10 @@ pub mod wsl;
 
 pub use cache::*;
 pub use checkout_path::CheckoutPath;
-pub use conflict::types::{ConflictKind, ConflictSide, ConflictStages, MergeRegion};
+pub use conflict::types::{
+    ConflictKind, ConflictResolution, ConflictSide, ConflictStages, MergeRegion, RegionTake,
+    TakeSide,
+};
 pub use parsers::*;
 pub use pr::*;
 pub use provider::*;

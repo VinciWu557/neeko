@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConflictStages } from '@/shared/types';
@@ -55,12 +55,15 @@ const BOTH_MODIFIED: ConflictStages = {
   region_mergeable: true,
 };
 
-function renderView(filePath: string, stages: ConflictStages | Error) {
+function renderView(filePath: string, stages: ConflictStages | Error, resolveConflict = vi.fn()) {
   const getConflictStages = vi.fn(() =>
     stages instanceof Error ? Promise.reject(stages.message) : Promise.resolve(stages),
   );
-  const commands = { getConflictStages } as unknown as ProjectCommands;
-  return render(<ConflictView workspace={WS} filePath={filePath} commands={commands} />);
+  const commands = { getConflictStages, resolveConflict } as unknown as ProjectCommands;
+  return {
+    resolveConflict,
+    ...render(<ConflictView workspace={WS} filePath={filePath} commands={commands} />),
+  };
 }
 
 beforeEach(() => {
@@ -178,5 +181,74 @@ describe('ConflictView — 三侧只读展示', () => {
     const btn = await screen.findByTitle('Open File');
     btn.click();
     expect(mockOpenProjectFile).toHaveBeenCalledWith({ projectId: 'p1', filePath: 'f.txt' });
+  });
+
+  // ── Layer 2：决议交互 ──────────────────────────────────────────────────────
+
+  it('renders per-region Accept Ours/Theirs/Both for a region-mergeable conflict', async () => {
+    renderView('f.txt', BOTH_MODIFIED);
+
+    expect(await screen.findByText('Accept Ours')).toBeInTheDocument();
+    expect(screen.getByText('Accept Theirs')).toBeInTheDocument();
+    expect(screen.getByText('Accept Both')).toBeInTheDocument();
+    // 区域可合并的 kind（UU/AA）也提供整文件二选一（与区域草稿互斥，PRD AC：UU 支持整文件）。
+    expect(screen.getByText('Take Ours')).toBeInTheDocument();
+    expect(screen.getByText('Take Theirs')).toBeInTheDocument();
+  });
+
+  it('applies a whole-file resolution for a region-mergeable (UU) conflict', async () => {
+    const { resolveConflict } = renderView('f.txt', BOTH_MODIFIED);
+
+    (await screen.findByText('Take Theirs')).click();
+    (await screen.findByText('Apply')).click();
+
+    await waitFor(() =>
+      expect(resolveConflict).toHaveBeenCalledWith('f.txt', {
+        kind: 'whole_file',
+        take: 'theirs',
+      }),
+    );
+  });
+
+  it('applies a whole-file resolution from the toolbar (modify_delete)', async () => {
+    const du: ConflictStages = {
+      ...BOTH_MODIFIED,
+      kind: 'modify_delete',
+      ancestor: side('base\n'),
+      ours: null,
+      theirs: side('theirs after\n'),
+      merged: null,
+      regions: [],
+      region_mergeable: false,
+    };
+    const { resolveConflict } = renderView('f.txt', du);
+
+    (await screen.findByText('Take Theirs')).click();
+    (await screen.findByText('Apply')).click();
+
+    await screen.findByText(/Conflict resolved|Take Theirs/);
+    expect(resolveConflict).toHaveBeenCalledWith('f.txt', {
+      kind: 'whole_file',
+      take: 'theirs',
+    });
+  });
+
+  it('does NOT render resolution buttons for rename/rename (non-goal)', async () => {
+    const rr: ConflictStages = {
+      ...BOTH_MODIFIED,
+      kind: 'rename_rename',
+      ancestor: side('a\n', { path: 'a.txt' }),
+      ours: side('a\n', { path: 'c.txt' }),
+      theirs: side('a\n', { path: 'z.txt' }),
+      merged: null,
+      regions: [],
+      region_mergeable: false,
+    };
+    renderView('a.txt', rr);
+
+    // 等渲染完成（不透明卡）后确认没有决议按钮。
+    await screen.findByText('Rename/rename conflict — not region-mergeable');
+    expect(screen.queryByText('Take Ours')).not.toBeInTheDocument();
+    expect(screen.queryByText('Take Theirs')).not.toBeInTheDocument();
   });
 });

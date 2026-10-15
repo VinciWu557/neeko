@@ -107,3 +107,65 @@ pub struct ConflictStages {
     /// 而改成「直接丢弃」的字段上，就是把正确性交给别人的优化决定。
     pub region_mergeable: bool,
 }
+
+impl ConflictStages {
+    /// 取某一侧的 stage（`Ours` → stage 2，`Theirs` → stage 3）。
+    ///
+    /// **返回 `None` = 该 stage 不存在**（DU 的 ours / UD 的 theirs）—— 这是决议写回的
+    /// 分派判据。**不要**改用 `side.content.is_some()` 判：binary 侧的 `content` 也是 `None`
+    /// （未解码）但它是一个**存在的实体**，用 content 判会把 binary「采用该侧」误判成删除。
+    #[must_use]
+    pub const fn side_of(&self, take: TakeSide) -> Option<&ConflictSide> {
+        match take {
+            TakeSide::Ours => self.ours.as_ref(),
+            TakeSide::Theirs => self.theirs.as_ref(),
+        }
+    }
+}
+
+/// 整文件决议采用哪一侧。
+///
+/// 只可能取「存在的那一侧」，故无 `Both` —— `Both` 只在区域级有意义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TakeSide {
+    /// 我方（stage 2）。
+    Ours,
+    /// 对方（stage 3）。
+    Theirs,
+}
+
+/// 单个冲突区域的决议采用方式。
+///
+/// 比 [`TakeSide`] 多一个 `Both`（= 我方行 + 对方行按序拼接），只在区域级有意义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegionTake {
+    /// 采用我方候选行。
+    Ours,
+    /// 采用对方候选行。
+    Theirs,
+    /// 我方行 + 对方行按序拼接。
+    Both,
+}
+
+/// 一处冲突决议：整文件级 或 区域级（二选一）。
+///
+/// serde 形态（与前端 `shared/types/git.ts` 逐字一致）：
+/// - `{"kind":"whole_file","take":"ours"}`
+/// - `{"kind":"regions","decisions":[[0,"ours"],[1,"both"]]}`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConflictResolution {
+    /// 整文件采用某一侧（UU / AA / DU / UD / binary 通用；rename/rename 非目标）。
+    WholeFile {
+        /// 采用哪一侧。
+        take: TakeSide,
+    },
+    /// 区域级：`region id → 采用方式`。仅 `kind.is_region_mergeable()` 时合法。
+    /// 未出现在列表中的区域**保留 marker**（分批决议）。
+    Regions {
+        /// 区域决议列表。
+        decisions: Vec<(u32, RegionTake)>,
+    },
+}

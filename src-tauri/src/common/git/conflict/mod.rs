@@ -17,8 +17,14 @@ pub mod types;
 pub use cap::{cap_conflict_payload, CONFLICT_PAYLOAD_MAX_BYTES};
 pub use classify::classify;
 pub use probe::{probe_bytes, ConflictGroup, RawConflictEntry, RenameMap};
-pub use regions::{build_regions, has_conflict_markers, scan_merge_markers, RawRegion};
-pub use types::{ConflictKind, ConflictSide, ConflictStages, MergeRegion};
+pub use regions::{
+    build_regions, has_conflict_markers, scan_merge_markers, splice_regions,
+    validate_region_decisions, RawRegion,
+};
+pub use types::{
+    ConflictKind, ConflictResolution, ConflictSide, ConflictStages, MergeRegion, RegionTake,
+    TakeSide,
+};
 
 #[cfg(test)]
 mod tests;

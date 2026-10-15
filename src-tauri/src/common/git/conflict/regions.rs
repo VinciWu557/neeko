@@ -178,6 +178,97 @@ fn to_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
 }
 
+/// 按区域决议拼接合并文本：已决议区域替换为所选候选行，未决议区域**保留原 marker 行**。
+///
+/// 纯函数（无 I/O），是决议写回的文本侧唯一实现。契约：
+/// - 输入 `merged` 必须是**服务端重读**的完整合并文本（不信前端行号）；
+/// - `regions` 的行区间（`merged_start..merged_end`，0-based 半开）按**逆序**处理 ——
+///   前面的区域被替换后行数会变，逆序保证后续下标不受影响；
+/// - 未出现在 `decisions` 里的区域原样保留（分批决议）；
+/// - `Ours`/`Theirs` 取对应候选行，`Both` = 我方行 + 对方行按序拼接；
+/// - 结尾换行：`merged` 以 `\n` 结尾则结果也以 `\n` 结尾（否则不补）。
+///
+/// 越界区间一律**夹取**（与 [`build_regions`] 同纪律，不 panic）。
+#[must_use]
+pub fn splice_regions(
+    merged: &str,
+    regions: &[MergeRegion],
+    decisions: &[(u32, super::types::RegionTake)],
+) -> String {
+    use super::types::RegionTake;
+
+    let trailing_newline = merged.ends_with('\n');
+    let mut lines: Vec<String> = merged.lines().map(str::to_string).collect();
+
+    // 逆序：先改靠后的区域，前面的区间下标不因行数变化而漂移。
+    let mut ordered: Vec<&MergeRegion> = regions.iter().collect();
+    ordered.sort_by_key(|r| std::cmp::Reverse(r.merged_start));
+
+    for region in ordered {
+        let Some((_, take)) = decisions.iter().find(|(id, _)| *id == region.id) else {
+            continue; // 未决议 → 保留原 marker 行
+        };
+        let replacement: Vec<String> = match take {
+            RegionTake::Ours => region.our_lines.clone(),
+            RegionTake::Theirs => region.their_lines.clone(),
+            RegionTake::Both => {
+                let mut both = region.our_lines.clone();
+                both.extend(region.their_lines.iter().cloned());
+                both
+            }
+        };
+        let start = (region.merged_start as usize).min(lines.len());
+        let end = (region.merged_end as usize)
+            .max(region.merged_start as usize)
+            .min(lines.len());
+        if start > end {
+            continue;
+        }
+        lines.splice(start..end, replacement);
+    }
+
+    let mut out = lines.join("\n");
+    if trailing_newline && !out.is_empty() {
+        out.push('\n');
+    }
+    out
+}
+
+/// 校验区域决议**覆盖全部区域**（无未知 / 无缺失 / 无重复 id）。
+///
+/// 第一性原理：`git add` 的语义是「该 path 已解决」，而含冲突 marker 的文件不是已解决 ——
+/// 一旦放行并 `git add`，就会把带 marker 的文件标成已解决（可被提交）。区域决议是**全函数**：
+/// 部分覆盖产出的文本既非「已解决」也非原文，没有明确定义的消费方（要留半截请走编辑器逃生门）。
+/// 因此要求 `decisions` 的 id 集合与 `regions` 的 id 集合**恰好相等**。
+///
+/// 未知 id = 前端视图陈旧（读 → apply 之间仓库变了）⇒ **显式拒绝**，绝不静默拼出半截文件。
+/// 本函数是**纯函数**（无 I/O），与 [`splice_regions`] 同住区域语义 owner。
+pub fn validate_region_decisions(
+    regions: &[MergeRegion],
+    decisions: &[(u32, super::types::RegionTake)],
+) -> anyhow::Result<()> {
+    use std::collections::HashSet;
+
+    let expected: HashSet<u32> = regions.iter().map(|r| r.id).collect();
+    let mut seen: HashSet<u32> = HashSet::with_capacity(decisions.len());
+    for (id, _) in decisions {
+        if !seen.insert(*id) {
+            anyhow::bail!("duplicate region id {id} in conflict resolution");
+        }
+        if !expected.contains(id) {
+            anyhow::bail!("unknown region id {id} in conflict resolution (stale view?)");
+        }
+    }
+    if seen.len() != expected.len() {
+        anyhow::bail!(
+            "region resolution must decide every region ({} decided, {} total)",
+            seen.len(),
+            expected.len()
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +394,114 @@ context2
         assert!(regions.is_empty());
     }
 
+    // ── splice_regions（决议写回的文本侧）────────────────────────────────────
+
+    /// 构造一个含两个区域的 diff3 合并文本，返回 `(merged, regions)`。
+    fn two_region_merged() -> (String, Vec<MergeRegion>) {
+        let merged = "\
+context1
+<<<<<<< HEAD
+ourA
+||||||| BASE
+baseA
+=======
+theirA
+>>>>>>> THEIRS
+middle
+<<<<<<< HEAD
+ourB
+||||||| BASE
+baseB
+=======
+theirB
+>>>>>>> THEIRS
+context2
+";
+        let regions = build_regions(
+            merged.lines().count(),
+            scan_merge_markers(merged),
+            &lines(&["context1", "baseA", "middle", "baseB", "context2"]),
+            &lines(&["context1", "ourA", "middle", "ourB", "context2"]),
+            &lines(&["context1", "theirA", "middle", "theirB", "context2"]),
+        );
+        (merged.to_string(), regions)
+    }
+
+    #[test]
+    fn splice_empty_decisions_returns_merged_unchanged() {
+        let (merged, regions) = two_region_merged();
+        assert_eq!(splice_regions(&merged, &regions, &[]), merged);
+    }
+
+    #[test]
+    fn splice_partial_decision_keeps_undecided_marker() {
+        use super::super::types::RegionTake;
+        let (merged, regions) = two_region_merged();
+        // 只决议第一个区域取我方：第二个区域保留 marker。
+        let out = splice_regions(&merged, &regions, &[(0, RegionTake::Ours)]);
+        assert!(out.contains("ourA"), "已决议区域应替换为我方行");
+        assert!(!out.contains("theirA"), "第一个区域的 marker 块应消失");
+        // 第二个区域未决议 → marker 仍在。
+        assert!(out.contains(MARKER_OURS), "未决议区域必须保留 marker");
+        assert!(out.contains("ourB") && out.contains("theirB"));
+    }
+
+    #[test]
+    fn splice_all_decisions_replaces_both_regions_in_order() {
+        use super::super::types::RegionTake;
+        let (merged, regions) = two_region_merged();
+        let out = splice_regions(
+            &merged,
+            &regions,
+            &[(0, RegionTake::Theirs), (1, RegionTake::Ours)],
+        );
+        assert!(!out.contains(MARKER_OURS), "全部决议后不应再有 marker");
+        let expected = "context1\ntheirA\nmiddle\nourB\ncontext2\n";
+        assert_eq!(out, expected, "逆序替换不得串位");
+    }
+
+    #[test]
+    fn splice_both_concatenates_our_then_their_lines() {
+        use super::super::types::RegionTake;
+        let (merged, regions) = two_region_merged();
+        let out = splice_regions(&merged, &regions, &[(0, RegionTake::Both)]);
+        let expected = "context1\nourA\ntheirA\nmiddle\n<<<<<<< HEAD\nourB\n||||||| BASE\nbaseB\n=======\ntheirB\n>>>>>>> THEIRS\ncontext2\n";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn splice_out_of_range_is_clamped_without_panic() {
+        use super::super::types::RegionTake;
+        let regions = vec![MergeRegion {
+            id: 7,
+            merged_start: 100,
+            merged_end: 200,
+            base_lines: vec![],
+            our_lines: lines(&["x"]),
+            their_lines: vec![],
+            base_start: 0,
+            our_start: 0,
+            their_start: 0,
+        }];
+        let out = splice_regions("a\nb\n", &regions, &[(7, RegionTake::Ours)]);
+        assert_eq!(out, "a\nb\nx\n", "越界区间夹取到末尾，不 panic");
+    }
+
+    #[test]
+    fn splice_preserves_absence_of_trailing_newline() {
+        use super::super::types::RegionTake;
+        let merged = "<<<<<<< HEAD\nour\n=======\ntheir\n>>>>>>> THEIRS";
+        let regions = build_regions(
+            merged.lines().count(),
+            scan_merge_markers(merged),
+            &[],
+            &lines(&["our"]),
+            &lines(&["their"]),
+        );
+        let out = splice_regions(merged, &regions, &[(0, RegionTake::Theirs)]);
+        assert_eq!(out, "their", "merged 无尾换行 → 结果也不补");
+    }
+
     #[test]
     fn multiple_regions_get_sequential_ids() {
         let merged = "\
@@ -331,5 +530,64 @@ d
         assert_eq!(regions[1].id, 1);
         assert_eq!(regions[1].our_start, 2, "第二个区域的 ours 起始行应已推进");
         assert_eq!(regions[1].their_start, 2);
+    }
+
+    // ── validate_region_decisions（全函数契约）──────────────────────────────
+
+    #[test]
+    fn validate_accepts_full_coverage() {
+        use super::super::types::RegionTake;
+        let (_, regions) = two_region_merged();
+        assert!(validate_region_decisions(
+            &regions,
+            &[(0, RegionTake::Ours), (1, RegionTake::Both)]
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_unknown_region_id() {
+        use super::super::types::RegionTake;
+        let (_, regions) = two_region_merged();
+        let err =
+            validate_region_decisions(&regions, &[(0, RegionTake::Ours), (99, RegionTake::Ours)])
+                .expect_err("未知 id 必须被拒");
+        assert!(err.to_string().contains("unknown region id 99"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_incomplete_coverage() {
+        use super::super::types::RegionTake;
+        let (_, regions) = two_region_merged();
+        let err = validate_region_decisions(&regions, &[(0, RegionTake::Ours)])
+            .expect_err("未覆盖全部区域必须被拒");
+        assert!(err.to_string().contains("every region"), "{err}");
+        assert!(
+            validate_region_decisions(&regions, &[]).is_err(),
+            "空决议必须被拒"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_region_id() {
+        use super::super::types::RegionTake;
+        let (_, regions) = two_region_merged();
+        let err = validate_region_decisions(
+            &regions,
+            &[
+                (0, RegionTake::Ours),
+                (0, RegionTake::Theirs),
+                (1, RegionTake::Ours),
+            ],
+        )
+        .expect_err("重复 id 必须被拒");
+        assert!(err.to_string().contains("duplicate region id 0"), "{err}");
+    }
+
+    #[test]
+    fn validate_empty_regions_requires_empty_decisions() {
+        use super::super::types::RegionTake;
+        assert!(validate_region_decisions(&[], &[]).is_ok());
+        assert!(validate_region_decisions(&[], &[(0, RegionTake::Ours)]).is_err());
     }
 }

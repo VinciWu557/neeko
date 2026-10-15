@@ -136,6 +136,7 @@ function PaneContent({
             workspace={tabSession}
             filePath={activeTab.data.filePath}
             onBack={() => onCloseTab(activeTab.id)}
+            onShowToast={showToast}
           />
         );
       }

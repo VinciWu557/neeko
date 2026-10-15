@@ -3,7 +3,7 @@
 use crate::common::git::operations;
 use crate::common::git::path_guard::validate_repo_relative_path;
 use crate::common::git::workspace_ref::WorkspaceSession;
-use crate::common::git::ConflictStages;
+use crate::common::git::{ConflictResolution, ConflictStages};
 use crate::AppError;
 use crate::AppStateWrapper;
 use tauri::State;
@@ -23,4 +23,24 @@ pub async fn get_conflict_stages(
     operations::read_conflict_stages(&t, repo.root(), &file_path)
         .await
         .map_err(AppError::from)
+}
+
+/// 应用一处冲突决议（区域级 / 整文件级）。
+///
+/// 写回后调 `wait_status_fresh` 收口（git-domain §10）：不调它前端会立刻重读到写前数据。
+/// 成功 = 该 path 退出 unmerged set，前端由快照事件驱动收敛回普通 diff（不是错误态）。
+#[tauri::command]
+pub async fn resolve_conflict(
+    workspace: WorkspaceSession,
+    file_path: String,
+    resolution: ConflictResolution,
+    state: State<'_, AppStateWrapper>,
+) -> Result<(), AppError> {
+    let (t, repo) = state.resolve_workspace_target(&workspace).await?;
+    validate_repo_relative_path(&t, repo.root(), &file_path).map_err(AppError::from)?;
+    operations::apply_conflict_resolution(&t, repo.root(), &file_path, resolution)
+        .await
+        .map_err(AppError::from)?;
+    crate::git::services::status::wait_status_fresh(&state, &repo).await;
+    Ok(())
 }

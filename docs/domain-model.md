@@ -180,6 +180,23 @@ unmerged stages（1/2/3）**，不是工作区里的 `<<<<<<<` marker 字节。m
 `/dev/null` —— POSIX 设备名在 Windows CI 上不存在，空 blob 一律用 `--stdin` 喂零字节；A6：传输实现
 不得自建 `ConflictStages` 字面量，必须经 `probe::assemble_stages`）。
 
+## git 冲突决议（写回）
+
+冲突决议（区域 Ours/Theirs/Both 或整文件二选一）由
+`apply_conflict_resolution`（`common/git/operations/conflict.rs`）+ 命令
+`resolve_conflict(workspace, file_path, resolution)` 落盘。三条原语：`write_text`（区域 splice 产物）、
+`checkout_side`（采用存在侧，`git checkout --ours|--theirs` + `git add`，字节保真含 binary）、
+`delete_path`（`git rm`）。
+
+- **分派判据 = 该侧 stage 是否存在**（`side_of(take).is_some()`），不是 `ConflictSide.content` 是否存在：
+  `content` 是读 API 的**解码视图**（binary 为 `None`、超预算被截断），用它会误删 binary 或写坏截断文件。
+- **成功判据 = 该 path 退出 unmerged set**（`git ls-files -u` 为空），与实现细节无关。
+- 区域 splice 以服务端重读的 `merged` 为准；**区域决议是全函数**（未知 / 缺失 / 重复 id 显式拒绝，不产出含 marker 却被 `git add` 标为已解决的文件）；`Regions` 对不可区域合并的 kind / 截断载荷**显式报错**。
+- **rename/rename 决议 = 显式非目标**（三侧路径不同，单条决议无法闭合整组）。
+- 写后调 `wait_status_fresh`；前端由 `git-status-snapshot` 驱动收敛回普通 diff（`notConflicted`，非错误态）。
+
+机制详解与单测口径：`.trellis/spec/backend/git-domain.md` §5d。
+
 ## 未完成（登记）
 
 - **分屏 p2+ 的终端精度（登记为显式非目标）**：写侧 `terminalAddress(session, tabId, paneId)` 携带

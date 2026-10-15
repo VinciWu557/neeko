@@ -13,6 +13,7 @@ import type {
   StashActionResult,
   StashEntry,
   ConflictStages,
+  ConflictResolution,
 } from '@/shared/types/git';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
@@ -118,6 +119,11 @@ export interface ProjectCommands {
    * path 无 unmerged 条目（已解决 / 非冲突）时 reject —— caller 据此回退普通 diff 视图（R10）。
    */
   getConflictStages(filePath: string): Promise<ConflictStages>;
+  /**
+   * 应用一处冲突决议（区域级 / 整文件级）—— 写回工作区 + `git add` 清除 unmerged 标记。
+   * 成功后该 path 退出 unmerged set；视图由 `git-status-snapshot` 事件驱动收敛。
+   */
+  resolveConflict(filePath: string, resolution: ConflictResolution): Promise<void>;
   /** 展开折叠的 untracked 目录条目：列出目录下的 untracked 文件（changes list 按需调用） */
   listUntrackedFiles(dirPath: string): Promise<string[]>;
   stageFiles(filePaths: string[]): Promise<void>;

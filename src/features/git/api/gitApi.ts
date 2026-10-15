@@ -18,6 +18,7 @@ import type {
   GitStatusSnapshot,
   WorkspaceActivation,
   ConflictStages,
+  ConflictResolution,
 } from '../types';
 export type { PushOutcome };
 
@@ -318,6 +319,20 @@ export function getConflictStages(
   filePath: string,
 ): Promise<ConflictStages> {
   return invoke<ConflictStages>('get_conflict_stages', { workspace, filePath });
+}
+
+/**
+ * 应用一处冲突决议（区域级 / 整文件级）—— 写回工作区并 `git add` 清除 unmerged 标记。
+ *
+ * 成功后该 path 退出 unmerged set；前端由 `git-status-snapshot` 事件驱动
+ * `useConflictStages` 重拉 → 读命令 `Err` → `notConflicted` → 回退普通 diff（正常收敛）。
+ */
+export function resolveConflict(
+  workspace: WorkspaceSession,
+  filePath: string,
+  resolution: ConflictResolution,
+): Promise<void> {
+  return invoke<void>('resolve_conflict', { workspace, filePath, resolution });
 }
 
 export function isGitRepo(projectId: ProjectId): Promise<boolean> {

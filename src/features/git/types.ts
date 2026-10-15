@@ -35,4 +35,5 @@ export type {
   ConflictSide,
   MergeRegion,
   ConflictStages,
+  ConflictResolution,
 } from '@/shared/types/git';

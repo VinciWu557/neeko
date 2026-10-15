@@ -264,6 +264,61 @@ $ grep -n 'strip_prefix("@@ ")' src-tauri/src/common/git/parsers/diff.rs
 当前生产路径带 `HEAD`（`git diff HEAD -- <path>`，不触发 `--cc`），故**本任务不修**；登记为已知边界，
 防止下一个人「用 `git diff` 凑冲突」时踩中且无从察觉（`--cc` 的 `@@@` 会被静默丢弃，表现为「No changes」）。
 
+### 5d. 冲突决议写回（Layer 2：三条原语 + stage 存在性分派）
+
+冲突文件的**决议**（区域 Ours/Theirs/Both 或整文件二选一）经
+`common/git/operations/conflict.rs::apply_conflict_resolution` + 命令 `resolve_conflict(workspace, file_path, resolution)`
+落盘。真值仍是 index stages（**重读，不信前端行号**）。
+
+**三条写回原语（按「要落盘什么」命名，不依赖哪侧是 ours）**：
+
+| 原语 | 实现 | 覆盖的决议 |
+| --- | --- | --- |
+| `write_text(path, text)` | `file::services::write_file_content` + `operations::stage_files` | 区域 splice 产物（文本由我们算出） |
+| `checkout_side(path, side)` | `git checkout --ours\|--theirs -- <path>` + `stage_files` | 采用存在侧（含 binary） |
+| `delete_path(path)` | `git rm -- <path>` | 采用删除侧 |
+
+**分派判据 = 该侧 stage 是否存在**（`ConflictStages::side_of(take).is_some()`），
+**不是** `ConflictSide.content` 是否存在。这是本域最容易写错的一处：`content` 是**读 API 的解码视图** ——
+binary 侧为 `None`（未解码）、超预算侧被截断。用 `content` 判会 ① 把 binary「采用对方」误判成删除侧
+（**删掉文件**）、② 把截断文本写回工作区（**损坏文件**）。
+
+**为什么整文件走 `checkout` 而不是「读 content 写回」**：
+
+- `checkout --ours/--theirs` 从 index 的第 2/3 个 stage 拷**完整 blob**到工作区，字节保真（binary 无损、
+  与 `cap_conflict_payload` 截断无关）；
+- 它**单独不清 unmerged**（实测仍留 3 条 stage），必须跟一次 `git add -- <path>`；
+- **对缺失 stage 调用会报 `does not have our/their version`**（实测，工作区不变）—— 所以删除侧绝不走它，
+  而走 `delete_path`。这正是「分派按 stage 存在性」的由来。
+
+**区域 splice 以服务端重算为准**：`splice_regions`（`conflict/regions.rs` 纯函数）按
+`MergeRegion.merged_start/end` **逆序**替换（逆序保证前面区域的行偏移不影响后面下标）。`RegionTake::Both`
+= 我方行 + 对方行按序拼接。
+
+**区域决议是全函数**：`apply_conflict_resolution` 在 splice 前必须过 `validate_region_decisions` ——
+`decisions` 的 id 集合与 `stages.regions` **恰好相等**（无未知 / 无缺失 / 无重复）。第一性原理：
+`git add` 的语义是「该 path 已解决」，而含 marker 的文件不是已解决 —— 放行未知/缺失 id 再 `git add`
+会把带 marker 的半截文件标成已解决（可被提交）。「分批决议」由**前端草稿累积**（逐个决策、一次提交）
+实现，不是服务端写半截文件。未知 id = 前端视图陈旧（读 → apply 之间仓库变了）⇒ **显式拒绝**。
+`Regions` 决议对非 `is_region_mergeable()` 的 kind（modify_delete / binary / rename_rename）**显式报错**
+（不静默降级）；载荷 `truncated` 时区域 splice 也**显式报错**（半截 merged 下标不自洽）。
+
+**rename/rename 决议 = 显式非目标**：三侧路径各不相同，单条 path 的决议无法闭合整组
+（实测 `checkout --ours -- c.txt` + `add` 后 `unmerged` 仍剩 2 条）—— 后端对 `RenameRename` + `WholeFile`
+报错，前端不对该 kind 渲染决议按钮。
+
+**写后收口**：命令层调 `wait_status_fresh`（§10）；成功后该 path 退出 unmerged set，前端由
+`git-status-snapshot` 事件驱动 `useConflictStages` 重拉 → 读命令 `Err` → `notConflicted`（**正常收敛**，
+不是错误态）→ 回退普通 diff。收敛路径与「用户在终端手动 `git add`」同一条。
+
+**rebase 语义（父任务 T4，登记不修）**：`--ours/--theirs` 在 rebase 下含义相反；本实现按 merge 语义。
+
+**单测口径**（`conflict/tests.rs`）：删除侧四条分支逐条断言且 **porcelain 逐例不同**
+（DU 选对方=`A  c.txt` / DU 选删除=空 / UD 选我方=空 / UD 选删除=`D  c.txt`）；binary 选对方 →
+文件**仍存在**且字节 = stage 3（T18 变异钉子：把判据改成 `content.is_some()` 必红）；
+rename/rename 与 binary/Regions → 报错；部分/未知 region id → 报错（T20 变异钉子：去掉
+`validate_region_decisions` 调用必红）。
+
 ## 6. 测试要求
 
 - `parse_decorate_refs`：branch/remote/tag/stash/HEAD 用例；`refs/synara/checkpoints` 被丢弃；

@@ -467,3 +467,472 @@ async fn lazy_rename_maps_do_not_change_classification_when_repo_has_renames() {
     assert!(!stages.regions.is_empty(), "UU 必须有区域");
     assert!(stages.ancestor.is_some() && stages.ours.is_some() && stages.theirs.is_some());
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 批 3 · 决议写回（Layer 2）—— 删除侧四条分支 + binary + rename/rename + 区域 splice
+// ══════════════════════════════════════════════════════════════════════════════
+
+use crate::common::git::operations::apply_conflict_resolution;
+use crate::common::git::{ConflictResolution, RegionTake, TakeSide};
+
+/// 在 `dir` 里跑 git 并返回 stdout（trim 后）。
+async fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = crate::core::exec::collect(
+        &ExecTarget::Local,
+        "git",
+        args,
+        Some(&dir.to_string_lossy()),
+    )
+    .await
+    .expect("spawn git");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// `git ls-files -u -- <path>` 的条目数（0 = 该 path 已退出 unmerged）。
+async fn unmerged_count(dir: &Path, path: &str) -> usize {
+    let out = git_out(dir, &["ls-files", "-u", "--", path]).await;
+    if out.is_empty() {
+        0
+    } else {
+        out.lines().count()
+    }
+}
+
+/// `git status --porcelain -- <path>`（逐例不同，见 PRD AC 表）。
+async fn porcelain(dir: &Path, path: &str) -> String {
+    git_out(dir, &["status", "--porcelain", "--", path]).await
+}
+
+/// 工作区字节（原始，不做换行归一 —— binary 用）。
+fn worktree_bytes(dir: &Path, path: &str) -> Option<Vec<u8>> {
+    std::fs::read(dir.join(path)).ok()
+}
+
+/// 工作区文本（行尾无关：`\r\n` → `\n`，红线 11）。文本决议一律用它断言。
+fn worktree_text(dir: &Path, path: &str) -> Option<String> {
+    worktree_bytes(dir, path).map(|b| String::from_utf8_lossy(&b).replace("\r\n", "\n"))
+}
+
+/// 造 UU 冲突（双方改同文件，三侧同路径）。
+async fn make_uu(dir: &tempfile::TempDir, path: &str, base: &[u8], ours: &[u8], theirs: &[u8]) {
+    let p = dir.path();
+    write(p, path, base);
+    git(p, &["add", "-A"]).await;
+    git(p, &["commit", "-qm", "base"]).await;
+    git(p, &["checkout", "-qb", "other"]).await;
+    write(p, path, theirs);
+    git(p, &["commit", "-qam", "theirs"]).await;
+    git(p, &["checkout", "-q", "main"]).await;
+    write(p, path, ours);
+    git(p, &["commit", "-qam", "ours"]).await;
+    git_allow_fail(p, &["merge", "other"]).await;
+}
+
+/// 造 DU 冲突（我方删、对方改）。
+async fn make_du(dir: &tempfile::TempDir, path: &str, base: &[u8], theirs: &[u8]) {
+    let p = dir.path();
+    write(p, path, base);
+    git(p, &["add", "-A"]).await;
+    git(p, &["commit", "-qm", "base"]).await;
+    git(p, &["checkout", "-qb", "other"]).await;
+    write(p, path, theirs);
+    git(p, &["commit", "-qam", "theirs"]).await;
+    git(p, &["checkout", "-q", "main"]).await;
+    git(p, &["rm", "-q", path]).await;
+    git(p, &["commit", "-qm", "ours-del"]).await;
+    git_allow_fail(p, &["merge", "other"]).await;
+}
+
+/// 造 UD 冲突（我方改、对方删）。
+async fn make_ud(dir: &tempfile::TempDir, path: &str, base: &[u8], ours: &[u8]) {
+    let p = dir.path();
+    write(p, path, base);
+    git(p, &["add", "-A"]).await;
+    git(p, &["commit", "-qm", "base"]).await;
+    git(p, &["checkout", "-qb", "other"]).await;
+    git(p, &["rm", "-q", path]).await;
+    git(p, &["commit", "-qm", "theirs-del"]).await;
+    git(p, &["checkout", "-q", "main"]).await;
+    write(p, path, ours);
+    git(p, &["commit", "-qam", "ours"]).await;
+    git_allow_fail(p, &["merge", "other"]).await;
+}
+
+// ── DU：采用对方（存在侧）→ 写 stage 3 内容 + porcelain `A  c.txt` ──────────────
+#[tokio::test]
+async fn du_take_theirs_writes_stage3_and_porcelain_is_added() {
+    let dir = init_repo(&[]).await;
+    make_du(&dir, "c.txt", b"base\n", b"theirs\n").await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "c.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Theirs,
+        },
+    )
+    .await
+    .expect("resolve DU take theirs");
+
+    assert_eq!(unmerged_count(p, "c.txt").await, 0, "unmerged 必须退出");
+    assert_eq!(porcelain(p, "c.txt").await, "A  c.txt");
+    assert_eq!(
+        worktree_text(p, "c.txt").as_deref(),
+        Some("theirs\n"),
+        "工作区 = stage 3 内容"
+    );
+}
+
+// ── DU：采用我方（删除侧）→ 文件不存在 + porcelain 空 ────────────────────────────
+#[tokio::test]
+async fn du_take_ours_deletes_file_and_porcelain_is_empty() {
+    let dir = init_repo(&[]).await;
+    make_du(&dir, "c.txt", b"base\n", b"theirs\n").await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "c.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Ours,
+        },
+    )
+    .await
+    .expect("resolve DU take ours");
+
+    assert_eq!(unmerged_count(p, "c.txt").await, 0);
+    assert_eq!(porcelain(p, "c.txt").await, "", "两侧均无此文件 → 净无变更");
+    assert!(
+        worktree_bytes(p, "c.txt").is_none(),
+        "采用删除侧 → 文件必须不存在（不是空文件）"
+    );
+}
+
+// ── UD：采用我方（存在侧）→ 写 stage 2 内容 + porcelain 空 ──────────────────────
+#[tokio::test]
+async fn ud_take_ours_writes_stage2_and_porcelain_is_empty() {
+    let dir = init_repo(&[]).await;
+    make_ud(&dir, "c.txt", b"base\n", b"ours\n").await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "c.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Ours,
+        },
+    )
+    .await
+    .expect("resolve UD take ours");
+
+    assert_eq!(unmerged_count(p, "c.txt").await, 0);
+    assert_eq!(porcelain(p, "c.txt").await, "", "内容 = HEAD → 无变更");
+    assert_eq!(
+        worktree_text(p, "c.txt").as_deref(),
+        Some("ours\n"),
+        "工作区 = stage 2 内容"
+    );
+}
+
+// ── UD：采用对方（删除侧）→ 文件不存在 + porcelain `D  c.txt` ────────────────────
+#[tokio::test]
+async fn ud_take_theirs_deletes_file_and_porcelain_is_deleted() {
+    let dir = init_repo(&[]).await;
+    make_ud(&dir, "c.txt", b"base\n", b"ours\n").await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "c.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Theirs,
+        },
+    )
+    .await
+    .expect("resolve UD take theirs");
+
+    assert_eq!(unmerged_count(p, "c.txt").await, 0);
+    assert_eq!(
+        porcelain(p, "c.txt").await,
+        "D  c.txt",
+        "从 HEAD 存在 → 删除"
+    );
+    assert!(worktree_bytes(p, "c.txt").is_none());
+}
+
+// ── UU：整文件二选一（region_mergeable 为真时同样可达，PRD AC 表要求）────────────
+#[tokio::test]
+async fn uu_whole_file_take_theirs_writes_stage3_and_clears_unmerged() {
+    let dir = init_repo(&[]).await;
+    make_uu(
+        &dir,
+        "f.txt",
+        b"a\nbase\nc\n",
+        b"a\nours\nc\n",
+        b"a\ntheirs\nc\n",
+    )
+    .await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    // 前提：UU 可区域合并，但整文件决议仍应可达。
+    let (stages, _) = read_both(&dir, "f.txt").await;
+    assert!(stages.region_mergeable);
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "f.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Theirs,
+        },
+    )
+    .await
+    .expect("UU whole-file take theirs");
+
+    assert_eq!(unmerged_count(p, "f.txt").await, 0);
+    assert_eq!(
+        worktree_text(p, "f.txt").as_deref(),
+        Some("a\ntheirs\nc\n"),
+        "工作区 = stage 3 整文件内容"
+    );
+}
+
+// ── binary：采用存在侧不得删文件（T18 回归钉子）────────────────────────────────
+#[tokio::test]
+async fn binary_take_theirs_keeps_file_with_raw_stage3_bytes() {
+    // 变异验证：把分派判据从 `side_of(take).is_some()` 改回 `content.is_some()`，
+    // 本用例必须变红（binary 侧 content=None → 会被误判成删除侧）。
+    let dir = init_repo(&[]).await;
+    make_uu(
+        &dir,
+        "b.bin",
+        b"\x00\x01BASE",
+        b"\x00\x01OURS",
+        b"\x00\x01THEIRS",
+    )
+    .await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    // 前提：读路径把它判成 binary 且 content 不解码。
+    let (stages, _) = read_both(&dir, "b.bin").await;
+    assert_eq!(stages.kind, ConflictKind::Binary);
+    assert!(
+        stages.theirs.as_ref().is_some_and(|s| s.content.is_none()),
+        "夹具前提：binary 侧 stage 存在但 content 为 None"
+    );
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "b.bin",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Theirs,
+        },
+    )
+    .await
+    .expect("resolve binary take theirs");
+
+    assert_eq!(unmerged_count(p, "b.bin").await, 0);
+    let bytes = worktree_bytes(p, "b.bin").expect("binary 文件必须仍存在（不得被误删）");
+    assert_eq!(bytes, b"\x00\x01THEIRS", "工作区 = stage 3 原始字节");
+}
+
+// ── UU：区域决议必须覆盖全部区域（全函数）────────────────────────────────
+#[tokio::test]
+async fn uu_region_resolution_splices_all_regions_and_clears_unmerged() {
+    let dir = init_repo(&[]).await;
+    // 造一个含两个冲突区域的 UU：行 1 与行 3 各自冲突。
+    make_uu(
+        &dir,
+        "f.txt",
+        b"a\nbase1\nb\nbase2\nc\n",
+        b"a\nour1\nb\nour2\nc\n",
+        b"a\ntheir1\nb\ntheir2\nc\n",
+    )
+    .await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    let (stages, _) = read_both(&dir, "f.txt").await;
+    assert!(stages.region_mergeable);
+    assert_eq!(stages.regions.len(), 2, "夹具前提：两个区域");
+
+    // 全部区域一次决议：区 0 取我方、区 1 取对方。
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "f.txt",
+        ConflictResolution::Regions {
+            decisions: vec![(0, RegionTake::Ours), (1, RegionTake::Theirs)],
+        },
+    )
+    .await
+    .expect("resolve both UU regions");
+
+    assert_eq!(
+        unmerged_count(p, "f.txt").await,
+        0,
+        "写回后 unmerged 必须退出"
+    );
+    let text = worktree_text(p, "f.txt").expect("file exists");
+    assert!(text.contains("our1") && text.contains("their2"));
+    assert!(!text.contains("their1") && !text.contains("our2"));
+    assert!(!text.contains("<<<<<<<"), "全部决议后不得再留 marker");
+}
+
+// ── 反证：未覆盖全部区域 / 未知 id 必须显式拒绝（不得把带 marker 的文件标成已解决）──
+#[tokio::test]
+async fn partial_or_stale_region_decisions_are_rejected_not_silently_resolved() {
+    let dir = init_repo(&[]).await;
+    make_uu(
+        &dir,
+        "f.txt",
+        b"a\nbase1\nb\nbase2\nc\n",
+        b"a\nour1\nb\nour2\nc\n",
+        b"a\ntheir1\nb\ntheir2\nc\n",
+    )
+    .await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    // 只决议区 0：不得放行（否则 `git add` 会把含 marker 的文件标成已解决）。
+    let err = apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "f.txt",
+        ConflictResolution::Regions {
+            decisions: vec![(0, RegionTake::Ours)],
+        },
+    )
+    .await
+    .expect_err("部分决议必须被拒");
+    assert!(err.to_string().contains("every region"), "{err}");
+    assert_eq!(
+        unmerged_count(p, "f.txt").await,
+        3,
+        "被拒后不得改动 index（UU 仍有 3 条 unmerged stage）"
+    );
+
+    // 未知 id（前端视图陈旧）：同样拒绝。
+    let err = apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "f.txt",
+        ConflictResolution::Regions {
+            decisions: vec![(0, RegionTake::Ours), (99, RegionTake::Theirs)],
+        },
+    )
+    .await
+    .expect_err("未知 region id 必须被拒");
+    assert!(err.to_string().contains("unknown region id 99"), "{err}");
+    assert_eq!(unmerged_count(p, "f.txt").await, 3);
+}
+
+// ── 显式拒绝：不可区域合并的 kind 收到 Regions 决议 ──────────────────────────────
+#[tokio::test]
+async fn region_resolution_on_modify_delete_is_rejected() {
+    let dir = init_repo(&[]).await;
+    make_du(&dir, "c.txt", b"base\n", b"theirs\n").await;
+    let wd = work_dir(&dir);
+
+    let err = apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "c.txt",
+        ConflictResolution::Regions {
+            decisions: vec![(0, RegionTake::Ours)],
+        },
+    )
+    .await
+    .expect_err("modify_delete 不可区域合并 → 必须报错");
+    assert!(
+        err.to_string().contains("region-level resolution"),
+        "错误必须指名不适用，得到：{err}"
+    );
+}
+
+// ── 显式拒绝：binary + Regions ──────────────────────────────────────────────────
+#[tokio::test]
+async fn region_resolution_on_binary_is_rejected() {
+    let dir = init_repo(&[]).await;
+    make_uu(&dir, "b.bin", b"\x00BASE", b"\x00OURS", b"\x00THEIRS").await;
+    let wd = work_dir(&dir);
+
+    let err = apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "b.bin",
+        ConflictResolution::Regions {
+            decisions: vec![(0, RegionTake::Theirs)],
+        },
+    )
+    .await
+    .expect_err("binary 不可区域合并 → 必须报错");
+    assert!(err.to_string().contains("region-level resolution"), "{err}");
+}
+
+// ── 显式拒绝：rename/rename + WholeFile（T19 非目标）────────────────────────────
+#[tokio::test]
+async fn rename_rename_whole_file_resolution_is_rejected() {
+    let dir = init_repo(&[("a.txt", b"a\n")]).await;
+    let p = dir.path();
+    git(p, &["checkout", "-qb", "other"]).await;
+    git(p, &["mv", "a.txt", "z.txt"]).await;
+    git(p, &["commit", "-qm", "ren-other"]).await;
+    git(p, &["checkout", "-q", "main"]).await;
+    git(p, &["mv", "a.txt", "c.txt"]).await;
+    git(p, &["commit", "-qm", "ren-main"]).await;
+    git_allow_fail(p, &["merge", "other"]).await;
+    let wd = work_dir(&dir);
+
+    let err = apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "a.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Ours,
+        },
+    )
+    .await
+    .expect_err("rename/rename 决议非目标 → 必须报错");
+    assert!(err.to_string().contains("rename/rename"), "{err}");
+}
+
+// ── 写后语义：git diff HEAD 不再是冲突态 ────────────────────────────────────────
+#[tokio::test]
+async fn resolved_file_has_normal_diff_semantics() {
+    let dir = init_repo(&[]).await;
+    make_du(&dir, "c.txt", b"base\n", b"theirs\n").await;
+    let p = dir.path();
+    let wd = work_dir(&dir);
+
+    apply_conflict_resolution(
+        &ExecTarget::Local,
+        &wd,
+        "c.txt",
+        ConflictResolution::WholeFile {
+            take: TakeSide::Theirs,
+        },
+    )
+    .await
+    .expect("resolve");
+
+    // 写后 `git diff HEAD -- c.txt` 应正常显示新增，而不是 `--cc` 合并格式。
+    let diff = git_out(p, &["diff", "HEAD", "--", "c.txt"]).await;
+    assert!(
+        diff.contains("+theirs"),
+        "普通 diff 应显示新增行，得到：{diff}"
+    );
+    assert!(!diff.contains("@@@"), "不得再是冲突合并格式");
+}

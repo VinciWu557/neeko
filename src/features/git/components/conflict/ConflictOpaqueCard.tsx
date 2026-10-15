@@ -10,7 +10,7 @@ interface ConflictOpaqueCardProps {
  * 不可区域合并（`binary` / `rename_rename` / `modify_delete`）的状态卡。
  *
  * 这三类**没有**「双方都有实体内容」的前提，区域行区间无意义（`design.md` §0.1）：
- * - `modify_delete`：删除不是内容，只给整文件二选一（Layer 2 承接）；
+ * - `modify_delete`：删除不是内容，只给整文件二选一；
  * - `binary`：不解码内容，只给状态；
  * - `rename_rename`：三侧路径不同。
  *

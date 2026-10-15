@@ -415,6 +415,22 @@ export interface ConflictStages {
   region_mergeable: boolean;
 }
 
+/** 整文件决议采用哪一侧（与 Rust `TakeSide` 的 serde `snake_case` 逐字对齐）。 */
+export type TakeSide = 'ours' | 'theirs';
+
+/** 区域决议采用方式（比 `TakeSide` 多 `both` = 我方行 + 对方行按序拼接）。 */
+export type RegionTake = 'ours' | 'theirs' | 'both';
+
+/**
+ * 一处冲突决议（与 Rust `ConflictResolution` 的 serde 形态逐字对齐）。
+ *
+ * - `{ kind: 'whole_file', take }`
+ * - `{ kind: 'regions', decisions }`（元组序列化为 `[regionId, take]` 数组）
+ */
+export type ConflictResolution =
+  | { kind: 'whole_file'; take: TakeSide }
+  | { kind: 'regions'; decisions: Array<[number, RegionTake]> };
+
 // ─── PR Comment Types ───────────────────────────────────────────────────────
 
 export interface CommentReaction {
