@@ -426,6 +426,28 @@
         }
       ],
       "red_line": null
+    },
+    {
+      "id": "git-conflict-read-contract",
+      "title": "Git 冲突真值 = index unmerged stages（不从工作区 marker 反解 / 缺失 stage 不归一 / 唯一封顶）",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_conflict_read_contract",
+          "note": "A1 marker 字面量只在 regions.rs / A2 缺失 stage 不归一 / A3 operations 唯一封顶（注释提及不算接线）/ A4 前端不解析 marker / A5 conflict 内无 /dev/null 字面量（Windows CI 上不存在该设备名；空 blob 走 --stdin）/ A6 传输实现不得自建 ConflictStages 字面量（必须经 probe::assemble_stages；剥除返回类型位置后再判，避免误报）"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_conflict_read_contract.py"
+        },
+        {
+          "kind": "test",
+          "ref": "src-tauri/src/common/git/conflict/tests.rs",
+          "note": "五类冲突夹具测试（UU/AA/DU/UD/rename-rename/binary）：三侧 content 不含 marker、缺失侧为 None、DU/UD regions 为空；另含惰化重命名映射的端到端钉子（lazy_rename_maps_do_not_change_classification_when_repo_has_renames）"
+        }
+      ],
+      "red_line": 12
     }
   ]
 }
