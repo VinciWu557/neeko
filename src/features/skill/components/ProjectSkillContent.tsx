@@ -32,7 +32,7 @@ import {
 import { useSkillStore } from '@/features/skill/store';
 import { bindProjectTagGroups } from '@/features/skill/utils/bindProjectTagGroups';
 import { cn } from '@/lib/utils';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import type { ManagedSkillDto, ProjectDiskSkill } from '@/shared/types';
@@ -1401,43 +1401,39 @@ const ProjectSkillContent: React.FC<ProjectSkillContentProps> = React.memo(({ se
         />
       ) : null}
 
-      <ConfirmDialog
-        open={pendingRemove !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingRemove(null);
-        }}
-        title="Remove skill from project?"
-        description={
-          pendingRemove ? (
-            <p className="text-sm text-text-secondary">
-              Remove <span className="font-medium text-text-primary">{pendingRemove.name}</span>{' '}
-              from agent skill directories under{' '}
-              <span className="font-medium text-text-primary">{activeProject.name}</span>? The
-              Library copy is kept.
-            </p>
-          ) : null
-        }
-        confirmLabel={removing ? 'Removing…' : 'Remove'}
-        danger
+      <DeleteConfirmDialog
+        pending={pendingRemove}
+        onCancel={() => setPendingRemove(null)}
         onConfirm={() => void handleRemoveConfirm()}
-      />
-      <ConfirmDialog
-        open={bulkConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open && !bulkRemoving) setBulkConfirmOpen(false);
-        }}
-        title={`Remove ${selectedSkills.length} skill${selectedSkills.length === 1 ? '' : 's'} from project?`}
-        description={
+        title="Remove skill from project?"
+        confirmLabel={() => (removing ? 'Removing…' : 'Remove')}
+        describe={(skill) => (
           <p className="text-sm text-text-secondary">
-            Remove <span className="font-medium text-text-primary">{selectedSkills.length}</span>{' '}
-            selected skill{selectedSkills.length === 1 ? '' : 's'} from agent skill directories
-            under <span className="font-medium text-text-primary">{activeProject?.name}</span>? The
+            Remove <span className="font-medium text-text-primary">{skill.name}</span> from agent
+            skill directories under{' '}
+            <span className="font-medium text-text-primary">{activeProject.name}</span>? The Library
+            copy is kept.
+          </p>
+        )}
+      />
+      <DeleteConfirmDialog
+        pending={bulkConfirmOpen ? selectedSkills : null}
+        onCancel={() => {
+          if (!bulkRemoving) setBulkConfirmOpen(false);
+        }}
+        onConfirm={() => void handleBulkRemove()}
+        title={(skills) =>
+          `Remove ${skills.length} skill${skills.length === 1 ? '' : 's'} from project?`
+        }
+        confirmLabel={(skills) => (bulkRemoving ? 'Removing…' : `Remove ${skills.length}`)}
+        describe={(skills) => (
+          <p className="text-sm text-text-secondary">
+            Remove <span className="font-medium text-text-primary">{skills.length}</span> selected
+            skill{skills.length === 1 ? '' : 's'} from agent skill directories under{' '}
+            <span className="font-medium text-text-primary">{activeProject?.name}</span>? The
             Library copies are kept.
           </p>
-        }
-        confirmLabel={bulkRemoving ? 'Removing…' : `Remove ${selectedSkills.length}`}
-        danger
-        onConfirm={() => void handleBulkRemove()}
+        )}
       />
     </div>
   );

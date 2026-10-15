@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 
-import SessionRow from '@/features/project/components/SessionRow';
+import SessionRow from '@/shared/components/SessionRow';
 
 describe('SessionRow', () => {
   it('渲染 label 与 branch 双行', () => {
@@ -25,12 +25,6 @@ describe('SessionRow', () => {
   it('非 active 时即使 ahead > 0 也不渲染 ↑N（仅 active 行展示）', () => {
     render(<SessionRow kind="local" label="local" ahead={208} />);
     expect(screen.queryByText('↑208')).not.toBeInTheDocument();
-  });
-
-  it('changes 不论 active 都渲染 +A -D', () => {
-    render(<SessionRow kind="local" label="local" changes={{ add: 41565, del: 7182 }} />);
-    expect(screen.getByText('+41565')).toBeInTheDocument();
-    expect(screen.getByText('-7182')).toBeInTheDocument();
   });
 
   it('有 shortcut 时渲染 ⌘N（hover 可见，不依赖 active）', () => {

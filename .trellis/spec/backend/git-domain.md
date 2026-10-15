@@ -841,6 +841,13 @@ Workspace」，且不能比这更少。前端可手搓的散参（`worktreePath?
 （`list_prs` / … / `add_comment_reaction` 共 16 个）均改收 `workspace: WorkspaceSession`；
 `set_active_workspace` 亦然（它激活的就是一个具体 Workspace）。
 
+**`search` 域（本次落地）**：`search/commands.rs::search_run` 同样收首参 `workspace: WorkspaceSession`
+（原先只收 `project_id` 并自行 `project_manager.get_project(...).path` 取根）。它不属 git 域，但同一
+条不变量适用：**「在哪个 Workspace 执行」的命令不得自行读项目表取根**。
+三重基准错位的完整形态（扫错根 / 结果路径基准与点击打开基准不一致 / 同一列表两种基准）
+与前端同源契约见 [`docs/domain-model.md`](../../../docs/domain-model.md)「寻址根 vs 展示根」的 search 段。
+`SearchPage.project_id` 保留但**降为元数据**（前端不参与寻址）。
+
 > 例外只针对**命令签名**（参数形态）。**内部**解析仍然收口：worktree 操作命令为「被操作的
 > 单元」解析身份以便 `release_workspace` 时，也经 `resolve_workspace_target`（用
 > `WorkspaceSession::of(project_id, Some(identity))` 构造地址）—— 使「git 域解析入口唯一」成为

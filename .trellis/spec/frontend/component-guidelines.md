@@ -747,15 +747,73 @@ import type { Project, AgentConfig } from "@/shared/types";
 
 ---
 
-## 确认弹窗规范：ConfirmDialog
+## 确认弹窗规范：两层的 `DeleteConfirmDialog` / `ConfirmDialog`
 
-### 约定
+### 第一性原理：先问「确认对象是谁」
 
-所有删除/危险操作的二次确认弹窗，使用 `src/shared/components/ConfirmDialog.tsx`。
+危险操作二次确认**只有一层业务记账**，选哪一层由确认对象的**性质**决定，不是由文案决定：
 
-基于 Radix UI `Dialog` + `Button` 原语，自动处理遮罩层、ESC 关闭、键盘焦点管理、dark theme 样式。
+| 确认对象 | 用什么 | 例 |
+| --- | --- | --- |
+| **某个待定条目**（可数、有名字/路径） | `DeleteConfirmDialog<T>` | 删文件/文件夹、移除 project、移除 worktree、移除 skill（单条/批量）、删 tag group、删 prompt / MCP server |
+| **UI 状态或未来动作**（无条目） | 底层 `ConfirmDialog` | 退出 App、关闭未保存文件、丢弃未保存变更 |
+| 非 React 模块（debug runner / store action）发起确认 | `await confirmAction()`（`ConfirmHost`） | 命令式 store 通道 |
 
-### Props
+**禁止**为每种危险操作新建 `XxxConfirmDialog`。差异（标题、文案、按钮名）都是**数据**，
+通过 props 注入即可 —— 见下方 `DeleteConfirmDialog`。
+
+---
+
+### `DeleteConfirmDialog<T>` —— 待定条目类确认（首选）
+
+位置：`src/shared/components/DeleteConfirmDialog.tsx`。它把 `ConfirmDialog` 的
+`open` / `onOpenChange`→cancel / `danger` 记账固定下来，消费方只注入文案与动作。
+
+```ts
+interface DeleteConfirmDialogProps<T> {
+  pending: T | null;                              // null = 不渲染
+  onCancel: () => void;
+  onConfirm: (item: T) => void;                   // 收到条目，无需调用方再判空
+  title: string | ((item: T) => string);          // 随条目变化时传函数
+  describe: (item: T) => React.ReactNode;
+  confirmLabel?: string | ((item: T) => string);  // 默认 "Delete"
+}
+```
+
+```tsx
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
+
+const [confirmRemove, setConfirmRemove] = useState(false);
+
+<DeleteConfirmDialog
+  pending={confirmRemove ? project : null}
+  onCancel={() => setConfirmRemove(false)}
+  onConfirm={(p) => onRemoveProject(p.id)}
+  title="Remove Project"
+  confirmLabel="Remove"
+  describe={(p) => (
+    <>
+      <p>Are you sure you want to remove <strong>{p.name}</strong>?</p>
+      <div>{p.path}</div>
+    </>
+  )}
+/>;
+```
+
+要点：
+
+- `T` **无结构约束**（组件从不读字段，只回传）。不要加 `extends { id: string }` ——
+  worktree 的条目是 `{ path, branch, isDirty }`，那个约束会逼出第二个组件。
+- `pending` 可为**集合**（skill 批量移除传 `T = 条目[]`）。
+- `confirmLabel` 随**条目**变化传 `(item) => string`；随**外部进行态**变化传无参闭包
+  （`() => (removing ? 'Removing…' : 'Remove')`）。
+- 列表项删除配 [`useDeleteConfirm`](state-management.md) 状态机（`pending` / `request` /
+  `confirm` / `cancel`）一起用。
+
+### 底层 `ConfirmDialog` —— 非条目类确认
+
+位置：`src/shared/components/ConfirmDialog.tsx`。基于 Radix UI `Dialog` + `Button` 原语，
+自动处理遮罩层、ESC 关闭、键盘焦点管理、dark theme 样式。
 
 ```ts
 interface ConfirmDialogProps {
@@ -769,36 +827,28 @@ interface ConfirmDialogProps {
 }
 ```
 
-### 使用方式
-
 ```tsx
-import ConfirmDialog from "@/shared/components/ConfirmDialog";
-
-const [confirmRemove, setConfirmRemove] = useState(false);
+import ConfirmDialog from '@/shared/components/ConfirmDialog';
 
 <ConfirmDialog
-  open={confirmRemove}
-  onOpenChange={setConfirmRemove}
-  title="Remove Project"
-  description={
-    <>
-      <p>Are you sure you want to remove <strong>{project.name}</strong>?</p>
-      <div>{project.path}</div>
-    </>
-  }
-  confirmLabel="Remove"
-  onConfirm={() => onRemoveProject(project.id)}
+  open={confirmExitOpen}
+  onOpenChange={onCancelExit}
+  title="Exit Neeko?"
+  description={<>Any running terminals will be stopped. Quit anyway?</>}
+  confirmLabel="Quit"
+  onConfirm={onConfirmExit}
   danger
-/>
+/>;
 ```
 
-- `description` 接受 `ReactNode`，可传入条件内容（如 Worktree 删除时的 `isDirty` 警告）
-- `danger` 为 `true` 时确认按钮使用 `variant="destructive"`（红色背景）
-- 确认按钮文案通过 `confirmLabel` 自定义（如 Worktree 的 "Force Remove" / "Remove"）
+- `description` 接受 `ReactNode`，可传条件内容
+- `danger` 为 `true` 时确认按钮 `variant="destructive"`
+- 已有同样的记账需求（待定条目）时，**不要**在这里手写 `open` / `onOpenChange` /
+  `danger` —— 用 `DeleteConfirmDialog`
 
 ### 反模式
 
-❌ **使用裸 `<div className="modal-overlay"> 模拟弹窗**：
+❌ **使用裸 `<div className="modal-overlay">` 模拟弹窗**：
 
 ```tsx
 // 禁止：这些 class 在项目 CSS 中没有定义，无任何样式
@@ -811,7 +861,19 @@ const [confirmRemove, setConfirmRemove] = useState(false);
 )}
 ```
 
-✅ **使用 ConfirmDialog**：见上方使用方式。
+❌ **为每种危险操作新建 `XxxConfirmDialog`，或手写 `ConfirmDialog` 记账**：
+
+```tsx
+// 禁止：project / skill / worktree / file 四处曾各写一遍这三行套话
+<ConfirmDialog
+  open={confirmRemove}
+  onOpenChange={setConfirmRemove}
+  danger
+  /* ... */
+/>
+```
+
+✅ **统一走 `DeleteConfirmDialog`**：见上方使用方式。新增确认场景 = 传 props。
 
 ---
 

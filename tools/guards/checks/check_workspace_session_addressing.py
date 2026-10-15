@@ -9,16 +9,19 @@
 | --- | --- | --- | --- |
 | **可手搓** | 前端 `worktreePath?: string \\| null` 可选散参 | 漏传 → 静默按主仓执行 | **B** |
 | **可拆分** | 后端 `(project_id, worktree_path)` 两个 wire 字段 | 两字段可独立缺失/错配 | **签名**（收单 `workspace` 对象，AC2 + 类型检查；半用对象由 **A2** 兜底） |
-| **可绕过** | git 域直调 `resolve_workspace(&str, Option<&str>)` | 解析逻辑两个外观 | **A** |
+| **可绕过** | 命令层直调 `resolve_workspace(&str, Option<&str>)` | 解析逻辑两个外观 | **A** |
+| **半迁移** | 签名收了 `workspace`，却仍从 `get_project(...).path` 取根 | worktree 视图扫主仓（签名看着对） | **D** |
 
 与前置任务 `10-09-file-io-workspace-scope` 的 `check_file_io_scope` 互补：那条管**文件 IO**的
-唯一命令面与旧编码，本条管 **git 域**的地址形态。两者的 B 判据作用域不同（那条管
-`rootPath` 退役，本条管 git 的 `worktreePath` 散签），不重叠。
+唯一命令面与旧编码，本条管**命令层**的地址形态（不限 git 域 —— file / terminal / search 同理）。
+两者的 B 判据作用域不同（那条管 `rootPath` 退役，本条管 `gitApi.ts` 的 `worktreePath` 散签），
+不重叠。
 
-## 判据（三条，均确定性可复现）
+## 判据（四条，均确定性可复现）
 
-- **A1 后端唯一解析入口（无条件）**：`git/commands/**` 与 `agent/commands_commit.rs` 内不得直调
-  `resolve_workspace(`（唯一入口是 `resolve_workspace_target(&workspace)`）。
+- **A1 后端唯一解析入口（无条件）**：命令层（`src-tauri/src/**/commands*.rs` 与
+  `**/commands/**/*.rs`，扣除 `RS_EXEMPT_DIRS`）内不得直调 `resolve_workspace(`
+  （唯一入口是 `resolve_workspace_target(&workspace)`）。
   收口完成后已无 `worktree_path: Option<String>` 散参，旧的"函数带散参形参才判"前置会永真空
   （2026-10-12 实证：history/commit 8 个命令收了 `workspace` 却走 `resolve_project`，护栏盲区）——
   故不设前置，字面零命中（AC3）。
@@ -34,6 +37,11 @@
 - **C 前端禁伪造地址**：`src/**` 生产代码不得把字面量**断言/标注成** `WorkspaceSession`
   （`{ projectId, worktreePath } as WorkspaceSession`、`: WorkspaceSession = { … }`）——
   class 私有构造已挡住直接 `new`，这两种是仅剩的绕过形态。
+- **D 收了地址就不得再按 project 取根（半迁移态）**：函数带 `workspace: WorkspaceSession` 形参，
+  却仍 `get_project( … )` 取 `project.path` 当工作目录 —— 签名看着对（A2 过），但它把**另一个**
+  根交给了下游（worktree 视图扫主仓）。2026-10-13 的 `search/commands.rs` 正是此形（旧形态
+  `search_run` 无`workspace` 形参，与 `set_active_project` 这类**合法的 project 级命令**语法同形，
+  无法用静态规则区分 —— 故本判据只钉「已收地址却还用另一个根」这个**可判定**的子集）。
 
 > **为何不拦裸 `{ projectId, worktreePath }`**：该形态在 `commandFactory.ts` 里是**合法 wire 载荷**
 > （`invoke('stage_files', { projectId, worktreePath })`，由 `gitApi` 内部解构产生），与「手搓地址」
@@ -50,7 +58,26 @@ import re
 from guards.core.contract import Context, Finding, Guard, GuardResult
 
 TS_SCOPES = ("src/**/*.ts", "src/**/*.tsx")
-RS_SCOPES = ("src-tauri/src/git/commands/**/*.rs", "src-tauri/src/agent/commands_commit.rs")
+# 后端域：不限于 git —— 「在哪个 Workspace 执行」是**跨域**不变量（file / terminal / search …）。
+# 曾仅扫 `git/commands/**` + `agent/commands_commit.rs`，search 域的同类缺陷因此**不可见**
+# （2026-10-13 实证：`search_run` 直取 `project.path` 作搜索根，三重基准错位）。
+RS_SCOPES = (
+    "src-tauri/src/**/commands*.rs",
+    "src-tauri/src/**/commands/**/*.rs",
+)
+
+# 非「在一个 Workspace 里执行」的域：它们按 project 或全局概念工作，不适用本护栏。
+# （保留目录形式以便新增域时显式决定，而不是静默被扫。）
+RS_EXEMPT_DIRS = (
+    "src-tauri/src/project/",  # 项目管理本身（set_active_project / primary_language …）
+    "src-tauri/src/library/",  # 资源库（按 project 绑定的 skill / prompt 安装）
+    "src-tauri/src/app/",  # 组合根（启动 / 关闭协议）
+    "src-tauri/src/about/",  # 版本信息
+)
+
+# D：收了 `workspace` 却仍从 `get_project(...).path` 取根（半迁移态）
+GET_PROJECT_RE = re.compile(r"\bget_project\s*\(")
+PROJECT_PATH_RE = re.compile(r"\bproject\.path\b|\bp\.path\b")
 
 # A1：后端直调旧解析入口（`resolve_workspace_target` 是合法入口，负向查断言它不在）
 RESOLVE_DIRECT_RE = re.compile(r"(?<!_target)\bresolve_workspace\s*\(")
@@ -85,9 +112,14 @@ def _is_test(rel: str) -> bool:
     return bool(TEST_PATH_RE.search(rel))
 
 
+def _is_exempt_dir(rel: str) -> bool:
+    """非「在一个 Workspace 里执行」的域（见 `RS_EXEMPT_DIRS` 注释）。"""
+    return rel.startswith(RS_EXEMPT_DIRS)
+
+
 GUARD = Guard(
     id="check_workspace_session_addressing",
-    title="git 命令按 WorkspaceSession 寻址（后端唯一解析入口 / 前端禁散签 / 禁手搓地址）",
+    title="按 WorkspaceSession 寻址（后端唯一解析入口 / 前端禁散签 / 禁手搓地址）",
     scopes=TS_SCOPES + RS_SCOPES,
     red_lines=(12,),
     docs="docs/domain-model.md",
@@ -119,21 +151,25 @@ def _owning_function(text: str, pos: int) -> str | None:
 
 def check(ctx: Context) -> GuardResult:
     ts_files = sorted({p for scope in TS_SCOPES for p in ctx.glob(scope)})
-    rs_files = sorted({p for scope in RS_SCOPES for p in ctx.glob(scope)})
+    # `mod.rs` 只允许声明 + re-export（红线 9），不可能承载命令体 —— 排除，免得它们充数。
+    rs_files = sorted(
+        p for scope in RS_SCOPES for p in ctx.glob(scope) if p.name != "mod.rs"
+    )
     if not ts_files:
         return GuardResult.broken("在 src/**/*.{ts,tsx} 下扫到 0 个文件 —— 口径失效", scanned=0)
     if not rs_files:
         return GuardResult.broken(
-            "在 src-tauri/src/git/commands/** 下扫到 0 个文件 —— 口径失效", scanned=0
+            "在 src-tauri/src/**/commands*.rs 下扫到 0 个文件 —— 口径失效", scanned=0
         )
 
     findings: list[Finding] = []
 
-    # ── A1：后端唯一解析入口（无条件：git 域不得直调旧入口，AC3 字面零命中）
+    # ── A1：后端唯一解析入口（无条件：命令层不得直调旧入口，AC3 字面零命中）
     # ── A2：收 workspace 的命令不得只按 project 解析（丢 worktree 维度，§10 戳错单元）
+    # ── D ：收了地址却仍从 `get_project(...).path` 取根（半迁移态）
     for path in rs_files:
         rel = ctx.rel(path)
-        if _is_test(rel):
+        if _is_test(rel) or _is_exempt_dir(rel):
             continue
         text = ctx.read(rel)
         for start, end in _iter_functions(text):
@@ -141,7 +177,7 @@ def check(ctx: Context) -> GuardResult:
             for m in RESOLVE_DIRECT_RE.finditer(body):
                 findings.append(
                     Finding(
-                        "git 域不得直调 `resolve_workspace(`：唯一入口是 "
+                        "命令层不得直调 `resolve_workspace(`：唯一入口是 "
                         f"`resolve_workspace_target(&workspace)`；直调 {m.group(0)!r} "
                         "会让解析逻辑存在两个外观",
                         rel,
@@ -159,6 +195,20 @@ def check(ctx: Context) -> GuardResult:
                             text.count("\n", 0, start + m.start()) + 1,
                         )
                     )
+                # D：收了地址却仍从 `get_project(...).path` 取根（半迁移态）。
+                # 两个信号**同时**出现才算：只有 `get_project(` 可能只是读元数据（名称 / 环境），
+                # 只有 `.path` 也可能是无关字段 —— 合起来才是「用项目路径当工作目录」。
+                if GET_PROJECT_RE.search(body) and PROJECT_PATH_RE.search(body):
+                    for m in GET_PROJECT_RE.finditer(body):
+                        findings.append(
+                            Finding(
+                                "收 `workspace: WorkspaceSession` 却仍从 `get_project(...).path` "
+                                "取工作目录：那会把**另一个**根交给下游（worktree 视图扫主仓）；"
+                                "根唯一来源是 `resolve_workspace_target(&workspace)` → `repo.root()`",
+                                rel,
+                                text.count("\n", 0, start + m.start()) + 1,
+                            )
+                        )
 
     # ── B：前端禁散签（只查 gitApi.ts 的形参；C 类命令的 worktreePath 是被操作目标，豁免）
     for path in ts_files:

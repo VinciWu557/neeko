@@ -3,8 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as searchApi from '@/features/search/api/searchApi';
 import { AppProvider } from '@/shared/contexts';
+import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { SearchPanel } from '../SearchPanel';
+
+/** 测试用地址（主仓）。 */
+const WS = WorkspaceSession.of('p-1', null);
 
 vi.mock('@/features/search/api/searchApi', async () => {
   const actual = await vi.importActual<typeof searchApi>('@/features/search/api/searchApi');
@@ -69,13 +73,13 @@ describe('SearchPanel', () => {
   });
 
   it('渲染输入框与空态提示', () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
     expect(screen.getByLabelText('Search project files')).toBeInTheDocument();
     expect(screen.getByText('Type to search across project files.')).toBeInTheDocument();
   });
 
   it('输入后（防抖）展示匹配结果', async () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
 
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: 'foo' } });
     await settle();
@@ -85,14 +89,14 @@ describe('SearchPanel', () => {
   });
 
   it('空 query 不触发搜索', async () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: '   ' } });
     await settle();
     expect(runMock).not.toHaveBeenCalled();
   });
 
   it('清除按钮清空输入', async () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
 
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: 'foo' } });
     await settle();
@@ -104,7 +108,7 @@ describe('SearchPanel', () => {
 
   it('搜索失败时通过 toast 显示错误', async () => {
     runMock.mockRejectedValue(new Error('backend exploded'));
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
 
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: 'foo' } });
     await settle();
@@ -113,7 +117,7 @@ describe('SearchPanel', () => {
   });
 
   it('展示文件匹配数 badge', async () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
 
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: 'foo' } });
     await settle();
@@ -122,7 +126,7 @@ describe('SearchPanel', () => {
   });
 
   it('展示结果总数在输入区域', async () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
 
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: 'foo' } });
     await settle();
@@ -131,7 +135,7 @@ describe('SearchPanel', () => {
   });
 
   it('展示状态栏', async () => {
-    renderWithProvider(<SearchPanel projectId="p-1" />);
+    renderWithProvider(<SearchPanel workspace={WS} />);
 
     fireEvent.change(screen.getByLabelText('Search project files'), { target: { value: 'foo' } });
     await settle();

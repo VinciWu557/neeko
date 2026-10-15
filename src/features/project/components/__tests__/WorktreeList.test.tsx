@@ -2,6 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { useGitStore } from '@/shared/store/gitStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { GitStatusSnapshot, Worktree } from '@/shared/types';
@@ -84,6 +85,7 @@ async function clickRemoveAndConfirm(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  useGitStore.setState({ aheadBehind: {} });
   api.removeWorktree.mockResolvedValue(undefined);
   api.deleteBranch.mockResolvedValue(undefined);
   api.renameWorktree.mockResolvedValue(undefined);
@@ -93,11 +95,20 @@ beforeEach(() => {
   );
   api.isWorktreeDirty.mockResolvedValue(false);
   api.closeTerminalSession.mockResolvedValue(undefined);
-  // 未挂载单元的侧栏 +A/-D 走 pull 通道。删除之后该 worktree 已不存在，后端解析必失败 ——
-  // 若不这样收口，组件的按需 pull 会把刚作废的槽位重新填上，测试就分不清「作废」与「被重填」。
+  // 列表不再为未挂载单元按需拉 status（那个 chip 的数据源已随 G4 失效并删除）；
+  // 默认拒绝，若将来重新引入拉取，测试会立刻显形。
   api.getWorkspaceStatus.mockImplementation((_projectId: string, path: string | null) =>
     path === WT_PATH ? Promise.reject(new Error('worktree is gone')) : Promise.resolve(snapshot(1)),
   );
+});
+
+describe('WorktreeList — 待 push 提交数（与 local 行逐字同一条读取规则）', () => {
+  it('激活的 worktree 行渲染 ↑N（键 = 该 worktree 单元）', async () => {
+    seedActiveUnit();
+    useGitStore.setState({ aheadBehind: { [WT_KEY]: { ahead: 3, behind: 0 } } });
+    renderList();
+    expect(await screen.findByText('↑3')).toBeInTheDocument();
+  });
 });
 
 describe('WorktreeList — 单元生命周期收口（R2.4 / I1-b）', () => {
@@ -175,25 +186,5 @@ describe('WorktreeList — 单元生命周期收口（R2.4 / I1-b）', () => {
     await waitFor(() =>
       expect(useWorkspaceStore.getState().byProject[PROJECT_ID]?.activePath).toBeNull(),
     );
-  });
-
-  it('重新挂载列表会重拉未挂载单元的 chip 数据（持久化槽位不得永久抑制重拉）', async () => {
-    // 非激活视图：该单元没有 push 生产者，chip 的数据源只有按需 pull。
-    // 旧守卫拿全局槽位（key in statuses）当跳过条件 ⇒ 槽位跨挂载持久 ⇒ chip 永久陈旧。
-    useWorkspaceStore.setState({ byProject: {} });
-    useProjectStore.setState({ statuses: {} } as never);
-    api.getWorkspaceStatus.mockResolvedValue(snapshot(1));
-
-    const { unmount } = renderList();
-    await waitFor(() =>
-      expect(api.getWorkspaceStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ projectId: PROJECT_ID, worktreePath: WT_PATH }),
-      ),
-    );
-    await waitFor(() => expect(useProjectStore.getState().statuses[WT_KEY]).toBeDefined());
-    unmount();
-
-    renderList();
-    await waitFor(() => expect(api.getWorkspaceStatus).toHaveBeenCalledTimes(2));
   });
 });

@@ -438,7 +438,12 @@ export function useDeltaBatcher(onFlush: (deltas: PendingDelta[]) => void) {
   const bufferRef = useRef<PendingDelta[]>([]);
   const rafRef = useRef<number | null>(null);
   const onFlushRef = useRef(onFlush);
-  onFlushRef.current = onFlush; // 始终读取最新回调，避免闭包过期
+
+  // 回调保持最新。**必须在 effect 中同步** —— 渲染期写 ref 被 `react-hooks/refs`（= error）拦下；
+  // 且 `src/AGENTS.md` 前端架构约定 3 要求所有 ref 镜像在**同一个** effect 中同步。
+  useEffect(() => {
+    onFlushRef.current = onFlush;
+  }, [onFlush]);
 
   const push = useCallback((kind, delta) => {
     bufferRef.current.push({ kind, delta });
@@ -523,3 +528,38 @@ return { handleSelect: (id) => { ... } };
 const handleSelect = useCallback((id) => { ... }, [deps]);
 return { handleSelect };
 ```
+
+### 5. 防抖 / 定时器 effect 依赖了**对象身份**而非原始值
+
+**症状**：功能「有时候完全不触发」，且与输入快慢无关 —— 输入越快越必现。高频重渲染的父级下，
+防抖（或任何定时器）窗口永远等不到静默期，回调**一次也不执行**。
+
+```tsx
+// 错误 —— 依赖对象：父级每次渲染新建实例（如渲染期调命令式 mint `activeWorkspaceSession(pid)`）
+// 都会重置 300ms 窗口 ⇒ 重渲染风暴中搜索被饿死（实测：1.2s / 20 次重渲，调用 0 次）
+useEffect(() => {
+  const t = setTimeout(() => run(workspace, query), 300);
+  return () => clearTimeout(t);
+}, [query, workspace, options, run]);   // ← workspace 是新对象
+
+// 正确 —— 依赖**原始值** key；对象本身经 ref 读取（与 optionsRef 同一模式）
+const workspaceRef = useRef(workspace);
+useEffect(() => {
+  workspaceRef.current = workspace;
+}, [workspace]);
+useEffect(() => {
+  const t = setTimeout(() => run(workspaceRef.current, query), 300);
+  return () => clearTimeout(t);
+}, [query, workspace?.key ?? null, optionsSignature, run]);   // ← key 是字符串
+```
+
+**判定准则**：effect 依赖数组里**不允许出现每次渲染可能新建的对象 / 数组 / 函数字面量**（除非它
+已由 `useMemo` / `useCallback` / store `useShallow` 稳定化）。需要对象内容时，依赖它的**原始投影**
+（`.key` / `.id` / 序列化签名），对象从 ref 读 —— 与「过期状态」相反：那里要**最新值**，这里要
+**不重置窗口**。
+
+**多个镜像 ref 合并到同一个 effect**（`src/AGENTS.md` 前端架构约定 3「所有 refs 在单个 effect 中同步」）：
+`optionsRef` 与 `workspaceRef` 应在**一个** `useEffect` 里赋值，而不是每个 ref 一个 effect。
+
+**回归测试**：写「重渲染风暴」用例 —— 在防抖窗内每 60ms 重渲一次（共 20 次，始终无 300ms 静默
+窗口），断言回调**恰好被调用一次**；临时把依赖换回对象，该用例必须 RED。

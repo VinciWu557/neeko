@@ -141,6 +141,93 @@ class WorkspaceSessionAddressingTest(unittest.TestCase):
         self.assertEqual(result.verdict, VIOLATION)
         self.assertIn("resolve_workspace_target", result.findings[0].message)
 
+    # ── D：收了地址却仍从 get_project(...).path 取根（半迁移态）
+    def test_workspace_param_with_get_project_path_is_violation(self):
+        """D：签名看着对，但把另一个根交给下游（2026-10-13 `search_run` 的形态）。"""
+        result = self.run_guard(
+            {
+                "src-tauri/src/search/commands.rs": (
+                    "pub async fn search_run(\n"
+                    "    workspace: WorkspaceSession,\n"
+                    ") -> Result<(), AppError> {\n"
+                    "    let manager = state.project_manager.lock()?;\n"
+                    "    let project = manager.get_project(&workspace.project_id);\n"
+                    "    let root = project.path.to_string_lossy().to_string();\n"
+                    "    Ok(())\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertIn("repo.root()", result.findings[0].message)
+
+    def test_search_run_target_form_is_clean(self):
+        """正确形态：地址经唯一入口解析，根取 `repo.root()`。"""
+        result = self.run_guard(
+            {
+                "src-tauri/src/search/commands.rs": (
+                    "pub async fn search_run(\n"
+                    "    workspace: WorkspaceSession,\n"
+                    ") -> Result<(), AppError> {\n"
+                    "    let (target, repo) = state.resolve_workspace_target(&workspace).await?;\n"
+                    "    let root = repo.root().to_string();\n"
+                    "    Ok(())\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, PASS)
+
+    def test_get_project_without_path_is_clean(self):
+        """D 需两信号同时出现：只读项目元数据（名称 / 选中 agent）不违规。"""
+        result = self.run_guard(
+            {
+                "src-tauri/src/task/commands.rs": (
+                    "pub fn project_label(\n"
+                    "    workspace: WorkspaceSession,\n"
+                    ") -> Result<String, AppError> {\n"
+                    "    let pm = state.project_manager.lock()?;\n"
+                    "    let name = pm.get_project(&workspace.project_id).map(|p| p.name.clone());\n"
+                    "    Ok(name.unwrap_or_default())\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, PASS)
+
+    def test_exempt_domain_is_not_scanned(self):
+        """`project/commands.rs` 是项目管理本身，读 `project.path` 合法。"""
+        result = self.run_guard(
+            {
+                "src-tauri/src/project/commands.rs": (
+                    "pub fn set_active_project(\n"
+                    "    project_id: String,\n"
+                    ") -> Result<(), AppError> {\n"
+                    "    let pm = state.project_manager.lock()?;\n"
+                    "    let p = pm.get_project(&project_id).map(|p| p.path.clone());\n"
+                    "    Ok(())\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, PASS)
+
+    def test_non_git_command_domain_is_scanned(self):
+        """非 git 域也在扫描范围内（「在哪个 Workspace 执行」是跨域不变量）。"""
+        result = self.run_guard(
+            {
+                "src-tauri/src/terminal/commands.rs": (
+                    "pub async fn create_terminal_session(\n"
+                    "    project_id: String,\n"
+                    ") -> Result<(), AppError> {\n"
+                    "    let (t, wd) = state.resolve_workspace(&project_id, None).await?;\n"
+                    "    Ok(())\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, VIOLATION)
+
     def test_project_only_resolve_project_is_clean(self):
         """无 workspace 形参的命令（canonical/is_git_repo）走 resolve_project 合法。"""
         result = self.run_guard(

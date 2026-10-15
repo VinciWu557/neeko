@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import ContextMenu from '@/shared/components/ContextMenu';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
 import type { FileChange } from '@/shared/types';
 import { buildFileTreeView, flattenFileTreeView } from '@/shared/utils/fileTree';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
@@ -12,7 +13,6 @@ import { useFileStore } from '../store';
 import { displayHomePath } from '../utils/fileTreeUtils';
 import { compactJavaPackages } from '../utils/javaPackageTree';
 
-import DeleteConfirmDialog from './DeleteConfirmDialog';
 import FilesPanelHeader from './FilesPanelHeader';
 import FileTreeList from './FileTreeList';
 import InlineNameInput from './InlineNameInput';
@@ -263,12 +263,18 @@ function FilesPanel({
 
       {/* Delete Confirmation */}
       <DeleteConfirmDialog
-        target={state.confirmDelete}
+        pending={state.confirmDelete}
         onCancel={state.closeDeleteConfirm}
-        onConfirm={(path, isDir) => {
+        onConfirm={(item) => {
           state.closeDeleteConfirm();
-          void state.handleDelete(path, isDir);
+          void state.handleDelete(item.path, item.isDir);
         }}
+        title={(item) => `Delete ${item.isDir ? 'Folder' : 'File'}`}
+        describe={(item) => (
+          <>
+            Are you sure you want to delete &quot;{item.path}&quot;? This action cannot be undone.
+          </>
+        )}
       />
     </div>
   );

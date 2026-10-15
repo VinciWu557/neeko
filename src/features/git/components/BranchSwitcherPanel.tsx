@@ -1,7 +1,9 @@
-import { SearchIcon, Plus, FolderGit2, ArrowUp, ArrowDown } from 'lucide-react';
+import { SearchIcon, ArrowUp, ArrowDown } from 'lucide-react';
 import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
 
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
+
+import BranchSwitcherActions from './BranchSwitcherActions';
 
 export interface BranchSwitcherPanelProps {
   branches: string[];
@@ -10,8 +12,9 @@ export interface BranchSwitcherPanelProps {
   aheadBehind: Record<string, { ahead: number; behind: number }>;
   onCheckout: (branchName: string) => void;
   onToggleFavorite: (branchName: string) => void;
-  onNewBranch: () => void;
-  onNewWorktree: () => void;
+  /** 不传 = 当前宿主无此能力（如状态栏无弹窗宿主）→ 底部动作栏不渲染，不摆死按钮。 */
+  onNewBranch?: () => void;
+  onNewWorktree?: () => void;
   onClose: () => void;
 }
 
@@ -347,29 +350,12 @@ function BranchSwitcherPanel({
         ))}
       </div>
 
-      {/* Bottom action bar */}
-      <div className="flex border-t border-border">
-        <button
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors duration-100"
-          onClick={() => {
-            onNewBranch();
-            onClose();
-          }}
-        >
-          <Plus size={12} />
-          New Branch
-        </button>
-        <button
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 text-[12px] text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors duration-100 border-l border-border"
-          onClick={() => {
-            onNewWorktree();
-            onClose();
-          }}
-        >
-          <FolderGit2 size={12} />
-          New Worktree
-        </button>
-      </div>
+      {/* Bottom action bar —— 能力缺席（如状态栏无弹窗宿主）时整体不渲染，不摆死按钮。 */}
+      <BranchSwitcherActions
+        onNewBranch={onNewBranch}
+        onNewWorktree={onNewWorktree}
+        onClose={onClose}
+      />
 
       {/* Context Menu */}
       {contextMenu && (

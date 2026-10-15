@@ -71,7 +71,7 @@ describe('ConnectionProjectCard (WSL)', () => {
     });
   });
 
-  it('展开后渲染 local 主终端行（branch + 聚合 +A -D）和 worktree 行', async () => {
+  it('展开后渲染 local 主终端行与 worktree 行', async () => {
     const project = makeWslProject();
     useProjectStore.getState().applyStatus(makeSnapshot(project.id, null, [MODIFIED]));
     render(
@@ -93,9 +93,6 @@ describe('ConnectionProjectCard (WSL)', () => {
     expect(screen.getByText('local')).toBeInTheDocument();
     // worktree 目录名
     expect(screen.getByText('feature-x')).toBeInTheDocument();
-    // local 行 changed_files 聚合：+4 -1
-    expect(screen.getByText('+4')).toBeInTheDocument();
-    expect(screen.getByText('-1')).toBeInTheDocument();
   });
 
   it('点击 local 行触发 onSelectProject (传入 distro + project)', async () => {
@@ -169,11 +166,12 @@ describe('ConnectionProjectCard (WSL)', () => {
     expect(screen.getByText('↑3')).toBeInTheDocument();
   });
 
-  it('active worktree 与 isActive 都成立时 local 行不显示 ↑N（显示的是该 worktree 的视图）', async () => {
+  it('active worktree 时 local 行不显示 ↑N，而 **worktree 行**显示它自己的 ↑N', async () => {
     const project = makeWslProject();
     const wtPath = '/home/user/wts/feature-x';
     useWorkspaceStore.getState().setActiveWorkspace(project.id, wtPath);
-    // 两个单元的键都给值：主仓的数字**不得**泄漏到 worktree 视图的 local 行上
+    // 两个单元的键都给值：主仓的数字**不得**泄漏到 worktree 视图的 local 行上，
+    // 而 worktree 行读的正是**它自己单元**的键（与 local 行同一条规则，只换单元）。
     useGitStore.setState({
       aheadBehind: {
         [WorkspaceSession.of(project.id, null).key]: { ahead: 3, behind: 0 },
@@ -190,38 +188,11 @@ describe('ConnectionProjectCard (WSL)', () => {
         onRemoveProject={vi.fn()}
       />,
     );
+    // worktree 行展示它自己单元的待 push 提交数
     await waitFor(() => {
-      expect(screen.queryByText('↑3')).not.toBeInTheDocument();
+      expect(screen.getByText('↑9')).toBeInTheDocument();
     });
-    expect(screen.queryByText('↑9')).not.toBeInTheDocument();
-  });
-
-  /**
-   * 本次根因的钉死用例：未提交变更是 **per 工作树** 的事实。旧实现把 changed_files 挂在
-   * per-project 的 git_info 上，worktree 的条目因此会串到主仓行（反之亦然）。
-   * worktree 行的条目来自按单元的状态命令；主仓单元在 store 里**没有**条目（未知）。
-   * 断言 `+4` 只出现 **1 次**：若主仓行泄漏 worktree 条目，它会出现在两行里（=2）。
-   */
-  it('worktree 单元的变更不泄漏到 local 主终端行（按 workspace_key 分域）', async () => {
-    const project = makeWslProject();
-    const wtPath = '/home/user/wts/feature-x';
-    vi.mocked(invoke).mockImplementation(async (cmd) =>
-      cmd === 'get_workspace_status' ? makeSnapshot(project.id, wtPath, [MODIFIED]) : [],
-    );
-    render(
-      <ConnectionProjectCard
-        project={project}
-        entryId="entry-1"
-        source={{ type: 'wsl', distro: 'Ubuntu' }}
-        isActive
-        onSelectProject={vi.fn()}
-        onRemoveProject={vi.fn()}
-      />,
-    );
-    await waitFor(() => {
-      expect(screen.getAllByText('+4')).toHaveLength(1);
-    });
-    expect(screen.getAllByText('-1')).toHaveLength(1);
-    expect(screen.getByText('local')).toBeInTheDocument();
+    // 主仓的数字不得出现在 worktree 视图里
+    expect(screen.queryByText('↑3')).not.toBeInTheDocument();
   });
 });

@@ -26,7 +26,7 @@ import {
 } from '@/features/skill/api/skillApi';
 import { useSkillStore } from '@/features/skill/store';
 import { cn } from '@/lib/utils';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import type { AgentDiskSkill, ManagedSkillDto } from '@/shared/types';
 import { Button } from '@/ui';
@@ -858,43 +858,37 @@ const AgentSkillContent: React.FC<AgentSkillContentProps> = React.memo(({ setDia
         />
       ) : null}
 
-      <ConfirmDialog
-        open={pendingRemove !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingRemove(null);
-        }}
-        title="Remove skill from agent?"
-        description={
-          pendingRemove ? (
-            <p className="text-sm text-text-secondary">
-              Remove <span className="font-medium text-text-primary">{pendingRemove.name}</span>{' '}
-              from <span className="font-medium text-text-primary">{activeGroup.agent_name}</span>?
-              This only unlinks it from the agent; the Library copy is kept.
-            </p>
-          ) : null
-        }
-        confirmLabel={removing ? 'Removing…' : 'Remove'}
-        danger
+      <DeleteConfirmDialog
+        pending={pendingRemove}
+        onCancel={() => setPendingRemove(null)}
         onConfirm={() => void handleRemoveConfirm()}
+        title="Remove skill from agent?"
+        confirmLabel={() => (removing ? 'Removing…' : 'Remove')}
+        describe={(skill) => (
+          <p className="text-sm text-text-secondary">
+            Remove <span className="font-medium text-text-primary">{skill.name}</span> from{' '}
+            <span className="font-medium text-text-primary">{activeGroup.agent_name}</span>? This
+            only unlinks it from the agent; the Library copy is kept.
+          </p>
+        )}
       />
 
-      <ConfirmDialog
-        open={bulkConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open && !bulkRemoving) setBulkConfirmOpen(false);
+      <DeleteConfirmDialog
+        pending={bulkConfirmOpen ? selectedSkills : null}
+        onCancel={() => {
+          if (!bulkRemoving) setBulkConfirmOpen(false);
         }}
-        title={`Remove ${selectedSkills.length} skill${selectedSkills.length === 1 ? '' : 's'}?`}
-        description={
+        onConfirm={() => void handleBulkRemove()}
+        title={(skills) => `Remove ${skills.length} skill${skills.length === 1 ? '' : 's'}?`}
+        confirmLabel={() => (bulkRemoving ? 'Removing…' : 'Remove selected')}
+        describe={(skills) => (
           <p className="text-sm text-text-secondary">
-            Remove <span className="font-medium text-text-primary">{selectedSkills.length}</span>{' '}
-            selected skill{selectedSkills.length === 1 ? '' : 's'} from{' '}
+            Remove <span className="font-medium text-text-primary">{skills.length}</span> selected
+            skill{skills.length === 1 ? '' : 's'} from{' '}
             <span className="font-medium text-text-primary">{activeGroup.agent_name}</span>? Library
             copies are kept.
           </p>
-        }
-        confirmLabel={bulkRemoving ? 'Removing…' : 'Remove selected'}
-        danger
-        onConfirm={() => void handleBulkRemove()}
+        )}
       />
     </div>
   );
