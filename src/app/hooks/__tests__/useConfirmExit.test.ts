@@ -32,7 +32,6 @@ function makeFileTab(
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title,
-    order: 0,
     data: {
       kind: 'file',
       filePath: title,
@@ -52,7 +51,7 @@ function registeredCloseHandler(): (e: { payload: unknown }) => void {
 describe('useConfirmExit', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('starts with the exit dialog closed', () => {

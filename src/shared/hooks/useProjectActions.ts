@@ -164,7 +164,6 @@ export function useProjectActions({
         id: tabId,
         scope: { kind: 'workspace', session },
         title: fileName,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'diff',
           filePath,

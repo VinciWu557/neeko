@@ -44,7 +44,6 @@ export function useOpenAgentFile(params: {
             id: tabId,
             scope: { kind: 'workspace', session: workspace },
             title: getFileName(filePath),
-            order: existing?.tabs.length ?? 0,
             data: {
               kind: 'file',
               filePath,

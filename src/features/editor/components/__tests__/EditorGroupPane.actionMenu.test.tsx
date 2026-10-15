@@ -63,7 +63,6 @@ const appValue = {
 
 const editorValue: EditorContextValue = {
   tabs: [],
-  activeTabId: null,
   onActivateTab: vi.fn(),
   onCloseTab: vi.fn(),
   onAddTab: vi.fn(),
@@ -101,12 +100,11 @@ function renderPane(editorCtx: Partial<EditorContextValue> = {}) {
 
 /** 播种一个 file tab，令 PaneTabBar（tabs.length > 0）渲染。 */
 function seedFileTab() {
-  useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+  useEditorStore.setState({ tabs: {}, editorLayout: {} });
   useEditorStore.getState().addTab({
     id: 'tab1',
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: 'a.ts',
-    order: 0,
     data: {
       kind: 'file',
       filePath: 'a.ts',

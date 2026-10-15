@@ -7,7 +7,7 @@ import { foregroundTerminalTab } from '@/features/terminal';
 import { cn } from '@/lib/utils';
 import { MessageSquare } from '@/shared/components/icons';
 import { useAppContext, useTerminalInsert } from '@/shared/contexts';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { PromptResource } from '@/shared/types/library';
@@ -49,7 +49,8 @@ function revealTerminalTab(projectId: ProjectId): void {
   const session = activeWorkspaceSession(projectId);
   const target = foregroundTerminalTab(session);
   if (!target) return;
-  if (useEditorStore.getState().tabs[session.key]?.activeTabId === target.tab.id) return;
+  // 前台由布局派生（`activeTabIdOf`），不再读已删除的空间级投影。
+  if (activeTabIdOf(session.key) === target.tab.id) return;
   useEditorStore.getState().activateTab(session.key, target.tab.id);
 }
 

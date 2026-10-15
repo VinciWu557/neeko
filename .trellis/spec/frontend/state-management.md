@@ -143,7 +143,7 @@ await saveSession(session);
 | --- | --- | --- |
 | 项目 | `projectStore` | `projects` / `activeProjectId` / `activeProject` / `statuses` / `git_info` 投影 |
 | Workspace激活态 | `workspaceStore` | `byProject[projectId].activePath / activeBranch / opened` |
-| 编辑器 tab | `editorStore` | `tabs[tabKey]` / `activeTabId` / `editorLayout` / `navigateGoal` |
+| 编辑器 tab | `editorStore` | `tabs[tabKey]`（Tab 注册表） / `editorLayout`（唯一权威：顺序 + 前台） / `navigateGoal` |
 | 文件视图 | `@/features/file/store` | `dirs` / `loadStates` / `activeFilePath` |
 | 视图路由 | `appViewStore` | `appView` |
 
@@ -294,8 +294,10 @@ activeProject: Project | null;
 byProject: Record<projectId, { activePath: string | null; activeBranch: string; opened: CheckoutEntry[] }>;
 // src/shared/store/editorStore.ts —— tabs 按 **checkout 身份 WorkspaceKey** 分槽（project + worktree 各有独立 tab 空间；
 // 旧 `:wt:` 编码的 `resolveTabKey` 已退役）
-tabs: Record<WorkspaceKey, ProjectTabs>;
-activeTabId: string | null;   // 全局：当前视图的激活 tab（cacheKey 等消费）
+tabs: Record<WorkspaceKey, ProjectTabs>;   // ProjectTabs = { tabs: Tab[] }，**只**是 Tab 注册表
+editorLayout: Record<WorkspaceKey, EditorSplitLayout>;  // 唯一权威：顺序（tabIds）+ 前台（activeGroupId → 组的 activeTabId）
+// 无顶层 activeTabId、无 ProjectTabs.activeTabId、无 Tab.order（2026-10-15 单源化删除）；
+// 前台/顺序的唯一派生点在 src/shared/store/editorTabSelectors.ts。
 // src/features/file/store.ts —— 文件树按目录分槽 + 归属校验
 owner: FileTreeOwner | null;               // `${projectId}:${rootPath}`，切换即作废旧缓存与在途响应
 dirs: Record<DirPath, FileNode[]>;         // 目录 → 该目录一级条目
@@ -338,20 +340,20 @@ interface FileActionsContextValue {
 | 目录加载失败 | IPC 抛错 | **保留旧内容**并标 error（不置空） | UI 可重试 |
 | 归属已切换 | 在途响应回来时 `owner` 变了 | 丢弃响应 | 静默 |
 | 请求乱序 | `requests[dirPath]` 序号不匹配 | 丢弃迟到响应 | 静默 |
-| `openFile` 命中已打开 tab | 同一 tab 身份 | 仅切换激活（`editorStore.activeTabId`） | 无 |
+| `openFile` 命中已打开 tab | 同一 tab 身份 | 仅切换激活（布局的激活组 `activeTabId`，经 `selectActiveTabId` 派生） | 无 |
 | `saveFile` 失败 | `write_file_content` 抛错 | 返回 `false`，`isDirty` 保留 | 编辑器保持编辑态 |
 
 ### 5. Good/Base/Bad Cases
 
 - Good：打开未打开文件 → 新增 tab 并激活，`activeFilePath` 与激活 tab 对齐。
-- Base：关闭当前 tab → 激活相邻 tab；关闭最后一个 tab 后 `activeTabId` 为 `null`。
+- Base：关闭当前 tab → 激活相邻 tab；关闭最后一个 tab 后前台（`activeTabIdOf`）为 `null`。
 - Bad：无激活 tab 时执行保存 → 返回 `false`，store 不写入脏数据。
 
 ### 6. Tests Required
 
 - `useFileView` 单测断言
 `openFile` 命中已存在 tab 时不追加 file tab 数量。
-`closeTab` 关闭当前 tab 时 `editorStore.activeTabId` 回退正确。
+`closeTab` 关闭当前 tab 时布局激活组回退到相邻 tab（`activeTabIdOf`）。
 `saveFile` 成功后 `isDirty=false`，失败后保持 `isDirty=true`。
 - 组件集成断言
 `FilesPanel`（原 `FileViewer` / `AppLayout` 时代）读 `@/features/file/store` 的 `dirs` / `activeFilePath` 渲染。
@@ -1321,7 +1323,9 @@ export function tabWorkspaceSession(tab: Tab): WorkspaceSession | null;
 export type TabScope =
   | { kind: 'workspace'; session: WorkspaceSession }
   | { kind: 'app' };
-export interface Tab { id: string; scope: TabScope; title: string; order: number; data: TabData }
+export interface Tab { id: string; scope: TabScope; title: string; data: TabData }
+// 注意：无 order 字段 —— 顺序是布局（editorLayout[key].groups[*].tabIds）的职责，
+// 唯一派生点 selectOrderedTabIds（editorTabSelectors.ts）。
 
 // shared/store/editorStore.ts —— 构造律：键由 tab 自身推导，调用方无权指定
 addTab: (tab: Tab, targetGroup?: EditorGroupId | 'pinned') => void; // 内部 tabSpaceKeyOf(tab.scope)
@@ -1379,14 +1383,14 @@ addTab: (tab: Tab, targetGroup?: EditorGroupId | 'pinned') => void; // 内部 ta
    相反**：它取**真实 `ProjectId`**（`activeProject.id`）构造本地终端缓存键，属身份槽位。
    裸 string 在此类槽位与身份槽位间流动即违规 —— 原事故（tab 键被当 project 身份）正是这一类。
 10. **消费端读 `tabs` 必须用 tab 空间键，禁止裸 `projectId`**：`editorStore.tabs` 按 `WorkspaceKey`
-    （`id\0…`）分槽。任何 `tabs[projectId]`（裸 id）恒 miss —— 典型症状：切项目后全局 `activeTabId`
-    未恢复、worktree 下读到别的单元。派生点唯一：渲染期 `useActiveWorkspaceKey(projectId)`；命令式
+    （`id\0…`）分槽。任何 `tabs[projectId]`（裸 id）恒 miss —— 典型症状：worktree 下读到别的单元。派生点唯一：渲染期 `useActiveWorkspaceKey(projectId)`；命令式
     `activeWorkspaceSession(projectId).key`；特定单元（主仓 / 指定 worktree）用 `WorkspaceSession.of(id, wt).key`。
     （`useLocalProjects` / `useProjectSelection` / `useWorktreeActions` / `useEditorAgentActions` /
     `DebugRunButton` / `useFileDrop` / `useBrowserPanelEvents` / `useBrowserTab` / `TerminalView` 已按此收口。）
-    全局 `activeTabId` 的**写侧只有一个入口** `editorStore.restoreActiveTabId(tabKey | null)`（切项目/单元时，
-    WSL/Remote 亦须调用，`useCrossTypeSelection` 已收口）；**读侧** `editorStore.activeTabIdOf(tabKey)`，
-    **渲染期派生** `useActiveWorkspaceKey`。调用方只派生目标单元的 `tabKey`，不得各自 `setState({ activeTabId })`。
+    **前台 tab 的读侧只有一个派生点** `editorStore.activeTabIdOf(tabKey)`（内部即 `selectActiveTabId`，
+    从 `editorLayout` 的激活组派生）；**渲染期**用 `useActiveWorkspaceKey(projectId)` 派生键后同上。
+    全局 `activeTabId` 与 `restoreActiveTabId` **已删除**（2026-10-15 单源化）—— 切项目/单元不再需要「恢复」
+    任何前台位；调用方也不得再 `setState({ activeTabId })`（该字段不存在，编译期即拦）。
     禁止 `'' as ProjectId` 伪身份（缺值即 `null` + guard；`GitDialog.projectId` 为必填）。
 
 9. **`DiffSource = { workspace: WorkspaceSession; revision: DiffRevision }`**：环境（local/WSL/SSH）
@@ -1433,12 +1437,11 @@ const key = WorkspaceSession.of(projectId, worktreePath ?? null).key;
 #### Correct
 
 ```ts
-// 身份是值对象；键由 tab 自身推导（调用方无从指定）
+// 身份是值对象；键由 tab 自身推导（调用方无从指定）；order 已删除（顺序属布局）
 useEditorStore.getState().addTab({
   id,
   scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
   title,
-  order,
   data,
 });
 // 键 = session.key（投影）；项目粒度消费 = tabProjectId(tab)
@@ -1458,6 +1461,122 @@ const session = WorkspaceSession.fromKeyOrId(tabKey); // worktree 下传错键 �
 // 本体只解析一次，下传对象；tabKey 仍按需另传（store 键位），但身份只认 session
 const tabSession = requireTabWorkspaceSession(activeTab);
 <AgentChatTabView session={tabSession} tabKey={tabSpaceKeyOf(activeTab.scope)} ... />
+```
+
+---
+
+## 场景：编辑器 tab 前台/顺序单源化（删除 `activeTabId` / `order` 双表示） 2026-10-15
+
+### 1. Scope / Trigger
+
+- Trigger（用户实测缺陷）：**分屏后拖文件复制路径，落到上一个 pane 的输入框而非当前激活 pane**；
+  同日实测 Cmd+W 关错 tab。
+- 根因（第一性原理）：`editorStore` 用两个数据结构描述同一个「tab 空间」——平铺的
+  `ProjectTabs { tabs, activeTabId }`（含 `Tab.order`）与分屏权威的 `editorLayout`。于是**两个事实
+  各有两个表示**：「哪个 tab 在前台」与「tab 顺序」。分屏之前两者恰好重合（只有一个组），冗余无害；
+  2026-05-13 引入分屏后二者分离。
+- 为何必须结构性消除而非补同步：`activateTab` 同 commit 同步了两处、`setActiveGroup` 只改布局 ——
+  即从出生起就是**约定**而非**构造**；此后 `splitRight` / `moveToRight` / `moveToLeft` / `unsplit` /
+  `pinTab` / `unpinTab` 全部只改布局。让 15 个写 tab 状态的 store 动作各自记得刷缓存 = 概率来源，
+  与具体哪个动作漏了无关（`projectActiveTab` 补丁实测仍漏 pin/unpin）。
+- Scope：`shared/types/tab.ts`（`ProjectTabs` / `Tab`）、`shared/store/editorStore.ts`、
+  **新增** `shared/store/editorTabSelectors.ts`、`shared/types/terminal.ts`、全部前台/顺序读点、
+  护栏 `check_terminal_foreground_arbitration`（A5）。
+
+### 2. Signatures
+
+```ts
+// shared/types/tab.ts —— 容器只是注册表；顺序/前台都不在这里
+export interface Tab { id: string; scope: TabScope; title: string; data: TabData }
+// 注意：无 order 字段
+export interface ProjectTabs { tabs: Tab[] }
+// 注意：无 activeTabId 字段
+
+// shared/store/editorTabSelectors.ts（新增）—— 「tab 空间视图」的唯一读取面
+export interface EditorTabSpaceState {
+  tabs: Record<string, ProjectTabs>;
+  editorLayout: Record<string, EditorSplitLayout>;
+}
+export function selectOrderedTabIds(state, tabKey: string): string[];   // left → right → pinned
+export function selectOrderedTabs(state, tabKey: string): Tab[];         // 跳过已失效 id
+export function selectActiveTabId(state, tabKey: string): string | null;  // 激活组的 activeTabId
+export function selectActiveTab(state, tabKey: string): Tab | null;       // 前台 Tab 对象
+
+// shared/store/editorStore.ts —— 命令式薄封装（内部即 selectActiveTabId）
+export function activeTabIdOf(tabKey: string): string | null;
+// 已删除：restoreActiveTabId(tabKey) / EditorStoreState.activeTabId / ProjectTabs.activeTabId / Tab.order
+```
+
+### 3. Contracts
+
+1. **布局是唯一真源**：顺序 = `editorLayout[tabKey].groups[*].tabIds`（左 → 右 → pinned）；
+   前台 = `editorLayout[tabKey].groups[activeGroupId].activeTabId`。**不得再存第二份表示**。
+2. **唯一派生点**：所有前台/顺序读取必须经 `editorTabSelectors.ts`（React 用同名 selector，
+   命令式用 `activeTabIdOf`）。禁止任何消费侧自读 `tabIds` 拼顺序、或另存「当前 tab」。
+3. **pinned 与「前台」正交**（有意保留）：`selectActiveTabId` **只反映编辑器组**，不含
+   `pinnedActiveTabId`。`activateTab(pinnedTab)` 只置 `pinnedActiveTabId`；pinned tab 不可关、
+   Cmd+W 从不命中它（与今日行为一致）。
+4. **不变量 I1**：有 tab 的空间必有 layout，且 `left.tabIds ∪ right.tabIds ∪ pinnedTabIds` 恰好
+   枚举该空间的 tab。`addTab` 是唯一 tab 创建入口 → 由构造满足。`useEditorGroupLayout` 与
+   `editorStore` 的缺-layout 分支是纯防御（生产中不可达），缺 layout 时前台降级为 `null`（不抛）。
+5. **顺序语义变更（有意）**：仲裁按**视觉顺序**取首个，而非创建序 —— 拖拽重排后插入落点随之改变。
+6. **顺序不需要 `sort`**：顺序直接来自布局数据，消费方**不得**再写 `sort((a,b) => a.order - b.order)`
+   （护栏 A1 在 terminal/browser/status-bar 域内拦）。
+7. **错误不可表示才是根治**：删字段后，`existing.activeTabId = ...` 编译不过 —— 这是选择
+   「删字段」而非「加同步 helper」的唯一理由。
+
+### 4. Validation & Error Matrix
+
+| 场景 | 输入 | 预期 |
+|------|------|------|
+| 分屏后 `moveToRight(B)` | 拖文件到输入框 | 落 **B**（当前激活 pane） |
+| 分屏后 `setActiveGroup('left')` | 拖文件 | 落左 pane 的激活 tab |
+| 分屏后 `pinTab` → `unpinTab` | 拖文件 | 仍落正确的编辑器组前台（补丁漏掉的路径） |
+| 分屏后 Cmd+W | — | 关闭**当前激活 pane** 的 tab |
+| `reorderTab` 把 C 拖到 A 前 | 仲裁「首个终端」 | 按**新视觉顺序**取首个 |
+| `activateTab(pinnedTab)` | 组前台 | **不变**（pinned 激活态正交） |
+| 缺 layout（防御分支） | 前台读取 | `null`（不抛、不伪造） |
+
+### 5. Good/Base/Bad Cases
+
+- Good：分屏 + 换 pane + pin/unpin 后，拖拽/Cmd+W/仲裁全部跟随布局。
+- Base：单 pane 无分屏，行为与改造前一致（前台 = 左组激活 tab）。
+- Bad：重新引入 `ProjectTabs.activeTabId` / `Tab.order` / 顶层 `activeTabId`，或用
+  `projectActiveTab` 式的「逐点补同步」——下一条新增写点必再漏（护栏 A5 拦字段回潮）。
+
+### 6. Tests Required
+
+- `shared/store/__tests__/editorTabSelectors.test.ts`：顺序（left→right→pinned、跳过失效 id）、
+  前台（组内 / 换组 / 缺 layout → null）、**pinned 不影响组前台**。
+- `shared/store/__tests__/editorStore.test.ts`：AC1（分屏后前台）/ AC2（pin→unpin 后前台）/ AC4
+  （`reorderTab` 后 `selectOrderedTabIds` 反映新顺序）。
+- `app/hooks/__tests__/closeActiveTabCommand.test.ts`：AC3（分屏后 Cmd+W 关当前 pane 的 tab）。
+- `features/terminal/components/__tests__/terminalRouting.test.ts`：仲裁落到正确 pane。
+- **变异验证**：把 `selectActiveTabId` 改回「忽略 activeGroupId」/ 把 `selectOrderedTabIds` 改回
+  「按创建序排序」，上述用例必须 RED；恢复即 GREEN。
+- 护栏 `tools/guards/tests/test_check_terminal_foreground_arbitration.py`：A5（字段回潮）正反例。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+// 第二份表示：分屏 / 拖拽重排后与布局分叉
+useEditorStore.getState().addTab({ id, scope, title, order: tabs.length, data });
+const active = projectTabs.tabs.find((t) => t.id === projectTabs.activeTabId);
+const sorted = [...tabs].sort((a, b) => a.order - b.order);
+```
+
+#### Correct
+
+```ts
+// 布局唯一权威；派生点唯一
+useEditorStore.getState().addTab({ id, scope, title, data });
+const active = selectActiveTab(useEditorStore.getState(), tabKey);
+const ordered = selectOrderedTabs(useEditorStore.getState(), tabKey);
+```
+
+---
 
 ## 常见错误
 
@@ -1482,39 +1601,34 @@ Context 粒度过大将放大重渲染影响。新增字段时优先放入最贴
 
 终端缓存销毁时必须同步清理关联状态，避免 stale session。
 
-### 6. 切换项目时 global `activeTabId` 未同步
+### 6. 切换项目/单元不需要（也不得）同步前台 tab —— 已删除的全局 `activeTabId`
 
-**问题**：tab 状态在 `editorStore` 里是两层结构 —— 全局 `activeTabId` 与按 `tabKey` 分槽的
-`tabs[tabKey].activeTabId`（`tabKey = WorkspaceSession.of(projectId, worktreePath ?? null).key`，主仓单元的 key = `projectId\0`）。切换项目/单元时若只写 `projectStore.activeProjectId` 而不恢复全局 `activeTabId`，
-下游会用**上一个项目**的 tab id 算 `cacheKey`（终端缓存）或做 tab 解析，导致 cache miss 与孤立
-PTY 创建。
+**背景（2026-10-15 单源化）**：本条曾经是一道「必须成对恢复」的纪律。它已**整体退役** ——
+`editorStore` 的**顶层** `activeTabId` 与按 `tabKey` 分槽的 `ProjectTabs.activeTabId` 两个字段
+都已被删除。
 
-**正确模式**：任何改变「当前项目/单元」的 setState 必须**同时**恢复全局 `activeTabId`：
+**为什么删而不是继续同步**：它们是「哪个 tab 在前台」的**第二份表示**。真源是
+`editorLayout[tabKey]`（`groups[activeGroupId].activeTabId`），分屏 / 拖拽重排后两份必然分叉
+（拖文件落错 pane、Cmd+W 关错 tab）。让每个「切项目 / 切单元」的写点各自记得刷新缓存
+= 约定，而不是构造；字段一删，这个缺陷在**编译期**就不再可表示。
+
+**现在的写法**：
+
+- 前台 = **布局派生**：`selectActiveTabId(state, tabKey)`（React）/ `activeTabIdOf(tabKey)`（命令式），
+  均在 `src/shared/store/editorTabSelectors.ts` 的同一定义上。
+- 切项目 / 切单元**只写** `projectStore.activeProjectId` 与 `workspaceStore` 的激活态 —— 
+  **没有**「同步 editorStore.activeTabId」这一步了（该动作随字段消失而不存在）。
+- 需要某项目的当前单元键时，仍走唯一派生点 `activeWorkspaceKeyOf(projectId)` /
+  `useActiveWorkspaceKey(projectId)` —— 这个契约不变（切的是键派生，不是前台位）。
 
 ```tsx
-// src/features/project/hooks/useProjectSelection.ts（真实实现，节选）
-const editorTabs = useEditorStore.getState().tabs[projectId];
+// src/features/project/hooks/useProjectSelection.ts（真实实现，节选）—— 无需再碰 editorStore
 useProjectStore.setState({ activeProjectId: projectId, activeProject: targetProject });
-useEditorStore.setState({ activeTabId: editorTabs?.activeTabId ?? null }); // ← 必须成对
 ```
 
-```tsx
-// 错误：只更新 projectStore，editorStore.activeTabId 仍是上一个项目的
-useProjectStore.setState({ activeProjectId: projectId, activeProject: targetProject });
-```
-
-**涉及位置**：`useProjectSelection.ts`（`selectProject`）、`useWorktreeActions.ts`（跨项目切 worktree）、
-`useWorkspaceState.ts`（切回主仓）、`useLocalProjects.ts`（handleRemoveProject / 项目恢复）。
-
-**下游防御性 guard**：终端缓存/tab 解析一侧同样要校验 `activeTabId` 是否属于当前 `tabKey` 的
-tabs，不属于则跳过（不要用别的项目的 id 建 PTY 或算 `cacheKey`）：
-
-```tsx
-const projectTabs = useEditorStore.getState().tabs[tabKey];
-if (activeTabId && projectTabs && !projectTabs.tabs.some((t) => t.id === activeTabId)) {
-  return; // stale activeTabId from another project
-}
-```
+**禁止回潮**：`ProjectTabs.activeTabId` / `Tab.order` 不得重新出现在类型定义里（护栏
+`check_terminal_foreground_arbitration` 的 A5 判据钉住）。前台/顺序只能从 `editorLayout` 派生，
+唯一派生点是 `editorTabSelectors.ts`。
 
 ### 7. 向 `FileTabData` 新增字段后忘记同步 `mergeTabData`
 

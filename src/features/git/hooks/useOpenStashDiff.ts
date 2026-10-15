@@ -45,7 +45,6 @@ export function useOpenStashDiff(
         // tab 身份是真实 project id 的 session（持值，不从 tabKey 反解）
         scope: { kind: 'workspace', session },
         title: message ? `${selector}: ${message}` : selector,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'diff',
           filePath,

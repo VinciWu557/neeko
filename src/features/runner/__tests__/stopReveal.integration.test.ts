@@ -18,7 +18,7 @@ import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useDebugStopReveal } from '@/features/editor';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { FileContent } from '@/shared/types';
@@ -85,7 +85,7 @@ function virtualFrame(id: number, reference: number, name: string, line: number)
 }
 
 function activeTabId(): string | null {
-  return useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId ?? null;
+  return activeTabIdOf(WorkspaceSession.of('p1', null).key);
 }
 
 function openTabIds(): string[] {
@@ -155,7 +155,6 @@ beforeEach(() => {
   useEditorStore.setState({
     tabs: {},
     editorLayout: {},
-    activeTabId: null,
     navigateGoal: null,
   });
   useProjectStore.setState({

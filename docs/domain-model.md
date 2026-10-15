@@ -115,9 +115,19 @@ Workspace」的命令**（含 branch / PR 两个子域）一律收首参 `worksp
 反解身份：分量解析走 `decodeTerminalKey`，日志/提示走 `terminalKeyLabel`。
 
 **「该往哪个 tab 插」= 全仓只有一处答案**（10-13 落地）：`terminalRouting.foregroundTerminalTab(session)`
-是唯一的 foreground 仲裁入口，口径 = **tab `order` 升序**（前台终端置顶），无前台终端则落同 session
+是唯一的 foreground 仲裁入口，口径 = **视觉顺序**（前台终端置顶 
+—— 即布局 `groups[*].tabIds` 的顺序），无前台终端则落同 session
 首个终端（`isFallback: true`，由调用方 toast 告知实际落点）；session 内一个终端都没有 → `null`（显式失败）。
 **禁跨 session**（`tabs` 的键就是 `session.key`，跨单元串写在构造上不可表达）。
+
+**「前台 tab」与「tab 顺序」的唯一权威 = 布局 `editorLayout`，不再有第二份表示**（2026-10-15 单源化）：
+前台 = `editorLayout[key].groups[activeGroupId].activeTabId`；顺序 = 各组 `tabIds`（左 → 右 → pinned）。
+两个曾并行存在的字段已**整体删除**：`ProjectTabs.activeTabId`（空间级前台投影）与 `Tab.order`
+（创建序）。历史缺陷：它们与布局分屏 / 拖拽重排后必然分叉，于是编辑器高亮（读布局）与
+拖拽/插入仲裁、Cmd+W（读投影）对「前台」给出两个答案 —— 分屏后拖文件总是落到上一个 pane 的
+输入框。唯一派生点在 `src/shared/store/editorTabSelectors.ts`（`selectActiveTabId` /
+`selectOrderedTabIds` / `selectOrderedTabs`）。删除而非同步是刻意的：**让错误在编译期不可表示**
+（护栏 `check_terminal_foreground_arbitration` 的 A5 判据钉住它们的回潮）。
 
 需要「某一类 tab」（Agent CLI 终端 / agent-chat composer）时，**在同一有序序列上 filter**
 （`foregroundAgentCliTab`），不自带 `sort`、不取 `tabs[0]`、不依赖 Map 插入顺序。历史病根：同一问题

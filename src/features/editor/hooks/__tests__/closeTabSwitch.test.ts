@@ -2,7 +2,7 @@ import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { closeEditorTab } from '@/features/terminal';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import type { Tab } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -21,7 +21,6 @@ function makeTab(id: string, kind: Tab['data']['kind'] = 'file'): Tab {
       id,
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: id,
-      order: 0,
       data: {
         kind: 'file',
         filePath: id,
@@ -35,14 +34,13 @@ function makeTab(id: string, kind: Tab['data']['kind'] = 'file'): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: { kind: 'terminal', agentId: null, status: 'Idle' },
   };
 }
 
 describe('closeTab → layout auto-switch (regression: blank content area)', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('single group: closing the active tab moves group activeTabId to the adjacent remaining tab', () => {
@@ -66,7 +64,7 @@ describe('closeTab → layout auto-switch (regression: blank content area)', () 
     // at a tab that still exists, otherwise the pane renders a blank area.
     expect(result.current.leftActiveTabId).toBe('B');
     expect(result.current.leftTabs.map((t) => t.id)).toEqual(['B']);
-    expect(useEditorStore.getState().activeTabId).toBe('B');
+    expect(activeTabIdOf(SPACE_p1)).toBe('B');
   });
 
   it('single group: closing a non-active tab keeps the active tab intact', () => {
@@ -82,7 +80,7 @@ describe('closeTab → layout auto-switch (regression: blank content area)', () 
       closeEditorTab(SPACE_p1, 'A');
     });
 
-    expect(useEditorStore.getState().tabs[SPACE_p1].activeTabId).toBe('B');
+    expect(activeTabIdOf(SPACE_p1)).toBe('B');
     const { result } = renderHook(() => useEditorGroupLayout(SPACE_p1));
     expect(result.current.leftActiveTabId).toBe('B');
     expect(result.current.leftTabs.map((t) => t.id)).toEqual(['B', 'C']);
@@ -107,6 +105,6 @@ describe('closeTab → layout auto-switch (regression: blank content area)', () 
     expect(layout.isSplit).toBe(false);
     expect(layout.groups.left.tabIds).toEqual(['B']);
     expect(layout.groups.left.activeTabId).toBe('B');
-    expect(useEditorStore.getState().activeTabId).toBe('B');
+    expect(activeTabIdOf(SPACE_p1)).toBe('B');
   });
 });

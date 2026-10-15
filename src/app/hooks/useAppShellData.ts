@@ -177,7 +177,6 @@ export function useAppShellData(): UseAppShellDataResult {
   const {
     tabKey,
     tabs,
-    activeTabId,
     handleAddTab,
     handleCloseTab,
     handleActivateTab,
@@ -253,7 +252,6 @@ export function useAppShellData(): UseAppShellDataResult {
   );
   useKeyboardShortcuts({
     updateWtPath,
-    activeTabId,
     onCloseTab: handleCloseTab,
     shortcuts: config.shortcuts,
     unifiedItems: useProjectList().items,
@@ -386,7 +384,6 @@ export function useAppShellData(): UseAppShellDataResult {
     pendingAuthEntry,
     setPendingAuthEntry,
     tabs,
-    activeTabId,
     handleActivateTab,
     handleCloseTab,
     handleAddTab,

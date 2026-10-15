@@ -127,13 +127,19 @@ export interface Tab {
   /** 唯一身份字段：tab 携带完整领域地址；store 键由它推导（构造律，见 editorStore.addTab）。 */
   scope: TabScope;
   title: string;
-  order: number;
   data: TabData;
 }
 
+/**
+ * 某个 tab 空间的 `Tab` 注册表（id → Tab 查询的容器）。
+ *
+ * **不持有「前台 / 顺序」**：两者都是 `editorLayout[tabKey]` 的职责（组的 `tabIds` 即顺序，
+ * `groups[activeGroupId].activeTabId` 即前台）—— 唯一派生点在
+ * `src/shared/store/editorTabSelectors.ts`。曾有的 `activeTabId` 字段是分屏前的第二份表示，
+ * 分屏 / 拖拽重排后与布局分叉（拖文件落错 pane、Cmd+W 关错 tab），已删除。
+ */
 export interface ProjectTabs {
   tabs: Tab[];
-  activeTabId: string | null;
 }
 
 /** Minimal shape any tab-like item must satisfy for the generic TabItem. */

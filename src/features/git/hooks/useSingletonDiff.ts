@@ -64,7 +64,6 @@ export function useSingletonDiff(
           // 身份从 realProjectId（值在手边）经身份源构造，不从复合 tabKey 反解
           scope: { kind: 'workspace', session },
           title,
-          order: 200,
           data: { kind: 'diff', ...partial },
         });
         store.activateTab(tabKey, DIFF_TAB_ID);
@@ -100,7 +99,6 @@ export function useSingletonDiff(
           // 身份从 realProjectId（值在手边）经身份源构造，不从复合 tabKey 反解
           scope: { kind: 'workspace', session },
           title,
-          order: 200,
           data: { kind: 'diff', ...partial },
         });
         store.activateTab(tabKey, DIFF_TAB_ID);
@@ -121,7 +119,6 @@ export function useSingletonDiff(
         id: pinnedId,
         scope: { kind: 'workspace', session },
         title,
-        order: 200,
         data: { kind: 'diff', filePath, fileName, diffSource },
       });
       store.activateTab(tabKey, pinnedId);

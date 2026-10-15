@@ -25,7 +25,6 @@ function tabToFileTab(tab: Tab & { data: FileTabData }): import('@/shared/types'
     fileName: tab.data.fileName,
     content: tab.data.content,
     isDirty: tab.data.isDirty,
-    order: tab.order,
     initialPreviewMode: tab.data.initialPreviewMode,
     isUntitled: tab.data.isUntitled,
     untitledName: tab.data.untitledName,
@@ -61,7 +60,7 @@ function FileViewer() {
   );
 
   // Read per-group activeTabId from EditorContext (correct in split mode)
-  const { activeTabId: groupActiveTabId } = useEditorContext();
+  const { activeTabId: groupActiveTabId = null } = useEditorContext();
 
   // Collect all file tabs to render (keep editors alive across switches)
   const fileTabs = useMemo(() => {

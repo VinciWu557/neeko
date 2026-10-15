@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import type { AgentConfig } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -10,7 +10,7 @@ import { useTerminalTabs } from '../useTerminalTabs';
 const SPACE = WorkspaceSession.of('p1', null).key;
 
 function resetStore() {
-  useEditorStore.setState({ tabs: {}, activeTabId: null });
+  useEditorStore.setState({ tabs: {}, editorLayout: {} });
 }
 
 describe('useTerminalTabs', () => {
@@ -23,7 +23,7 @@ describe('useTerminalTabs', () => {
     expect(entry.tabs).toHaveLength(1);
     expect(entry.tabs[0].title).toBe('Terminal 1');
     expect(entry.tabs[0].data.kind).toBe('terminal');
-    expect(useEditorStore.getState().activeTabId).toBe(entry.tabs[0].id);
+    expect(activeTabIdOf(SPACE)).toBe(entry.tabs[0].id);
   });
 
   it('caps terminal tabs at 10', () => {

@@ -26,7 +26,6 @@ vi.mock('@/shared/store/editorStore', () => ({
             { id: 'tab_a', data: { kind: 'terminal' } },
             { id: 'tab_b', data: { kind: 'file' } },
           ],
-          activeTabId: 'tab_a',
         },
       },
     }),

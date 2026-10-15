@@ -50,7 +50,6 @@ export function useEditorGroupLayout(
   onRequestCloseDirty?: RequestCloseDirty,
 ): EditorGroupLayoutResult {
   const allTabs = useEditorStore((s) => s.tabs[tabKey]?.tabs ?? EMPTY_TABS);
-  const projectActiveTabId = useEditorStore((s) => s.tabs[tabKey]?.activeTabId ?? null);
   const rawLayout = useEditorStore((s) => s.editorLayout[tabKey]);
   const storeSplitRight = useEditorStore((s) => s.splitRight);
   const storeMoveToRight = useEditorStore((s) => s.moveToRight);
@@ -84,13 +83,11 @@ export function useEditorGroupLayout(
       const liveTabIds = tabIds.filter((id) => liveTabIdSet.has(id));
       if (currentActiveTabId && liveTabIds.includes(currentActiveTabId)) return currentActiveTabId;
       if (liveTabIds.length === 0) return null;
-      // Prefer the store's active tab when it lives in this group, else the
-      // last remaining tab — mirrors the fallback branch below.
-      return projectActiveTabId && liveTabIds.includes(projectActiveTabId)
-        ? projectActiveTabId
-        : liveTabIds[liveTabIds.length - 1];
+      // 布局即唯一权威：本组的激活位失效时取最后一个存活 tab（不再参考空间级投影 ——
+      // 那个投影已随「单一真源」删除；它本就恒等于激活组的激活位，不携带额外信息）。
+      return liveTabIds[liveTabIds.length - 1];
     },
-    [projectActiveTabId, liveTabIdSet],
+    [liveTabIdSet],
   );
 
   const layout: EditorSplitLayout = useMemo(() => {
@@ -130,17 +127,11 @@ export function useEditorGroupLayout(
     }
     const l = createDefaultEditorLayout();
     l.groups.left.tabIds = allTabs.map((t) => t.id);
-    // Prefer the store's active tab so the fallback (used before any layout is
-    // created, e.g. right after session restore) never points at a removed tab
-    // — otherwise closing the active tab leaves a blank content area.
-    l.groups.left.activeTabId =
-      projectActiveTabId && liveTabIdSet.has(projectActiveTabId)
-        ? projectActiveTabId
-        : allTabs.length > 0
-          ? allTabs[allTabs.length - 1].id
-          : null;
+    // 不变量 I1（有 tab 的空间必有 layout）成立后本分支不可达，保留作防御：
+    // 缺失 layout 时取最后一个 tab（不再参考已删除的空间级投影）。
+    l.groups.left.activeTabId = allTabs.length > 0 ? allTabs[allTabs.length - 1].id : null;
     return l;
-  }, [rawLayout, allTabs, projectActiveTabId, healGroupActiveTabId, liveTabIdSet]);
+  }, [rawLayout, allTabs, healGroupActiveTabId, liveTabIdSet]);
 
   const tabsById = useMemo(() => {
     const map = new Map<string, Tab>();

@@ -31,7 +31,6 @@ function makeTab(id: string, kind: Tab['data']['kind'] = 'file'): Tab {
       id,
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: id,
-      order: 0,
       data: {
         kind: 'file',
         filePath: id,
@@ -45,7 +44,6 @@ function makeTab(id: string, kind: Tab['data']['kind'] = 'file'): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: { kind: 'terminal', agentId: null, status: 'Idle' },
   };
 }
@@ -58,17 +56,15 @@ function seedLayout(tabIds: string[], activeTabId: string | null) {
     tabs: {
       p1: {
         tabs: tabIds.map((id) => makeTab(id)),
-        activeTabId: activeTabId ?? tabIds[tabIds.length - 1] ?? null,
       },
     },
     editorLayout: { p1: layout },
-    activeTabId: activeTabId,
   });
 }
 
 describe('stale layout → group activeTabId self-heals to a live tab (blank content regression)', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('existing layout with null activeTabId still resolves a live tab', () => {
@@ -97,9 +93,8 @@ describe('stale layout → group activeTabId self-heals to a live tab (blank con
     layout.groups.left.tabIds = ['A', 'B', 'C'];
     layout.groups.left.activeTabId = 'C';
     useEditorStore.setState({
-      tabs: { p1: { tabs: [makeTab('A'), makeTab('B')], activeTabId: 'B' } },
+      tabs: { p1: { tabs: [makeTab('A'), makeTab('B')] } },
       editorLayout: { p1: layout },
-      activeTabId: 'B',
     });
 
     const { result } = renderHook(() => useEditorGroupLayout('p1'));
@@ -129,11 +124,9 @@ describe('stale layout → group activeTabId self-heals to a live tab (blank con
       tabs: {
         p1: {
           tabs: [makeTab('A'), makeTab('B'), makeTab('C'), makeTab('D')],
-          activeTabId: 'B',
         },
       },
       editorLayout: { p1: layout },
-      activeTabId: 'B',
     });
 
     const { result } = renderHook(() => useEditorGroupLayout('p1'));
@@ -157,11 +150,9 @@ describe('stale layout → group activeTabId self-heals to a live tab (blank con
       tabs: {
         p1: {
           tabs: [makeTab('P'), makeTab('A')],
-          activeTabId: 'P',
         },
       },
       editorLayout: { p1: layout },
-      activeTabId: 'P',
     });
 
     const { result } = renderHook(() => useEditorGroupLayout('p1'));
@@ -175,9 +166,8 @@ describe('stale layout → group activeTabId self-heals to a live tab (blank con
     const layout = createDefaultEditorLayout();
     layout.groups.left = { tabIds: ['A', 'B'], activeTabId: 'A' };
     useEditorStore.setState({
-      tabs: { p1: { tabs: [makeTab('A'), makeTab('B')], activeTabId: 'A' } },
+      tabs: { p1: { tabs: [makeTab('A'), makeTab('B')] } },
       editorLayout: { p1: layout },
-      activeTabId: 'A',
     });
 
     const { result } = renderHook(() => useEditorGroupLayout('p1'));

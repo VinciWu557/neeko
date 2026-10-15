@@ -9,7 +9,6 @@ const makeTab = (id: string, title: string): Tab => ({
   id,
   projectId: 'p1',
   title,
-  order: 0,
   data: {
     kind: 'file',
     filePath: title,

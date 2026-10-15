@@ -138,11 +138,9 @@ describe('useBrowserTab — closePage 关闭页面回收资源', () => {
               id: 'tab_c',
               scope: { kind: 'workspace', session: mkSession('p1') },
               title: 'A',
-              order: 0,
               data: { kind: 'browser', url: 'https://a.com' },
             },
           ],
-          activeTabId: 'tab_c',
         },
       },
     });
@@ -303,7 +301,6 @@ describe('useBrowserTab — 浮层打开期间隐藏 webview', () => {
     id: 'tab_bw',
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: 'B',
-    order: 0,
     data: { kind: 'browser' as const, url: 'https://a.com' },
   };
 
@@ -311,7 +308,7 @@ describe('useBrowserTab — 浮层打开期间隐藏 webview', () => {
     useBrowserTabsStore.setState({ states: {} });
     useOverlayStore.getState().reset();
     vi.mocked(useBrowserWebview).mockClear();
-    useEditorStore.setState({ tabs: { p1: { tabs: [browserTab], activeTabId: 'tab_bw' } } });
+    useEditorStore.setState({ tabs: { p1: { tabs: [browserTab] } } });
   });
 
   it('无浮层 → visible；有浮层 → 隐藏；关闭后 → 恢复', () => {

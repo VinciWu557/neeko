@@ -2,7 +2,7 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { useTerminalTabs } from '@/features/terminal/hooks/useTerminalTabs';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 vi.mock('@/features/terminal/components/terminalTabCleanup', async () => {
@@ -28,15 +28,15 @@ describe('useTerminalTabs', () => {
    *
    * 此前断言走 `getActiveTabId`，那个 helper 自带「无激活终端则回退数组首个 terminal」
    * 的第二套口径（与 foregroundTerminalTab 的 order 升序不一致），本任务按 R4 删除它；
-   * 测试要保护的是**关闭后的激活态回退**这一 store 行为，直读 store 反而更贴切。
+   * 测试要保护的是**关闭后的激活态回退**这一 store 行为，走布局派生（`activeTabIdOf`）反而更贴切。
    */
   function activeId(tabKey: string): string | null {
-    return useEditorStore.getState().tabs[tabKey]?.activeTabId ?? null;
+    return activeTabIdOf(tabKey);
   }
 
   beforeEach(() => {
     // Clear the unified store tabs between tests
-    useEditorStore.setState({ tabs: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('should close the last tab and set activeTabId to null', () => {

@@ -28,7 +28,6 @@ export function createUntitledFileTab(
     id: tabId,
     scope: { kind: 'workspace', session },
     title: name,
-    order: projTabs.length,
     data: {
       kind: 'file',
       filePath: '',

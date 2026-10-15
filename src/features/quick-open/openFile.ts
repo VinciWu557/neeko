@@ -62,7 +62,6 @@ export async function openProjectFile(opts: {
     id: tabId,
     scope: { kind: 'workspace', session: workspace },
     title: getFileName(filePath),
-    order: store.tabs[tabKey]?.tabs.length ?? 0,
     data: {
       kind: 'file',
       filePath,

@@ -51,7 +51,6 @@ const TAB: FileTab = {
   fileName: 'main.go',
   content: { path: '/proj/main.go', content: 'package main\n', size: 13, is_binary: false },
   isDirty: false,
-  order: 0,
 };
 
 const URI = 'file:///proj/main.go';

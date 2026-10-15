@@ -2,9 +2,8 @@ import { useCallback } from 'react';
 
 import { useAppViewStore } from '@/shared/store/appViewStore';
 import { useConnectionStore } from '@/shared/store/connectionStore';
-import { restoreActiveTabId } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { activeWorkspaceSession, useWorkspaceStore } from '@/shared/store/workspaceStore';
+import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 interface WslActions {
@@ -61,12 +60,8 @@ export function useCrossTypeSelection({
       });
 
       if (project.environment.type === 'Wsl') {
-        // 切项目后全局 activeTabId 重派生于该项目当前单元的激活 tab
-        // （此前只有 local 分支经 selectProject 同步，WSL/Remote 停留在上一项目 → 下游 cacheKey 陈旧）
-        restoreActiveTabId(activeWorkspaceSession(project.id).key);
         void wslActions.handleRefreshGit(project.environment.distro, project.id, project.path);
       } else if (project.environment.type === 'Remote') {
-        restoreActiveTabId(activeWorkspaceSession(project.id).key);
         const host = project.environment.host;
         const entry =
           useConnectionStore.getState().remoteEntries.find((e) => e.host === host) ?? null;

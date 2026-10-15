@@ -1,11 +1,10 @@
 import { useCallback } from 'react';
 
-import { restoreActiveTabId } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { selectActiveCheckoutPath, useWorkspaceStore } from '@/shared/store/workspaceStore';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { isActiveWorktree } from '@/shared/utils/git';
-import { WorkspaceSession, type ProjectId } from '@/shared/utils/workspaceRef';
+import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { loadOnboardingState } from '../api/onboardingApi';
 import { setActiveProject, setViewTerminal } from '../api/projectApi';
@@ -47,8 +46,6 @@ export function useWorktreeActions({
       const isFirstVisit = onboardingState === null;
 
       if (activeProjectId !== projectId) {
-        // 打开的是**指定 worktree** 的终端 → 重派生该单元的激活 tab
-        restoreActiveTabId(WorkspaceSession.of(projectId, worktreePath).key);
         useProjectStore.setState({
           activeProjectId: projectId,
           activeProject:

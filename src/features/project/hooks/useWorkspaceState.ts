@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 
-import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
   activeWorkspaceKeyOf,
@@ -37,9 +36,6 @@ export function useWorkspaceState(activeProjectId: ProjectId | null) {
       useWorkspaceStore.getState().setActiveWorkspace(projectId, path, branch);
       // 旧单元此后没有任何生产者，残留数据不得被渲染（未挂载 = 未知）
       if (prevKey && prevKey !== nextKey) useProjectStore.getState().invalidateStatus(prevKey);
-      // 切到新的 tab 空间（tabKey 已按单元分域）
-      const tabs = useEditorStore.getState().tabs[WorkspaceSession.of(projectId, path ?? null).key];
-      useEditorStore.setState({ activeTabId: tabs?.activeTabId ?? null });
     },
     [],
   );

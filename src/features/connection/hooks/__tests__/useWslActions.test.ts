@@ -11,6 +11,7 @@ import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { WSLEntrySession } from '@/shared/types';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 vi.mock('@/features/terminal', () => ({
@@ -90,6 +91,10 @@ function seedStore(
  */
 function seedTerminalTab(activeTabId: string | null = 'wp1-term'): void {
   const session = WorkspaceSession.of('wp1', null);
+  // 前台由布局派生（`selectActiveTabId`）：seed layout，缺失则前台恒 null。
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = ['wp1-term'];
+  layout.groups.left.activeTabId = activeTabId;
   useEditorStore.setState((state) => ({
     tabs: {
       ...state.tabs,
@@ -99,13 +104,12 @@ function seedTerminalTab(activeTabId: string | null = 'wp1-term'): void {
             id: 'wp1-term',
             scope: { kind: 'workspace', session },
             title: 'Terminal 1',
-            order: 0,
             data: { kind: 'terminal', agentId: null, status: 'Idle' },
           } as never,
         ],
-        activeTabId,
       },
     },
+    editorLayout: { ...state.editorLayout, [session.key]: layout },
   }));
 }
 

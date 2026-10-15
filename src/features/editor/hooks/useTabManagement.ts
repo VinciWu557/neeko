@@ -5,7 +5,6 @@ import {
   type SaveTabAction,
 } from '@/features/editor/store/closeConfirmStore';
 import { useTerminalTabs } from '@/features/terminal';
-import { useEditorStore } from '@/shared/store/editorStore';
 import { useActiveWorkspaceKey } from '@/shared/store/workspaceStore';
 import type { AgentConfig, TerminalTab } from '@/shared/types';
 import { tabSpaceKeyOf } from '@/shared/utils/tabIdentity';
@@ -29,7 +28,6 @@ export function useTabManagement(options: UseTabManagementOptions) {
   const tabKey = currentProjectId ? activeKey : tabSpaceKeyOf({ kind: 'app' });
 
   const tabs = tabKey ? getTabs(tabKey) : [];
-  const activeTabId = useEditorStore((state) => state.activeTabId);
 
   const handleAddTab = useCallback(() => {
     if (!currentProjectId) return;
@@ -73,7 +71,6 @@ export function useTabManagement(options: UseTabManagementOptions) {
   return {
     tabKey,
     tabs,
-    activeTabId,
     handleAddTab,
     handleCloseTab,
     handleActivateTab,

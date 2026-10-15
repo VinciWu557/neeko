@@ -104,7 +104,6 @@ function makeTab(overrides: Partial<FileTab> = {}): FileTab {
     fileName: 'a.ts',
     content: { path: FILE_PATH, content: 'const a = 1;\n', size: 13, is_binary: false },
     isDirty: false,
-    order: 0,
     initialPreviewMode: 'source',
     ...overrides,
   };
@@ -160,7 +159,7 @@ beforeEach(() => {
     activeProject: createProject({ id: 'p1', path: PROJECT_PATH }),
   });
   useDebugStore.setState({ session: null, breakpoints: {} });
-  useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+  useEditorStore.setState({ tabs: {}, editorLayout: {} });
   useLspStore.setState({ isDefinitionJumping: false } as never);
 });
 

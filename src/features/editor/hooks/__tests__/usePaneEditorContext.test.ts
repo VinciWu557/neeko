@@ -8,7 +8,6 @@ import { usePaneEditorContext } from '../usePaneEditorContext';
 function makeGlobalCtx(overrides: Partial<EditorContextValue> = {}): EditorContextValue {
   return {
     tabs: [],
-    activeTabId: null,
     onActivateTab: vi.fn(),
     onCloseTab: vi.fn(),
     onAddTab: vi.fn(),

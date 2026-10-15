@@ -23,7 +23,6 @@ const makeFileTab = (projectId: string, filePath: string): Tab => ({
   id: `file:${filePath}`,
   scope: { kind: 'workspace' as const, session: mkSession(projectId) },
   title: filePath,
-  order: 0,
   data: {
     kind: 'file',
     filePath,
@@ -79,7 +78,6 @@ describe('translationTabCleanupHandler — 文件 tab 关闭回收', () => {
       id: 'term:1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'Terminal 1',
-      order: 0,
       data: { kind: 'terminal' as const, agentId: null, status: 'Idle' as const },
     };
 
@@ -99,7 +97,6 @@ describe('editorStore 注册 — closeTab 触发文件清理', () => {
         ...s.tabs,
         [projKey]: {
           tabs: [makeFileTab('p1', 'README.md')],
-          activeTabId: 'file:README.md',
         },
       },
       editorLayout: {

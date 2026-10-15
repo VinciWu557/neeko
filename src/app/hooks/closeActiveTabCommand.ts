@@ -2,7 +2,7 @@ import {
   closeTabWithConfirmation,
   type SaveTabAction,
 } from '@/features/editor/store/closeConfirmStore';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { getActiveCheckoutPath } from '@/shared/store/workspaceStore';
 import { tabSpaceKeyOf } from '@/shared/utils/tabIdentity';
@@ -29,9 +29,9 @@ export function resolveCurrentTabKey(): string {
 /**
  * 关闭指定 tab 空间里当前激活的 tab。
  *
- * 读取 `tabs[tabKey].activeTabId`（per-tabKey 激活位，与 UI 高亮同源，
- * addTab/activateTab/closeTab 都会同步），而非全局 activeTabId ——
- * 全局值会在项目/worktree 切换路径被置空/错位。
+ * 前台由**布局派生**（`activeTabIdOf` → `selectActiveTabId`：激活编辑器组的激活 tab），
+ * 不再读已删除的 `tabs[tabKey].activeTabId` —— 那个空间级投影曾随分屏/换 pane 与布局
+ * 分叉，导致 Cmd+W 关错 tab（用户可见缺陷，2026-10-15 结构消除）。
  *
  * dirty 文件 tab 弹三选确认（与 X 按钮路径同源的 closeConfirmStore 编排）：
  * cancel 不关、discard 直接关、save 保存成功才关。
@@ -44,7 +44,7 @@ export async function closeActiveTabForTabKey(
   tabKey: string,
   saveTab?: SaveTabAction,
 ): Promise<boolean> {
-  const tabId = useEditorStore.getState().tabs[tabKey]?.activeTabId ?? null;
+  const tabId = activeTabIdOf(tabKey);
   if (!tabId) return false;
   return closeTabWithConfirmation(tabKey, tabId, saveTab);
 }

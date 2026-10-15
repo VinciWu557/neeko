@@ -10,9 +10,10 @@ import { useQuickOpenStore } from '@/features/quick-open/store/quickOpenStore';
 import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
 import { useAppViewStore } from '@/shared/store/appViewStore';
 import { useConnectionStore } from '@/shared/store/connectionStore';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore, type WorkspaceState } from '@/shared/store/workspaceStore';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { createProject } from '@/testing/factories';
 
@@ -33,7 +34,6 @@ function createDefaultParams() {
     setWslWtBranch: vi.fn(),
     setRemoteWorktreePath: vi.fn(),
     setRemoteWtBranch: vi.fn(),
-    activeTabId: null as string | null,
     onCloseTab: vi.fn(),
     shortcuts: {} as Record<string, string>,
     onToggleTerminal: vi.fn(),
@@ -104,17 +104,19 @@ function dispatchKey(code: string, opts: { ctrlKey?: boolean; altKey?: boolean }
  */
 function seedTerminalEditor(activeTabId: string | null = 'tab1') {
   const session = WorkspaceSession.of('p1', null);
-  const mk = (id: string, order: number): never =>
+  const mk = (id: string): never =>
     ({
       id,
       scope: { kind: 'workspace', session },
       title: id,
-      order,
       data: { kind: 'terminal', agentId: null, status: 'Idle' },
     }) as never;
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = ['tab1', 'tab2'];
+  layout.groups.left.activeTabId = activeTabId;
   useEditorStore.setState({
-    tabs: { [session.key]: { tabs: [mk('tab1', 0), mk('tab2', 1)], activeTabId } },
-    activeTabId,
+    tabs: { [session.key]: { tabs: [mk('tab1'), mk('tab2')] } },
+    editorLayout: { [session.key]: layout },
   });
 }
 
@@ -128,7 +130,6 @@ function seedTwoTabEditor() {
             id: 't0',
             scope: { kind: 'workspace', session: mkSession('p1') },
             title: 'a',
-            order: 0,
             data: {
               kind: 'file',
               filePath: 'a.ts',
@@ -141,7 +142,6 @@ function seedTwoTabEditor() {
             id: 't1',
             scope: { kind: 'workspace', session: mkSession('p1') },
             title: 'b',
-            order: 1,
             data: {
               kind: 'file',
               filePath: 'b.ts',
@@ -151,7 +151,6 @@ function seedTwoTabEditor() {
             },
           },
         ],
-        activeTabId: 't1',
       },
     },
     editorLayout: {
@@ -470,7 +469,6 @@ describe('useKeyboardShortcuts', () => {
   });
 
   it('输入框聚焦时不触发 Ctrl+W', () => {
-    params.activeTabId = 't1';
     renderHook(() => useKeyboardShortcuts(params));
 
     const input = document.createElement('input');
@@ -492,7 +490,8 @@ describe('useKeyboardShortcuts', () => {
   });
 
   it('CodeMirror 聚焦时仍触发 Ctrl+W 关闭 tab', () => {
-    params.activeTabId = 't1';
+    // Ctrl+W 现从布局派生前台（`resolveActiveTabKey` + `activeTabIdOf`），需 seed tab 空间。
+    seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
 
     const cm = document.createElement('div');
@@ -519,7 +518,6 @@ describe('useKeyboardShortcuts', () => {
   });
 
   it('绑定 Alt+Left 后，CodeMirror 聚焦时切换到上一个 tab', () => {
-    params.activeTabId = 't1';
     params.shortcuts = { prevTab: 'Alt+Left' };
     seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
@@ -535,14 +533,11 @@ describe('useKeyboardShortcuts', () => {
 
     dispatchKeyAt(content, { code: 'ArrowLeft', key: 'ArrowLeft', altKey: true });
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
-      't0',
-    );
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('t0');
     cm.remove();
   });
 
   it('绑定 Alt+Left 后，终端 textarea 聚焦时切换到上一个 tab（并阻止事件泄漏到 xterm）', () => {
-    params.activeTabId = 't1';
     params.shortcuts = { prevTab: 'Alt+Left' };
     seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
@@ -562,16 +557,13 @@ describe('useKeyboardShortcuts', () => {
     const stopSpy = vi.spyOn(event, 'stopPropagation');
     window.dispatchEvent(event);
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
-      't0',
-    );
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('t0');
     // 阻止事件继续到达 xterm，避免同时向 shell 发送转义序列。
     expect(stopSpy).toHaveBeenCalled();
     textarea.remove();
   });
 
   it('默认 Alt+Left 切换到上一个 tab（IDEA 手感）', () => {
-    params.activeTabId = 't1';
     seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
 
@@ -584,14 +576,11 @@ describe('useKeyboardShortcuts', () => {
 
     dispatchKeyAt(content, { code: 'ArrowLeft', key: 'ArrowLeft', altKey: true });
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
-      't0',
-    );
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('t0');
     cm.remove();
   });
 
   it('显式设为 Unbound 后 Alt+Left 不切换 tab（保留 macOS Option 按词移动）', () => {
-    params.activeTabId = 't1';
     params.shortcuts = { prevTab: '' };
     seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
@@ -605,28 +594,22 @@ describe('useKeyboardShortcuts', () => {
 
     dispatchKeyAt(content, { code: 'ArrowLeft', key: 'ArrowLeft', altKey: true });
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
-      't1',
-    );
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('t1');
     cm.remove();
   });
 
   it('Ctrl+Tab 切换到 MRU 上一个 tab，且不打开 QuickOpen 面板', () => {
-    params.activeTabId = 't1';
     useMruTabsStore.setState({ byTabKey: { [WorkspaceSession.of('p1', null).key]: ['t0'] } });
     seedTwoTabEditor(); // t0 / t1, active t1
     renderHook(() => useKeyboardShortcuts(params));
 
     dispatchKey('Tab', { ctrlKey: true });
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
-      't0',
-    );
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('t0');
     expect(useQuickOpenStore.getState().open).toBe(false);
   });
 
   it('QuickOpen 面板打开时 Ctrl+Tab 不触发 tab 切换', () => {
-    params.activeTabId = 't1';
     useMruTabsStore.setState({ byTabKey: { [WorkspaceSession.of('p1', null).key]: ['t0'] } });
     seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
@@ -637,15 +620,12 @@ describe('useKeyboardShortcuts', () => {
 
     dispatchKey('Tab', { ctrlKey: true });
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
-      't1',
-    );
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('t1');
     expect(useQuickOpenStore.getState().mode).toBe('gotoFile');
     root.remove();
   });
 
   it('设置页打开时不触发快捷键', () => {
-    params.activeTabId = 't1';
     renderHook(() => useKeyboardShortcuts(params));
 
     const root = document.createElement('div');
@@ -659,7 +639,7 @@ describe('useKeyboardShortcuts', () => {
   });
 
   it('Ctrl+W 关闭当前活跃 tab', () => {
-    params.activeTabId = 't1';
+    seedTwoTabEditor();
     renderHook(() => useKeyboardShortcuts(params));
 
     dispatchKey('KeyW', { ctrlKey: true });
@@ -668,7 +648,6 @@ describe('useKeyboardShortcuts', () => {
   });
 
   it('Ctrl+W 无活跃 tab 时不崩溃', () => {
-    params.activeTabId = null;
     renderHook(() => useKeyboardShortcuts(params));
 
     expect(() => {
@@ -688,8 +667,6 @@ describe('useKeyboardShortcuts', () => {
       '@/features/terminal/components/terminalCache'
     );
     seedTerminalEditor('tab1');
-    // 顶层 activeTabId 故意给一个**不属于本 session** 的旧值：必须不被采用。
-    params.activeTabId = 'stale-from-another-project';
     storeState = seedStore({
       ...storeState,
       activeProjectId: 'p1',
@@ -717,7 +694,6 @@ describe('useKeyboardShortcuts', () => {
       '@/features/terminal/components/terminalCache'
     );
     seedTerminalEditor(null); // 无激活 tab
-    params.activeTabId = null;
     storeState = seedStore({
       ...storeState,
       activeProjectId: 'p1',
@@ -744,7 +720,6 @@ describe('useKeyboardShortcuts', () => {
     // 「not.toHaveBeenCalled」必须先清零，否则前面用例的调用会让它假红/假绿。
     refreshTerminalForSession.mockClear();
     seedTwoTabEditor(); // 只有 file tabs
-    params.activeTabId = 't1';
     storeState = seedStore({
       ...storeState,
       activeProjectId: 'p1',

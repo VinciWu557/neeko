@@ -3,7 +3,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { FileTabData, Tab } from '@/shared/types';
@@ -55,7 +55,6 @@ function makeUntitledTab(id: string, overrides: Partial<FileTabData> = {}): Tab 
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: id,
@@ -89,7 +88,7 @@ function renderDialog(req: SaveAsRequest | null) {
 describe('SaveFileDialog closeAfterSave', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProject });
     useWorkspaceStore.setState({ byProject: {} });
     saveNewFileMock.mockResolvedValue('notes/Untitled-1.ts');
@@ -149,7 +148,7 @@ describe('SaveFileDialog closeAfterSave', () => {
     });
     expect(closeEditorTabMock).not.toHaveBeenCalled();
     // 身份迁移后 tab 保持激活（activateTab 以新 id 命中）
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]!.activeTabId).toBe(
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
       `${WorkspaceSession.of('p1', null).key}:/repo/notes/Untitled-1.ts`,
     );
   });
@@ -216,7 +215,6 @@ describe('SaveFileDialog closeAfterSave', () => {
         id: `${WorkspaceSession.of('p1', null).key}:/repo/notes/Untitled-1.ts`,
         scope: { kind: 'workspace', session: mkSession('p1') },
         title: 'Untitled-1.ts',
-        order: 0,
         data: {
           kind: 'file',
           filePath: '/repo/notes/Untitled-1.ts',
@@ -242,7 +240,7 @@ describe('SaveFileDialog closeAfterSave', () => {
         .tabs[WorkspaceSession.of('p1', null).key]!.tabs.some((t) => t.id === 'u1'),
     ).toBe(false);
     // 既有目标 tab 被激活（非重复新 tab）
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]!.activeTabId).toBe(
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
       `${WorkspaceSession.of('p1', null).key}:/repo/notes/Untitled-1.ts`,
     );
     expect(

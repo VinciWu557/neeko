@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Square, ChevronDown, Bug } from '@/shared/components/icons';
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTab } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import { safeUnlisten } from '@/shared/utils/safeUnlisten';
@@ -17,11 +18,13 @@ import LaunchConfigDialog from './LaunchConfigDialog';
 
 /** Active editor file path for ${file} / ${fileDirname} expansion. */
 function getActiveEditorFile(projectId: ProjectId): string | null {
-  const projectTabs = useEditorStore.getState().tabs[activeWorkspaceSession(projectId).key];
-  if (!projectTabs) return null;
-  const active = projectTabs.tabs.find((t) => t.id === projectTabs.activeTabId);
+  const state = useEditorStore.getState();
+  const tabKey = activeWorkspaceSession(projectId).key;
+  // 前台 tab 由布局派生（`selectActiveTab`），不再读已删除的空间级投影。
+  const active = selectActiveTab(state, tabKey);
   if (active?.data.kind === 'file') return active.data.filePath;
-  const fileTab = projectTabs.tabs.find((t) => t.data.kind === 'file');
+  const projectTabs = state.tabs[tabKey];
+  const fileTab = projectTabs?.tabs.find((t) => t.data.kind === 'file');
   return fileTab?.data.kind === 'file' ? fileTab.data.filePath : null;
 }
 

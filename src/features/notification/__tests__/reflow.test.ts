@@ -12,19 +12,16 @@ vi.mock('@/shared/store/editorStore', () => ({
     getState: () => ({
       tabs: {
         'ws-1': {
-          activeTabId: 't1',
           tabs: [
             {
               id: 't1',
               title: 'Terminal',
-              order: 0,
               scope: { kind: 'app' },
               data: { kind: 'terminal' },
             },
             {
               id: 't2',
               title: 'Chat',
-              order: 1,
               scope: { kind: 'workspace', session: { key: 'ws-1', projectId: 'p-9' } },
               data: { kind: 'agent-chat', sessionId: 'sess-42' },
             },

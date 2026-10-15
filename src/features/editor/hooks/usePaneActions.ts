@@ -78,7 +78,6 @@ export function usePaneActions({
                 id: tabId,
                 scope: { kind: 'workspace', session: activeWorkspaceSession(projectIdForCheck) },
                 title: 'Agent Chat',
-                order: tabs.length,
                 data: {
                   kind: 'agent-chat' as const,
                   agentId: undefined,
@@ -99,7 +98,6 @@ export function usePaneActions({
                 id: tabId,
                 scope: { kind: 'workspace', session: activeWorkspaceSession(projectIdForCheck) },
                 title: 'Browser',
-                order: tabs.length,
                 data: {
                   kind: 'browser' as const,
                   url: '',
@@ -143,7 +141,6 @@ export function usePaneActions({
           id: tabId,
           scope: { kind: 'workspace', session: activeWorkspaceSession(projectIdForCheck) },
           title: agentName,
-          order: tabs.length,
           data: {
             kind: 'terminal' as const,
             agentId,

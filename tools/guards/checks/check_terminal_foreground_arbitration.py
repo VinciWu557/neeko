@@ -20,11 +20,16 @@
   ①`a.order - b.order` / `b.order - a.order`（自带一套 tab 顺序）
   ②`tabs[0]` / `terminalTabs[0]` / `agentTabs[0]` / `terminals[0]` / `candidates[0]` /
     `chatTabs[0]`（绕过仲裁直接取首个）。
-  命中必须逐文件登记在台账，且 `kind == "owner"` 的恰为 `terminalRouting.ts` 一处。
-  **基线实测**（写判据前重新量的；design §3 首轮记的「4 处合法命中」在实现后已过期）：
-  `terminalRouting.ts`（owner）+ `StatusBarCluster.tsx` / `status-bar/registry.ts`
-  （legit —— 状态栏 item 展示序与注册序，**同形但不同域**）。
+  命中必须逐文件登记在台账。
+  **2026-10-15 单源化后的基线**：tab 顺序不再由任何代码 `sort` 得出 —— 它直接来自
+  `editorLayout[tabKey]` 的 `tabIds`（唯一派生点 `editorTabSelectors.ts::selectOrderedTabIds`，
+  在 `src/shared/store/`，**不在本判据作用域内**）。因此 `order_sort` 在本域内的合法命中数为
+  **零**（原先唯一的 owner `terminalRouting.ts` 已随 `Tab.order` 字段删除而不复存在）。
+  剩下的仅 `StatusBarCluster.tsx` / `status-bar/registry.ts` 两处 `order_sort`（legit ——
+  状态栏 item 展示序与注册序，**同形但不同域**）。
   ⇒ 这就是必须台账式而非纯正则的原因：同一段字符串在不同域有完全不同的语义。
+  **「owner」概念已退役**：它原本断言「全仓恰有一处实现 order 排序」；顺序改为纯数据派生后
+  不再有那处 sort，故不再要求任何文件是 owner（本判据只保证「本域内不得再有第二套顺序/取首」。
 - **A2（第二口径退出）**：`firstTerminalKeyOfSession(` / `firstTerminalEntryOfSession(`
   在 `src` 内零命中。这两个符号随本任务**整体删除**（不是降为私有：消费者为零时留着
   就是下一个手搓的诱惑，按 10-12 R5 纪律删）。判据防的是**新造同类**。
@@ -46,6 +51,15 @@
   （`browser://` / `file-changed` / `dap-event` …）的消费点在 Rust 侧 emit，不在射程内 ——
   实测 `BROWSER_LOADING_EVENT` 前端零引用但后端确实在发（`webview_ops.rs:73,80`），
   那是「后端发、前端还没接」的另一类问题，不由本判据误报。
+- **A5（单一表示不回潮）**：`src/shared/types/tab.ts` 与 `src/shared/types/terminal.ts`
+  内不得重新声明 `ProjectTabs.activeTabId` / `Tab.order` / `TerminalTab.order`。
+  这三者曾是「前台 / 顺序」的第二份表示，分屏 / 拖拽重排后与 `editorLayout` 分叉
+  （拖文件落错 pane、Cmd+W 关错 tab，2026-10-15 单源化删除）。前台与顺序的唯一权威是
+  `editorLayout`（`groups[activeGroupId].activeTabId` / `tabIds`），唯一派生点是
+  `editorTabSelectors.ts`。
+  **为何只扫类型定义文件**：生产/测试代码里出现这些名字是合法的（注释解释成因、布局的
+  `groups[].activeTabId`、测试夹具）——判据盯的是「字段被重新声明」这个动作本身，
+  而字段只能声明在类型定义里。
 
 > **取证纪律（本轮实测教训，写给下一个改这条护栏的人）**：形态/材质类判据必须**逐形态**量
 > （标识符 / 转义 / 不同引号 / 代码行 vs 注释行），不能只测一种就写「基线为 N」。
@@ -61,7 +75,6 @@ from guards.core.ledger import load_ledger
 
 LEDGER_NAME = "terminal_foreground_arbitration"
 EVENTS_FILE = "src/shared/events.ts"
-OWNER = "src/features/terminal/components/terminalRouting.ts"
 
 A1_SCOPES = tuple(
     f"src/features/{domain}/**/*{ext}"
@@ -84,6 +97,16 @@ RETIRED_FALLBACK_RE = re.compile(
 )
 # A3 —— tabId 的可选性 / 可空性回退
 OPTIONAL_TAB_ID_RE = re.compile(r"\btabId\?:|\btabId:\s*string\s*\|\s*null")
+# A5 —— 单源化删除的两个字段回潮（tab 空间第二份表示）
+# 只在 **类型定义文件** 上判：读到字段声明即违规。生产/测试代码里出现这些名字
+# （如注释解释成因、布局的 groups[].activeTabId）不算 —— 判据盯的是「字段被重新声明」。
+TAB_TYPES_FILE = "src/shared/types/tab.ts"
+TERMINAL_TYPES_FILE = "src/shared/types/terminal.ts"
+# 在类型定义文件里，这两个名字**只可能是**已删除的字段（tab.ts 的 Tab 无 activeTabId、
+# ProjectTabs 只有 tabs；EditorGroupState 的 groups[].activeTabId 在 editorGroup.ts，不在射程）。
+# 故模式适度放宽，覆盖可选/readonly/宽类型变体：`activeTabId?: string` / `readonly order?: number`。
+PROJECT_TABS_ACTIVE_RE = re.compile(r"\bactiveTabId\s*\??\s*:")
+TAB_ORDER_RE = re.compile(r"^\s*(?:readonly\s+)?order\s*\??\s*:\s*number\b", re.MULTILINE)
 # A4 —— DOM 事件常量（值以 neeko: 开头 = 纯前端 CustomEvent 名，非后端 Tauri 通道）
 DOM_EVENT_CONST_RE = re.compile(
     r"^export const ([A-Z_0-9]+)\s*=\s*['\"](neeko:[^'\"]*)['\"]", re.MULTILINE
@@ -96,7 +119,9 @@ COMMENT_LINE_RE = re.compile(r"^\s*(?:\*|//|/\*)")
 GUARD = Guard(
     id="check_terminal_foreground_arbitration",
     title="终端前台仲裁口径唯一 + 声明的 DOM 事件必须有消费点",
-    scopes=A1_SCOPES + SRC_SCOPES + (EVENTS_FILE, f"tools/guards/ledger/{LEDGER_NAME}.json"),
+    scopes=A1_SCOPES
+    + SRC_SCOPES
+    + (EVENTS_FILE, TAB_TYPES_FILE, TERMINAL_TYPES_FILE, f"tools/guards/ledger/{LEDGER_NAME}.json"),
     red_lines=(5, 12),
     docs="docs/domain-model.md",
     ledger=LEDGER_NAME,
@@ -145,7 +170,7 @@ def _scan_a1(ctx: Context) -> tuple[int, dict]:
 
 
 def check(ctx: Context) -> GuardResult:
-    ledger = load_ledger(LEDGER_NAME, required_keys=("owner", "valid_kinds", "manifest"))
+    ledger = load_ledger(LEDGER_NAME, required_keys=("valid_kinds", "manifest"))
     manifest, valid_kinds = ledger["manifest"], set(ledger["valid_kinds"])
 
     a1_count, hits = _scan_a1(ctx)
@@ -177,14 +202,6 @@ def check(ctx: Context) -> GuardResult:
                     f"tools/guards/ledger/{LEDGER_NAME}.json",
                 )
             )
-    owners = [p for p, e in manifest.items() if e["kind"] == "owner"]
-    if owners != [OWNER]:
-        findings.append(
-            Finding(
-                f"A1 owner 必须恰为 {OWNER}，实测 {owners} —— 「取首个」的实现处必须唯一",
-                f"tools/guards/ledger/{LEDGER_NAME}.json",
-            )
-        )
 
     # ---- A2：第二口径符号回潮（扫全 src；测试文件豁免 —— 注释里解释成因不算命中）----
     src_files = _files(ctx, SRC_SCOPES)
@@ -243,13 +260,37 @@ def check(ctx: Context) -> GuardResult:
                 )
             )
 
+    # ---- A5：单源化删除的字段不得回潮（类型定义文件里重声明即违规）----
+    # `ProjectTabs.activeTabId` 与 `Tab.order` 曾各存「前台 / 顺序」的第二份表示，
+    # 分屏 / 拖拽重排后与 `editorLayout` 分叉（拖文件落错 pane、Cmd+W 关错 tab）。
+    # 它们的正确位置是布局（`groups[activeGroupId].activeTabId` / `tabIds`），
+    # 派生点是 `editorTabSelectors.ts`。类型文件里重声明 = 把缺陷重新表示出来。
+    for rel, rx, label in (
+        (TAB_TYPES_FILE, PROJECT_TABS_ACTIVE_RE, "ProjectTabs.activeTabId"),
+        (TAB_TYPES_FILE, TAB_ORDER_RE, "Tab.order"),
+        (TERMINAL_TYPES_FILE, TAB_ORDER_RE, "TerminalTab.order"),
+    ):
+        # 夹具仓库可能没有该类型文件（真实仓库必有）—— 缺文件 = 无回潮，不报错。
+        type_path = ctx.repo_root / rel
+        if not type_path.is_file():
+            continue
+        if rx.search(ctx.read_tolerant(rel)):
+            findings.append(
+                Finding(
+                    f"A5 单一表示回潮：{label} 又在类型定义里出现 —— 前台/顺序只能由 "
+                    "`editorLayout` 派生（`editorTabSelectors.ts`），不得再存第二份表示",
+                    rel,
+                )
+            )
+
     total = sum(sum(v.values()) for v in hits.values())
     scanned = a1_count + len(src_files) + len(terminal_files) + 1
     metrics = (
         f"A1 {a1_count} 文件 / 命中 {len(hits)} 处 {total} · "
         f"A2 零命中（{len(src_files)} 文件）· "
         f"A3 零命中（{len(terminal_files)} 文件）· "
-        f"A4 neeko:* 常量 {len(dom_consts)} / 有监听 {len([n for n in dom_consts if n in listened or dom_consts[n] in listened])}"
+        f"A4 neeko:* 常量 {len(dom_consts)} / 有监听 {len([n for n in dom_consts if n in listened or dom_consts[n] in listened])} · "
+        f"A5 字段回潮 0"
     )
     notes = _notes(a1_count, hits, manifest, dom_consts, listened)
     if findings:
@@ -267,6 +308,10 @@ def _notes(a1_count, hits, manifest, dom_consts, listened) -> tuple:
             lines.append(f"  [debt] {path}: {entry['note']}")
     lines.append("  A2 已删除的第二口径：firstTerminalKeyOfSession / firstTerminalEntryOfSession")
     lines.append("  A3 tabId 必填（terminal 域；别域的 tabId?: 是另一套合法含义，不在射程）")
+    lines.append(
+        "  A5 单一表示：ProjectTabs.activeTabId / Tab.order / TerminalTab.order "
+        "不得在类型定义里回潮（前台/顺序由 editorLayout 派生）"
+    )
     lines.append(
         f"  A4 neeko:* DOM 事件常量 {len(dom_consts)} 个，"
         f"有监听者 {len([n for n in dom_consts if n in listened or dom_consts[n] in listened])} 个"

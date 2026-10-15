@@ -26,7 +26,7 @@ describe('openProjectFile — file tab 构造 canonical 化（quick-open 链路�
   beforeEach(() => {
     vi.clearAllMocks();
     langExtMock.mockResolvedValue(null);
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'p1', path: '/repo' } as never],
       activeProjectId: 'p1',
@@ -143,7 +143,7 @@ describe('openProjectFile — 语言扩展就绪屏障（await getLanguageExtens
   beforeEach(() => {
     vi.clearAllMocks();
     langExtMock.mockResolvedValue(null);
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'p1', path: '/repo' } as never],
       activeProjectId: 'p1',

@@ -96,7 +96,6 @@ export interface FileTab {
   fileName: string;
   content: FileContent;
   isDirty: boolean;
-  order: number;
   initialPreviewMode?: 'preview' | 'source';
   isUntitled?: boolean;
   untitledName?: string;

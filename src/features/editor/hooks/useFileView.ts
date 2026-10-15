@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/shallow';
 import { readDirTree } from '@/features/file/api/fileApi';
 import { useFileStore } from '@/features/file/store';
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTabId } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceSession, useActiveWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { DirTreeResult } from '@/shared/types';
@@ -43,6 +44,9 @@ export function useFileView() {
     }),
   );
 
+  // 前台 tab 由布局派生（订阅 `editorLayout`，前台切换才重渲）。
+  const activeTabId = useEditorStore((state) => (tabKey ? selectActiveTabId(state, tabKey) : null));
+
   // Derive file tabs (filtered by kind === "file")
   const fileTabs = useMemo(() => {
     if (!projectTabs) return [];
@@ -52,13 +56,13 @@ export function useFileView() {
   // Derive active file tab ID
   const activeFileTabId = useMemo(() => {
     if (!projectTabs) return null;
-    // Prefer the project's active tab if it's a file tab
-    const active = projectTabs.tabs.find((t) => t.id === projectTabs.activeTabId);
+    // Prefer the foreground tab if it's a file tab
+    const active = activeTabId ? projectTabs.tabs.find((t) => t.id === activeTabId) : undefined;
     if (active && active.data.kind === 'file') return active.id;
     // Fall back to first file tab
     const first = projectTabs.tabs.find(isFileTab);
     return first?.id ?? null;
-  }, [projectTabs]);
+  }, [projectTabs, activeTabId]);
 
   // Derive active file path
   const activeFilePath = useMemo(() => {

@@ -36,7 +36,7 @@ describe('useFileViewTabOps.openFile — FilesPanel 链路 canonical 化', () =>
 
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({
       projects: [{ id: 'p1', name: 'p1', path: '/repo' } as never],
       activeProjectId: 'p1',

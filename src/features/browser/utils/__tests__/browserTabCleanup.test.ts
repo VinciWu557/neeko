@@ -22,7 +22,7 @@ function mkSession(projectId: string) {
 
 describe('browserTabCleanup — 关闭 browser tab 销毁 webview + 清除状态', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useBrowserTabsStore.setState({ states: {} });
     browserCloseMock.mockClear();
     browserSetVisibleMock.mockClear();
@@ -35,7 +35,6 @@ describe('browserTabCleanup — 关闭 browser tab 销毁 webview + 清除状态
       id: 'tab_b1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'GitHub',
-      order: 0,
       data: { kind: 'browser', url: 'https://github.com' },
     });
     useBrowserTabsStore.getState().setTabState('tab_b1', {
@@ -60,14 +59,12 @@ describe('browserTabCleanup — 关闭 browser tab 销毁 webview + 清除状态
       id: 'tab_b1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'A',
-      order: 0,
       data: { kind: 'browser', url: 'https://a.com' },
     });
     useEditorStore.getState().addTab({
       id: 'tab_b2',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'B',
-      order: 1,
       data: { kind: 'browser', url: 'https://b.com' },
     });
     useBrowserTabsStore.getState().setTabState('tab_b1', { url: 'https://a.com', isCreated: true });
@@ -87,7 +84,6 @@ describe('browserTabCleanup — 关闭 browser tab 销毁 webview + 清除状态
       id: 'tab_t1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'Terminal',
-      order: 0,
       data: { kind: 'terminal', agentId: null, status: 'Idle' },
     });
 

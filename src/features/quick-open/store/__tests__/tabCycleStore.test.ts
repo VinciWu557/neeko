@@ -2,8 +2,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTabId } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { createProject } from '@/testing/factories';
 
@@ -26,14 +28,18 @@ function seedStores() {
 }
 
 function seedTabs(tabs: { id: string; title: string }[], activeId: string) {
+  // 前台由布局派生（`selectActiveTabId`）：夹具必须 seed layout，否则前台恒 null。
+  const tabKey = WorkspaceSession.of('p1', null).key;
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = tabs.map((t) => t.id);
+  layout.groups.left.activeTabId = activeId;
   useEditorStore.setState({
     tabs: {
-      [WorkspaceSession.of('p1', null).key]: {
-        tabs: tabs.map((t, i) => ({
+      [tabKey]: {
+        tabs: tabs.map((t) => ({
           id: t.id,
           scope: { kind: 'workspace', session: mkSession('p1') },
           title: t.title,
-          order: i,
           data: {
             kind: 'file' as const,
             filePath: `${t.id}.ts`,
@@ -42,9 +48,9 @@ function seedTabs(tabs: { id: string; title: string }[], activeId: string) {
             isDirty: false,
           },
         })),
-        activeTabId: activeId,
       },
     },
+    editorLayout: { [tabKey]: layout },
   });
 }
 
@@ -100,7 +106,7 @@ describe('useTabCycleStore.cycleTab', () => {
 
     useTabCycleStore.getState().cycleTab(1);
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't1',
     );
     expect(useTabCycleStore.getState().session?.cursor).toBe(1);
@@ -119,15 +125,15 @@ describe('useTabCycleStore.cycleTab', () => {
 
     const s = useTabCycleStore.getState();
     s.cycleTab(1);
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't1',
     );
     s.cycleTab(1);
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't2',
     );
     s.cycleTab(1);
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't0',
     );
   });
@@ -145,11 +151,11 @@ describe('useTabCycleStore.cycleTab', () => {
 
     const s = useTabCycleStore.getState();
     s.cycleTab(-1); // reverse from t0 → least recent (t2)
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't2',
     );
     s.cycleTab(-1);
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't1',
     );
   });
@@ -175,7 +181,7 @@ describe('useTabCycleStore.cycleTab', () => {
     s.cycleTab(1); // expired → fresh rebuild from t1 → order [t1,t2,t0], cursor 1
 
     const session = useTabCycleStore.getState().session!;
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't2',
     );
     expect(session.order).toEqual(['t1', 't2', 't0']);
@@ -197,7 +203,7 @@ describe('useTabCycleStore.cycleTab', () => {
     s.cycleTab(1); // → t1, cursor 1
     useEditorStore.getState().activateTab(WorkspaceSession.of('p1', null).key, 't2'); // user clicked elsewhere
     s.cycleTab(1); // lastActivated(t1) !== active(t2) → fresh from t2 → MRU prev (t1)
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't1',
     );
   });
@@ -205,7 +211,7 @@ describe('useTabCycleStore.cycleTab', () => {
   it('does nothing with a single tab', () => {
     seedTabs([{ id: 't0', title: 'a' }], 't0');
     useTabCycleStore.getState().cycleTab(1);
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't0',
     );
     expect(useTabCycleStore.getState().session).toBeNull();
@@ -221,7 +227,7 @@ describe('useTabCycleStore.cycleTab', () => {
       't0',
     );
     useTabCycleStore.getState().cycleTab(1);
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key]?.activeTabId).toBe(
+    expect(selectActiveTabId(useEditorStore.getState(), WorkspaceSession.of('p1', null).key)).toBe(
       't0',
     );
   });

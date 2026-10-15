@@ -21,12 +21,14 @@ import { foregroundTerminalTab } from '@/features/terminal/components/terminalRo
 // eslint-disable-next-line import/no-restricted-paths
 import {
   cycleTab,
+  resolveActiveTabKey,
   splitActiveTabRight,
   unsplitActiveEditor,
 } from '@/shared/hooks/shortcutTabCommands';
 import { useAppViewStore } from '@/shared/store/appViewStore';
 // eslint-disable-next-line import/no-restricted-paths
 import { useDockStore } from '@/shared/store/dockStore';
+import { activeTabIdOf } from '@/shared/store/editorStore';
 import { useNavHistoryStore } from '@/shared/store/navigationHistoryStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
@@ -43,7 +45,6 @@ import {
 
 interface UseKeyboardShortcutsParams {
   updateWtPath: (path: string | null, branch: string) => void;
-  activeTabId: string | null;
   onCloseTab: (tabId: string) => void;
   shortcuts: Record<string, string>;
   unifiedItems: ProjectListItem[];
@@ -76,20 +77,15 @@ const GLOBAL_ACTION_IDS = new Set([
 
 export function useKeyboardShortcuts({
   updateWtPath,
-  activeTabId,
   onCloseTab,
   shortcuts,
   unifiedItems,
 }: UseKeyboardShortcutsParams) {
   const shortcutsRef = useRef(shortcuts);
-  const activeTabIdRef = useRef(activeTabId);
 
   useEffect(() => {
     shortcutsRef.current = shortcuts;
   }, [shortcuts]);
-  useEffect(() => {
-    activeTabIdRef.current = activeTabId;
-  }, [activeTabId]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -174,7 +170,10 @@ export function useKeyboardShortcuts({
 
           case 'closeTab': {
             e.preventDefault();
-            const tabId = activeTabIdRef.current;
+            // 前台由布局派生（事件到达时现取当前 tab 空间的激活 tab），
+            // 不再依赖全局 `activeTabId`（跨 tab 空间态，已删除）。
+            const tabKey = resolveActiveTabKey();
+            const tabId = tabKey ? activeTabIdOf(tabKey) : null;
             if (tabId) onCloseTab(tabId);
             break;
           }

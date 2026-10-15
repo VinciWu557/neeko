@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTab } from '@/shared/store/editorTabSelectors';
 import { relativeToRoot } from '@/shared/utils/fileRef';
 
 /**
@@ -20,9 +21,9 @@ export function useLocateFileInTree(tabKey: string | null, rootPath?: string | n
     useCallback(
       (s) => {
         if (!tabKey) return null;
-        const projectTabs = s.tabs[tabKey];
-        if (!projectTabs?.activeTabId) return null;
-        return projectTabs.tabs.find((t) => t.id === projectTabs.activeTabId) ?? null;
+        // 前台由布局派生（`selectActiveTab`）—— 同时订阅 `tabs` 与 `editorLayout`，
+        // 前台切换才能触发重渲（旧读点只订阅 `tabs`，靠空间级投影的变化通知）。
+        return selectActiveTab(s, tabKey);
       },
       [tabKey],
     ),

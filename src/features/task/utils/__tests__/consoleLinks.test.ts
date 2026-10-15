@@ -57,7 +57,7 @@ function clientXForColumn(column: number): number {
 describe('consoleLinks — 文件路径 Ctrl/Cmd+Click 打开编辑器（canonical 构造）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     readFileContentMock.mockImplementation(async (_projectId: string, p: string) => ({
       path: p,
       content: 'x',
@@ -109,7 +109,7 @@ describe('consoleLinks — worktree 键空间（workspaceKeyOf 派生）', () =>
 
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null, navigateGoal: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {}, navigateGoal: null });
     useWorkspaceStore.setState({ byProject: {} });
     readFileContentMock.mockImplementation(async (_projectId: string, p: string) => ({
       path: p,
@@ -180,7 +180,6 @@ describe('consoleLinks — worktree 键空间（workspaceKeyOf 派生）', () =>
               id: TAB_ID_WT,
               scope: { kind: 'workspace', session: mkSession('p1') },
               title: 'main.rs',
-              order: 0,
               data: {
                 kind: 'file',
                 filePath: '/repo/src/main.rs',
@@ -194,7 +193,6 @@ describe('consoleLinks — worktree 键空间（workspaceKeyOf 派生）', () =>
         },
       },
       editorLayout: {},
-      activeTabId: TAB_ID_WT,
     });
 
     clickMainRsLink();

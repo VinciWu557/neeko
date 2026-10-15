@@ -27,7 +27,6 @@ function tabToTerminalTab(tab: Tab & { data: TerminalTabData }): TerminalTab {
     agentId: tab.data.agentId,
     title: tab.title,
     status: tab.data.status,
-    order: tab.order,
   };
 }
 
@@ -57,7 +56,6 @@ export function useTerminalTabs() {
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
         title: agentName ?? agentId ?? `Terminal ${terminalCount + 1}`,
-        order: existing?.tabs.length ?? 0,
         data: {
           kind: 'terminal',
           agentId: agentId ?? null,
@@ -74,7 +72,6 @@ export function useTerminalTabs() {
         agentId: agentId ?? null,
         title: agentName ?? agentId ?? `Terminal ${terminalCount + 1}`,
         status: 'Idle',
-        order: newTab.order,
       };
     },
     [],

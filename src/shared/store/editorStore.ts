@@ -18,6 +18,8 @@ import { emitTabActivated } from '@/shared/utils/editorActivity';
 import { tabSpaceKeyOf } from '@/shared/utils/tabIdentity';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
+import { selectActiveTabId } from './editorTabSelectors';
+
 /**
  * Tab 关闭清理注册表（feature 解耦的按 kind 分发）。
  *
@@ -300,7 +302,6 @@ export interface NavigateGoalInput {
 
 interface EditorStoreState {
   tabs: Record<string, ProjectTabs>;
-  activeTabId: string | null;
   editorLayout: Record<string, EditorSplitLayout>;
   cursorPosition: { line: number; col: number } | null;
   navigateGoal: NavigateGoal | null;
@@ -320,9 +321,9 @@ interface EditorStoreState {
     partial: Partial<TabData> & { title?: string },
   ) => void;
   /**
-   * 重命名 tab 身份（改 id）：Save As 等「身份迁移」场景——untitled id 迁移到
-   * canonical path id。保持 order / 双组归属 / pinned / 激活（tab 级与全局级）
-   * 一致；目标 id 已被占用或 old id 不存在时无变化。
+   * 重命名 tab 身份（改 id）：Save As 等「身份迁移」场景—— untitled id 迁移到
+   * canonical path id。保持布局双组归属 / pinned / 激活（都是布局内的 id）一致；
+   * 目标 id 已被占用或 old id 不存在时无变化。
    */
   renameTab: (projectId: string, oldTabId: string, newTabId: string) => void;
   clearProjectTabs: (projectId: string) => void;
@@ -381,7 +382,6 @@ function dropNavigateGoalFor(
 
 export const useEditorStore = create<EditorStoreState>((set) => ({
   tabs: {},
-  activeTabId: null,
   editorLayout: {},
   cursorPosition: null,
   navigateGoal: null,
@@ -407,8 +407,8 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       }
 
       const projectTabs: ProjectTabs = existing
-        ? { tabs: [...filteredTabs, tab], activeTabId: tab.id }
-        : { tabs: [tab], activeTabId: tab.id };
+        ? { tabs: [...filteredTabs, tab] }
+        : { tabs: [tab] };
 
       const newTabs = { ...state.tabs, [projectId]: projectTabs };
 
@@ -462,7 +462,6 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
 
       return {
         tabs: newTabs,
-        activeTabId: tab.id,
         editorLayout: { ...state.editorLayout, [projectId]: newLayout },
       };
     }),
@@ -483,9 +482,11 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       if (state.editorLayout[projectId]?.pinnedTabIds.includes(tabId)) return state;
 
       const remaining = existing.tabs.filter((t) => t.id !== tabId);
-      let newActiveId: string | null = existing.activeTabId;
+      // 前台由布局派生（`selectActiveTabId`），不再读已删除的空间级投影。
+      const foreground = selectActiveTabId(state, projectId);
+      let newActiveId: string | null = foreground;
 
-      if (existing.activeTabId === tabId) {
+      if (foreground === tabId) {
         if (remaining.length === 0) {
           newActiveId = null;
         } else {
@@ -518,11 +519,9 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
         }
       }
 
-      const globalActiveId = state.activeTabId === tabId ? newActiveId : state.activeTabId;
-
       const newTabs = {
         ...state.tabs,
-        [projectId]: { tabs: remaining, activeTabId: newActiveId },
+        [projectId]: { tabs: remaining },
       };
 
       let newEditorLayout = state.editorLayout;
@@ -602,22 +601,20 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
 
         newEditorLayout = { ...state.editorLayout, [projectId]: newLayout };
       } else if (remaining.length > 0) {
-        // No layout yet (e.g. session-restored tabs or legacy state): create
-        // one in sync with the remaining tabs so the UI (useEditorGroupLayout)
-        // reads a real layout instead of deriving a fallback that ignores
-        // tabs[projectId].activeTabId — which left a blank content area.
+        // 不变量 I1（有 tab 的空间必有 layout）成立后本分支不可达，保留作防御：
+        // 缺失 layout 时建一份与剩余 tab 同步的 layout，前台落到一个存活 tab（本节
+        // 依赖的旧字段 `existing.activeTabId` 已删除，故用 remaining 推导）。
         const created = ensureLayout(
           state.editorLayout,
           projectId,
           remaining.map((t) => t.id),
-          newActiveId,
+          newActiveId ?? remaining[remaining.length - 1].id,
         );
         newEditorLayout = { ...state.editorLayout, [projectId]: created };
       }
 
       return {
         tabs: newTabs,
-        activeTabId: globalActiveId,
         editorLayout: newEditorLayout,
         // goal 指向的 tab 已随本次移除：同一 set 更新内清除，避免滞留目标日后「换弹」跳转。
         ...dropNavigateGoalFor(state, projectId, tabId),
@@ -666,8 +663,7 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
           };
         }
       } else {
-        // 与 closeTab 相同的兜底：layout 缺失时（session restore 等路径）创建
-        // 与 tabs 同步的 layout，否则 UI fallback 与 store 的 activeTabId 脱节。
+        // 不变量 I1 成立后本分支不可达，保留作防御（缺失 layout 时建一份）。
         newEditorLayout = {
           ...state.editorLayout,
           [projectId]: ensureLayout(
@@ -686,14 +682,8 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
         emitTabActivated(projectId, tabId, tab);
       });
 
-      return {
-        tabs: {
-          ...state.tabs,
-          [projectId]: { ...existing, activeTabId: tabId },
-        },
-        activeTabId: tabId,
-        editorLayout: newEditorLayout,
-      };
+      // 激活 = 写布局（组激活 / pinned 两分支不变）；空间级与顶层投影字段已删除。
+      return { editorLayout: newEditorLayout };
     }),
 
   updateTab: (projectId, tabId, partial) =>
@@ -732,7 +722,6 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       if (existing.tabs.some((t) => t.id === newTabId)) return state;
 
       const tabs = existing.tabs.map((t) => (t.id === oldTabId ? { ...t, id: newTabId } : t));
-      const activeTabId = existing.activeTabId === oldTabId ? newTabId : existing.activeTabId;
 
       const layout = state.editorLayout[projectId];
       const newEditorLayout = layout
@@ -764,8 +753,7 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
         : state.editorLayout;
 
       return {
-        tabs: { ...state.tabs, [projectId]: { tabs, activeTabId } },
-        activeTabId: state.activeTabId === oldTabId ? newTabId : state.activeTabId,
+        tabs: { ...state.tabs, [projectId]: { tabs } },
         editorLayout: newEditorLayout,
       };
     }),
@@ -777,17 +765,12 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       const existingTabs = state.tabs[projectId];
       if (!existingTabs) return state;
 
-      const globalActiveId = existingTabs.tabs.some((t) => t.id === state.activeTabId)
-        ? null
-        : state.activeTabId;
-
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [projectId]: _tmp, ...rest } = state.tabs;
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { [projectId]: _tmp2, ...restLayouts } = state.editorLayout;
       return {
         tabs: rest,
-        activeTabId: globalActiveId,
         editorLayout: restLayouts,
         // 整项目 tab 空间被移除：该项目键下的 goal 一并清除（不限 tabId）。
         ...dropNavigateGoalFor(state, projectId),
@@ -811,7 +794,7 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
         state.editorLayout,
         tabKey,
         projectTabs.tabs.map((t) => t.id),
-        projectTabs.activeTabId,
+        selectActiveTabId(state, tabKey),
       );
 
       const newLeftIds = layout.groups.left.tabIds.filter((id) => id !== tabId);
@@ -845,7 +828,6 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       };
 
       return {
-        activeTabId: tabId,
         editorLayout: { ...state.editorLayout, [tabKey]: newLayout },
       };
     }),
@@ -860,7 +842,7 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
         state.editorLayout,
         tabKey,
         projectTabs.tabs.map((t) => t.id),
-        projectTabs.activeTabId,
+        selectActiveTabId(state, tabKey),
       );
 
       if (layout.groups.right.tabIds.includes(tabId)) return state;
@@ -892,7 +874,6 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       };
 
       return {
-        activeTabId: tabId,
         editorLayout: { ...state.editorLayout, [tabKey]: newLayout },
       };
     }),
@@ -929,7 +910,6 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       }
 
       return {
-        activeTabId: tabId,
         editorLayout: { ...state.editorLayout, [tabKey]: newLayout },
       };
     }),
@@ -974,6 +954,7 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
       };
 
       return {
+        // 换 pane 即改「前台」：投影必须跟上，否则仲裁/Cmd+W 仍指向上一个 pane 的 tab。
         editorLayout: { ...state.editorLayout, [tabKey]: newLayout },
       };
     }),
@@ -1034,7 +1015,7 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
         state.editorLayout,
         tabKey,
         projectTabs.tabs.map((t) => t.id),
-        projectTabs.activeTabId,
+        selectActiveTabId(state, tabKey),
       );
 
       const newLayout = applyPin(layout, tabId);
@@ -1135,22 +1116,10 @@ export const useEditorStore = create<EditorStoreState>((set) => ({
 /**
  * 当前单元（tab 空间键 `tabKey`）的激活 tab id；无该空间 / 无激活 tab 时为 `null`。
  *
- * **单一读取实现**：任何「切项目 / 切单元后同步全局 `activeTabId`」的调用方（项目选择、
- * worktree 切换、项目移除兜底、跨类型选择）都经此取，不得各自 `tabs[key]?.activeTabId ?? null`
- * —— 同一事实多处重算是下一次分叉的入口。键由调用方按**目标单元**语义派生
- * （`activeWorkspaceSession(id).key` / `WorkspaceSession.of(id, wt).key`）。
+ * **命令式薄封装**：内部即 `selectActiveTabId`（前台 = 布局激活编辑器组的激活 tab），
+ * 使命令式调用点签名不变、语义变为派生。渲染期用同名 selector（`useEditorStore(s =>
+ * selectActiveTabId(s, tabKey))`）。
  */
 export function activeTabIdOf(tabKey: string): string | null {
-  return useEditorStore.getState().tabs[tabKey]?.activeTabId ?? null;
-}
-
-/**
- * 把全局 `activeTabId` 重派生于指定 tab 空间（`null` = 无项目 ⇒ 置空）。
- *
- * **写侧单一实现**：切项目 / 切单元 / 选中/移除项目后同步全局 `activeTabId` 一律经此，
- * 调用方只负责按**目标单元**语义派生 `tabKey`（`activeWorkspaceSession(id).key` /
- * `WorkspaceSession.of(id, wt).key`），不再各自 `setState({ activeTabId })`。
- */
-export function restoreActiveTabId(tabKey: string | null): void {
-  useEditorStore.setState({ activeTabId: tabKey ? activeTabIdOf(tabKey) : null });
+  return selectActiveTabId(useEditorStore.getState(), tabKey);
 }

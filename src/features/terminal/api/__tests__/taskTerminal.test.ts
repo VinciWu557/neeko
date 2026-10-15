@@ -3,7 +3,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { MAX_TERMINAL_TABS, createTaskTerminal } from '../taskTerminal';
@@ -14,7 +14,7 @@ const SPACE = WorkspaceSession.of(PROJECT_ID, null).key;
 
 describe('createTaskTerminal', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('创建 terminal tab 并携带 taskCommand，随即激活', () => {
@@ -34,7 +34,7 @@ describe('createTaskTerminal', () => {
       expect(tab.data.taskCommand).toBe("opencode --prompt 'fix it'");
     }
     expect(tab.title).toBe('OpenCode');
-    expect(projectTabs.activeTabId).toBe(tab.id);
+    expect(activeTabIdOf(SPACE)).toBe(tab.id);
   });
 
   it('无 agentName 时标题回落 agentId', () => {

@@ -1,4 +1,5 @@
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTabId, selectOrderedTabs } from '@/shared/store/editorTabSelectors';
 import type { Tab } from '@/shared/types';
 import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -11,7 +12,8 @@ import { pasteToTerminalSession } from './terminalCommands';
  * 与 `terminalCache.resolveTerminalEntry`（低层精确 resolve）分工：
  * 本模块只回答「该往 session 内哪个 tab 插」，低层只回答「该 tab 的 PTY 在哪」。
  *
- * **顺序口径只实现一次**：`sessionTabSpace` 里那一次 `sort`。其余「要某一类 tab」的需求
+ * **顺序口径只实现一次**：本模块不自带任何 `sort` —— 它消费 `editorTabSelectors.selectOrderedTabs`
+ * （顺序 = `editorLayout` 的 `tabIds`，左组 → 右组 → pinned）。其余「要某一类 tab」的需求
  * 一律是**在这个有序序列上 filter**（filter 保序），不是第二套顺序实现。
  * 10-12 实测同一问题全仓曾有 7 个答案（order 升序 / order 降序 / 数组顺序 /
  * Map 插入顺序），「插入落哪个 tab」与「刷新落哪个 PTY」口径不一致就是当时的成因。
@@ -35,24 +37,28 @@ export interface ForegroundTarget {
 
 /** 本 session 的 tab 空间快照：**一次** store 读取同时给出有序序列与激活 tab。 */
 interface SessionTabSpace {
-  /** order 升序，且前台 tab 置顶（「前台优先」与「order 升序」在同一序列里同时成立）。 */
+  /** 视觉顺序（布局 left → right → pinned），且前台 tab 置顶。 */
   ordered: Tab[];
   activeTabId: string | null;
 }
 
 /**
- * 全仓**唯一**的一次 tab 排序（`a.order - b.order`）。其余「要某一类 tab」的需求
- * 一律是在 `ordered` 上 filter（filter 保序）——那是一层**类型**筛选，
- * 不是第二层**顺序**口径（决议 Q2）。
+ * 本 session 的 tab 空间视图 —— **唯一**顺序/前台口径，全部由布局派生
+ * （`editorTabSelectors`：顺序 = `tabIds`，前台 = 激活组的 `activeTabId`）。
+ *
+ * 其余「要某一类 tab」的需求一律是在 `ordered` 上 filter（filter 保序）——
+ * 那是一层**类型**筛选，不是第二层**顺序**口径（决议 Q2）。
+ * 历史病根：同一份顺序曾有 `Tab.order`（创建序）与布局 `tabIds`（视觉序）两个真源，
+ * 重排后仲裁读旧序 —— 已删除该字段，顺序只此一处派生。
  */
 function sessionTabSpace(session: WorkspaceSession): SessionTabSpace {
-  const projectTabs = useEditorStore.getState().tabs[session.key];
-  if (!projectTabs) return { ordered: [], activeTabId: null };
-  const sorted = [...projectTabs.tabs].sort((a, b) => a.order - b.order);
-  const active = sorted.find((t) => t.id === projectTabs.activeTabId);
+  const state = useEditorStore.getState();
+  const ordered = selectOrderedTabs(state, session.key);
+  const activeTabId = selectActiveTabId(state, session.key);
+  const active = ordered.find((t) => t.id === activeTabId);
   return {
-    ordered: active ? [active, ...sorted.filter((t) => t.id !== active.id)] : sorted,
-    activeTabId: projectTabs.activeTabId,
+    ordered: active ? [active, ...ordered.filter((t) => t.id !== active.id)] : ordered,
+    activeTabId,
   };
 }
 
@@ -67,8 +73,8 @@ function pickFirst(
 }
 
 /**
- * 该 session 内的**终端**插入目标：前台终端；无前台终端 → 同 session 首个终端（按 order）；
- * 无终端 → null。**禁止跨 session**（tabs 键即 session.key）。
+ * 该 session 内的**终端**插入目标：前台终端；无前台终端 → 同 session 首个终端（视觉序，
+ * 布局 `tabIds`）；无终端 → null。**禁止跨 session**（tabs 键即 session.key）。
  */
 export function foregroundTerminalTab(session: WorkspaceSession): ForegroundTarget | null {
   return pickFirst(sessionTabSpace(session), (t) => t.data.kind === 'terminal');

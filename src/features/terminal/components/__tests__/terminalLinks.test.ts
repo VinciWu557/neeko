@@ -46,7 +46,7 @@ function makeFakeTerm(lineText: string) {
 describe('terminalLinks — 文件路径链接打开编辑器（canonical 构造）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     readFileContentMock.mockImplementation(async (_projectId: string, p: string) => ({
       path: p,
       content: 'x',
@@ -106,7 +106,7 @@ describe('terminalLinks — 文件路径链接打开编辑器（canonical 构造
 
 describe('terminalLinks — worktree pane：地址随 pane 携带（单元不漂移）', () => {
   it('pane 属于 worktree 时，读取与 tab 记录都用该 pane 的 workspace 值', async () => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     const { term, getProvider } = makeFakeTerm('Error at /wt/src/main.rs:10:2');
     const paneWorkspace = WorkspaceSession.of('p1', '/wt');
     setupTerminalLinks(term, {

@@ -101,12 +101,10 @@ function ProjectView() {
   const handleGuideOpenAgentChat = useCallback(() => {
     if (!tabKey || !currentProjectId) return;
     const tabId = `tab_${crypto.randomUUID()}`;
-    const tabs = useEditorStore.getState().tabs[tabKey]?.tabs ?? [];
     useEditorStore.getState().addTab({
       id: tabId,
       scope: { kind: 'workspace', session: activeWorkspaceSession(currentProjectId) },
       title: 'Agent Chat',
-      order: tabs.length,
       data: {
         kind: 'agent-chat' as const,
         agentId: undefined,

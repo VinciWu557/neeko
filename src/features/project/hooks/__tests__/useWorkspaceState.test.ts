@@ -39,21 +39,13 @@ function seededKeys(): string[] {
   return Object.keys(useProjectStore.getState().statuses);
 }
 
-/** 单元切换会移动编辑器激活 tab 指针 —— 给某单元建一个带激活 tab 的 tab 空间。 */
-function seedTabSpace(projectId: string, worktreePath: string | null, activeTabId: string): void {
-  const key = WorkspaceSession.of(projectId, worktreePath ?? null).key;
-  useEditorStore.setState((state) => ({
-    tabs: { ...state.tabs, [key]: { tabs: [], activeTabId } },
-  }));
-}
-
 describe('useWorkspaceState', () => {
   beforeEach(() => {
     // 单一表示：workspaceStore 只有 byProject 一份状态；镜像字段已删除，
     // 复位也必须只复位它（写不存在的键会让 store 里残留别的用例的单元）。
     useWorkspaceStore.setState({ byProject: {} });
     useProjectStore.setState({ statuses: {}, activeProjectId: PROJECT, projects: [] });
-    useEditorStore.setState({ tabs: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('初始状态为空（主仓单元、无分支、无已打开清单）', () => {
@@ -181,7 +173,6 @@ describe('useWorkspaceState', () => {
     const { result } = renderHook(() => useWorkspaceState(PROJECT));
 
     seedStatus(PROJECT, null, 'main');
-    seedTabSpace(PROJECT, null, 'main-tab');
 
     act(() => {
       result.current.activateWorkspace(PROJECT, WT_A, 'feature-a');
@@ -234,37 +225,6 @@ describe('useWorkspaceState', () => {
     expect(
       useProjectStore.getState().statuses[WorkspaceSession.of(PROJECT, WT_A ?? null).key],
     ).toBeUndefined();
-  });
-
-  it('activateWorkspace 把编辑器激活 tab 指针移到目标单元的 tab 空间', () => {
-    seedTabSpace(PROJECT, null, 'main-tab');
-    seedTabSpace(PROJECT, WT_A, 'wt-a-tab');
-    useEditorStore.setState({ activeTabId: 'main-tab' });
-
-    const { result } = renderHook(() => useWorkspaceState(PROJECT));
-
-    act(() => {
-      result.current.activateWorkspace(PROJECT, WT_A, 'feature-a');
-    });
-    expect(useEditorStore.getState().activeTabId).toBe('wt-a-tab');
-
-    act(() => {
-      result.current.activateWorkspace(PROJECT, null);
-    });
-    expect(useEditorStore.getState().activeTabId).toBe('main-tab');
-  });
-
-  it('目标单元没有 tab 空间时激活位置空（不残留上一单元的 tab id）', () => {
-    seedTabSpace(PROJECT, null, 'main-tab');
-    useEditorStore.setState({ activeTabId: 'main-tab' });
-
-    const { result } = renderHook(() => useWorkspaceState(PROJECT));
-
-    act(() => {
-      result.current.activateWorkspace(PROJECT, WT_A, 'feature-a');
-    });
-
-    expect(useEditorStore.getState().activeTabId).toBeNull();
   });
 
   it('不同项目间的激活态相互隔离（无全局镜像）', () => {

@@ -1,9 +1,8 @@
 import { useCallback } from 'react';
 
-import { restoreActiveTabId } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { selectActiveCheckoutPath, useWorkspaceStore } from '@/shared/store/workspaceStore';
-import { WorkspaceSession, type ProjectId } from '@/shared/utils/workspaceRef';
+import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { setActiveProject } from '../api/projectApi';
 
@@ -31,7 +30,6 @@ export function useProjectSelection() {
       wtStore.clearActiveWorkspace(projectId);
     }
     useProjectStore.setState(projectDelta);
-    restoreActiveTabId(WorkspaceSession.of(projectId, null).key);
 
     setActiveProject(projectId).catch(console.error);
   }, []);

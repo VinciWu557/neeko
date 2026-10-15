@@ -38,7 +38,6 @@ function makeFileTab(id: string, workspace: WorkspaceSession, filePath: string, 
     id,
     scope: { kind: 'workspace', session: workspace },
     title: id,
-    order: 0,
     data: {
       kind: 'file' as const,
       filePath,
@@ -60,7 +59,7 @@ beforeEach(() => {
   capturedHandler = null;
   vi.clearAllMocks();
   readFileContentMock.mockResolvedValue({ content: 'new', size: 3, is_binary: false });
-  useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+  useEditorStore.setState({ tabs: {}, editorLayout: {} });
   useProjectStore.setState({
     projects: [{ id: 'p1', name: 'p1', path: '/repo' } as never],
     activeProjectId: 'p1',

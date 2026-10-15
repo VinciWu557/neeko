@@ -432,7 +432,7 @@ export function stripImeSegmentationSpaces(data: string): string;
 │              ├ agent-chat composer（已登记在注册表）          │
 │              └ 降级 Agent CLI 终端 tab（terminal + agentId）   │
 │  Priority 2: insertToSessionTerminal(session, text)          │
-│              └ 本 session 前台终端（无前台则 order 升序首个）  │
+│              └ 本 session 前台终端（无前台则视觉序（布局 tabIds）首个）│
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -442,6 +442,13 @@ export function stripImeSegmentationSpaces(data: string): string;
 2. **模块级 `pendingDrag`**：`setDragFile` 写入、`handleDragEnd` 消费并清零，天然配对。
 3. **仲裁走身份，不走焦点**：目标由 `terminalRouting` 的唯一前台仲裁给出（决议 R1/Q2），
    与「此刻哪个元素有焦点」无关。
+   **「前台」的唯一权威是布局**（2026-10-15 单源化）：`tabs[key].activeTabId` 与 `Tab.order`
+   两个字段已**删除**；前台 = `editorLayout[key].groups[activeGroupId].activeTabId`，顺序 = 各组的
+   `tabIds`。二者的唯一派生点是 `src/shared/store/editorTabSelectors.ts`
+   （`selectActiveTabId` / `selectOrderedTabs`）。
+   历史缺陷：分屏迁移与换 pane 只改布局而不更新那两个投影时，编辑器高亮与仲裁对「前台」给出
+   两个答案 —— **分屏后拖文件总落到上一个 pane 的输入框**（回归用例见 `editorStore.test.ts`）。
+   删字段后该缺陷在**编译期**不可再表示。
 4. **路径格式化**：统一 `path + ' '`（尾部空格，方便继续输入），不自动提交（无 `\r`），不额外加引号/转义。
 
 ### 4. 组件契约
@@ -538,7 +545,7 @@ const tabs = useEditorStore.getState().tabs[session.key];
 const target = tabs.tabs.find((t) => t.data.kind === 'terminal');
 ```
 
-一律走 `foregroundTerminalTab` / `foregroundAgentCliTab`（order 升序，唯一实现处）。
+一律走 `foregroundTerminalTab` / `foregroundAgentCliTab`（视觉序（布局 `tabIds`），唯一实现处）。
 
 #### ❌ 路径加引号或尾部斜杠
 

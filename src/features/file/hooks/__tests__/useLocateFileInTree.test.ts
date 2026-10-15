@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useEditorStore } from '@/shared/store/editorStore';
 import type { Tab } from '@/shared/types';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { useLocateFileInTree } from '../useLocateFileInTree';
@@ -24,7 +25,6 @@ function makeFileTab(id: string, filePath: string): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: filePath,
-    order: 0,
     data: {
       kind: 'file',
       filePath,
@@ -40,23 +40,29 @@ function makeTerminalTab(id: string): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: { kind: 'terminal', agentId: null, status: 'Idle' },
   };
 }
 
+/** Seed one tab space at `tabKey` with a layout whose left group holds the tab
+ *  and makes it foreground — 前台由布局派生（`selectActiveTabId`），夹具必须 seed layout。 */
+function seedActive(tabKey: string, tab: Tab): void {
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = [tab.id];
+  layout.groups.left.activeTabId = tab.id;
+  useEditorStore.setState({
+    tabs: { [tabKey]: { tabs: [tab] } },
+    editorLayout: { [tabKey]: layout },
+  });
+}
+
 describe('useLocateFileInTree', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('active file tab（相对路径）→ canLocate true and exposes its path', () => {
-    useEditorStore.setState({
-      tabs: {
-        p1: { tabs: [makeFileTab('t1', 'src/hooks/useFilePanelState.ts')], activeTabId: 't1' },
-      },
-      activeTabId: 't1',
-    });
+    seedActive('p1', makeFileTab('t1', 'src/hooks/useFilePanelState.ts'));
 
     const { result } = renderHook(() => useLocateFileInTree('p1'));
     expect(result.current.canLocateFile).toBe(true);
@@ -64,15 +70,7 @@ describe('useLocateFileInTree', () => {
   });
 
   it('active file tab（canonical 绝对路径且在 root 下）→ 剥根成相对路径匹配树', () => {
-    useEditorStore.setState({
-      tabs: {
-        p1: {
-          tabs: [makeFileTab('t1', '/repo/src/hooks/useFilePanelState.ts')],
-          activeTabId: 't1',
-        },
-      },
-      activeTabId: 't1',
-    });
+    seedActive('p1', makeFileTab('t1', '/repo/src/hooks/useFilePanelState.ts'));
 
     const { result } = renderHook(() => useLocateFileInTree('p1', '/repo'));
     expect(result.current.canLocateFile).toBe(true);
@@ -80,30 +78,21 @@ describe('useLocateFileInTree', () => {
   });
 
   it('绝对路径不在 root 下（外置根/盘符差异）→ 原样返回（树匹配自然失败）', () => {
-    useEditorStore.setState({
-      tabs: { p1: { tabs: [makeFileTab('t1', '/other/src/a.ts')], activeTabId: 't1' } },
-      activeTabId: 't1',
-    });
+    seedActive('p1', makeFileTab('t1', '/other/src/a.ts'));
 
     const { result } = renderHook(() => useLocateFileInTree('p1', '/repo'));
     expect(result.current.filePath).toBe('/other/src/a.ts');
   });
 
   it('root 未提供 → 绝对路径原样返回（保守，不剥）', () => {
-    useEditorStore.setState({
-      tabs: { p1: { tabs: [makeFileTab('t1', '/repo/src/a.ts')], activeTabId: 't1' } },
-      activeTabId: 't1',
-    });
+    seedActive('p1', makeFileTab('t1', '/repo/src/a.ts'));
 
     const { result } = renderHook(() => useLocateFileInTree('p1'));
     expect(result.current.filePath).toBe('/repo/src/a.ts');
   });
 
   it('active terminal tab → canLocate false, filePath null', () => {
-    useEditorStore.setState({
-      tabs: { p1: { tabs: [makeTerminalTab('t1')], activeTabId: 't1' } },
-      activeTabId: 't1',
-    });
+    seedActive('p1', makeTerminalTab('t1'));
 
     const { result } = renderHook(() => useLocateFileInTree('p1'));
     expect(result.current.canLocateFile).toBe(false);

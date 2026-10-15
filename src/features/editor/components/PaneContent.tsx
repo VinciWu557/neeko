@@ -75,11 +75,12 @@ function PaneContent({
       workspace: requireTabWorkspaceSession(activeTab),
       revision: { type: 'worktree' },
     };
-    const tab = {
+    // 显式标注 `Tab`：让 tsc 对字面量做 excess-property 检查（推断成裸对象会绕过它，
+    // 曾因此漏掉已删除的 `order` 字段）。顺序由布局 `tabIds` 表达，`Tab` 不再有 `order`。
+    const tab: Tab = {
       id: tabId,
       scope: activeTab.scope,
       title: filePath.split('/').pop() || filePath,
-      order: 0,
       data: {
         kind: 'diff' as const,
         filePath,

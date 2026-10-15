@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { useOpenStashDiff } from '@/features/git/hooks/useOpenStashDiff';
 import type { StashEntry } from '@/features/git/types';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -27,7 +27,7 @@ const STASHES: StashEntry[] = [
 
 describe('useOpenStashDiff', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProjectId: null });
     useWorkspaceStore.setState({ byProject: {} });
   });
@@ -54,7 +54,7 @@ describe('useOpenStashDiff', () => {
         revision: { type: 'stash', selector: 'stash@{0}' },
       },
     });
-    expect(useEditorStore.getState().activeTabId).toBe(tab?.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(tab?.id);
   });
 
   it('无 message 时标题回退为 selector', () => {
@@ -88,7 +88,7 @@ describe('useOpenStashDiff', () => {
       .getState()
       .tabs[WorkspaceSession.of('proj-1', null).key]?.tabs.filter((t) => t.data.kind === 'diff');
     expect(diffTabs).toHaveLength(1);
-    expect(useEditorStore.getState().activeTabId).toBe(first?.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(first?.id);
   });
 
   it('worktree 激活时 diff tab 落在 worktree tab key 且 projectId 为真实 project id', () => {

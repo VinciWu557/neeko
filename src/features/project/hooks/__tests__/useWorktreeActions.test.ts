@@ -36,7 +36,7 @@ function seedStore(state: Record<string, unknown> = {}): void {
     ...state,
   });
   useWorkspaceStore.setState({ byProject: {} });
-  useEditorStore.setState({ tabs: {}, activeTabId: null });
+  useEditorStore.setState({ tabs: {}, editorLayout: {} });
 }
 
 function createDeps() {

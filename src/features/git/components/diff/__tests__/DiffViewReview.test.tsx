@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useNotificationStore } from '@/shared/store/notificationStore';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import type { DiffSource } from '@/shared/types/git';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -55,21 +56,24 @@ const diffResult: DiffResult = {
 
 /** 注入一个 agent 终端 tab，使 sendToAgent 命中并写入终端。 */
 function seedAgentTab() {
+  const tabKey = mkSession('p1').key;
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = ['agent-tab'];
+  layout.groups.left.activeTabId = 'agent-tab';
   useEditorStore.setState({
     tabs: {
-      [mkSession('p1').key]: {
+      [tabKey]: {
         tabs: [
           {
             id: 'agent-tab',
             scope: { kind: 'workspace', session: mkSession('p1') },
             title: 'opencode',
-            order: 0,
             data: { kind: 'terminal', agentId: 'opencode', status: 'Idle' },
           },
         ],
-        activeTabId: 'agent-tab',
       },
     },
+    editorLayout: { [tabKey]: layout },
   });
 }
 
@@ -145,7 +149,7 @@ describe('DiffView AI review (sendToAgent path)', () => {
 
   it('should_show_warning_when_no_agent_terminal_open', async () => {
     // 清空 tabs，模拟没有 agent 终端
-    useEditorStore.setState({ tabs: {} });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
 
     render(<DiffView projectId="p1" diffSource={DIFF_SOURCE} filePath="src/a.ts" />);
 

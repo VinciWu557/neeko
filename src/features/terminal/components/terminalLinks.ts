@@ -110,7 +110,6 @@ async function openFileInEditor(
       id: tabId,
       scope: { kind: 'workspace', session: workspace },
       title: getFileName(fullPath),
-      order: existing?.tabs.length ?? 0,
       data: {
         kind: 'file',
         filePath: fullPath,

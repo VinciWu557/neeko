@@ -36,7 +36,6 @@ function makeFileTab(id: string, overrides: Partial<FileTabData> = {}): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: `${id}.ts`,
@@ -65,7 +64,7 @@ function renderOps(setError = vi.fn(), workspaceRef: WorkspaceSession | null = M
 
 describe('useFileViewTabOps saveTabById', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     requestSaveAsMock.mockReset();
     writeFileContentMock.mockReset();
   });
@@ -189,7 +188,6 @@ describe('useFileViewTabOps saveTabById', () => {
         id: 'term',
         scope: { kind: 'workspace', session: mkSession('p1') },
         title: 'term',
-        order: 0,
         data: { kind: 'terminal', agentId: null, status: 'Idle' },
       });
     });

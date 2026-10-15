@@ -10,7 +10,7 @@ import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 describe('useSingletonDiff worktree tab projectId', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useWorkspaceStore.setState({ byProject: {} });
   });
 

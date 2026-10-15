@@ -108,7 +108,6 @@ export async function ensureSourceTab(
     id: tabId,
     scope: { kind: 'workspace', session: workspace },
     title: tabTitle,
-    order: fresh.tabs[tabKey]?.tabs.length ?? 0,
     data: {
       kind: 'file',
       filePath: identity,

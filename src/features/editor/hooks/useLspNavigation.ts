@@ -174,7 +174,6 @@ export function useLspNavigation({
           id: targetTabId,
           scope: { kind: 'workspace', session: activeWorkspaceSession(projId) },
           title,
-          order: 0,
           data: {
             kind: 'file' as const,
             filePath: targetPath,

@@ -1,10 +1,11 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { FileContent } from '@/shared/types';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { deferred, flushMicrotasks } from '@/testing/async';
 import { createStackFrame } from '@/testing/factories';
@@ -15,6 +16,14 @@ import type { StackFrameDto } from '../types';
 /** 测试身份源：项目 id → WorkspaceSession（主仓形态）。 */
 function mkSession(projectId: string) {
   return WorkspaceSession.of(projectId, null);
+}
+
+/** 单 tab 空间的布局：该 tab 落 left 组并激活（前台 = 激活组的激活 tab）。 */
+function singleTabLayout(tabKey: string, tabId: string) {
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = [tabId];
+  layout.groups.left.activeTabId = tabId;
+  return { [tabKey]: layout };
 }
 
 const { readFileContentMock, langExtMock, externalReadMock, virtualReadMock, recordJumpMock } =
@@ -54,7 +63,7 @@ function content(path: string, body = 'x') {
 describe('openSourceAtLine — DAP 停止行打开源文件（canonical 构造）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProject: null, projects: [] });
     useWorkspaceStore.setState({ byProject: {} });
     readFileContentMock.mockImplementation(async (_ws: unknown, p: string) => content(p));
@@ -108,7 +117,9 @@ describe('openSourceAtLine — DAP 停止行打开源文件（canonical 构造�
 
     const space = useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key];
     expect(space.tabs).toHaveLength(1);
-    expect(space.activeTabId).toBe(`${WorkspaceSession.of('p1', null).key}:/repo/src/main.rs`);
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
+      `${WorkspaceSession.of('p1', null).key}:/repo/src/main.rs`,
+    );
   });
 
   it('激活 worktree → 项目内读取的 scope 是 worktree 根（不因在项目根外而转只读）', async () => {
@@ -130,7 +141,7 @@ describe('openSourceAtLine — DAP 停止行打开源文件（canonical 构造�
 describe('openSourceAtLine — 项目外栈帧源码兜底（外部只读通道）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProject: null });
     useWorkspaceStore.setState({ byProject: {} });
     readFileContentMock.mockRejectedValue(new Error('Path is outside root directory'));
@@ -196,7 +207,7 @@ describe('openSourceAtLine — JDK 缓存路径身份归一（同一份源码同
     vi.clearAllMocks();
     useProjectStore.setState({ activeProject: null });
     useWorkspaceStore.setState({ byProject: {} });
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('已有同身份的 jdt tab → 直接激活，不读取任何内容', async () => {
@@ -208,7 +219,6 @@ describe('openSourceAtLine — JDK 缓存路径身份归一（同一份源码同
               id: `${WorkspaceSession.of('p1', null).key}:${JDT}`,
               scope: { kind: 'workspace', session: mkSession('p1') },
               title: 'PrintStream.java',
-              order: 0,
               data: {
                 kind: 'file' as const,
                 filePath: JDT,
@@ -220,18 +230,18 @@ describe('openSourceAtLine — JDK 缓存路径身份归一（同一份源码同
               },
             },
           ],
-          activeTabId: null,
         },
       },
       editorLayout: {},
-      activeTabId: null,
     });
 
     await openSourceAtLine('p1', '/repo', CACHE, 1167, 1, { sessionId: 's1' });
 
     const space = useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key];
     expect(space.tabs).toHaveLength(1); // 同一个类只有一个 tab
-    expect(space.activeTabId).toBe(`${WorkspaceSession.of('p1', null).key}:${JDT}`);
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
+      `${WorkspaceSession.of('p1', null).key}:${JDT}`,
+    );
     expect(readFileContentMock).not.toHaveBeenCalled();
     expect(externalReadMock).not.toHaveBeenCalled();
   });
@@ -258,7 +268,7 @@ describe('openSourceAtLine — jdt 虚拟文档（不拼根、不读 fs）', () 
 
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProject: null });
     useWorkspaceStore.setState({ byProject: {} });
   });
@@ -272,7 +282,6 @@ describe('openSourceAtLine — jdt 虚拟文档（不拼根、不读 fs）', () 
               id: `${WorkspaceSession.of('p1', null).key}:${JDT_DISPLAY}`,
               scope: { kind: 'workspace', session: mkSession('p1') },
               title: 'PrintStream.java',
-              order: 0,
               data: {
                 kind: 'file' as const,
                 filePath: JDT_DISPLAY,
@@ -288,16 +297,14 @@ describe('openSourceAtLine — jdt 虚拟文档（不拼根、不读 fs）', () 
               },
             },
           ],
-          activeTabId: null,
         },
       },
       editorLayout: {},
-      activeTabId: null,
     });
 
     await openSourceAtLine('p1', '/repo', JDT_DISPLAY, 1167);
 
-    expect(useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key].activeTabId).toBe(
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
       `${WorkspaceSession.of('p1', null).key}:${JDT_DISPLAY}`,
     );
     expect(readFileContentMock).not.toHaveBeenCalled();
@@ -355,7 +362,7 @@ describe('openSourceAtLine — jdt 虚拟文档（不拼根、不读 fs）', () 
 describe('openVirtualSourceAtLine — 适配器虚拟源码（sourceReference）', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProject: null });
     useWorkspaceStore.setState({ byProject: {} });
   });
@@ -426,7 +433,6 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
       navigateGoal: null,
     });
     useProjectStore.setState({ activeProject: null });
@@ -445,7 +451,7 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
 
     const store = useEditorStore.getState();
     expect(tabId).toBe(`${WorkspaceSession.of('p1', null).key}:/repo/src/A.java`);
-    expect(store.tabs[WorkspaceSession.of('p1', null).key].activeTabId).toBe(
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
       `${WorkspaceSession.of('p1', null).key}:/repo/src/A.java`,
     );
     // 跳转目标必须为空：编辑器侧由 useDebugStopReveal 从 location 派生，不再经单槽消费。
@@ -620,7 +626,6 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
               id: `${WorkspaceSession.of('p1', null).key}:/repo/src//A.java`,
               scope: { kind: 'workspace', session: mkSession('p1') },
               title: 'A.java',
-              order: 0,
               data: {
                 kind: 'file' as const,
                 filePath: '/repo/src//A.java',
@@ -630,11 +635,12 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
               },
             },
           ],
-          activeTabId: `${WorkspaceSession.of('p1', null).key}:/repo/src//A.java`,
         },
       },
-      editorLayout: {},
-      activeTabId: null,
+      editorLayout: singleTabLayout(
+        WorkspaceSession.of('p1', null).key,
+        `${WorkspaceSession.of('p1', null).key}:/repo/src//A.java`,
+      ),
       navigateGoal: null,
     });
     readFileContentMock.mockClear();
@@ -665,7 +671,6 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
               id: `${WorkspaceSession.of('p1', null).key}:src/A.java`,
               scope: { kind: 'workspace', session: mkSession('p1') },
               title: 'A.java',
-              order: 0,
               data: {
                 kind: 'file' as const,
                 filePath: 'src/A.java',
@@ -675,11 +680,12 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
               },
             },
           ],
-          activeTabId: `${WorkspaceSession.of('p1', null).key}:src/A.java`,
         },
       },
-      editorLayout: {},
-      activeTabId: null,
+      editorLayout: singleTabLayout(
+        WorkspaceSession.of('p1', null).key,
+        `${WorkspaceSession.of('p1', null).key}:src/A.java`,
+      ),
       navigateGoal: null,
     });
     readFileContentMock.mockClear();
@@ -719,7 +725,7 @@ describe('ensureStopSourceTab — 停点只确保源码可见（不写跳转目�
       `${WorkspaceSession.of('p1', null).key}:/repo/src/A.java`,
       `${WorkspaceSession.of('p1', null).key}:/repo/src/B.java`,
     ]);
-    expect(store.tabs[WorkspaceSession.of('p1', null).key].activeTabId).toBe(
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe(
       `${WorkspaceSession.of('p1', null).key}:/repo/src/B.java`,
     );
   });
@@ -742,7 +748,7 @@ describe('ensureSourceTab — 语言扩展就绪屏障（await getLanguageExtens
   beforeEach(() => {
     vi.clearAllMocks();
     langExtMock.mockResolvedValue(null);
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProject: null });
     useWorkspaceStore.setState({ byProject: {} });
     readFileContentMock.mockImplementation(async (_ws: unknown, p: string) => content(p));

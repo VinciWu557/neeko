@@ -25,6 +25,7 @@ import { insertToSessionAgent } from '@/features/agent-chat/api/insertToSessionA
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import type { Project, Tab, TabScope } from '@/shared/types';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { terminalAddress } from '../terminalAddress';
@@ -73,11 +74,78 @@ function chatTab(id: string, order: number, session: WorkspaceSession): Tab {
   };
 }
 
+/**
+ * 直接播种 tab 空间：**同时**播种权威布局（不再写已废弃的第二份表示/`Tab.order`）——
+ * tab/顺序/前台三者由 `editorLayout` 唯一承载（`editorTabSelectors` 的派生输入）。
+ * 全部 tab 落 left 组，顺序即传入顺序；`activeTabId` 即该组的激活位（null = 无前台）。
+ */
 function setTabs(tabKey: string, tabs: Tab[], activeTabId: string | null): void {
+  const layout = createDefaultEditorLayout();
+  layout.groups.left = { tabIds: tabs.map((t) => t.id), activeTabId };
   useEditorStore.setState((state) => ({
-    tabs: { ...state.tabs, [tabKey]: { tabs, activeTabId } },
+    tabs: { ...state.tabs, [tabKey]: { tabs } },
+    editorLayout: { ...state.editorLayout, [tabKey]: layout },
   }));
 }
+
+/**
+ * AC1/AC4 回归（PRD + implement.md）—— 仲裁必须消费**布局派生视图**，而不是第二份表示：
+ * - AC1：分屏后前台仲裁指向**当前激活 pane** 的 tab（`moveToRight` / `setActiveGroup`）；
+ * - AC4：`reorderTab` 后仲裁按**新视觉顺序**取首个，而非创建序。
+ *
+ * 旧读点（已删除的 `tabs[key].activeTabId` / `Tab.order`）在此必红：`moveToRight` 只改布局，
+ * 旧投影停在 `A`；旧 sort 按创建序（`order`），重排对它不可见。
+ */
+describe('仲裁读布局派生视图（AC1 分屏后前台 / AC4 重排后顺序）', () => {
+  const session = WorkspaceSession.of('proj1', null);
+
+  afterEach(() => {
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
+  });
+
+  function addTerminals(ids: string[]): void {
+    for (const id of ids) {
+      useEditorStore.getState().addTab({
+        id,
+        scope: { kind: 'workspace', session },
+        title: `terminal-${id}`,
+        data: { kind: 'terminal', agentId: null, status: 'Idle' },
+      });
+    }
+  }
+
+  it('AC1：moveToRight(B) 后仲裁落 B；setActiveGroup(left) 后落 A', () => {
+    addTerminals(['A', 'B']);
+    useEditorStore.getState().activateTab(session.key, 'A');
+
+    useEditorStore.getState().moveToRight(session.key, 'B');
+    expect(foregroundTerminalTab(session)?.tab.id).toBe('B');
+    expect(foregroundTerminalTab(session)?.isFallback).toBe(false);
+
+    useEditorStore.getState().setActiveGroup(session.key, 'left');
+    expect(foregroundTerminalTab(session)?.tab.id).toBe('A');
+    expect(foregroundTerminalTab(session)?.isFallback).toBe(false);
+  });
+
+  it('AC4：reorderTab 把 B 拖到最前后，fallback 仲裁按新顺序取 B（旧实现按创建序取 A）', () => {
+    // 非终端前台（file 后创建并激活）→ 终端仲裁走 fallback = 有序序列首个终端。
+    addTerminals(['A', 'B']);
+    useEditorStore.getState().addTab({
+      id: 'f1',
+      scope: { kind: 'workspace', session },
+      title: 'f1',
+      data: { kind: 'file', filePath: 'f1', fileName: 'f1', content: '', isDirty: false },
+    });
+
+    // 视觉顺序 A → B：fallback = A（此时与创建序一致，不构成区分）
+    expect(foregroundTerminalTab(session)?.tab.id).toBe('A');
+
+    // 拖 B 到 A 之前 → 视觉顺序 B → A（创建序仍是 A:0 / B:1）
+    useEditorStore.getState().reorderTab(session.key, 'left', 'B', 'A');
+    expect(foregroundTerminalTab(session)?.tab.id).toBe('B');
+    expect(foregroundTerminalTab(session)?.isFallback).toBe(true);
+  });
+});
 
 function makeEntry(sessionId: string | null): never {
   return { sessionId, term: { dispose: vi.fn() } } as never;
@@ -118,13 +186,13 @@ describe('foregroundTerminalTab', () => {
     expect(target?.isFallback).toBe(false);
   });
 
-  it('前台非 terminal → fallback 同 session 首个 terminal（按 order）', () => {
+  it('前台非 terminal → fallback 同 session 首个 terminal（视觉顺序）', () => {
     setTabs(
       session.key,
       [
         tab('f1', 0, 'file', session),
-        tab('t2', 2, 'terminal', session),
         tab('t1', 1, 'terminal', session),
+        tab('t2', 2, 'terminal', session),
       ],
       'f1',
     );

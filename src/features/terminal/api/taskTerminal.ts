@@ -41,7 +41,6 @@ export function createTaskTerminal(projectId: ProjectId, opts: TaskTerminalOptio
     id: tabId,
     scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
     title: opts.agentName ?? opts.agentId,
-    order: existing?.tabs.length ?? 0,
     data: {
       kind: 'terminal',
       agentId: opts.agentId,

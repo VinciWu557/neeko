@@ -288,7 +288,6 @@ const PullRequestsPanel: React.FC<PullRequestsPanelProps> = ({
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
         title: `#${pr.number} ${pr.title}`,
-        order: 0,
         data: {
           kind: 'prDetail' as const,
           projectId: projectId as ProjectId,

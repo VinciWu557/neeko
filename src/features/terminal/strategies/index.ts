@@ -57,7 +57,7 @@ export interface UseTerminalStrategyOptions {
  */
 export function useTerminalStrategy(options: UseTerminalStrategyOptions): TerminalStrategy | null {
   const { config, showToast } = useAppContext();
-  const { activeTabId } = useEditorContext();
+  const { activeTabId = null } = useEditorContext();
   const activeProject = useProjectStore((s) => s.activeProject);
   const session = useActiveWorkspaceSession(activeProject?.id ?? null);
   const { paneId, remoteConfig } = options;

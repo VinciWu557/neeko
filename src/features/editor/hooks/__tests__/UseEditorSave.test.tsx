@@ -26,7 +26,6 @@ function makeFileTab(overrides?: Partial<FileTab>): FileTab {
     fileName: 'index.html',
     content: { path: 'index.html', content: '<html></html>', size: 15, is_binary: false },
     isDirty: false,
-    order: 0,
     ...overrides,
   };
 }
@@ -98,12 +97,10 @@ function seedStoreFileTab(options: { content: string; isDirty: boolean }): void 
   useEditorStore.setState({
     tabs: {
       [TAB_KEY]: {
-        activeTabId: TAB_ID,
         tabs: [
           {
             id: TAB_ID,
             title: 'index.html',
-            order: 0,
             data: {
               kind: 'file',
               workspace: { projectId: 'test-project-id', worktreePath: null },

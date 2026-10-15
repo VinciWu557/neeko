@@ -1,4 +1,5 @@
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTabId } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceKeyOf } from '@/shared/store/workspaceStore';
 import { resolveNextTabId } from '@/shared/utils/cycleEditorTab';
@@ -40,7 +41,8 @@ export function cycleTab(direction: 1 | -1): void {
 
   const nextId = resolveNextTabId({
     tabIds: projectTabs.tabs.map((t) => t.id),
-    activeTabId: projectTabs.activeTabId,
+    // 前台由布局派生（`selectActiveTabId`），不再读已删除的空间级投影。
+    activeTabId: selectActiveTabId(editor, tabKey),
     layout: editor.editorLayout[tabKey] ?? null,
     direction,
   });
@@ -52,7 +54,8 @@ export function splitActiveTabRight(): void {
   const editor = useEditorStore.getState();
   const tabKey = resolveActiveTabKey();
   if (!tabKey) return;
-  const tabId = editor.tabs[tabKey]?.activeTabId;
+  // 前台由布局派生（`selectActiveTabId`），不再读已删除的空间级投影。
+  const tabId = selectActiveTabId(editor, tabKey);
   if (!tabId) return;
   editor.splitRight(tabKey, tabId);
 }

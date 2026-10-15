@@ -73,7 +73,6 @@ const PullRequestsPanelWrapper: React.FC = React.memo(() => {
     (command: string, title: string) => {
       if (!project) return;
       const editorState = useEditorStore.getState();
-      const existingTabs = editorState.tabs[tabKey];
       const tabId = crypto.randomUUID();
       const tab: Tab = {
         id: tabId,
@@ -81,7 +80,6 @@ const PullRequestsPanelWrapper: React.FC = React.memo(() => {
         // 不能用复合 worktree tab key，也不从 tabKey 反解
         scope: { kind: 'workspace', session: activeWorkspaceSession(project.id) },
         title,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'terminal',
           agentId: null,

@@ -1,12 +1,5 @@
 {
   "manifest": {
-    "src/features/terminal/components/terminalRouting.ts": {
-      "counts": {
-        "order_sort": 1
-      },
-      "kind": "owner",
-      "note": "全仓唯一的前台仲裁实现：sessionTabSpace 里那一次 order 升序 sort"
-    },
     "src/features/status-bar/StatusBarCluster.tsx": {
       "counts": {
         "order_sort": 1
@@ -22,10 +15,8 @@
       "note": "StatusBar item 注册序，非 tab 语境"
     }
   },
-  "owner": "src/features/terminal/components/terminalRouting.ts",
   "valid_kinds": [
     "debt",
-    "legit",
-    "owner"
+    "legit"
   ]
 }

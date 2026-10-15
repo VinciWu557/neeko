@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EditorProvider } from '@/shared/contexts';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import type { Tab } from '@/shared/types';
 import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -19,9 +19,8 @@ vi.mock('@/features/terminal/components/terminalTabCleanup', () => ({
 
 const makeTab = (id: string, title: string): Tab => ({
   id,
-  projectId: 'p1',
+  scope: { kind: 'workspace', session: WorkspaceSession.of('p1', null) },
   title,
-  order: 0,
   data: {
     kind: 'file',
     filePath: title,
@@ -50,9 +49,8 @@ function seed(tabs: Tab[], active: string) {
   layout.groups.left.tabIds = tabs.map((t) => t.id);
   layout.groups.left.activeTabId = active;
   useEditorStore.setState({
-    tabs: { [WorkspaceSession.of('p1', null).key]: { tabs, activeTabId: active } },
+    tabs: { [WorkspaceSession.of('p1', null).key]: { tabs } },
     editorLayout: { [WorkspaceSession.of('p1', null).key]: layout },
-    activeTabId: active,
   });
   ctx.tabs = tabs;
   ctx.activeTabId = active;
@@ -60,7 +58,7 @@ function seed(tabs: Tab[], active: string) {
 
 describe('close active tab → next tab becomes active (dev/build parity)', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     ctx.onCloseTab.mockClear();
   });
 
@@ -69,8 +67,7 @@ describe('close active tab → next tab becomes active (dev/build parity)', () =
 
     const onClose = (tabId: string) => {
       useEditorStore.getState().closeTab(WorkspaceSession.of('p1', null).key, tabId);
-      ctx.activeTabId =
-        useEditorStore.getState().tabs[WorkspaceSession.of('p1', null).key].activeTabId;
+      ctx.activeTabId = activeTabIdOf(WorkspaceSession.of('p1', null).key);
     };
     render(
       <EditorProvider value={{ ...ctx, onCloseTab: onClose }}>
@@ -90,7 +87,7 @@ describe('close active tab → next tab becomes active (dev/build parity)', () =
 
     const state = useEditorStore.getState();
     expect(state.tabs[WorkspaceSession.of('p1', null).key].tabs.map((t) => t.id)).toEqual(['B']);
-    expect(state.tabs[WorkspaceSession.of('p1', null).key].activeTabId).toBe('B');
+    expect(activeTabIdOf(WorkspaceSession.of('p1', null).key)).toBe('B');
     expect(state.editorLayout[WorkspaceSession.of('p1', null).key].groups.left.activeTabId).toBe(
       'B',
     );

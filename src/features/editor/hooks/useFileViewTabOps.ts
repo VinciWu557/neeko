@@ -5,6 +5,7 @@ import { readFileContent, writeFileContent } from '@/features/file/api/fileApi';
 import { useFileStore } from '@/features/file/store';
 import { closeEditorTab } from '@/features/terminal';
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTabId } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { FileContent, Tab } from '@/shared/types';
 import { clearViewSnapshot, clearAllForTabKey } from '@/shared/utils/editorViewState';
@@ -89,7 +90,6 @@ export function useFileViewTabOps({ tabKeyRef, workspaceRef, setError }: UseFile
           id: tabId,
           scope: { kind: 'workspace', session: ws },
           title: getFileName(filePath),
-          order: existing?.tabs.length ?? 0,
           data: {
             kind: 'file',
             filePath,
@@ -170,10 +170,11 @@ export function useFileViewTabOps({ tabKeyRef, workspaceRef, setError }: UseFile
       const projTabs = useEditorStore.getState().tabs[tk];
       if (!projTabs) return false;
 
-      // Find the active file tab (or the tab specified by tabId)
+      // Find the active file tab (or the tab specified by tabId).
+      // 前台由布局派生（`selectActiveTabId`），不再读已删除的空间级投影。
       const target = tabId
         ? projTabs.tabs.find((t) => t.id === tabId)
-        : projTabs.tabs.find((t) => t.id === projTabs.activeTabId);
+        : projTabs.tabs.find((t) => t.id === selectActiveTabId(useEditorStore.getState(), tk));
       const fileTab =
         target && target.data.kind === 'file' ? target : projTabs.tabs.find(isFileTab);
       if (!fileTab || fileTab.data.kind !== 'file') return false;

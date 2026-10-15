@@ -35,7 +35,6 @@ const makeBrowserTab = (id: string): Tab => ({
   id,
   scope: { kind: 'workspace', session: mkSession('p1') },
   title: 'Browser',
-  order: 0,
   data: { kind: 'browser', url: '' },
 });
 

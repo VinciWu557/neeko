@@ -77,14 +77,13 @@ function makeTab(kind: TabData['kind'], id = `tab-${kind}`): Tab {
     id,
     scope: { kind: 'workspace', session: P1_MAIN },
     title: kind,
-    order: 0,
     data: dataOf(kind),
   };
 }
 
 describe('Tab 身份模型 — 构造律与键-身份一致性', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it.each(KINDS)('kind=%s：store 键 = tab.scope 推导键，且命中该 tab', (kind) => {

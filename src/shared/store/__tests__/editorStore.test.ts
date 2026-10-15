@@ -8,10 +8,10 @@ import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import {
   activeTabIdOf,
   registerTabCleanup,
-  restoreActiveTabId,
   unregisterTabCleanup,
   useEditorStore,
 } from '../editorStore';
+import { selectOrderedTabIds } from '../editorTabSelectors';
 
 /** 测试身份源 + tab 空间键（addTab 现从 tab.scope 推导键；主仓 → `'p1\0'`）。 */
 const mkSession = (projectId: string) => WorkspaceSession.of(projectId, null);
@@ -22,7 +22,6 @@ function makeTab(id: string): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: { kind: 'file', filePath: id, fileName: id, content: '', isDirty: false },
   };
 }
@@ -41,12 +40,10 @@ function splitLayout(
   return layout;
 }
 
-function seedState(layout: EditorSplitLayout, tabs: Tab[], globalActive: string) {
-  useEditorStore.setState({
-    tabs: { [SPACE]: { tabs, activeTabId: globalActive } },
-    editorLayout: { [SPACE]: layout },
-    activeTabId: globalActive,
-  });
+function seedState(layout: EditorSplitLayout, tabs: Tab[]) {
+  // 前台/顺序的唯一权威 = 布局（`selectActiveTabId` / `selectOrderedTabIds`）；
+  // 空间级 `activeTabId` 与顶层 `activeTabId` 已随单源化删除。
+  useEditorStore.setState({ tabs: { [SPACE]: { tabs } }, editorLayout: { [SPACE]: layout } });
 }
 
 describe('editorStore.closeTab — split layout active switch', () => {
@@ -54,14 +51,13 @@ describe('editorStore.closeTab — split layout active switch', () => {
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
   it('closing a group active tab (not global active) keeps that group on a valid adjacent tab', () => {
     // left: [A, B] active=A ; right: [C] active=C ; global active=C
     const layout = splitLayout(['A', 'B'], ['C'], 'A', 'C');
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')], 'C');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')]);
 
     useEditorStore.getState().closeTab(SPACE, 'A');
 
@@ -70,13 +66,13 @@ describe('editorStore.closeTab — split layout active switch', () => {
     // left group must NOT point at C (belongs to right group) → would render blank
     expect(next.groups.left.activeTabId).toBe('B');
     expect(next.groups.right.activeTabId).toBe('C');
-    expect(useEditorStore.getState().activeTabId).toBe('C');
+    expect(activeTabIdOf(SPACE)).toBe('C');
   });
 
   it('closing the right group active tab keeps right group valid', () => {
-    // left: [A] active=A ; right: [B, C] active=C ; global active=A
+    // left: [A] active=A ; right: [B, C] active=C（激活组 = right）
     const layout = splitLayout(['A'], ['B', 'C'], 'A', 'C');
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')]);
 
     useEditorStore.getState().closeTab(SPACE, 'C');
 
@@ -84,18 +80,22 @@ describe('editorStore.closeTab — split layout active switch', () => {
     expect(next.groups.right.tabIds).toEqual(['B']);
     expect(next.groups.right.activeTabId).toBe('B');
     expect(next.groups.left.activeTabId).toBe('A');
-    expect(useEditorStore.getState().activeTabId).toBe('A');
+    // 前台 = 激活组（right）的激活 tab；关掉它后回退到同组相邻的 'B'
+    expect(activeTabIdOf(SPACE)).toBe('B');
   });
 
-  it('closing the global active tab switches to the adjacent tab in the same group', () => {
+  it('closing a non-foreground tab heals its own group, leaves the foreground group intact', () => {
+    // 激活组 = right（前台 = 'D'）；关闭 left 的激活 tab 'B' 只影响 left 组。
     const layout = splitLayout(['A', 'B'], ['C', 'D'], 'B', 'D');
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C'), makeTab('D')], 'B');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C'), makeTab('D')]);
 
     useEditorStore.getState().closeTab(SPACE, 'B');
 
     const next = useEditorStore.getState().editorLayout[SPACE];
+    expect(next.groups.left.tabIds).toEqual(['A']);
     expect(next.groups.left.activeTabId).toBe('A');
-    expect(useEditorStore.getState().activeTabId).toBe('A');
+    // 前台仍是激活组 right 的激活 tab
+    expect(activeTabIdOf(SPACE)).toBe('D');
   });
 });
 
@@ -104,14 +104,13 @@ describe('editorStore.pinTab — 多 pinned tabs 追加语义', () => {
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
   it('pin 第一个 tab：从 left 移除并加入 pinnedTabIds', () => {
     const layout = createDefaultEditorLayout();
     layout.groups.left = { tabIds: ['A', 'B'], activeTabId: 'A' };
-    seedState(layout, [makeTab('A'), makeTab('B')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('B')]);
 
     useEditorStore.getState().pinTab(SPACE, 'A');
 
@@ -126,7 +125,7 @@ describe('editorStore.pinTab — 多 pinned tabs 追加语义', () => {
     layout.pinnedTabIds = ['A'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['B'], activeTabId: 'B' };
-    seedState(layout, [makeTab('A'), makeTab('B')], 'B');
+    seedState(layout, [makeTab('A'), makeTab('B')]);
 
     useEditorStore.getState().pinTab(SPACE, 'B');
 
@@ -141,7 +140,7 @@ describe('editorStore.pinTab — 多 pinned tabs 追加语义', () => {
     layout.pinnedTabIds = ['A'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['B'], activeTabId: 'B' };
-    seedState(layout, [makeTab('A'), makeTab('B')], 'B');
+    seedState(layout, [makeTab('A'), makeTab('B')]);
 
     useEditorStore.getState().pinTab(SPACE, 'A');
 
@@ -156,7 +155,6 @@ describe('editorStore.unpinTab — 按 tab 移除并放回 left', () => {
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
@@ -165,7 +163,7 @@ describe('editorStore.unpinTab — 按 tab 移除并放回 left', () => {
     layout.pinnedTabIds = ['A', 'B'];
     layout.pinnedActiveTabId = 'B';
     layout.groups.left = { tabIds: ['C'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')], 'B');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')]);
 
     useEditorStore.getState().unpinTab(SPACE, 'A');
 
@@ -179,7 +177,7 @@ describe('editorStore.unpinTab — 按 tab 移除并放回 left', () => {
     layout.pinnedTabIds = ['A', 'B'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: [], activeTabId: null };
-    seedState(layout, [makeTab('A'), makeTab('B')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('B')]);
 
     useEditorStore.getState().unpinTab(SPACE, 'A');
 
@@ -195,7 +193,6 @@ describe('editorStore.activateTab — pinned tab 激活', () => {
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
@@ -204,7 +201,7 @@ describe('editorStore.activateTab — pinned tab 激活', () => {
     layout.pinnedTabIds = ['A', 'B'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['C'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')], 'C');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')]);
 
     useEditorStore.getState().activateTab(SPACE, 'B');
 
@@ -217,7 +214,7 @@ describe('editorStore.activateTab — pinned tab 激活', () => {
 
 describe('editorStore.updateTab — browser 标题/favicon 同步', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   function seedBrowserTab() {
@@ -225,7 +222,6 @@ describe('editorStore.updateTab — browser 标题/favicon 同步', () => {
       id: 'tb1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'Browser',
-      order: 0,
       data: { kind: 'browser', url: 'https://a.com' },
     });
   }
@@ -261,7 +257,7 @@ describe('editorStore.updateTab — browser 标题/favicon 同步', () => {
 
 describe('editorStore.updateTab — file tab 只读字段透传（mergeTabData）', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   function seedReadonlyTab() {
@@ -269,7 +265,6 @@ describe('editorStore.updateTab — file tab 只读字段透传（mergeTabData�
       id: 'tf1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'Foo.java',
-      order: 0,
       data: {
         kind: 'file',
         filePath: 'jdt:/java.base/java/lang/Foo.java',
@@ -309,7 +304,6 @@ describe('editorStore.updateTab — file tab 只读字段透传（mergeTabData�
       id: 'tf2',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'Bar.rs',
-      order: 0,
       data: {
         kind: 'file',
         filePath: 'src/lib.rs',
@@ -330,7 +324,6 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
@@ -339,7 +332,7 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     layout.pinnedTabIds = ['A', 'B'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['C', 'D'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C'), makeTab('D')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C'), makeTab('D')]);
 
     useEditorStore.getState().unpinTabTo(SPACE, 'A', 'left', 'D');
 
@@ -353,7 +346,7 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     layout.pinnedTabIds = ['A'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['C'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('C')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('C')]);
 
     useEditorStore.getState().unpinTabTo(SPACE, 'A', 'left', 'C');
 
@@ -366,7 +359,7 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     layout.pinnedTabIds = ['A', 'B'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['C'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')]);
 
     useEditorStore.getState().unpinTabTo(SPACE, 'A', 'left', 'C');
 
@@ -379,7 +372,7 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     layout.pinnedTabIds = ['A'];
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['C', 'D'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('C'), makeTab('D')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('C'), makeTab('D')]);
 
     useEditorStore.getState().unpinTabTo(SPACE, 'A', 'left', null);
 
@@ -392,7 +385,7 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     layout.pinnedTabIds = ['B'];
     layout.pinnedActiveTabId = 'B';
     layout.groups.left = { tabIds: ['C'], activeTabId: 'C' };
-    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')], 'B');
+    seedState(layout, [makeTab('A'), makeTab('B'), makeTab('C')]);
 
     useEditorStore.getState().unpinTabTo(SPACE, 'A', 'left', 'C');
 
@@ -408,7 +401,7 @@ describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
     layout.pinnedActiveTabId = 'A';
     layout.groups.left = { tabIds: ['C'], activeTabId: 'C' };
     layout.groups.right = { tabIds: ['D'], activeTabId: 'D' };
-    seedState(layout, [makeTab('A'), makeTab('C'), makeTab('D')], 'A');
+    seedState(layout, [makeTab('A'), makeTab('C'), makeTab('D')]);
 
     useEditorStore.getState().unpinTabTo(SPACE, 'A', 'right', 'D');
 
@@ -425,7 +418,6 @@ describe('editorStore.addTab — targetGroup 指定落组（pane 内 + 创建跟
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
@@ -436,7 +428,7 @@ describe('editorStore.addTab — targetGroup 指定落组（pane 内 + 创建跟
     layout.groups.right = { tabIds: ['R1'], activeTabId: 'R1' };
     // 激活组为 right：缺省落组行为（回归基准）
     layout.activeGroupId = 'right';
-    seedState(layout, [makeTab('L1'), makeTab('R1')], 'R1');
+    seedState(layout, [makeTab('L1'), makeTab('R1')]);
   }
 
   function makeNewTab(id: string): Tab {
@@ -444,7 +436,6 @@ describe('editorStore.addTab — targetGroup 指定落组（pane 内 + 创建跟
       id,
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: id,
-      order: 99,
       data: { kind: 'browser', url: '' },
     };
   }
@@ -458,7 +449,10 @@ describe('editorStore.addTab — targetGroup 指定落组（pane 内 + 创建跟
     expect(next.pinnedActiveTabId).toBe('NEW');
     expect(next.groups.left.tabIds).toEqual(['L1']);
     expect(next.groups.right.tabIds).toEqual(['R1']);
-    expect(useEditorStore.getState().activeTabId).toBe('NEW');
+    // pinned 激活态与编辑器组前台**正交**（design §2.3）：落 pinned 不改组前台，
+    // 故 `activeTabIdOf`（= 组前台）仍是原来的 'R1'；pinned 自身的激活看
+    // `pinnedActiveTabId`（上一行）—— 这是今日行为，有意保留。
+    expect(activeTabIdOf(SPACE)).toBe('R1');
   });
 
   it("targetGroup='left' → 落 left 组并激活（即使激活组是 right）", () => {
@@ -495,7 +489,7 @@ describe('editorStore.addTab — targetGroup 指定落组（pane 内 + 创建跟
     layout.pinnedTabIds = ['P1'];
     layout.pinnedActiveTabId = 'P1';
     layout.groups.left = { tabIds: ['L1'], activeTabId: 'L1' };
-    seedState(layout, [makeTab('P1'), makeTab('L1')], 'L1');
+    seedState(layout, [makeTab('P1'), makeTab('L1')]);
 
     useEditorStore.getState().addTab(makeNewTab('NEW'), 'pinned');
 
@@ -510,7 +504,6 @@ describe('editorStore.renameTab — Save As 身份迁移（改 id 保持一致�
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
     });
   });
 
@@ -518,14 +511,12 @@ describe('editorStore.renameTab — Save As 身份迁移（改 id 保持一致�
     const layout = splitLayout(['u1', 'A'], ['B'], 'u1', 'B');
     layout.pinnedTabIds = ['A'];
     layout.pinnedActiveTabId = 'A';
-    seedState(layout, [makeTab('u1'), makeTab('A'), makeTab('B')], 'u1');
+    seedState(layout, [makeTab('u1'), makeTab('A'), makeTab('B')]);
 
     useEditorStore.getState().renameTab(SPACE, 'u1', 'p1:/repo/x.ts');
 
     const s = useEditorStore.getState();
     expect(s.tabs[SPACE].tabs.map((t) => t.id)).toEqual(['p1:/repo/x.ts', 'A', 'B']);
-    expect(s.tabs[SPACE].activeTabId).toBe('p1:/repo/x.ts');
-    expect(s.activeTabId).toBe('p1:/repo/x.ts');
     const l = s.editorLayout[SPACE];
     expect(l.groups.left.tabIds).toEqual(['p1:/repo/x.ts', 'A']);
     expect(l.groups.left.activeTabId).toBe('p1:/repo/x.ts');
@@ -535,23 +526,23 @@ describe('editorStore.renameTab — Save As 身份迁移（改 id 保持一致�
   });
 
   it('目标 id 已被占用 → 拒绝（无变化）', () => {
-    seedState(splitLayout(['u1', 'A'], [], 'u1', 'u1'), [makeTab('u1'), makeTab('A')], 'u1');
+    seedState(splitLayout(['u1', 'A'], [], 'u1', 'u1'), [makeTab('u1'), makeTab('A')]);
 
     useEditorStore.getState().renameTab(SPACE, 'u1', 'A');
 
     const s = useEditorStore.getState();
     expect(s.tabs[SPACE].tabs.map((t) => t.id)).toEqual(['u1', 'A']);
-    expect(s.tabs[SPACE].activeTabId).toBe('u1');
+    expect(s.editorLayout[SPACE].groups.left.activeTabId).toBe('u1');
   });
 
   it('old id 不存在 → 无变化', () => {
-    seedState(splitLayout(['A'], [], 'A', 'A'), [makeTab('A')], 'A');
+    seedState(splitLayout(['A'], [], 'A', 'A'), [makeTab('A')]);
 
     useEditorStore.getState().renameTab(SPACE, 'missing', 'X');
 
     const s = useEditorStore.getState();
     expect(s.tabs[SPACE].tabs.map((t) => t.id)).toEqual(['A']);
-    expect(s.tabs[SPACE].activeTabId).toBe('A');
+    expect(s.editorLayout[SPACE].groups.left.activeTabId).toBe('A');
   });
 });
 
@@ -560,13 +551,12 @@ describe('editorStore.navigateGoal — cleared when its target tab is removed', 
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
       navigateGoal: null,
     });
   });
 
   it('closeTab removes the goal target tab → navigateGoal cleared', () => {
-    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')], 'A');
+    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')]);
     useEditorStore.getState().setNavigateGoal({ tabKey: SPACE, tabId: 'A', line: 1, col: 0 });
 
     useEditorStore.getState().closeTab(SPACE, 'A');
@@ -575,7 +565,7 @@ describe('editorStore.navigateGoal — cleared when its target tab is removed', 
   });
 
   it('closeTab removes another tab → navigateGoal preserved', () => {
-    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')], 'A');
+    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')]);
     useEditorStore.getState().setNavigateGoal({ tabKey: SPACE, tabId: 'A', line: 1, col: 0 });
 
     useEditorStore.getState().closeTab(SPACE, 'B');
@@ -590,7 +580,7 @@ describe('editorStore.navigateGoal — cleared when its target tab is removed', 
     const layout = splitLayout(['A'], [], 'A', 'A');
     layout.pinnedTabIds = ['A'];
     layout.pinnedActiveTabId = 'A';
-    seedState(layout, [makeTab('A')], 'A');
+    seedState(layout, [makeTab('A')]);
     useEditorStore.getState().setNavigateGoal({ tabKey: SPACE, tabId: 'A', line: 1, col: 0 });
 
     useEditorStore.getState().closeTab(SPACE, 'A');
@@ -599,7 +589,7 @@ describe('editorStore.navigateGoal — cleared when its target tab is removed', 
   });
 
   it('clearProjectTabs removes the project tab space → goal for that tabKey cleared', () => {
-    seedState(splitLayout(['A'], [], 'A', 'A'), [makeTab('A')], 'A');
+    seedState(splitLayout(['A'], [], 'A', 'A'), [makeTab('A')]);
     useEditorStore.getState().setNavigateGoal({ tabKey: SPACE, tabId: 'A', line: 1, col: 0 });
 
     useEditorStore.getState().clearProjectTabs(SPACE);
@@ -608,7 +598,7 @@ describe('editorStore.navigateGoal — cleared when its target tab is removed', 
   });
 
   it('clearProjectTabs on another project → navigateGoal preserved', () => {
-    seedState(splitLayout(['A'], [], 'A', 'A'), [makeTab('A')], 'A');
+    seedState(splitLayout(['A'], [], 'A', 'A'), [makeTab('A')]);
     useEditorStore.getState().setNavigateGoal({ tabKey: 'p2', tabId: 'X', line: 1, col: 0 });
 
     useEditorStore.getState().clearProjectTabs(SPACE);
@@ -625,7 +615,6 @@ describe('editorStore.tabCleanup — handler 异常在分发点隔离', () => {
     useEditorStore.setState({
       tabs: {},
       editorLayout: {},
-      activeTabId: null,
       navigateGoal: null,
     });
     throwingHandler = vi.fn((tabKey: string, tab: Tab) => {
@@ -640,7 +629,7 @@ describe('editorStore.tabCleanup — handler 异常在分发点隔离', () => {
   });
 
   it('clearProjectTabs：A 的 handler 抛错 → B 仍被清理、tab 空间仍被移除、异常不外溢', () => {
-    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')], 'A');
+    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')]);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     expect(() => useEditorStore.getState().clearProjectTabs(SPACE)).not.toThrow();
@@ -650,7 +639,7 @@ describe('editorStore.tabCleanup — handler 异常在分发点隔离', () => {
   });
 
   it('closeTab：handler 抛错 → tab 仍被移除、异常不外溢', () => {
-    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')], 'A');
+    seedState(splitLayout(['A', 'B'], [], 'A', 'A'), [makeTab('A'), makeTab('B')]);
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
     expect(() => useEditorStore.getState().closeTab(SPACE, 'A')).not.toThrow();
@@ -659,9 +648,9 @@ describe('editorStore.tabCleanup — handler 异常在分发点隔离', () => {
   });
 });
 
-describe('activeTabIdOf / restoreActiveTabId（全局 activeTabId 读/写单一实现）', () => {
+describe('activeTabIdOf（前台布局派生的命令式封装）', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, activeTabId: null, editorLayout: {}, navigateGoal: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {}, navigateGoal: null });
   });
 
   it('activeTabIdOf 读指定空间的激活 tab；未知空间返回 null', () => {
@@ -669,15 +658,125 @@ describe('activeTabIdOf / restoreActiveTabId（全局 activeTabId 读/写单一�
     expect(activeTabIdOf(SPACE)).toBe('A');
     expect(activeTabIdOf(mkSession('other').key)).toBeNull();
   });
+});
 
-  it('restoreActiveTabId 按 tabKey 重派生全局 activeTabId；null 置空', () => {
+/**
+ * 空间级激活位是布局「哪个 pane 在前台」的**投影**。
+ *
+ * 分屏迁移与换 pane 只改布局、不改投影时，「前台 tab」就有两个答案：编辑器高亮按布局，
+ * 而拖拽/插入仲裁（`terminalRouting.sessionTabSpace`）与 Cmd+W 按旧投影 ——
+ * 用户可见缺陷 = 分屏后拖文件只落到上一个 pane 的输入框。本组钉住投影跟随。
+ */
+describe('editorStore — pane 前台变化投影到 tabs[tabKey].activeTabId', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
+  });
+
+  function seedTwo(): void {
     useEditorStore.getState().addTab(makeTab('A'));
-    useEditorStore.setState({ activeTabId: null });
+    useEditorStore.getState().addTab(makeTab('B'));
+    useEditorStore.getState().activateTab(SPACE, 'A');
+  }
 
-    restoreActiveTabId(SPACE);
-    expect(useEditorStore.getState().activeTabId).toBe('A');
+  it('moveToRight：前台投影指向被迁移 tab', () => {
+    seedTwo();
+    useEditorStore.getState().moveToRight(SPACE, 'B');
+    expect(activeTabIdOf(SPACE)).toBe('B');
+  });
 
-    restoreActiveTabId(null);
-    expect(useEditorStore.getState().activeTabId).toBeNull();
+  it('splitRight：前台投影指向拆出的 tab', () => {
+    seedTwo();
+    useEditorStore.getState().splitRight(SPACE, 'B');
+    expect(activeTabIdOf(SPACE)).toBe('B');
+  });
+
+  it('moveToLeft：前台投影指向被迁移 tab', () => {
+    seedTwo();
+    useEditorStore.getState().moveToRight(SPACE, 'B');
+    useEditorStore.getState().moveToLeft(SPACE, 'B');
+    expect(activeTabIdOf(SPACE)).toBe('B');
+  });
+
+  it('setActiveGroup：切到某 pane 后投影指向该 pane 的激活 tab', () => {
+    seedTwo();
+    useEditorStore.getState().moveToRight(SPACE, 'B');
+    // moveToRight 使 right 在前台（B）；切回 left 应投影回 A。
+    useEditorStore.getState().setActiveGroup(SPACE, 'left');
+    expect(activeTabIdOf(SPACE)).toBe('A');
+    useEditorStore.getState().setActiveGroup(SPACE, 'right');
+    expect(activeTabIdOf(SPACE)).toBe('B');
+  });
+
+  it('setActiveGroup 幂等：已是该组时不改投影', () => {
+    seedTwo();
+    useEditorStore.getState().setActiveGroup(SPACE, 'left');
+    expect(activeTabIdOf(SPACE)).toBe('A');
+  });
+
+  it('unsplit：前台投影指向原激活 pane 的激活 tab', () => {
+    seedTwo();
+    useEditorStore.getState().moveToRight(SPACE, 'B');
+    useEditorStore.getState().unsplit(SPACE);
+    expect(activeTabIdOf(SPACE)).toBe('B');
+  });
+});
+
+/**
+ * PRD AC1–AC4 回归（TDD Red 优先，见 implement.md「Red 证据」）。
+ *
+ * 断言面刻意选在**唯一读取点** `activeTabIdOf`（批 2 起改为 `selectActiveTabId` 派生）
+ * 与新派生点 `selectOrderedTabIds` 上 —— 字段删除后这些用例语义不变，仍然钉住
+ * 「布局是唯一权威」。
+ */
+describe('editorStore — AC1/AC2/AC4（布局是唯一前台/顺序权威）', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
+  });
+
+  function seedTwo(): void {
+    useEditorStore.getState().addTab(makeTab('A'));
+    useEditorStore.getState().addTab(makeTab('B'));
+    useEditorStore.getState().activateTab(SPACE, 'A');
+  }
+
+  it('AC1：moveToRight 后前台 = 被迁移 tab；setActiveGroup 切回左 pane 后前台 = 左 pane 激活 tab', () => {
+    seedTwo();
+    useEditorStore.getState().moveToRight(SPACE, 'B');
+    const layout = useEditorStore.getState().editorLayout[SPACE];
+    expect(layout.activeGroupId).toBe('right');
+    expect(layout.groups.left).toEqual({ tabIds: ['A'], activeTabId: 'A' });
+    expect(layout.groups.right).toEqual({ tabIds: ['B'], activeTabId: 'B' });
+    expect(activeTabIdOf(SPACE)).toBe('B');
+
+    useEditorStore.getState().setActiveGroup(SPACE, 'left');
+    expect(activeTabIdOf(SPACE)).toBe('A');
+  });
+
+  it('AC2：分屏后 pinTab → unpinTab，前台仍等于布局激活 pane 的 tab（补丁漏掉的路径）', () => {
+    seedTwo();
+    useEditorStore.getState().moveToRight(SPACE, 'B');
+    expect(activeTabIdOf(SPACE)).toBe('B');
+
+    // pin：B 从 right 组移入 pinned 面板 → 编辑器组前台回到 left 的 A
+    useEditorStore.getState().pinTab(SPACE, 'B');
+    expect(useEditorStore.getState().editorLayout[SPACE].groups.left.activeTabId).toBe('A');
+    expect(activeTabIdOf(SPACE)).toBe('A');
+
+    // unpin：B 放回 left 首部，但 left 激活位仍是 A（pinned 交互语义不变）
+    useEditorStore.getState().unpinTab(SPACE, 'B');
+    expect(useEditorStore.getState().editorLayout[SPACE].groups.left).toEqual({
+      tabIds: ['B', 'A'],
+      activeTabId: 'A',
+    });
+    expect(activeTabIdOf(SPACE)).toBe('A');
+  });
+
+  it('AC4：reorderTab 后顺序派生点反映新视觉顺序（不再读创建序）', () => {
+    seedTwo();
+    expect(selectOrderedTabIds(useEditorStore.getState(), SPACE)).toEqual(['A', 'B']);
+
+    // 把 B 拖到 A 之前
+    useEditorStore.getState().reorderTab(SPACE, 'left', 'B', 'A');
+    expect(selectOrderedTabIds(useEditorStore.getState(), SPACE)).toEqual(['B', 'A']);
   });
 });

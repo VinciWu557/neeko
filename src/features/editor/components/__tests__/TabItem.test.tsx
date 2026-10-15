@@ -78,7 +78,6 @@ describe('TabItem browser favicon', () => {
       id: 'tab-b1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'GitHub',
-      order: 0,
       data: {
         kind: 'browser',
         url: 'https://github.com',
@@ -99,7 +98,6 @@ describe('TabItem browser favicon', () => {
       id: 'tab-b2',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'Browser',
-      order: 0,
       data: { kind: 'browser', url: '' },
     };
 

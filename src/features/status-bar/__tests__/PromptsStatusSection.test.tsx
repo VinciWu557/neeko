@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PromptDialogHost } from '@/features/library';
 import { resetLibraryState, useLibraryStore } from '@/features/library/store/libraryStore';
 import type { TerminalInsertApi } from '@/shared/contexts';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { Project } from '@/shared/types';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import type { PromptResource } from '@/shared/types/library';
 import type { Tab } from '@/shared/types/tab';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -110,7 +111,6 @@ function terminalTabFixture(id: string): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('proj-1') },
     title: 'Terminal',
-    order: 0,
     data: { kind: 'terminal', agentId: null, status: 'Idle' },
   };
 }
@@ -120,7 +120,6 @@ function fileTabFixture(id: string): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('proj-1') },
     title: 'a.ts',
-    order: 1,
     data: {
       kind: 'file',
       filePath: 'src/a.ts',
@@ -132,8 +131,13 @@ function fileTabFixture(id: string): Tab {
 }
 
 function setEditorTabs(tabs: Tab[], activeTabId: string | null) {
+  const tabKey = WorkspaceSession.of('proj-1', null).key;
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = tabs.map((t) => t.id);
+  layout.groups.left.activeTabId = activeTabId;
   useEditorStore.setState({
-    tabs: { [WorkspaceSession.of('proj-1', null).key]: { tabs, activeTabId } },
+    tabs: { [tabKey]: { tabs } },
+    editorLayout: { [tabKey]: layout },
   });
 }
 
@@ -434,9 +438,7 @@ describe('PromptsStatusSection', () => {
     fireEvent.click(screen.getByTestId('prompts-status-chip'));
     fireEvent.click(screen.getByTestId('prompts-status-row-p1'));
     expect(insertToTerminal).toHaveBeenCalledWith('review this diff');
-    expect(
-      useEditorStore.getState().tabs[WorkspaceSession.of('proj-1', null).key]?.activeTabId,
-    ).toBe(term.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(term.id);
     expect(hoisted.toast).not.toHaveBeenCalled();
   });
 
@@ -449,9 +451,7 @@ describe('PromptsStatusSection', () => {
     render(<PromptsStatusSection />);
     fireEvent.click(screen.getByTestId('prompts-status-chip'));
     fireEvent.click(screen.getByTestId('prompts-status-row-p1'));
-    expect(
-      useEditorStore.getState().tabs[WorkspaceSession.of('proj-1', null).key]?.activeTabId,
-    ).toBe(file.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(file.id);
     expect(hoisted.toast).toHaveBeenCalledWith(expect.stringContaining('无活动终端'), 'info');
   });
 
@@ -464,9 +464,7 @@ describe('PromptsStatusSection', () => {
     render(<PromptsStatusSection />);
     fireEvent.click(screen.getByTestId('prompts-status-chip'));
     fireEvent.click(screen.getByTestId('prompts-status-row-p1'));
-    expect(
-      useEditorStore.getState().tabs[WorkspaceSession.of('proj-1', null).key]?.activeTabId,
-    ).toBe(term.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(term.id);
     expect(hoisted.toast).not.toHaveBeenCalled();
   });
 
@@ -480,9 +478,7 @@ describe('PromptsStatusSection', () => {
     fireEvent.click(screen.getByTestId('prompts-status-chip'));
     fireEvent.click(screen.getByTestId('prompts-status-row-p1'));
     expect(insertToTerminal).toHaveBeenCalledWith('review this diff');
-    expect(
-      useEditorStore.getState().tabs[WorkspaceSession.of('proj-1', null).key]?.activeTabId,
-    ).toBe(file.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(file.id);
     expect(hoisted.toast).not.toHaveBeenCalled();
   });
 });

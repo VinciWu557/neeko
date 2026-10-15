@@ -33,7 +33,6 @@ function makeTab(
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: id,
@@ -47,7 +46,7 @@ function makeTab(
 
 describe('useEditorGroupLayout batch close dirty confirmation', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('closeOtherTabs closes directly when no dirty tabs are affected', () => {

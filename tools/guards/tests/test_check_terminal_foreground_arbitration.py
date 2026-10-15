@@ -18,11 +18,13 @@ from guards.core import ledger as ledger_mod
 from guards.core.contract import ERROR, PASS, VIOLATION
 from guards.tests.support import context, make_repo
 
-OWNER = "src/features/terminal/components/terminalRouting.ts"
+# 夹具文件：带一次 order_sort 命中的合法命中（用于让「只测 A2/A3/A4」的用例不被 A1 干扰）。
+# 2026-10-15 单源化后本域已无 owner（顺序改为布局数据派生，不再有那处 sort）。
+FIXTURE = "src/features/terminal/components/terminalRouting.ts"
 EVENTS = "src/shared/events.ts"
 OTHER = "src/features/other/thing.ts"
 
-# ① order 相减 —— 与 owner 同形的第二套顺序口径
+# ① order 相减 —— 被禁止的第二套顺序口径
 ORDER_SORT = "  const first = [...tabs].sort((a, b) => a.order - b.order)[1];\n"
 # ② 取集合首个 —— 绕过仲裁
 FIRST_OF = "  const t = terminalTabs[0];\n"
@@ -34,8 +36,7 @@ def tab_module(body: str) -> str:
 
 def manifest(entries: dict) -> dict:
     return {
-        "owner": OWNER,
-        "valid_kinds": ["owner", "legit", "debt"],
+        "valid_kinds": ["legit", "debt"],
         "manifest": {
             path: {"kind": kind, "counts": counts, "note": "夹具"}
             for path, (kind, counts) in entries.items()
@@ -60,20 +61,20 @@ class ForegroundArbitrationTest(unittest.TestCase):
         )
 
     # 框架的 load_ledger 禁止空 manifest（空台账 = 护栏失判却仍报 OK），所以每条用例
-    # 都至少登记 owner 一处；owner 夹具文件固定带一次 order_sort 命中，
+    # 都至少登记 FIXTURE 一处；夹具文件固定带一次 order_sort 命中，
     # 让「只测 A2/A3/A4」的用例不因 A1 报红。
-    OWNER_FX = tab_module(ORDER_SORT)
-    OWNER_ENTRY = (OWNER, ("owner", {"order_sort": 1}))
+    FIXTURE_FX = tab_module(ORDER_SORT)
+    FIXTURE_ENTRY = (FIXTURE, ("legit", {"order_sort": 1}))
 
     def run_guard(self, files: dict, extra_entries=(), base_entries=None):
         """跑护栏。
 
-        `base_entries` 默认是「owner 已登记 + 计数 1」——因为框架的 load_ledger
+        `base_entries` 默认是「FIXTURE 已登记 + 计数 1」——因为框架的 load_ledger
         禁止空 manifest，而多数用例只关心 A2/A3/A4，不该被 A1 的台账问题干扰。
-        要测「台账缺 owner / owner 漂移」这类用例时显式传 base_entries。
+        要测「未登记命中 / 登记失效 / 计数漂移」这类用例时显式传 base_entries。
         """
         make_repo(self.root, files)
-        base = [self.OWNER_ENTRY] if base_entries is None else list(base_entries)
+        base = [self.FIXTURE_ENTRY] if base_entries is None else list(base_entries)
         self.write_ledger(dict([*base, *extra_entries]))
         return subject.check(context(self.root))
 
@@ -82,7 +83,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
     def test_consistent_ledger_passes(self):
         result = self.run_guard(
             {
-                OWNER: self.OWNER_FX,
+                FIXTURE: self.FIXTURE_FX,
                 "src/features/status-bar/registry.ts": tab_module(ORDER_SORT),
                 EVENTS: "export const A = 'file-changed';\n",
             },
@@ -94,7 +95,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
         """新加一处自带 order 排序 → 未登记命中（这就是 Q2 要拦的形态）。"""
         result = self.run_guard(
             {
-                OWNER: self.OWNER_FX,
+                FIXTURE: self.FIXTURE_FX,
                 "src/features/browser/components/pickerUtils.ts": tab_module(ORDER_SORT),
                 EVENTS: "",
             },
@@ -107,7 +108,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
 
     def test_take_first_bypasses_arbitration(self):
         result = self.run_guard(
-            {OWNER: self.OWNER_FX, "src/features/browser/x.ts": tab_module(FIRST_OF), EVENTS: ""},
+            {FIXTURE: self.FIXTURE_FX, "src/features/browser/x.ts": tab_module(FIRST_OF), EVENTS: ""},
             # 登记的是另一个口径（order_sort），而实测是 collection_first → 漂移 + 未登记
             [("src/features/browser/x.ts", ("legit", {"order_sort": 1}))],
         )
@@ -116,31 +117,21 @@ class ForegroundArbitrationTest(unittest.TestCase):
 
     def test_stale_ledger_entry_is_caught(self):
         result = self.run_guard(
-            {OWNER: self.OWNER_FX, EVENTS: ""},
+            {FIXTURE: self.FIXTURE_FX, EVENTS: ""},
             [("src/features/status-bar/registry.ts", ("legit", {"order_sort": 1}))],
         )
         self.assertEqual(result.verdict, VIOLATION)
         self.assertTrue(any("登记失效" in f.message for f in result.findings))
 
     def test_count_drift_is_caught(self):
-        result = self.run_guard({OWNER: tab_module(ORDER_SORT * 2), EVENTS: ""})
+        result = self.run_guard({FIXTURE: tab_module(ORDER_SORT * 2), EVENTS: ""})
         self.assertEqual(result.verdict, VIOLATION)
         self.assertTrue(any("计数漂移" in f.message for f in result.findings))
 
-    def test_missing_owner_entry_is_caught(self):
-        """owner 必须恰为 terminalRouting.ts —— 「取首个」的实现处必须唯一。"""
-        # 台账里没有 kind=="owner" 的条目（只登记了一个 legit）
-        result = self.run_guard(
-            {OWNER: self.OWNER_FX, EVENTS: ""},
-            base_entries=[("src/features/browser/x.ts", ("legit", {"order_sort": 1}))],
-        )
-        self.assertEqual(result.verdict, VIOLATION)
-        self.assertTrue(any("owner 必须恰为" in f.message for f in result.findings))
-
     def test_illegal_kind_is_caught(self):
         result = self.run_guard(
-            {OWNER: self.OWNER_FX, EVENTS: ""},
-            [(OWNER, ("whatever", {"order_sort": 1}))],
+            {FIXTURE: self.FIXTURE_FX, EVENTS: ""},
+            [(FIXTURE, ("whatever", {"order_sort": 1}))],
         )
         self.assertEqual(result.verdict, VIOLATION)
         self.assertTrue(any("分类非法" in f.message for f in result.findings))
@@ -160,7 +151,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
             "  return [...tabs].sort((a, b) => a.order - b.order);\n"
             "}\n"
         )
-        result = self.run_guard({OWNER: commented, EVENTS: ""})
+        result = self.run_guard({FIXTURE: commented, EVENTS: ""})
         self.assertEqual(result.verdict, PASS, [f.as_text() for f in result.findings])
 
     # ------------------------------------------------------------------ A2
@@ -168,7 +159,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
     def test_retired_second_source_symbol_is_caught(self):
         """Map 插入顺序首个 —— 本任务删掉的第二口径，回潮即拦。"""
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "",
             "src/features/terminal/components/terminalCache.ts": (
                 "export function useIt(s: any) {\n  return firstTerminalKeyOfSession(s);\n}\n"
@@ -183,7 +174,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
 
     def test_retired_symbol_in_comment_is_not_a_hit(self):
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "",
             "src/features/terminal/components/terminalAgentSwitch.ts": (
                 "/** 旧形态是「传 null → 内部用 firstTerminalKeyOfSession 取 Map 首个」。 */\n"
@@ -198,7 +189,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
     def test_optional_tab_id_in_terminal_domain_is_caught(self):
         """`tabId?:` 改回可选对现有调用方在 TS 上完全合法 → 只有跨文件判据抓得住。"""
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "",
             "src/features/terminal/components/terminalCommands.ts": (
                 "export function sendToTerminal(session: any, text: string, tabId?: string) {}\n"
@@ -213,7 +204,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
 
     def test_nullable_tab_id_in_terminal_domain_is_caught(self):
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "",
             "src/features/terminal/components/terminalCache.ts": (
                 "export function sw(session: any, tabId: string | null, agentId: string) {}\n"
@@ -230,7 +221,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
         而误报的结局是逼人放宽判据（比没有护栏更糟）。
         """
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "",
             "src/app/utils/layoutId.ts": (
                 "export function buildLayoutId(p: any, g: string, tabId: string | null) {\n  return '';\n}\n"
@@ -245,7 +236,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
     def test_dom_event_without_listener_is_caught(self):
         """红线 14 同型：声明了（三个派发点）却零监听者 —— 本任务的根因形态。"""
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "export const INSERT_X_EVENT = 'neeko:insert-x';\n",
             OTHER: "window.dispatchEvent(new CustomEvent(INSERT_X_EVENT));\n",
         }
@@ -258,7 +249,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
 
     def test_dom_event_with_listener_passes(self):
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "export const INSERT_X_EVENT = 'neeko:insert-x';\n",
             OTHER: "window.addEventListener(INSERT_X_EVENT, () => {});\n",
         }
@@ -272,7 +263,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
         那是「后端发、前端还没接」的另一类问题。
         """
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "export const BROWSER_LOADING_EVENT = 'browser://loading';\n",
         }
         result = self.run_guard(files)
@@ -283,7 +274,7 @@ class ForegroundArbitrationTest(unittest.TestCase):
     def test_test_files_are_exempt(self):
         """测试里写已退役符号会在 tsc 暴露；且测试需要把旧形态写进注释解释成因。"""
         files = {
-            OWNER: self.OWNER_FX,
+            FIXTURE: self.FIXTURE_FX,
             EVENTS: "",
             "src/features/terminal/components/__tests__/x.test.ts": tab_module(
                 ORDER_SORT + FIRST_OF
@@ -293,12 +284,57 @@ class ForegroundArbitrationTest(unittest.TestCase):
         result = self.run_guard(files)
         self.assertEqual(result.verdict, PASS, [f.as_text() for f in result.findings])
 
+    # ------------------------------------------------------------------ A5
+
+    def test_project_tabs_active_tab_id_reintroduction_is_caught(self):
+        """A5：`ProjectTabs.activeTabId` 重新声明即违规（单一表示回潮）。"""
+        files = {
+            FIXTURE: self.FIXTURE_FX,
+            EVENTS: "",
+            subject.TAB_TYPES_FILE: (
+                "export interface ProjectTabs {\n  tabs: string[];\n"
+                "  activeTabId: string | null;\n}\n"
+            ),
+        }
+        result = self.run_guard(files)
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertTrue(
+            any("A5 单一表示回潮" in f.message for f in result.findings),
+            [f.as_text() for f in result.findings],
+        )
+
+    def test_tab_order_reintroduction_is_caught(self):
+        """A5：`Tab.order` 重新声明即违规。"""
+        files = {
+            FIXTURE: self.FIXTURE_FX,
+            EVENTS: "",
+            subject.TAB_TYPES_FILE: (
+                "export interface Tab {\n  id: string;\n  order: number;\n}\n"
+            ),
+        }
+        result = self.run_guard(files)
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertTrue(any("A5 单一表示回潮" in f.message for f in result.findings))
+
+    def test_layout_active_tab_id_in_source_is_not_a5_hit(self):
+        """边界：布局的 `groups[].activeTabId`（合法）与注释解释成因不得误报。"""
+        files = {
+            FIXTURE: self.FIXTURE_FX,
+            EVENTS: "",
+            subject.TAB_TYPES_FILE: (
+                "// 前台 = groups[activeGroupId].activeTabId（布局），不再有 ProjectTabs.activeTabId\n"
+                "export interface Tab {\n  id: string;\n}\n"
+            ),
+        }
+        result = self.run_guard(files)
+        self.assertEqual(result.verdict, PASS, [f.as_text() for f in result.findings])
+
     def test_empty_scan_set_is_an_infra_failure(self):
         """扫到 0 个文件 = 口径失效，必须 ERROR（不能伪装成「检查过了」）。
 
         台账给一份**合法非空**的（框架禁止空 manifest），确保红的是扫描集、不是台账。
         """
-        self.write_ledger({OWNER: ("owner", {"order_sort": 1})})
+        self.write_ledger({FIXTURE: ("legit", {"order_sort": 1})})
         (self.root / "repo-empty").mkdir(parents=True, exist_ok=True)
         result = subject.check(context(self.root / "repo-empty"))
         self.assertEqual(result.verdict, ERROR)

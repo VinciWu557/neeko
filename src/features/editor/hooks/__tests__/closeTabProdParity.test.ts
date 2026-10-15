@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { closeEditorTab } from '@/features/terminal';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import type { Tab } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -22,14 +22,13 @@ function makeTab(id: string): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: { kind: 'file', filePath: id, fileName: id, content: '', isDirty: false },
   };
 }
 
 describe('closeTab prod parity (no React rendering needed — pure store)', () => {
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('single group: closing active tab keeps left group active on a live tab', () => {
@@ -46,7 +45,7 @@ describe('closeTab prod parity (no React rendering needed — pure store)', () =
     expect(layout.groups.left.tabIds).toEqual(['A', 'C']);
     expect(layout.groups.left.activeTabId).toBe('A');
     expect(layout.groups.left.tabIds).toContain(layout.groups.left.activeTabId);
-    expect(s.activeTabId).toBe('A');
+    expect(activeTabIdOf(SPACE_p1)).toBe('A');
   });
 
   it('single group: closing active tab that is the FIRST tab switches forward', () => {
@@ -59,7 +58,7 @@ describe('closeTab prod parity (no React rendering needed — pure store)', () =
 
     const s = useEditorStore.getState();
     expect(s.editorLayout[SPACE_p1].groups.left.activeTabId).toBe('B');
-    expect(s.activeTabId).toBe('B');
+    expect(activeTabIdOf(SPACE_p1)).toBe('B');
   });
 
   it('single group: closing the LAST tab leaves a valid active tab', () => {
@@ -72,23 +71,24 @@ describe('closeTab prod parity (no React rendering needed — pure store)', () =
 
     const s = useEditorStore.getState();
     expect(s.editorLayout[SPACE_p1].groups.left.activeTabId).toBe('A');
-    expect(s.activeTabId).toBe('A');
+    expect(activeTabIdOf(SPACE_p1)).toBe('A');
   });
 
   it('layout missing (undefined editorLayout): closeTab still yields a consistent layout', () => {
-    // Simulate session-restored tabs WITHOUT editorLayout (real-app state).
+    // 不变量 I1（有 tab 必有 layout）成立后本形态不可达，保留作防御：无 layout 时
+    // 删/关 tab 必须仍产出一份自洽的 layout（此前那处 `tabs[key].activeTabId` 已删除）。
     useEditorStore.setState({
-      tabs: {
-        [SPACE_p1]: { tabs: [makeTab('A'), makeTab('B'), makeTab('C')], activeTabId: 'B' },
-      },
+      tabs: { [SPACE_p1]: { tabs: [makeTab('A'), makeTab('B'), makeTab('C')] } },
       editorLayout: {},
-      activeTabId: 'B',
     });
 
     closeEditorTab(SPACE_p1, 'B');
 
     const s = useEditorStore.getState();
-    expect(s.tabs[SPACE_p1].activeTabId).toBe('A');
     expect(s.tabs[SPACE_p1].tabs.map((t) => t.id)).toEqual(['A', 'C']);
+    // 缺 layout 时 closeTab 兜底建一份：前台必落在**存活** tab 上（不再依赖已删除的投影）。
+    const foreground = activeTabIdOf(SPACE_p1);
+    expect(foreground).not.toBeNull();
+    expect(['A', 'C']).toContain(foreground);
   });
 });

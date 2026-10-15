@@ -53,7 +53,6 @@ export function useOpenDiffTab(
         id: tabId,
         scope: { kind: 'workspace', session },
         title: isConflict ? `Conflict \u00b7 ${fileName}` : `Commit Diff \u00b7 ${fileName}`,
-        order: existingTabs?.tabs.length ?? 0,
         data: { kind: 'diff', filePath, fileName, diffSource },
       };
       editorState.addTab(tab);

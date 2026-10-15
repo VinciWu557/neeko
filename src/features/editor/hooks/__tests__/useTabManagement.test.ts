@@ -40,7 +40,6 @@ function makeTerminalTab(id: string, projectId: string, title = id): Tab {
     id,
     projectId,
     title,
-    order: 0,
     data: { kind: 'terminal', agentId: null, status: 'Idle' },
   };
 }
@@ -50,7 +49,6 @@ function makeFileTab(id: string, projectId: string, isDirty: boolean): Tab {
     id,
     projectId,
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: `${id}.ts`,
@@ -75,11 +73,9 @@ describe('useTabManagement handleCloseTab', () => {
       tabs: {
         [WorkspaceSession.of('p1', null).key]: {
           tabs: [makeTerminalTab('tab-1', 'p1')],
-          activeTabId: 'tab-1',
         },
-        p2: { tabs: [makeTerminalTab('tab-2', 'p2')], activeTabId: 'tab-2' },
+        p2: { tabs: [makeTerminalTab('tab-2', 'p2')] },
       },
-      activeTabId: 'tab-1',
       editorLayout: {},
     });
   });
@@ -106,9 +102,8 @@ describe('useTabManagement handleCloseTab', () => {
       tabs: {
         [WorkspaceSession.of('p1', null).key]: {
           tabs: [makeFileTab('f1', 'p1', false)],
-          activeTabId: 'f1',
         },
-        p2: { tabs: [makeTerminalTab('tab-2', 'p2')], activeTabId: 'tab-2' },
+        p2: { tabs: [makeTerminalTab('tab-2', 'p2')] },
       },
       editorLayout: {},
     });
@@ -131,9 +126,8 @@ describe('useTabManagement handleCloseTab', () => {
       tabs: {
         [WorkspaceSession.of('p1', null).key]: {
           tabs: [makeFileTab('f1', 'p1', true)],
-          activeTabId: 'f1',
         },
-        p2: { tabs: [makeTerminalTab('tab-2', 'p2')], activeTabId: 'tab-2' },
+        p2: { tabs: [makeTerminalTab('tab-2', 'p2')] },
       },
       editorLayout: {},
     });
@@ -162,9 +156,8 @@ describe('useTabManagement handleCloseTab', () => {
       tabs: {
         [WorkspaceSession.of('p1', null).key]: {
           tabs: [makeFileTab('f1', 'p1', true)],
-          activeTabId: 'f1',
         },
-        p2: { tabs: [makeTerminalTab('tab-2', 'p2')], activeTabId: 'tab-2' },
+        p2: { tabs: [makeTerminalTab('tab-2', 'p2')] },
       },
       editorLayout: {},
     });
@@ -192,9 +185,8 @@ describe('useTabManagement handleCloseTab', () => {
       tabs: {
         [WorkspaceSession.of('p1', null).key]: {
           tabs: [makeFileTab('f1', 'p1', true)],
-          activeTabId: 'f1',
         },
-        p2: { tabs: [makeTerminalTab('tab-2', 'p2')], activeTabId: 'tab-2' },
+        p2: { tabs: [makeTerminalTab('tab-2', 'p2')] },
       },
       editorLayout: {},
     });
@@ -222,9 +214,8 @@ describe('useTabManagement handleCloseTab', () => {
       tabs: {
         [WorkspaceSession.of('p1', null).key]: {
           tabs: [makeFileTab('f1', 'p1', true)],
-          activeTabId: 'f1',
         },
-        p2: { tabs: [makeTerminalTab('tab-2', 'p2')], activeTabId: 'tab-2' },
+        p2: { tabs: [makeTerminalTab('tab-2', 'p2')] },
       },
       editorLayout: {},
     });

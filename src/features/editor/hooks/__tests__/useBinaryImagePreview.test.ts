@@ -15,7 +15,6 @@ function fileTab(filePath: string, isBinary: boolean): FileTab {
     fileName: filePath.split('/').pop() ?? filePath,
     content: { path: filePath, content: '', size: 10, is_binary: isBinary },
     isDirty: false,
-    order: 0,
   };
 }
 

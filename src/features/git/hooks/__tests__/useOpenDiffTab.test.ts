@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import type { Tab } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -10,7 +10,7 @@ import { useOpenDiffTab } from '../useOpenDiffTab';
 
 beforeEach(() => {
   useProjectStore.setState({ activeProjectId: 'proj-1' });
-  useEditorStore.setState({ tabs: {}, activeTabId: null, editorLayout: {} });
+  useEditorStore.setState({ tabs: {}, editorLayout: {} });
 });
 
 describe('useOpenDiffTab', () => {
@@ -35,9 +35,7 @@ describe('useOpenDiffTab', () => {
         revision: { type: 'worktree' },
       });
     }
-    expect(
-      useEditorStore.getState().tabs[WorkspaceSession.of('proj-1', null).key]?.activeTabId,
-    ).toBe(tab.id);
+    expect(activeTabIdOf(WorkspaceSession.of('proj-1', null).key)).toBe(tab.id);
   });
 
   it('should_activate_existing_diff_tab_for_same_file_instead_of_duplicating', () => {

@@ -214,7 +214,6 @@ describe('isDirtyFileTab / getTabDisplayName', () => {
       id: 't1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 't1',
-      order: 0,
       data: {
         kind: 'file',
         filePath: 'a.ts',
@@ -231,7 +230,6 @@ describe('isDirtyFileTab / getTabDisplayName', () => {
       id: 'term',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'term',
-      order: 0,
       data: { kind: 'terminal', agentId: null, status: 'Idle' },
     };
   }

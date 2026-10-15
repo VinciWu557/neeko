@@ -25,7 +25,7 @@ export interface TerminalViewProps {
 
 function TerminalView({ paneId, tabSpaceKey, remoteConfig }: TerminalViewProps) {
   const { config } = useAppContext();
-  const { activeTabId, tabs, onTabStatusChange } = useEditorContext();
+  const { activeTabId = null, tabs, onTabStatusChange } = useEditorContext();
   const strategy = useTerminalStrategy({
     paneId,
     remoteConfig,

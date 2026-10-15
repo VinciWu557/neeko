@@ -7,6 +7,7 @@ import { create } from 'zustand';
 // eslint-disable-next-line import/no-restricted-paths -- navigationHistoryStore reads files via file API (inherent dependency)
 import { readFileContent } from '@/features/file/api/fileApi';
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTab } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { activeWorkspaceKeyOf } from '@/shared/store/workspaceStore';
 import type { Tab } from '@/shared/types';
@@ -50,9 +51,9 @@ export function captureCurrentNavLocation(): NavLocation | null {
   const tabKey = activeWorkspaceKeyOf(projectId);
   if (!tabKey) return null;
 
-  const projectTabs = editor.tabs[tabKey];
-  if (!projectTabs?.activeTabId) return null;
-  const tab = projectTabs.tabs.find((t) => t.id === projectTabs.activeTabId);
+  // 前台 tab 由布局派生（`selectActiveTab`：激活编辑器组的激活 tab）；
+  // 不再读已删除的 `tabs[tabKey].activeTabId`（那个空间级投影曾随分屏/换 pane 与布局分叉）。
+  const tab = selectActiveTab(editor, tabKey);
   if (!tab || tab.data.kind !== 'file' || tab.scope.kind !== 'workspace') return null;
 
   const cursor = editor.cursorPosition;
@@ -93,7 +94,6 @@ async function restoreLocation(loc: NavLocation): Promise<void> {
       id: tabId,
       scope: { kind: 'workspace', session: loc.workspace },
       title: getFileName(loc.filePath),
-      order: existing?.tabs.length ?? 0,
       data: {
         kind: 'file',
         filePath: loc.filePath,

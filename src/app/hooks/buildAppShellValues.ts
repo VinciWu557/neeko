@@ -94,7 +94,6 @@ export interface AppShellData {
   setPendingAuthEntry: ConnectionProjectContextValue['setPendingAuthEntry'];
   // editor
   tabs: EditorContextValue['tabs'];
-  activeTabId: EditorContextValue['activeTabId'];
   handleActivateTab: EditorContextValue['onActivateTab'];
   handleCloseTab: EditorContextValue['onCloseTab'];
   handleAddTab: EditorContextValue['onAddTab'];
@@ -174,7 +173,6 @@ export function buildAppShellValues(data: AppShellData) {
     pendingAuthEntry,
     setPendingAuthEntry,
     tabs,
-    activeTabId,
     handleActivateTab,
     handleCloseTab,
     handleAddTab,
@@ -251,7 +249,6 @@ export function buildAppShellValues(data: AppShellData) {
   };
   const editorValue: EditorContextValue = {
     tabs,
-    activeTabId,
     onActivateTab: handleActivateTab,
     onCloseTab: handleCloseTab,
     onAddTab: handleAddTab,

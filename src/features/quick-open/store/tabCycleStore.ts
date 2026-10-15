@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 
 import { useEditorStore } from '@/shared/store/editorStore';
+import { selectActiveTabId } from '@/shared/store/editorTabSelectors';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { selectActiveCheckoutPath, useWorkspaceStore } from '@/shared/store/workspaceStore';
 import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -83,10 +84,12 @@ export const useTabCycleStore = create<TabCycleState>((set, get) => ({
     const projectId = useProjectStore.getState().activeProjectId;
     if (!projectId) return;
     const tabKey = currentTabKey(projectId);
-    const projectTabs = useEditorStore.getState().tabs[tabKey];
+    const editor = useEditorStore.getState();
+    const projectTabs = editor.tabs[tabKey];
     if (!projectTabs || projectTabs.tabs.length < 2) return;
 
-    const activeId = projectTabs.activeTabId;
+    // 前台由布局派生（`selectActiveTabId`），不再读已删除的空间级投影。
+    const activeId = selectActiveTabId(editor, tabKey);
     const now = Date.now();
     const prev = get().session;
     const fresh =

@@ -6,7 +6,7 @@ import { useShallow } from 'zustand/shallow';
 // eslint-disable-next-line import/no-restricted-paths -- useLocalProjects cleans terminal caches on project close
 import { destroyTerminalsForProject } from '@/features/terminal';
 import { bumpGitRefresh } from '@/shared/hooks/useGitRefresh';
-import { restoreActiveTabId, useEditorStore } from '@/shared/store/editorStore';
+import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
   activeWorkspaceSession,
@@ -55,9 +55,6 @@ export function useLocalProjects() {
   }, []);
 
   const setActiveProjectId = useCallback((projectId: ProjectId | null) => {
-    // 该项目当前激活单元（主仓或 worktree）的激活 tab
-    restoreActiveTabId(projectId ? activeWorkspaceSession(projectId).key : null);
-
     useProjectStore.setState((state) => ({
       activeProjectId: projectId,
       activeProject: projectId
@@ -165,10 +162,6 @@ export function useLocalProjects() {
       const nextActiveProject = nextActiveProjectId
         ? (nextProjects.find((project) => project.id === nextActiveProjectId) ?? null)
         : null;
-      restoreActiveTabId(
-        nextActiveProjectId ? activeWorkspaceSession(nextActiveProjectId).key : null,
-      );
-
       useProjectStore.setState({
         projects: nextProjects,
         activeProjectId: nextActiveProjectId,
@@ -213,7 +206,6 @@ export function useLocalProjects() {
         id: tabId,
         scope: { kind: 'workspace', session },
         title: fileName,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'diff',
           filePath,

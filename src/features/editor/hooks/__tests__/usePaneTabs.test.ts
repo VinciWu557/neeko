@@ -12,7 +12,6 @@ function fileTab(id: string, projectId = 'p1'): Tab {
     id,
     scope: { kind: 'workspace', session: WorkspaceSession.of(projectId, null) },
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: id,

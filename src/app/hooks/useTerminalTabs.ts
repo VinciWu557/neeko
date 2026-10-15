@@ -36,7 +36,6 @@ export function useTerminalTabs(
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
         title: `Terminal ${terminalCount + 1}`,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'terminal',
           agentId: null,
@@ -57,7 +56,6 @@ export function useTerminalTabs(
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(projectId) },
         title: agent.name,
-        order: 0,
         data: {
           kind: 'terminal',
           agentId: agent.id,

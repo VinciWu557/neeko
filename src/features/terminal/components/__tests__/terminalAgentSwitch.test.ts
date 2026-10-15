@@ -45,11 +45,9 @@ function seedTab(): void {
             id: 'tab1',
             scope: { kind: 'workspace', session },
             title: 'Terminal',
-            order: 0,
             data: { kind: 'terminal', agentId: null, status: 'Idle' },
           },
         ],
-        activeTabId: 'tab1',
       } as never,
     },
   });

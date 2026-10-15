@@ -679,7 +679,6 @@ describe('AgentChatTabView', () => {
             title: 'session.ts',
           },
         ],
-        activeTabId: `${WorkspaceSession.of('test-project', null).key}:/proj/src/auth/session.ts`,
       },
     };
     editorMock.addTab.mockClear();

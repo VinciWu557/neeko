@@ -179,7 +179,6 @@ describe('useLocalProjects', () => {
       useEditorStore.setState({
         tabs: {},
         editorLayout: {},
-        activeTabId: null,
         navigateGoal: null,
       });
     });
@@ -208,7 +207,6 @@ describe('useLocalProjects', () => {
           session: WorkspaceSession.fromKey(tabKey) ?? WorkspaceSession.of(tabKey, null),
         },
         title: `${tabId}.ts`,
-        order: 0,
         data: {
           kind: 'file',
           filePath: `src/${tabId}.ts`,
@@ -257,28 +255,6 @@ describe('useLocalProjects', () => {
       ).toEqual(['g1']);
       // navigateGoal 随项目 tab 空间级联清除（clearProjectTabs → dropNavigateGoalFor）
       expect(useEditorStore.getState().navigateGoal).toBeNull();
-      // UI 兜底落到剩余项目的 active tab
-      expect(useEditorStore.getState().activeTabId).toBe('g1');
-    });
-
-    it('setActiveProjectId 按 session.key 恢复该项目激活单元的 activeTabId（裸 id 读即 miss）', async () => {
-      const projects = [createProject({ id: 'p1' })];
-      mockInvoke.mockResolvedValue(projects);
-
-      const { result } = renderHook(() => useLocalProjects());
-      await act(async () => {
-        await result.current.loadProjects();
-      });
-
-      act(() => {
-        seedFileTab('p1', 'p1', 'f1');
-      });
-      act(() => {
-        useEditorStore.setState({ activeTabId: null });
-        result.current.setActiveProjectId('p1');
-      });
-
-      expect(useEditorStore.getState().activeTabId).toBe('f1');
     });
 
     it('removing a project without tabs leaves other projects and their goal untouched', async () => {
@@ -650,7 +626,7 @@ describe('useLocalProjects', () => {
   });
 
   it('handleSelectFile 在项目未激活时先激活项目再创建 diff tab（落在该项目主仓单元）', async () => {
-    useEditorStore.setState({ tabs: {}, activeTabId: null, editorLayout: {}, navigateGoal: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {}, navigateGoal: null });
     useWorkspaceStore.setState({ byProject: {} });
     useProjectStore.setState({ projects: [], activeProjectId: null, activeProject: null });
     const project = createProject({ id: 'p-diff', name: 'diff-proj' });
@@ -815,7 +791,6 @@ describe('useLocalProjects', () => {
     beforeEach(() => {
       useEditorStore.setState({
         tabs: {},
-        activeTabId: null,
         editorLayout: {},
         navigateGoal: null,
       });

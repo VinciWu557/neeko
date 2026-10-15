@@ -85,7 +85,6 @@ const ConversationsPanelWrapper: React.FC = React.memo(() => {
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(currentProjectId) },
         title: meta.agentId,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'terminal',
           agentId: meta.agentId,
@@ -103,13 +102,11 @@ const ConversationsPanelWrapper: React.FC = React.memo(() => {
     (meta: ConversationMeta) => {
       if (!currentProjectId || !tabKey || !meta.nativeSessionId) return;
       const editorState = useEditorStore.getState();
-      const existingTabs = editorState.tabs[tabKey];
       const tabId = `tab_${crypto.randomUUID()}`;
       const tab: Tab = {
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(currentProjectId) },
         title: `${meta.userTitle ?? meta.title ?? 'Agent Chat'}`,
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'agent-chat',
           agentId: meta.agentId,
@@ -129,13 +126,11 @@ const ConversationsPanelWrapper: React.FC = React.memo(() => {
     (meta: ConversationMeta) => {
       if (!currentProjectId) return; // 无项目身份不开 tab（原 `?? tabKey ?? 'conversation'` 隐患已根除）
       const editorState = useEditorStore.getState();
-      const existingTabs = tabKey ? editorState.tabs[tabKey] : undefined;
       const tabId = `tab_${crypto.randomUUID()}`;
       const tab: Tab = {
         id: tabId,
         scope: { kind: 'workspace', session: activeWorkspaceSession(currentProjectId) },
         title: conversationTabTitle(meta),
-        order: existingTabs?.tabs.length ?? 0,
         data: {
           kind: 'conversation',
           conversationId: meta.id,

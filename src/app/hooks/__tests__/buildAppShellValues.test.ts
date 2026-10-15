@@ -85,7 +85,6 @@ function makeData(): AppShellData {
     pendingAuthEntry: null,
     setPendingAuthEntry: fn,
     tabs: [],
-    activeTabId: 'tab-1',
     handleActivateTab: fn,
     handleCloseTab: fn,
     handleAddTab: fn,
@@ -178,7 +177,6 @@ describe('buildAppShellValues', () => {
     const { editorValue } = buildAppShellValues(data);
 
     expect(editorValue.tabs).toBe(data.tabs);
-    expect(editorValue.activeTabId).toBe('tab-1');
     expect(editorValue.agents).toBe(data.agents);
     // config-driven
     expect(editorValue.compactMode).toBe(true);

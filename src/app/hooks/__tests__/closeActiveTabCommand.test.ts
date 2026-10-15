@@ -10,6 +10,7 @@ import { useEditorStore } from '@/shared/store/editorStore';
 import { useOverlayStore } from '@/shared/store/overlayStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
+import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
 import type { Tab } from '@/shared/types/tab';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
@@ -30,9 +31,8 @@ const mockCloseEditorTab = vi.mocked(closeEditorTab);
 function makeTab(id: string, projectId: string, title = id): Tab {
   return {
     id,
-    projectId,
+    scope: { kind: 'workspace', session: WorkspaceSession.of(projectId, null) },
     title,
-    order: 0,
     data: { kind: 'terminal', agentId: null, status: 'Idle' },
   };
 }
@@ -40,9 +40,8 @@ function makeTab(id: string, projectId: string, title = id): Tab {
 function makeFileTab(id: string, projectId: string, isDirty: boolean): Tab {
   return {
     id,
-    projectId,
+    scope: { kind: 'workspace', session: WorkspaceSession.of(projectId, null) },
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: `${id}.ts`,
@@ -53,10 +52,26 @@ function makeFileTab(id: string, projectId: string, isDirty: boolean): Tab {
   };
 }
 
+/**
+ * Seed a tab space with a layout whose left group holds the tabs and makes
+ * `activeId` foreground. 前台由布局派生（`selectActiveTabId`），夹具必须 seed layout。
+ * `activeId === null` → 左组无激活 tab（「激活位为空」用例）。
+ */
+function seedSpace(tabKey: string, tabs: Tab[], activeId: string | null): void {
+  const layout = createDefaultEditorLayout();
+  layout.groups.left.tabIds = tabs.map((t) => t.id);
+  layout.groups.left.activeTabId = activeId;
+  // 合并而非替换：同一用例可能 seed 多个 tab 空间（worktree + 主仓并存）。
+  useEditorStore.setState((state) => ({
+    tabs: { ...state.tabs, [tabKey]: { tabs } },
+    editorLayout: { ...state.editorLayout, [tabKey]: layout },
+  }));
+}
+
 describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/脱节）', () => {
   beforeEach(() => {
     mockCloseEditorTab.mockClear();
-    useEditorStore.setState({ tabs: {}, activeTabId: null, editorLayout: {} });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useProjectStore.setState({ activeProjectId: null });
     // 单一表示：workspaceStore 只有 byProject（旧的全局镜像字段已删除）
     useWorkspaceStore.setState({ byProject: {} });
@@ -104,25 +119,18 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
 
   describe('closeActiveTabForTabKey', () => {
     it('关闭指定 tab 空间的激活 tab', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeTab('t1', 'p1'), makeTab('t2', 'p1')],
-            activeTabId: 't2',
-          },
-        },
-      });
+      seedSpace(
+        [WorkspaceSession.of('p1', null).key],
+        [makeTab('t1', 'p1'), makeTab('t2', 'p1')],
+        't2',
+      );
       const closed = await closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key);
       expect(closed).toBe(true);
       expect(mockCloseEditorTab).toHaveBeenCalledWith(WorkspaceSession.of('p1', null).key, 't2');
     });
 
     it('激活位为空 → 静默不关闭', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: { tabs: [makeTab('t1', 'p1')], activeTabId: null },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeTab('t1', 'p1')], null);
       await expect(closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key)).resolves.toBe(
         false,
       );
@@ -135,11 +143,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
     });
 
     it('非 file tab（terminal）→ 直关，不弹确认', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: { tabs: [makeTab('t1', 'p1')], activeTabId: 't1' },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeTab('t1', 'p1')], 't1');
       const saveTab = vi.fn().mockResolvedValue(true);
 
       expect(await closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key, saveTab)).toBe(
@@ -151,14 +155,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
     });
 
     it('非 dirty 文件 tab → 直关，不弹确认', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeFileTab('f1', 'p1', false)],
-            activeTabId: 'f1',
-          },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeFileTab('f1', 'p1', false)], 'f1');
       const saveTab = vi.fn().mockResolvedValue(true);
 
       expect(await closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key, saveTab)).toBe(
@@ -170,14 +167,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
     });
 
     it('dirty 文件 tab：cancel → 不关闭', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeFileTab('f1', 'p1', true)],
-            activeTabId: 'f1',
-          },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeFileTab('f1', 'p1', true)], 'f1');
       const saveTab = vi.fn().mockResolvedValue(true);
 
       const closing = closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key, saveTab);
@@ -190,14 +180,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
     });
 
     it('dirty 文件 tab：discard → 直接关闭（不调用保存）', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeFileTab('f1', 'p1', true)],
-            activeTabId: 'f1',
-          },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeFileTab('f1', 'p1', true)], 'f1');
       const saveTab = vi.fn().mockResolvedValue(true);
 
       const closing = closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key, saveTab);
@@ -209,14 +192,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
     });
 
     it('dirty 文件 tab：save 成功 → 先保存再关闭', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeFileTab('f1', 'p1', true)],
-            activeTabId: 'f1',
-          },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeFileTab('f1', 'p1', true)], 'f1');
       const saveTab = vi.fn().mockResolvedValue(true);
 
       const closing = closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key, saveTab);
@@ -228,14 +204,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
     });
 
     it('dirty 文件 tab：save 失败 → 不关闭', async () => {
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeFileTab('f1', 'p1', true)],
-            activeTabId: 'f1',
-          },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeFileTab('f1', 'p1', true)], 'f1');
       const saveTab = vi.fn().mockResolvedValue(false);
 
       const closing = closeActiveTabForTabKey(WorkspaceSession.of('p1', null).key, saveTab);
@@ -248,26 +217,34 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
   });
 
   describe('closeActiveTabCommand（事件处理器全链路）', () => {
+    it('AC3：分屏后关闭的是**当前激活 pane** 的 tab（旧读点读废弃投影 → 关错）', async () => {
+      useProjectStore.setState({ activeProjectId: 'p1' });
+      const tabKey = WorkspaceSession.of('p1', null).key;
+      const layout = createDefaultEditorLayout();
+      layout.isSplit = true;
+      layout.activeGroupId = 'right';
+      layout.groups.left = { tabIds: ['A'], activeTabId: 'A' };
+      layout.groups.right = { tabIds: ['B'], activeTabId: 'B' };
+      useEditorStore.setState({
+        tabs: { [tabKey]: { tabs: [makeTab('A', 'p1'), makeTab('B', 'p1')] } },
+        editorLayout: { [tabKey]: layout },
+      });
+
+      expect(await closeActiveTabCommand()).toBe(true);
+      expect(mockCloseEditorTab).toHaveBeenCalledWith(tabKey, 'B');
+      expect(mockCloseEditorTab).not.toHaveBeenCalledWith(tabKey, 'A');
+    });
+
     it('现取当前项目/tab 状态并关闭激活 tab', async () => {
       useProjectStore.setState({ activeProjectId: 'p1' });
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: { tabs: [makeTab('t1', 'p1')], activeTabId: 't1' },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeTab('t1', 'p1')], 't1');
       expect(await closeActiveTabCommand()).toBe(true);
       expect(mockCloseEditorTab).toHaveBeenCalledWith(WorkspaceSession.of('p1', null).key, 't1');
     });
 
-    it('项目切换后全局 activeTabId 脱节时，仍按 per-tabKey 激活位关闭', async () => {
-      // 模拟「全局 activeTabId 被项目切换路径置空/错位、但 p1 有激活 tab」的竞态现场
+    it('前台由布局派生（不再有可脱节的全局 activeTabId）', async () => {
       useProjectStore.setState({ activeProjectId: 'p1' });
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: { tabs: [makeTab('t1', 'p1')], activeTabId: 't1' },
-        },
-        activeTabId: null, // 全局位被置空（setActiveProjectId 读到空槽的 `?? null`）
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeTab('t1', 'p1')], 't1');
       expect(await closeActiveTabCommand()).toBe(true);
       expect(mockCloseEditorTab).toHaveBeenCalledWith(WorkspaceSession.of('p1', null).key, 't1');
     });
@@ -277,15 +254,8 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
       useWorkspaceStore.setState({
         byProject: { p1: { activePath: '/repo/wt', activeBranch: 'feature-x', opened: [] } },
       });
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', '/repo/wt').key]: {
-            tabs: [makeTab('w1', 'p1')],
-            activeTabId: 'w1',
-          },
-          [WorkspaceSession.of('p1', null).key]: { tabs: [makeTab('m1', 'p1')], activeTabId: 'm1' },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', '/repo/wt').key, [makeTab('w1', 'p1')], 'w1');
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeTab('m1', 'p1')], 'm1');
       expect(await closeActiveTabCommand()).toBe(true);
       expect(mockCloseEditorTab).toHaveBeenCalledWith(
         WorkspaceSession.of('p1', '/repo/wt').key,
@@ -298,15 +268,8 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
       useWorkspaceStore.setState({
         byProject: { p1: { activePath: '/repo/wt', activeBranch: 'feature-x', opened: [] } },
       });
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', '/repo/wt').key]: {
-            tabs: [makeTab('w1', 'p1')],
-            activeTabId: 'w1',
-          },
-          [WorkspaceSession.of('p1', null).key]: { tabs: [makeTab('m1', 'p1')], activeTabId: 'm1' },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', '/repo/wt').key, [makeTab('w1', 'p1')], 'w1');
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeTab('m1', 'p1')], 'm1');
 
       useWorkspaceStore.getState().setActiveWorkspace('p1', null);
       expect(await closeActiveTabCommand()).toBe(true);
@@ -315,14 +278,7 @@ describe('closeActiveTabCommand — Cmd+W 关闭当前激活 tab（根治竞态/
 
     it('dirty 文件 tab：确认 discard 后关闭激活 tab', async () => {
       useProjectStore.setState({ activeProjectId: 'p1' });
-      useEditorStore.setState({
-        tabs: {
-          [WorkspaceSession.of('p1', null).key]: {
-            tabs: [makeFileTab('f1', 'p1', true)],
-            activeTabId: 'f1',
-          },
-        },
-      });
+      seedSpace(WorkspaceSession.of('p1', null).key, [makeFileTab('f1', 'p1', true)], 'f1');
       const saveTab = vi.fn().mockResolvedValue(true);
 
       const closing = closeActiveTabCommand(saveTab);

@@ -13,7 +13,7 @@ import {
   useCloseConfirmStore,
 } from '@/features/editor/store/closeConfirmStore';
 import { closeEditorTab } from '@/features/terminal';
-import { useEditorStore } from '@/shared/store/editorStore';
+import { activeTabIdOf, useEditorStore } from '@/shared/store/editorStore';
 import { useOverlayStore } from '@/shared/store/overlayStore';
 import type { AgentConfig, FileTabData, Tab } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -32,7 +32,6 @@ function makeFileTab(id: string, overrides: Partial<FileTabData> = {}): Tab {
     id,
     scope: { kind: 'workspace', session: mkSession('p1') },
     title: id,
-    order: 0,
     data: {
       kind: 'file',
       filePath: id,
@@ -57,7 +56,7 @@ describe('usePaneActions', () => {
   };
 
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
     useCloseConfirmStore.setState({ pending: null });
     // 本套用例自己扮演对话框（直接 resolve 请求）：声明宿主就绪，否则 request 走
     // 「无宿主 → cancel」的 fail-closed 分支，关闭流程根本不会继续。
@@ -77,7 +76,6 @@ describe('usePaneActions', () => {
       id: 'tab1',
       scope: { kind: 'workspace', session: mkSession('p1') },
       title: 'tab1',
-      order: 0,
       data: { kind: 'file', filePath: 't1', fileName: 't1', content: '', isDirty: false },
     });
 
@@ -85,7 +83,7 @@ describe('usePaneActions', () => {
       result.current.handleActivateTab('tab1');
     });
 
-    expect(useEditorStore.getState().activeTabId).toBe('tab1');
+    expect(activeTabIdOf(SPACE)).toBe('tab1');
   });
   it('handleCloseTab calls closeEditorTab for non-dirty tabs without confirmation', async () => {
     seedTabs(defaultParams.tabs);
@@ -277,7 +275,7 @@ describe('usePaneActions', () => {
     const tabs = s.tabs[SPACE]?.tabs ?? [];
     expect(tabs.length).toBe(1);
     expect(tabs[0]?.data).toMatchObject({ kind: 'browser', url: '' });
-    expect(s.activeTabId).toBe(tabs[0]?.id);
+    expect(activeTabIdOf(SPACE)).toBe(tabs[0]?.id);
   });
 
   it('handleActionMenuExecute: new-browser is a no-op without a project', () => {
@@ -312,7 +310,7 @@ describe('usePaneActions — pinned pane 内创建跟随落组', () => {
   }
 
   beforeEach(() => {
-    useEditorStore.setState({ tabs: {}, editorLayout: {}, activeTabId: null });
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
   });
 
   it('new-agent-chat → 落 pinned 组（pinnedTabIds 追加）', () => {

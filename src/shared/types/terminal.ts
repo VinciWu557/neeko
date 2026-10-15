@@ -5,5 +5,4 @@ export interface TerminalTab {
   agentId: string | null;
   title: string;
   status: 'Idle' | 'Running' | 'Failed';
-  order: number;
 }
