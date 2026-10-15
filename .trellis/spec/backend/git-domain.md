@@ -145,6 +145,125 @@
   `file_diff_caps_oversized_untracked_payload`（派发缝）、`get_commit_file_diff_caps_oversized_payload`
   （revision 出口）、`DiffTruncationNotice.test.tsx`（前端：有 hunk / 无截断 / **截断到 0 hunk** 三态）。
 
+### 5c. 冲突读路径的三态契约（index unmerged stages）
+
+**冲突文件不属于 §5 的三种 diff 合法形态**（干净 → 空 hunk / 有改动 → hunk / 未跟踪 → 全 `Added`）。
+它有自己的三态契约，与单文件 diff 三态**同族但独立**：读命令是
+`common/git/operations/conflict.rs::read_conflict_stages`，命令层 `git/commands/conflict.rs::get_conflict_stages`
+（红线 6：只校验 + 调度），前端入口是 `DiffRevision` 的 `{ type: 'conflict' }` 变体（不新增 `TabData.kind`、
+不新增地址类型）。
+
+- **契约 ①无 unmerged 条目 → `Err`**（不是空冲突）：语义 = 调用方回退普通 diff 视图。这是
+  **正常收敛**而非错误 —— 决议写回后 unmerged 消失，前端据此从冲突视图回到普通 diff（R10）。判断
+  「空即已解决」的歧义被这条契约消除。
+- **契约 ②有 unmerged 条目 → 返回三侧现状，缺失 stage 以 `content: None` 上浮**。`null` 是**语义**
+  （该 stage 不存在：DU 的 ours / UD 的 theirs / AA 的 base），`''` 是**内容**（该侧确实是空文件）。
+  两者 UI 必须渲染成不同东西（「我方已删除」≠「空文件」）。**禁止** `unwrap_or_default()` / `unwrap_or("")`
+  作用于 stage 内容取值路径 —— 把「删除」画成「空文件」既误导又丢掉决议依据。
+- **契约 ③binary → `kind = Binary`，三侧不解码内容**（判据与 `common/file/reader.rs::is_binary_file`
+  同：前 8KB 含 `0x00`）。乱码不进 IPC。
+
+**真值来源 = index 的 unmerged stages（1/2/3），不是工作区 `<<<<<<<` marker 字节。** marker 是合并尝试的
+**渲染产物**：modify/delete、binary、rename/rename 三类**根本没有 marker**，rename/rename 的三侧连路径
+都不同 —— 「读工作区找 marker」在这四类上必然静默失真。实测（本仓 2026-10-14，临时仓库）：
+
+```bash
+# 冲突类型 × marker / stage 分布（`git ls-files -u` 与工作区字节）
+#   双方改同文件 UU：1+2+3，有 marker
+#   双方各自新增 AA：2+3（无 base），有 marker
+#   我方删/对方改 DU：1+3（无 ours），无 marker
+#   我方改/对方删 UD：1+2（无 theirs），无 marker
+#   双方都删 DD：无 unmerged 条目（不进 status）
+#   rename/rename：三侧路径各不相同
+```
+
+**两 transport 同契约**：`conflict/local.rs`（git2，红线 3：整体 `spawn_blocking`）与 `conflict/shell.rs`
+（WSL / SSH，`git ls-files -u -z` + `git cat-file blob` + `git merge-file -p --object-id --diff3`）
+必须行为一致，已用 `ShellLocalTransport` 夹具（`open_repo_async` 恒 `None` → 走 shell）同时对两条路径断言。
+**区域合并只对 `is_region_mergeable()` 为真的两个 kind（`both_modified` / `both_added`）成立** ——
+这不是实现能力限制，而是决议语义：`modify_delete` 的一侧内容是「这个文件不存在」，对它做区域合并后选
+「删除侧」只能写出一个**空文件**；缺 base（AA）用**字面量构造的空 `IndexEntry`**（local）或
+**空 blob 的 oid**（shell）提交 merge（实测可用）。
+
+**领域算法不得按 transport 各写一份（跨实现重复 = 分叉温床）**：`any_binary` / `paths_differ` /
+`classify` / `ConflictStages` 构造 / 区域构建这套语义**与传输方式无关**，只与「三侧现状」有关，因此住在
+`conflict/probe.rs`（两侧共用的纯逻辑所有者）：`ConflictSides`（三侧探测结果）→ `assemble_stages`
+（**`ConflictStages` 的唯一构造点**）→ `attach_regions`（`merged` 与 `regions` 一起赋值，同一语义动作）。
+`local.rs` / `shell.rs` 只保留「怎么取三侧字节 + 怎么取 merge 文本」。本任务在这条上踩过两次：
+`other_commit` 的 `.ok()?` 语义漂移（下方）与 `size` 的 lossy 长度分叉都只在**一侧**发生。
+
+**`region_mergeable` 上 wire，前端不得重算**：`ConflictStages.region_mergeable: bool`
+= `kind.is_region_mergeable()`，在 `assemble_stages` 里派生**一次**。前端只读该字段决定
+「渲染区域列表 vs 不透明状态卡」，不得自持 `kind === 'both_modified' || 'both_added'`（同一条领域判据
+的第二份实现，改一处必漏另一处），也不得用 `merged != null` 反推 —— `merged` 是**派生展示数据**，
+其存在与否由载荷预算支配（`cap.rs` 把它当预算余量的牺牲品）而不是由语义支配，两者同进退只是巧合。
+区域渲染因此只读结构化 `MergeRegion`（`our_lines` / `base_lines` / `their_lines`），不读 `merged`。
+回归：`ConflictView.test.tsx` 的 `trusts the backend region_mergeable field...`（wire 字段与 `kind`
+相左时以字段为准）、`still renders regions... when merged is sacrificed by the payload cap`。
+
+**空 blob 一律用 `--stdin`，不用 `/dev/null`**：`/dev/null` 是 POSIX 设备名，Windows 上不存在，
+`git hash-object -t blob /dev/null` 会直接失败（而 backend-test 的 CI 矩阵含 windows-latest，shell 分支经
+`ShellLocalTransport` 夹具在 CI 上真跑）。等价写法 = `run_git_with_stdin(&["hash-object","-t","blob","--stdin"],
+work_dir, GitExecOptions::default(), b"")`（仓内先例：`transport/tests.rs`、`common/git/credential.rs`）。
+**为何靠护栏而不是测试**：`/dev/null` 在 macOS / Linux 上行为完全正确，夹具测试在 POSIX 上永远绿 ——
+只有静态判据（A5）能在写下当时拦住它。
+
+**重命名映射惰化（`probe::needs_rename_maps`）**：映射来自 `diff -M <merge-base> <side>` 的**全仓
+tree diff**，只对 rename 系冲突有意义。可跳过的判据很窄：**stage 1/2/3 全部落在同一路径**（常见 UU）——
+祖先与两侧同路径即证明两侧都没重命名；且当 stage1 存在于路径 P 时，P 在 merge-base 就已存在
+（`diff --name-status -M` 报 `M` 而非 `A`），git 不可能把任何文件配对成「重命名到 P」⇒「三侧同路径」与
+「该路径是重命名目标」在 git 语义上**互斥**（实测）。任一侧缺失或 stage1 不在该路径 ⇒ 必须算映射，
+否则静默失真：rename/rename（含双方重命名到**同一**目标：stage2+3 同路径、stage1 在源路径）会被误判成
+`both_added`。判错的方向是「多跑一次 tree diff」而不是「分类错」—— 保守侧是有意的。回归：
+`needs_rename_maps` 五条纯函数单测 + `lazy_rename_maps_do_not_change_classification_when_repo_has_renames`
+（端到端：夹具先取证 `diff -M` 确实检出重命名，再断言惰性分支上的 UU 分类不变）。变异验证：判据恒
+`false`（永远跳过）⇒ 2 条端到端 rename/rename 红；恒 `true`（永远算）⇒ 端到端全绿（证明惰化是纯优化）。
+
+**两侧别解析的探针陷阱（回归钉子）**：`other_commit` 按 `MERGE_HEAD → CHERRY_PICK_HEAD → REVERT_HEAD`
+顺序取「另一侧」。**不存在**的 ref 会让 `git rev-parse --verify --quiet` 以非零退出（`Err`），因此
+shell 版必须对每个候选用 `if let Ok(..)` **继续探测下一个**；写成 `.ok()?` 会在第一个缺失的 ref 上
+提前返回 `None`，于是 cherry-pick / revert（无 `MERGE_HEAD`）永远取不到另一侧 → 重命名映射为空 →
+rename/rename 静默退化成 `modify_delete`（**仅 shell 路径**，两 transport 因此分叉）。回归：
+`cherry_pick_rename_rename_stays_rename_rename_on_both_transports`。同样地，`ConflictSide.size`
+两 transport 都必须报**原始字节数**：shell 版另调 `git cat-file -s <oid>` 取（`run_git` 只返回
+lossy `String`，含非法 UTF-8 的 blob lossy 长度会膨胀，实测 `\x00\xff\x01` 侧 lossy=9 / 原始=7）。
+回归：`non_utf8_binary_size_matches_across_transports` / `non_utf8_text_content_and_size_match_across_transports`。
+
+**载荷封顶唯一实现 = `conflict::cap::cap_conflict_payload`**（红线 4，接线纪律与 §5b 的 `cap_diff_payload`
+同）：唯一 wire 出口在 `operations/conflict.rs` 的派发缝末尾，`conflict/local.rs` / `conflict/shell.rs`
+是**封顶上游的内部组装**（重复封顶会对已截断内容二次截断，且第三个 transport 还要各自记得 cap，
+单一出口就没了）。分配序 = 三侧各得保底 → 余量按 ancestor/ours/theirs 先到先得 → 行边界截断 →
+`merged` 最后分配（派生展示，超预算优先牺牲）。**回归**：
+`three_sides_near_900kb_serialize_under_ipc_limit`（`serde_json::to_vec` ≤ 2MB 硬断言）、
+`oversized_side_does_not_starve_the_others`（一栏 10MB 不得饿死另两栏）、`control_char_escaping_cannot_break_ipc_limit`。
+
+**护栏 `check_conflict_read_contract`（A1–A6）**钉住这些不变量：A1 真值来源唯一（`conflict/**` 内
+`<<<<<<<` 字面量只允许在 `regions.rs`）；A2 缺失 stage 不许归一（同目录 `unwrap_or_default()` 零命中）；
+A3 唯一封顶（`operations/` 层返回 `ConflictStages` 的函数必须过 `cap_conflict_payload`）；A4 前端不解析
+marker（`components/conflict/**` 内无 marker 字面量）；A5 跨平台中立（`conflict/**` 的**字符串字面量**内
+无 `/dev/null`；只扫引号内串 —— 注释里解释「为何不用它」合法，否则护栏会逼人删掉恰好防止回潮的那段
+文档）；A6 唯一构造点（传输实现不得自建 `ConflictStages { … }` 字面量，必须经 `probe::assemble_stages`；
+判据先剥除返回类型位置 `-> ConflictStages {`（那是签名不是构造）再找字面量 —— 否则正确调用
+`assemble_stages` 的新 transport 会被误报，而误报的结局是逼人放宽判据；也不能整行豁免，单行函数里
+两者可共存。新 transport 文件**默认在射程内**，不需登记）。A1/A2/A5 均为**行级**判据，两类规避不在射程内
+（拆字面量构造、跨行 raw string），已在护栏
+docstring「已知边界」如实登记。本组判据**目标恒零、不配计数台账**，任一扫描集为空
+即判 ERROR。领域术语定义见 [`docs/domain-model.md`](../../../docs/domain-model.md)「git 冲突读路径」小节。
+
+**已知边界（R11，登记不修）**：`git diff -- <path>`（**不带 `HEAD`**）在冲突时输出 `--cc` 合并格式
+`@@@ -1,5 -1,5 +1,9 @@@`（三个 `@`）。而 `parsers/diff.rs` 的 `parse_hunk_header` 只认
+`strip_prefix("@@ ")`（两个 `@` 加空格）→ `starts_with("@@")` 为真但 parse 返回 `None`，
+`if let Some(..)` **静默跳过**，后续行因 `hunks.last_mut()` 为 `None` 也全部丢弃 ⇒ **整段 hunk 消失**。
+复现：
+
+```bash
+$ grep -n 'strip_prefix("@@ ")' src-tauri/src/common/git/parsers/diff.rs
+139:    let rest = line.strip_prefix("@@ ")?;
+```
+
+当前生产路径带 `HEAD`（`git diff HEAD -- <path>`，不触发 `--cc`），故**本任务不修**；登记为已知边界，
+防止下一个人「用 `git diff` 凑冲突」时踩中且无从察觉（`--cc` 的 `@@@` 会被静默丢弃，表现为「No changes」）。
+
 ## 6. 测试要求
 
 - `parse_decorate_refs`：branch/remote/tag/stash/HEAD 用例；`refs/synara/checkpoints` 被丢弃；

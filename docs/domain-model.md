@@ -143,6 +143,36 @@ Local/WSL/Remote 三环境承接同一 `cwd`（环境是传输维度），项目
 发现/展示/执行路径 Workspace 化。契约与判据：`.trellis/spec/backend/git-domain.md` §15.3、护栏
 `check_terminal_run_root`。
 
+## git 冲突读路径（三态寻址 + 区域）
+
+冲突文件不属于单文件 diff 的三种合法形态（干净 / 有改动 / 未跟踪），它的真值是 **index 的
+unmerged stages（1/2/3）**，不是工作区里的 `<<<<<<<` marker 字节。marker 是合并尝试的**渲染
+产物**：modify/delete、binary、rename/rename 三类根本没有 marker，rename/rename 的三侧连路径
+都不同 —— 任何「读工作区找 marker」的实现都会在这些类型上静默失真。因此冲突视图的入口是
+`DiffRevision` 的 `{ type: 'conflict' }` 变体（修订维度天然容纳「对 index unmerged 状态做 diff」），
+读命令 `get_conflict_stages(workspace, file_path)` 只从 stages 组装 `ConflictStages`。
+
+| 概念 | 含义 | 归属 |
+| --- | --- | --- |
+| `ConflictKind` | 冲突类型（`both_modified` / `both_added` / `modify_delete` / `rename_rename` / `binary`），由 **stage 存在性 + 路径是否分歧 + binary** 纯函数判定 | `common/git/conflict/classify.rs` |
+| `ConflictSide.content` | `Option<String>`：`null` = **该 stage 不存在**（合法状态）；`''` = 该侧确实是空文件 | `types.rs` |
+| `ConflictStages.regions` | 仅 `both_modified` / `both_added` 有值（`is_region_mergeable()`） | `regions.rs` |
+| `ConflictStages.region_mergeable` | = `kind.is_region_mergeable()`，在**唯一构造点**派生一次并上 wire；前端只消费不重算 | `probe::assemble_stages` |
+
+**`is_region_mergeable()` 只对 `both_modified` / `both_added` 为真**。这不是实现能力限制，而是
+决议语义：`modify_delete` 的一侧内容是「这个文件不存在」，对它做区域合并后选「删除侧」只能写出
+一个**空文件**，而用户的意图是**删除** —— 空文件 ≠ 删除。故 modify/delete 只给整文件二选一。
+
+**`null` ≠ 空串**：「我方已删除」必须渲染成 `null`（stage 缺失），不得 `unwrap_or_default()` /
+`?? ''` 归一为空文件 —— 那会把删除语义画成「空文件」并丢掉决议依据。
+
+`ConflictStages` 的唯一构造点是 `probe::assemble_stages`（**领域算法不按 transport 各写一份** ——
+跨实现重复就是分叉温床），唯一对外出口在 `common/git/operations/conflict.rs` 派发缝，且必须过
+`cap_conflict_payload`（红线 4：三元载荷），`local.rs` / `shell.rs` 的内部组装在封顶上游。
+护栏 `check_conflict_read_contract`（A1–A6）钉住这些不变量（A5：`conflict/**` 的字符串字面量内无
+`/dev/null` —— POSIX 设备名在 Windows CI 上不存在，空 blob 一律用 `--stdin` 喂零字节；A6：传输实现
+不得自建 `ConflictStages` 字面量，必须经 `probe::assemble_stages`）。
+
 ## 未完成（登记）
 
 - **分屏 p2+ 的终端精度（登记为显式非目标）**：写侧 `terminalAddress(session, tabId, paneId)` 携带
