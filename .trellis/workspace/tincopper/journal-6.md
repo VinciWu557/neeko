@@ -1122,3 +1122,230 @@ Windows/Linux CI 矩阵一编译即红。修法 = 门面签名改 `&str`（借�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 288: git-conflict-diff-view: Layer 1 批 0+批 1（纯语义层 + 读路径）
+
+**Date**: 2026-10-14
+**Task**: git-conflict-diff-view: Layer 1 批 0+批 1（纯语义层 + 读路径）
+**Branch**: `main`
+
+### Summary
+
+以 index unmerged stages 为唯一真值读冲突三侧；批 0 纯语义（classify/regions/cap），批 1 双 transport 读路径。41 条 conflict 测试绿，29 护栏全过，1690 lib 测试无回归。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 289: git-conflict-diff-view: Layer 1 批 2（前端只读展示，修跨 transport 分叉）
+
+**Date**: 2026-10-14
+**Task**: git-conflict-diff-view: Layer 1 批 2（前端只读展示，修跨 transport 分叉）
+**Branch**: `main`
+
+### Summary
+
+前端冲突视图：DiffRevision 加 conflict variant（不新增 TabData.kind）、useConflictStages（Err→notConflicted 收敛非错误）、ConflictView 三侧只读 + 区域 + 未接决议。R6 入口决策复用 isConflictedEntry（零新增 prop）。66 文件 572 测试绿，29 护栏全过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 290: git-conflict-diff-view: Layer 1 批 4+批 5（护栏 A1-A4 + spec 沉淀 + @@ 登记 + pnpm check 全绿）
+
+**Date**: 2026-10-14
+**Task**: git-conflict-diff-view: Layer 1 批 4+批 5（护栏 A1-A4 + spec 沉淀 + @@ 登记 + pnpm check 全绿）
+**Branch**: `main`
+
+### Summary
+
+新增护栏 check_conflict_read_contract（A1-A4，目标恒零）与同名测试 15 例；git-domain §5c 冲突读路径三态契约 + @@ 静默丢弃登记（R11）；docs/domain-model 冲突小节；10 条 Layer 1 AC 全勾。30 护栏全过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 291: git-conflict-diff-view: Layer 1 独立复核（修 2 处跨 transport 真分叉）
+
+**Date**: 2026-10-15
+**Task**: git-conflict-diff-view: Layer 1 独立复核（修 2 处跨 transport 真分叉）
+**Branch**: `main`
+
+### Summary
+
+trellis-check 发现并修复：P1 shell other_commit 用 .ok()? 在首个缺失 ref 提前退出 → cherry-pick 的 rename/rename 退化 modify_delete；P2 shell size 用 lossy String 长度 → 非 UTF-8 blob 两 transport size 分叉（改 git cat-file -s）。3 条回归钉子经变异验证可红。Layer 1 完成。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 292: git-conflict-diff-view: 审核修复（Block /dev/null + DRY 收敛 + region_mergeable 上 wire + 惰性映射 + A5/A6 护栏）
+
+**Date**: 2026-10-15
+**Task**: git-conflict-diff-view: 审核修复（Block /dev/null + DRY 收敛 + region_mergeable 上 wire + 惰性映射 + A5/A6 护栏）
+**Branch**: `main`
+
+### Summary
+
+修 /neeko-check 的 5 条发现；44 条既有测试断言未改，新增 12 后端 + 2 前端钉子，护栏扩至 A1–A6；每条修复均经变异验证可红
+
+### Main Changes
+
+### Summary
+
+修复 `/neeko-check` 审出的 5 条（1 Block + 3 Warning + 1 Nit），并为其中 2 条补上机器判据。
+Layer 1 的 44 条既有测试**断言一字未改**（行为保持型重构），新增 12 条后端 + 2 条前端钉子。
+
+### 修了什么
+
+1. **[Block] `/dev/null` 不可移植** —— `shell.rs::empty_blob_oid` 改用
+   `run_git_with_stdin(&["hash-object","-t","blob","--stdin"], …, b"")`。`/dev/null` 是 POSIX 设备名，
+   Windows 上不存在，而 backend-test 的 CI 矩阵含 windows-latest ⇒ AA 冲突会在 Windows 上读不出三侧。
+   **为何靠护栏而不是测试**：`/dev/null` 在 macOS/Linux 上行为完全正确，夹具测试在 POSIX 上永远绿 ——
+   只有静态判据能在写下当时拦住它。新增护栏判据 **A5**（只扫引号内串；实测覆盖普通串 / `r"…"` /
+   `r#"…"#` / argv 内嵌四种形态；注释里的解释合法，否则护栏会逼人删掉恰好防止回潮的那段文档）。
+2. **[W1] 领域算法按 transport 重复** —— `distinct_paths` / `side_lines` 曾各持一份（md5 逐字相同），
+   两份 `assemble` 整段同构。收敛到 `probe.rs`：`ConflictSides` → `assemble_stages`
+   （**`ConflictStages` 唯一构造点**）→ `attach_regions`。两 transport 现在只剩「怎么取三侧字节 +
+   怎么取 merge 文本」。新增护栏判据 **A6**（传输实现不得自建 `ConflictStages` 字面量）——
+   删掉重复只是清今天，护栏才能拦住明天。
+3. **[W2] 前端第二份领域判据** —— 删掉 `ConflictView.isRegionMergeable`，改由后端在唯一构造点派生
+   `region_mergeable` 上 wire。**不能用 `merged != null` 反推**：`merged` 是派生展示数据，其存在与否由
+   载荷预算支配而非语义支配，两者同进退只是巧合（复核时发现我最初写的理由是假的 —— cap 截断后总回填
+   `Some(capped)`，从不置 null；已改正为真实理由并补钉子）。
+4. **[W3] `default:` 削弱穷尽性** —— `ConflictOpaqueCard` 改为对 `ConflictKind` 穷尽 switch、header 与
+   body 合并成一张文案表（对齐同目录 `ConflictToolbar.kindLabel`）。
+5. **[Nit] 每次读冲突白跑全仓 tree diff** —— 新增纯判据 `probe::needs_rename_maps`：仅当 stage 1/2/3
+   **全部落在同一路径**（常见 UU）才跳过重命名映射。实测取证：当 stage1 存在于路径 P 时，P 在
+   merge-base 就已存在（`diff --name-status -M` 报 `M` 而非 `A`），git 不可能把任何文件配对成「重命名到 P」
+   ⇒「三侧同路径」与「该路径是重命名目标」在 git 语义上互斥，惰性判据的交叠情形不可达。
+
+### 变异验证（每条钉子都证明可红）
+
+| 变异 | 结果 | 含义 |
+| --- | --- | --- |
+| `needs_rename_maps` 恒 `false`（永远跳过） | 6 条红，含 2 条端到端 rename/rename | 判据是载荷性的 |
+| `needs_rename_maps` 恒 `true`（永远算，= 修复前行为） | 仅判据自身单测红，端到端全绿 | 惰化是纯优化，不改变分类结论 |
+| `ConflictView` 改回 `kind === 'both_modified' \|\| …` | 新钉子红 | W2 已收口 |
+| `ConflictView` 改回 `merged !== null` | 2 条钉子红 | 假理由也被钉住了 |
+| 给 `ConflictKind` 加 `'future_kind'` | 现状：OpaqueCard + Toolbar 双双 TS2366；恢复 `default:` 后只有 Toolbar 失败、OpaqueCard **静默通过** | W3 指控的形态已消除 |
+| 护栏植入 `/dev/null` 字面量 / `unwrap_or_default()` / `ConflictStages { … }` | A5 / A2 / A6 各 VIOLATION（exit 1） | 三条判据在真实仓库可红 |
+
+A6 首版把「返回类型位置 `-> ConflictStages {`」整行豁免，被自己的测试
+`test_new_transport_file_is_in_scope_without_registration` 逮住（单行函数里签名与真构造可共存）⇒
+改为「先剥除返回类型位置，再找字面量」。误报的结局是逼人放宽判据，比没护栏更糟。
+
+### Testing
+
+- `cargo test … conflict` → **56 passed**（44 Layer 1 基线断言未改 + 12 新增）
+- `npx vitest run src/features/git` → 66 文件 / **575 用例**
+- `tools/guards/tests` → **549 用例全绿**（护栏自身 23 条）
+- `pnpm check` → **30/30 护栏通过**（含 lint_fe=tsc、clippy 全目标、test_fe/test_rust/test_host）
+
+### 复核方式说明
+
+`trellis-check` 子代理这次**没有文件/命令工具**，它拒绝在无证据下填写 ✓/行号/计数（正确行为 ——
+伪造的复核比缺失的复核危险）。其提出的 3 条待查点由主会话逐条实测收口，其中第 1 条命中真问题
+（design.md 落点图把 `probe.rs` 标为「纯 I/O」，已升级为「纯逻辑」并如实描述新增职责），
+第 2 条纠出了我自己写下的假理由。
+
+### 文档同步
+
+`git-domain.md` §5c（新增 4 段可执行契约 + 护栏扩至 A1–A6）、`docs/domain-model.md`（`region_mergeable`
+入术语表）、任务 `design.md`（落点图 / §2.1 stages / §3 A5+A6 / §2.4 空 blob 写法）、`implement.md`、
+`invariants.json` note。
+
+### Status
+
+[OK] **Completed** —— 改动停在未提交状态（项目规则：不主动提交）。
+
+### Next Steps
+
+- 用户决定是否提交；Layer 2（`10-14-git-conflict-resolve`）硬前置 = 本轮 + Layer 1 批 0/1/2 已合入。
+- 端到端 GUI 手测（`pnpm tauri dev`）与真 WSL/SSH transport 仍未执行（本机无 GUI），已如实登记。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

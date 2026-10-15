@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 287
-- **Last Active**: 2026-10-14
+- **Total Sessions**: 292
+- **Last Active**: 2026-10-15
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1124 | Active |
+| `journal-6.md` | ~1351 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,11 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 292 | 2026-10-15 | git-conflict-diff-view: 审核修复（Block /dev/null + DRY 收敛 + region_mergeable 上 wire + 惰性映射 + A5/A6 护栏） | - | `main` |
+| 291 | 2026-10-15 | git-conflict-diff-view: Layer 1 独立复核（修 2 处跨 transport 真分叉） | - | `main` |
+| 290 | 2026-10-14 | git-conflict-diff-view: Layer 1 批 4+批 5（护栏 A1-A4 + spec 沉淀 + @@ 登记 + pnpm check 全绿） | - | `main` |
+| 289 | 2026-10-14 | git-conflict-diff-view: Layer 1 批 2（前端只读展示，修跨 transport 分叉） | - | `main` |
+| 288 | 2026-10-14 | git-conflict-diff-view: Layer 1 批 0+批 1（纯语义层 + 读路径） | - | `main` |
 | 287 | 2026-10-14 | opencode-2x插件与通知兼容 | `c5d84e6f` | `main` |
 | 286 | 2026-10-13 | Agent 通知第四轮 /neeko-check 审计与整改 | - | `neeko-notify` |
 | 285 | 2026-10-12 | macOS 系统通知修复：UNUserNotificationCenter 后端替换失效的 NSUserNotification | - | `neeko-notify` |

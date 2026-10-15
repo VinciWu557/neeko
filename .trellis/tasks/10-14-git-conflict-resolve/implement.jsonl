@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/10-14-git-conflict-resolve/prd.md", "reason": "本任务需求 L2-R1–L2-R8 与四类决议的精确落盘结果表（porcelain 逐例不同）；硬前置声明与依赖关系图"}
+{"file": ".trellis/tasks/10-14-git-conflict-resolve/design.md", "reason": "两条写回原语的由来（checkout 对删除侧原理上不可用）、None => delete_path 这一最易写错的支、前端决议草稿状态模型、风险 T12/T13（两条写回原语 + 空文件陷阱）"}
+{"file": ".trellis/tasks/10-14-git-conflict-resolve/implement.md", "reason": "批 3 的落点、动作与验证；批 6 的文档沉淀与全量验证"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/design.md", "reason": "父任务 §2.5 是本任务写回映射表的唯一依据（不重做实验）；§0.1 解释为什么区域决议只对 UU/AA 成立；§4 T2/T3/T4/T5 是本任务风险的上下文"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/prd.md", "reason": "Layer 1 的读契约（ConflictStages / ConflictKind / null 语义 / DiffRevision.conflict）—— 本任务的入参与前置；不得修改这些形状"}
+{"file": ".trellis/spec/backend/git-domain.md", "reason": "§10 写后快照新鲜度（wait_status_fresh 必须调用）、§15 命令寻址（resolve_conflict 首参 workspace）、§7 换行契约（写回内容的 CRLF 处理）、§11 禁止 stderr 嗅探判定分支"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "红线 6 命令层极薄：apply_conflict_resolution 的分派落 operations，不得平铺在命令层；红线 4 载荷边界"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "红线 11 的确定性测试仓库 builder（TestRepo / init_repo 双保险 = core.autocrlf=false + .gitattributes * -text）与 assert_content_eq，是删除侧四条分支单测的写法约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "决议草稿（useState/局部）与 useConflictStages（无状态消费者）的边界；收敛必须由快照事件驱动，不新增第二条收敛机制"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "跨 feature 导入防火墙与组件 ≤300 行 ratchet：新 hook / 按钮进 ConflictView 的合规判据"}
+{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "「两条写回原语」与「禁止删除侧 checkout」如何从纪律变成可执行判据（反证 grep 与单测两形式）"}

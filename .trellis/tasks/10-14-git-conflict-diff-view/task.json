@@ -1,0 +1,28 @@
+{
+  "id": "git-conflict-diff-view",
+  "name": "git-conflict-diff-view",
+  "title": "Diff 面板 Git 冲突展示（index 三态寻址 + 区域决议）",
+  "description": "冲突文件在 diff 面板的展示与决议：以 index unmerged stages（1/2/3）为唯一真值来源，替代工作区 marker 解析（实测 modify-delete / binary / rename-rename 三类冲突无 marker 或 stage 路径不同）；修掉本地 git2 路径下冲突文件显示 No changes 的跨 transport 分叉。含三侧只读展示、逐区域决议（ours/theirs/both）、整文件决议与标记已解决；分栏共享载荷预算守红线 4；三栏编辑器内联合并为非目标。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "tincopper",
+  "assignee": "tincopper",
+  "createdAt": "2026-10-14",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-14-git-conflict-resolve"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

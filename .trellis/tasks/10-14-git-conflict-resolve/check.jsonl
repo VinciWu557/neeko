@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/10-14-git-conflict-resolve/prd.md", "reason": "逐条核 AC：四类决议落盘结果表逐行可验（尤其 DU-选删除=文件不存在、UD-选删除=文件不存在）、删除侧无 checkout、区域 splice 服务端重算、收敛走 notConflicted、写后 wait_status_fresh"}
+{"file": ".trellis/tasks/10-14-git-conflict-resolve/design.md", "reason": "核对实现未把「缺失侧」误写成空文件（§2.1 的 None => delete_path 支）；核区域决议用于不可合并 kind 时显式报错而非静默降级；核前端收敛未新增第二条机制"}
+{"file": ".trellis/tasks/10-14-git-conflict-resolve/implement.md", "reason": "核批 3 删除侧四条分支单测是否逐条写了真实断言（不得用「同理」合并，porcelain 逐例不同）；核反证 Red 证据被保留"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/prd.md", "reason": "核 Layer 1 的读契约未被本任务偷偷改动（ConflictStages / null 语义 / DiffRevision 形状）——改了就是两个真值口径"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/design.md", "reason": "核写回实现与 §2.5 映射表一致；核 T2（不信前端行号）与 T5（CRLF）已被落实到代码而非只在文档里"}
+{"file": ".trellis/spec/backend/git-domain.md", "reason": "核 §10 写命令收口（wait_status_fresh 真的被调用且戳对单元）、§15 寻址（首参 WorkspaceSession，且内部走 resolve_workspace_target）"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "核红线 6：命令层只校验+调度，分派逻辑在 operations；核错误经 AppError 传导而非 String"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核测试夹具用确定性 builder、工作区字节断言走 assert_content_eq（红线 11 / check_worktree_byte_assertions 保持绿）、用例独立且 <100ms"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "核决议草稿不写进全局 store（应为组件/hook 局部状态）；核 useConflictStages 与 useDiffData 同构、刷新信号仍来自既有三源"}
+{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "核本任务的反证（删除侧 checkout / 空文件）真的能红，而非恒绿的装饰性检查"}

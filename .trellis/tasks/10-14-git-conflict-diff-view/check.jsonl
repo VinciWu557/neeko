@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/prd.md", "reason": "逐条核 AC：两条 transport 都不再 No changes、五类冲突语义正确、缺失 stage 上浮 null、区域合并不含删除型、三侧内容不含 marker、红线 4 实测 ≤2MB、决议闭环、DiffRevision 只多一 variant、@@@ 边界已登记"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/design.md", "reason": "核对实现未偏离 §2 类型与 §2.5 写回路径；重点核 §0.1（区域合并边界是可论证的语义而非实现偷懒）、§4 T9（删除型冲突误做区域合并会写出空文件）、T2（不信前端行号）、T8（空 base 是构造行为，需单测固定）"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/implement.md", "reason": "核批次落点与验证命令是否被执行；核批 1 的七类夹具测试表是否逐条有断言（尤其「已解决 → Err」与「binary 不解码」两条易漏）"}
+{"file": ".trellis/spec/backend/git-domain.md", "reason": "核新增冲突契约与 §5 三态契约同族（不得自成一派）；核 §5b 的唯一封顶接线纪律被遵守（cap_conflict_payload 是唯一出口）；核 §10 写后快照新鲜度已调用"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "核红线 3/4/6 在批 1/批 3 的命令与 operations 落点是否成立（spawn_blocking / 载荷上限 / 命令只调度）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "核 useConflictStages 与 useDiffData 同构、刷新信号来自既有三源（不得新增第二套刷新机制）；核 notConflicted 与 error 两态确实分开"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核跨 feature 导入未越线（conflict 目录在 git feature 内，前端不反向依赖）；核 eslint 防火墙与 tsc 绿"}
+{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "核新护栏真的能拦（必须有故意违规的 Red 证据，而不是恒绿）；核 registry.py _validate 的两条硬要求（同名测试存在、GUARD.docs 可解析）"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核夹具路径平台无关（红线 13）、测试独立不依赖顺序与外部状态、单个用例 <100ms"}
+{"file": "docs/domain-model.md", "reason": "核批 4 的 GUARD.docs 指针已落地且内容与实现一致（真值来源、null≠空串）；这是 registry.py 会机器校验存在的文档"}

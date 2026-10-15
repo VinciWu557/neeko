@@ -1,0 +1,16 @@
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/prd.md", "reason": "本任务需求与验收：R1 index 三态真值 / R2 显式 ConflictKind / R3 Option 不许归一空串 / R4 区域合并边界 / R5 分栏预算 / R6 入口纯函数；AC 逐条可核"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/design.md", "reason": "§0 实测冲突类型表（四类无 marker）/ §0.1 区域合并只对 UU+AA 的语义论证 / §0.2 空 base 两引擎实测 / §2 类型与判据 / §2.5 决议写回复用点 / §4 风险 T1–T9"}
+{"file": ".trellis/tasks/10-14-git-conflict-diff-view/implement.md", "reason": "批次 0–5 的落点、动作、验证命令与 Red 证据要求；批 1 的七类夹具测试表"}
+{"file": ".trellis/spec/backend/git-domain.md", "reason": "§5 单文件 diff 三态契约（本任务新增的冲突契约与其同族）、§5b 载荷封顶接线纪律（cap_conflict_payload 照抄对象）、§8 路径文本契约（ls-files -z）、§10 写后快照新鲜度、§15 命令寻址（WorkspaceSession 首参）"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "红线 4 IPC 大文本边界 + 红线 6 命令层极薄 + 红线 3 阻塞隔离：批 1 的命令与 operations 落点判据"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "Rust 夹具路径平台无关（红线 13）、tempfile 用法、真实临时仓库建法：批 0/1 七类冲突夹具的写法约束"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "无状态消费者 + 刷新信号单源：批 2 的 useConflictStages 必须与 useDiffData 同构，不得引入第二种刷新机制"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件 ≤300 行 ratchet（check_component_size 台账）与 feature 目录约定：ConflictView 等新组件的落点与拆分纪律"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "跨 feature 只允许 index/api/store/types 导入（防火墙）：conflictEntry 落 utils、hook 落 hooks 的合规性判据"}
+{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "把「真值来源唯一」「null≠空串」落成 guard 而非纪律；护栏台账形态与 registry.py _validate 的硬要求（同名测试 + GUARD.docs 必须存在）"}
+{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "文件拖拽/点击后的目标决策样例，是「入口纯函数 + 复用既有判定」这一形态的仓内先例（R6）"}
+{"file": "docs/domain-model.md", "reason": "批 4 的 GUARD.docs 指针必须指向此处（registry.py 校验存在性）；同时也是领域术语「Workspace/Checkout」的唯一定义处"}
+{"file": "src-tauri/src/common/git/conflict/probe.rs", "reason": "审核修复 W1+Nit：升级为两侧 transport 共用的领域算法所有者（ConflictSides / assemble_stages = ConflictStages 唯一构造点 / attach_regions / distinct_paths / side_lines / needs_rename_maps）。跨实现重复即分叉温床，此前 local.rs 与 shell.rs 各持一份 md5 相同的 distinct_paths+side_lines"}
+{"file": "src-tauri/src/common/git/conflict/shell.rs", "reason": "审核修复 Block：empty_blob_oid 由 /dev/null（POSIX 设备名，Windows CI 上不存在）改 run_git_with_stdin + --stdin 喂零字节；另接线 needs_rename_maps 惰化与 assemble_stages 共享组装"}
+{"file": "src-tauri/src/common/git/conflict/types.rs", "reason": "审核修复 W2：ConflictStages 增 region_mergeable（= kind.is_region_mergeable()，唯一构造点派生一次并上 wire），前端不再自持第二份领域判据"}
+{"file": "tools/guards/checks/check_conflict_read_contract.py", "reason": "判据扩至 A1–A6：A5 conflict/** 字符串字面量内无 /dev/null（POSIX 上行为正确、夹具测试永远绿 ⇒ 只有静态判据拦得住）；A6 传输实现不得自建 ConflictStages 字面量（删掉重复只是清今天，护栏才能拦住明天）"}
