@@ -3,19 +3,28 @@ import React, { useCallback, useEffect, useRef } from 'react';
 
 import { openProjectFile } from '@/features/quick-open/openFile';
 import { useSearch } from '@/features/search/hooks/useSearch';
+import { useSearchPagination } from '@/features/search/hooks/useSearchPagination';
 import { useSearchStore } from '@/features/search/store/searchStore';
 import { useAppContext } from '@/shared/contexts';
 import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
 import type { SearchMatch } from '@/shared/types/search';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
+import { getFileName } from '@/shared/utils/fileTree';
 import { buildScrollKey } from '@/shared/utils/scrollMemory';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 /** 滚动视图身份：全局唯一 surface 常量。 */
 const SCROLL_SURFACE = 'dock.search';
 
 interface SearchPanelProps {
-  projectId: ProjectId | null;
+  /**
+   * 搜索地址（**唯一寻址单位**）。`null` = 无激活项目。
+   *
+   * 根 = `workspace.worktreePath ?? project.path`，后端经 `resolve_workspace_target` 取
+   * 同一值 —— 与点击「打开文件」时的身份基准同源（两条链路不同基准时，结果里的相对路径
+   * 会被解析到另一个对象）。
+   */
+  workspace: WorkspaceSession | null;
 }
 
 /** Highlight matched substrings within a line. */
@@ -41,8 +50,10 @@ function highlightMatch(line: string, query: string): React.ReactNode {
  * Results are grouped by file and clickable — clicking a match opens the file
  * in the editor at the exact line/column. Pagination is appended via scroll.
  */
-export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ projectId }) => {
+export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ workspace }) => {
   const { showToast } = useAppContext();
+  const workspaceKey = workspace?.key ?? '';
+  const workspaceProjectId = workspace?.projectId ?? null;
   const {
     query,
     setQuery,
@@ -53,19 +64,17 @@ export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ projectId }
     truncated,
     clear,
     totalMatches,
-  } = useSearch(projectId, showToast);
+  } = useSearch(workspace, showToast);
 
-  const next = useSearchStore((s) => s.next);
   const collapsed = useSearchStore((s) => s.collapsed);
   const toggleCollapse = useSearchStore((s) => s.toggleCollapse);
   // 可写 ref（hook 的合并回调 ref 需要回写 current；useRef<T>(null) 的 current 只读）
   const listRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const autoLoadedRef = useRef(false);
 
   // 滚动记忆：面板互切（保活期引擎丢位置）与卸载重建都恢复列表位置；按项目隔离。
   // 与既有 listRef 合并成单一回调 ref（两个 consumer：分页逻辑 + 记忆机制）。
-  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, projectId));
+  const scrollRef = useScrollMemory<HTMLDivElement>(buildScrollKey(SCROLL_SURFACE, workspaceKey));
   const setListRef = useCallback(
     (node: HTMLDivElement | null) => {
       listRef.current = node;
@@ -79,39 +88,17 @@ export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ projectId }
     inputRef.current?.focus();
   }, []);
 
-  const hasMore = useSearchStore((s) => !s.truncated && s.offset > 0);
-  const cursorOffset = useSearchStore((s) => s.offset);
-
   const handleOpenMatch = useCallback(
     (path: string, line: number, column: number) => {
-      if (!projectId) return;
-      void openProjectFile({ projectId, filePath: path, line, column });
+      if (workspaceProjectId === null) return;
+      // 与搜索的根**同源**：后端返回的是相对该单元根的路径，打开也必须以它为基准。
+      void openProjectFile({ projectId: workspaceProjectId, filePath: path, line, column });
     },
-    [projectId],
+    [workspaceProjectId],
   );
 
-  const handleScroll = useCallback(() => {
-    const el = listRef.current;
-    if (!el || !projectId) return;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 48) {
-      void next(projectId);
-    }
-  }, [next, projectId]);
-
-  // Auto-scroll request next page when the list grows shorter than viewport.
-  useEffect(() => {
-    if (!hasMore || !projectId) return;
-    const el = listRef.current;
-    if (!el) return;
-    if (el.scrollHeight <= el.clientHeight) {
-      if (!autoLoadedRef.current) {
-        autoLoadedRef.current = true;
-        void next(projectId);
-      }
-    } else {
-      autoLoadedRef.current = false;
-    }
-  }, [fileGroups, hasMore, next, projectId, cursorOffset]);
+  // 触底分页（含「结果撑不满视口时自动补一页」）—— 容器逻辑下沉到 hook。
+  const { handleScroll } = useSearchPagination({ workspace, groups: fileGroups, listRef });
 
   const fileCount = fileGroups.length;
 
@@ -182,7 +169,7 @@ export const SearchPanel: React.FC<SearchPanelProps> = React.memo(({ projectId }
 
         {fileGroups.map((group) => {
           const iconSrc = fileIconSrc(group.path);
-          const fileName = group.path.split('/').pop() || group.path;
+          const fileName = getFileName(group.path);
           const dirName = group.path.includes('/')
             ? group.path.slice(0, group.path.lastIndexOf('/') + 1)
             : '';

@@ -3,12 +3,16 @@ import { create } from 'zustand';
 import { runSearch, stopSearch } from '@/features/search/api/searchApi';
 import type { SearchFileGroup, SearchOptions } from '@/shared/types/search';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
-import type { ProjectId } from '@/shared/utils/workspaceRef';
+import type { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 /** Lifecycle of the active search run. */
 export type SearchStatus = 'idle' | 'running' | 'error';
 
-/** Monotonic request id source (encapsulated in store, reset on clear). */
+/** Monotonic request id source (encapsulated in store).
+ *
+ * **单调递增，不随 `clear()` 归零**（唯一例外见 `initialState` 的注释）：id 是「哪个请求在飞」的
+ * 唯一区分符，回退到 0 会让切单元后的新请求**重用旧 id** ⇒ 两个请求不可区分，早到的旧响应会
+ * 覆盖新单元的结果（旧根的相对路径被当成当前单元的事实）。 */
 let requestCounter = 0;
 function nextRequestId(): string {
   requestCounter += 1;
@@ -35,9 +39,9 @@ interface SearchState {
   status: SearchStatus;
   error: string | null;
 
-  run: (projectId: ProjectId, query: string, options: SearchOptions) => Promise<void>;
+  run: (workspace: WorkspaceSession, query: string, options: SearchOptions) => Promise<void>;
   /** Fetch the next page of the current query. */
-  next: (projectId: ProjectId) => Promise<void>;
+  next: (workspace: WorkspaceSession) => Promise<void>;
   /** Cancel the in-flight request. */
   stop: () => Promise<void>;
   /** Reset to pristine idle state. */
@@ -73,7 +77,7 @@ function normalizeOptions(options: SearchOptions): SearchOptions {
 export const useSearchStore = create<SearchState>((set, get) => ({
   ...initialState(),
 
-  run: async (projectId, query, options) => {
+  run: async (workspace, query, options) => {
     const requestId = nextRequestId();
     const normalized = normalizeOptions(options);
     // Fresh start: clear previous results and reset offset.
@@ -90,13 +94,16 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
     try {
       const res = await runSearch({
-        projectId,
+        workspace,
         query,
         requestId,
         options: normalized,
         offset: 0,
         limit: 100,
       });
+      // 已被更晚的请求（新查询 / 切单元）取代 ⇒ 丢弃陈旧响应：其结果相对**另一个根**，
+      // 写进去就是「把别的单元的路径当成本单元的事实」（未知不得被伪造）。
+      if (get().requestId !== requestId) return;
       set({
         requestId: res.requestId,
         fileGroups: res.matches,
@@ -106,6 +113,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         status: 'idle',
       });
     } catch (err) {
+      // 陈旧请求的失败同样不得污染新状态（否则新单元的搜索会被报成 error）。
+      if (get().requestId !== requestId) return;
       set({
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
@@ -113,7 +122,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     }
   },
 
-  next: async (projectId) => {
+  next: async (workspace) => {
     const { query, offset, options, status } = get();
     if (status === 'running' || !query) return;
     const requestId = nextRequestId();
@@ -122,13 +131,15 @@ export const useSearchStore = create<SearchState>((set, get) => ({
 
     try {
       const res = await runSearch({
-        projectId,
+        workspace,
         query,
         requestId,
         options,
         offset,
         limit: 100,
       });
+      // 同 `run`：跨页响应若已被取代（切单元 / 新查询），不能把旧根的下一页拼进当前结果。
+      if (get().requestId !== requestId) return;
       set((state) => {
         // Continuation: append new groups, replacing files that reappear.
         const known = new Map(state.fileGroups.map((f) => [f.path, f]));
@@ -145,6 +156,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         };
       });
     } catch (err) {
+      if (get().requestId !== requestId) return;
       set({
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
@@ -161,7 +173,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   },
 
   clear: () => {
-    requestCounter = 0;
+    // 注意：**不**重置 `requestCounter` —— 见顶部注释（重置会让切单元后的新请求重用旧 id，
+    // 使「陈旧响应」与「当前请求」不可区分）。
     set(initialState());
   },
 

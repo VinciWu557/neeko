@@ -3,28 +3,30 @@
 //! Kept thin per the command-layer rule: receives + validates args, resolves
 //! the project target, registers cancellation, then delegates to the service.
 
-use std::path::Path;
-
 use tauri::State;
 
 use crate::app_state::AppStateWrapper;
 use crate::common::error::AppError;
+use crate::common::git::WorkspaceSession;
 use crate::search::services;
 use crate::search::types::{SearchCursor, SearchOptions, SearchPage};
 
-/// Run a content search within a project.
+/// Run a content search within a **Workspace**.
 ///
 /// Args:
-/// * `query` — literal or regex search string (empty returns an empty page).
-/// * `project_id` — registered project; its environment decides local vs remote.
+/// * `workspace` — 搜索地址（`{ projectId, worktreePath }`）。**根 = `WorkspaceRef::root()`**
+///   （≡ `worktreePath ?? project.path`），与 file / terminal 域的运行根同一定义。
+///   曾经本命令只收 `project_id` 并直取 `project.path`：linked worktree 被选中时
+///   搜索仍扫主仓，而结果路径相对**主仓**根、点击打开时又相对**单元**根解析 ——
+///   同一份结果列表里两种基准，点开会打到另一个对象（红线 12 违反形态）。
 /// * `request_id` — monotonic id; a newer request with the same id cancels the
 ///   previous in-flight search (frontend increments per query change).
 /// * `options` — mode / case / word / regex / include / exclude.
 /// * `offset` / `limit` — pagination.
 #[tauri::command]
 pub async fn search_run(
+    workspace: WorkspaceSession,
     query: String,
-    project_id: String,
     request_id: String,
     options: Option<SearchOptions>,
     offset: Option<u32>,
@@ -32,6 +34,8 @@ pub async fn search_run(
     state: State<'_, AppStateWrapper>,
 ) -> Result<SearchPage, AppError> {
     let opts = options.unwrap_or_default();
+    // `SearchPage.project_id` 是**元数据**（前端不参与寻址），与地址同源取出。
+    let project_id = workspace.project_id.clone();
     if query.trim().is_empty() {
         return Ok(SearchPage {
             request_id,
@@ -46,22 +50,9 @@ pub async fn search_run(
         });
     }
 
-    // Resolve project root + environment (single lock acquisition).
-    let (root, target) = {
-        let manager = state.project_manager.lock().map_err(AppError::from)?;
-        let project = manager
-            .get_project(&project_id)
-            .ok_or_else(|| AppError::NotFound(format!("Project not found: {project_id}")))?;
-        (
-            project.path.to_string_lossy().to_string(),
-            project.environment.to_exec_target(),
-        )
-    };
-
-    let root = Path::new(&root)
-        .canonicalize()
-        .map_err(|e| AppError::InvalidInput(format!("Invalid project root: {e}")))?;
-    let root_str = root.to_string_lossy().to_string();
+    // 地址解析的唯一入口（红线 15）：环境与工作目录一次取齐，不再各自读项目表。
+    let (target, repo) = state.resolve_workspace_target(&workspace).await?;
+    let root_str = repo.root().to_string();
 
     let token = services::cancellations().begin(&request_id);
     let notified = token.notified();
