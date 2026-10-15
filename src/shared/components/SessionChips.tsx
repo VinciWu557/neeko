@@ -16,24 +16,6 @@ const AheadChip: React.FC<AheadChipProps> = ({ ahead }) => {
   );
 };
 
-interface ChangesChipProps {
-  add: number;
-  del: number;
-}
-
-const ChangesChip: React.FC<ChangesChipProps> = ({ add, del }) => {
-  if (add <= 0 && del <= 0) return null;
-  return (
-    <span
-      data-testid="session-chips-changes"
-      className="flex flex-col items-start text-[0.92em] font-mono leading-tight"
-    >
-      {add > 0 && <span className="text-[#3fb950]">+{add}</span>}
-      {del > 0 && <span className="text-[#f85149]">-{del}</span>}
-    </span>
-  );
-};
-
 interface KbdChipProps {
   children: React.ReactNode;
 }
@@ -44,9 +26,13 @@ const KbdChip: React.FC<KbdChipProps> = ({ children }) => (
   </span>
 );
 
+// 曾经还有一个 `Changes`（+A / -D 行级统计）chip。它在 G4 把 numstat 移出 status 热路径后
+// 恒不渲染：`FileChange.additions/deletions` 由 `parsers/status.rs` 硬编码为 0，全仓无写入点，
+// 而 chip 的门是 `add <= 0 && del <= 0 → null`。行级统计的正确出口是按需的
+// `getChangedFilesDiffStats`（Git 面板内使用），不进侧栏快照。
+
 export const SessionChips = {
   Ahead: React.memo(AheadChip),
-  Changes: React.memo(ChangesChip),
   Kbd: React.memo(KbdChip),
 };
 

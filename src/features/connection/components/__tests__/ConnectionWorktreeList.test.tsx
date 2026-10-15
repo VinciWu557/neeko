@@ -1,138 +1,86 @@
 import { render, screen, waitFor } from '@testing-library/react';
-import React from 'react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ConnectionWorktreeList from '@/features/connection/components/ConnectionWorktreeList';
-import { useProjectStore } from '@/shared/store/projectStore';
-import type { GitStatusSnapshot, Worktree } from '@/shared/types';
+import { useGitStore } from '@/shared/store/gitStore';
+import { useWorkspaceStore } from '@/shared/store/workspaceStore';
+import type { Worktree } from '@/shared/types';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
+const PROJECT_ID = 'p1';
 const WT: Worktree = { path: '/home/u/wts/feature-x', branch: 'feature/x', head: 'abc' };
-
-function makeSnapshot(projectId: string, worktreePath: string): GitStatusSnapshot {
-  return {
-    workspace_key: WorkspaceSession.of(projectId, worktreePath ?? null).key,
-    version: 1,
-    project_id: projectId,
-    worktree_path: worktreePath,
-    branch: 'feature/x',
-    entries: [{ path: 'a.ts', status: 'Modified', additions: 2, deletions: 1, is_dir: false }],
-    truncated: false,
-  };
-}
-
-type FetchStatus = (worktreePath: string) => Promise<GitStatusSnapshot | null>;
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
+const WT_KEY = WorkspaceSession.of(PROJECT_ID, WT.path).key;
 
 function List({
   worktrees = [WT],
-  onFetchStatus,
+  activeCheckoutPath = null,
 }: {
   worktrees?: Worktree[];
-  onFetchStatus?: FetchStatus;
+  activeCheckoutPath?: string | null;
 }) {
   return (
     <ConnectionWorktreeList
-      projectId="p1"
+      projectId={PROJECT_ID}
       worktrees={worktrees}
-      activeCheckoutPath={null}
+      activeCheckoutPath={activeCheckoutPath}
       onOpenWorktreeTerminal={vi.fn()}
       onCommitRenameWorktree={vi.fn()}
       onRemoveWorktree={vi.fn()}
-      onFetchStatus={onFetchStatus}
     />
   );
 }
 
-describe('ConnectionWorktreeList — 远端侧栏 chip（按单元订阅，不用组件本地 state）', () => {
+describe('ConnectionWorktreeList — 待 push 提交数（与 local 行逐字同一条读取规则）', () => {
   beforeEach(() => {
-    useProjectStore.setState({ statuses: {} });
+    useGitStore.setState({ aheadBehind: {} });
+    useWorkspaceStore.setState({ byProject: {} });
   });
 
-  it('拉取失败 = 未知：不出 chip（绝不写 0/0 假干净），下一次触发可重试', async () => {
-    const onFetchStatus = vi.fn<FetchStatus>().mockResolvedValue(null);
-    const { rerender } = render(<List onFetchStatus={onFetchStatus} />);
-
-    await waitFor(() => expect(onFetchStatus).toHaveBeenCalledTimes(1));
-    expect(screen.queryByText('+0')).not.toBeInTheDocument();
-    expect(screen.queryByText('-0')).not.toBeInTheDocument();
-
-    // 失败项必须退出「已拉清单」：清单变化（新数组）即重试，而不是一生只拉一次。
-    rerender(<List worktrees={[{ ...WT }]} onFetchStatus={onFetchStatus} />);
-    await waitFor(() => expect(onFetchStatus).toHaveBeenCalledTimes(2));
+  it('激活的 worktree 行渲染 ↑N（键 = 该 worktree 单元）', () => {
+    // ↑N 的键来自 workspaceStore 的激活单元（与 local 行同一条派生）。
+    useWorkspaceStore.getState().setActiveWorkspace(PROJECT_ID, WT.path, WT.branch);
+    useGitStore.setState({ aheadBehind: { [WT_KEY]: { ahead: 9, behind: 0 } } });
+    render(<List activeCheckoutPath={WT.path} />);
+    expect(screen.getByText('↑9')).toBeInTheDocument();
   });
 
-  it('成功拉取经 projectStore.statuses 出 chip（订阅而非本地 state）', async () => {
-    const onFetchStatus = vi.fn<FetchStatus>().mockResolvedValue(makeSnapshot('p1', WT.path));
-    render(<List onFetchStatus={onFetchStatus} />);
-
-    expect(await screen.findByText('+2')).toBeInTheDocument();
-    expect(screen.getByText('-1')).toBeInTheDocument();
-    // 数据确实落在共享槽位（本地/远端侧栏同表），而不是组件私有 state
-    expect(
-      useProjectStore.getState().statuses[WorkspaceSession.of('p1', WT.path ?? null).key]?.entries,
-    ).toHaveLength(1);
+  it('非激活行不渲染 ↑N（与 local 行一致：仅激活行展示）', () => {
+    useWorkspaceStore.getState().setActiveWorkspace(PROJECT_ID, WT.path, WT.branch);
+    useGitStore.setState({ aheadBehind: { [WT_KEY]: { ahead: 9, behind: 0 } } });
+    render(<List activeCheckoutPath={null} />);
+    expect(screen.queryByText('↑9')).not.toBeInTheDocument();
   });
 
-  it('同一挂载内不重复拉取已成功单元', async () => {
-    const onFetchStatus = vi.fn<FetchStatus>().mockResolvedValue(makeSnapshot('p1', WT.path));
-    const { rerender } = render(<List onFetchStatus={onFetchStatus} />);
-    await waitFor(() => expect(onFetchStatus).toHaveBeenCalledTimes(1));
-
-    // rerender 在 act 内同步 flush effect：跳过是同步的，无需等待即可断言「没有第二次拉取」。
-    rerender(<List worktrees={[{ ...WT }]} onFetchStatus={onFetchStatus} />);
-    expect(onFetchStatus).toHaveBeenCalledTimes(1);
+  it('无数据（未知）时不渲染 ↑N，绝不写 0 假干净', () => {
+    useWorkspaceStore.getState().setActiveWorkspace(PROJECT_ID, WT.path, WT.branch);
+    render(<List activeCheckoutPath={WT.path} />);
+    expect(screen.queryByText('↑0')).not.toBeInTheDocument();
   });
 
-  it('React.StrictMode 双挂载下 chip 仍出现（不得丢弃首轮结果）', async () => {
-    // 回归：曾用组件生命周期 `cancelled` 丢弃首轮拉取结果，而 StrictMode 的「重挂」会让次轮因
-    // key 已在已拉清单而跳过 ⇒ 结果被两头丢掉、chip 永不出现。applyStatus 是全局 store 写入，
-    // 不该被组件生命周期取消。
-    const onFetchStatus = vi.fn<FetchStatus>().mockResolvedValue(makeSnapshot('p1', WT.path));
+  it('渲染 worktree 行（目录名 + 分支）', () => {
+    render(<List />);
+    expect(screen.getByText('feature-x')).toBeInTheDocument();
+    expect(screen.getByText('feature/x')).toBeInTheDocument();
+  });
+});
+
+describe('ConnectionWorktreeList — 单元生命周期', () => {
+  it('删除点击触发 dirty 检查后弹确认', async () => {
+    const onIsWorktreeDirty = vi.fn().mockResolvedValue(true);
     render(
-      <React.StrictMode>
-        <List onFetchStatus={onFetchStatus} />
-      </React.StrictMode>,
+      <ConnectionWorktreeList
+        projectId={PROJECT_ID}
+        worktrees={[WT]}
+        activeCheckoutPath={null}
+        onOpenWorktreeTerminal={vi.fn()}
+        onCommitRenameWorktree={vi.fn()}
+        onRemoveWorktree={vi.fn()}
+        onIsWorktreeDirty={onIsWorktreeDirty}
+      />,
     );
-
-    expect(await screen.findByText('+2')).toBeInTheDocument();
-  });
-
-  it('本地 + 远端两侧栏同挂在同一单元时并发只拉一次（进程级单飞）', async () => {
-    const d = deferred<GitStatusSnapshot | null>();
-    const onFetchStatus = vi.fn<FetchStatus>().mockReturnValue(d.promise);
-    render(
-      <>
-        <List onFetchStatus={onFetchStatus} />
-        <List onFetchStatus={onFetchStatus} />
-      </>,
-    );
-
-    await waitFor(() => expect(onFetchStatus).toHaveBeenCalledTimes(1));
-    d.resolve(makeSnapshot('p1', WT.path));
-    await waitFor(() =>
-      expect(
-        useProjectStore.getState().statuses[WorkspaceSession.of('p1', WT.path ?? null).key],
-      ).toBeDefined(),
-    );
-    expect(onFetchStatus).toHaveBeenCalledTimes(1);
-  });
-
-  it('单元移出清单后再加回会重拉（已拉清单随之收敛）', async () => {
-    const onFetchStatus = vi.fn<FetchStatus>().mockResolvedValue(makeSnapshot('p1', WT.path));
-    const { rerender } = render(<List onFetchStatus={onFetchStatus} />);
-    await waitFor(() => expect(onFetchStatus).toHaveBeenCalledTimes(1));
-
-    // 移出清单 → 它的 key 退出「已拉清单」；再加回 ⇒ 同一挂载内也会重拉（不永久陈旧）。
-    rerender(<List worktrees={[]} onFetchStatus={onFetchStatus} />);
-    rerender(<List worktrees={[{ ...WT }]} onFetchStatus={onFetchStatus} />);
-    await waitFor(() => expect(onFetchStatus).toHaveBeenCalledTimes(2));
+    await userEvent.click(screen.getByTitle('Remove worktree and branch'));
+    await waitFor(() => expect(onIsWorktreeDirty).toHaveBeenCalledWith(WT.path));
+    expect(await screen.findByText(/Force Remove/)).toBeInTheDocument();
   });
 });
