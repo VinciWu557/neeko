@@ -12,6 +12,7 @@ import type {
   PushOutcome,
   StashActionResult,
   StashEntry,
+  ConflictStages,
 } from '@/shared/types/git';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
@@ -112,6 +113,11 @@ export interface ProjectCommands {
     Array<{ path: string; additions: number; deletions: number }>
   >;
   getFileDiff(filePath: string, collapse?: boolean): Promise<DiffResult>;
+  /**
+   * 读本命令所属Workspace中某冲突文件的 index unmerged stages。
+   * path 无 unmerged 条目（已解决 / 非冲突）时 reject —— caller 据此回退普通 diff 视图（R10）。
+   */
+  getConflictStages(filePath: string): Promise<ConflictStages>;
   /** 展开折叠的 untracked 目录条目：列出目录下的 untracked 文件（changes list 按需调用） */
   listUntrackedFiles(dirPath: string): Promise<string[]>;
   stageFiles(filePaths: string[]): Promise<void>;

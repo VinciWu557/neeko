@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useProjectStore } from '@/shared/store/projectStore';
@@ -25,6 +25,11 @@ function file(path: string): FileChange {
     index_status: ' ',
     worktree_status: 'M',
   };
+}
+
+/** 冲突条目（UU）：index/worktree 任一侧为 U。 */
+function conflictedFile(path: string): FileChange {
+  return { ...file(path), index_status: 'U', worktree_status: 'U' };
 }
 
 function snapshot(
@@ -87,7 +92,10 @@ const commands = {
   push: vi.fn().mockResolvedValue(undefined),
 } as never;
 
-function renderPanel(workspaceKey: WorkspaceKey) {
+function renderPanel(
+  workspaceKey: WorkspaceKey,
+  onSelectFile?: (path: string, r?: unknown) => void,
+) {
   return render(
     <GitCommitPanel
       project={project}
@@ -96,6 +104,7 @@ function renderPanel(workspaceKey: WorkspaceKey) {
       onRefreshGit={vi.fn().mockResolvedValue(undefined)}
       aheadBehind={null}
       workspaceKey={workspaceKey}
+      onSelectFile={onSelectFile}
     />,
   );
 }
@@ -174,5 +183,25 @@ describe('GitCommitPanel — 面板可见性由「单元槽位」决定（issue 
     );
     expect(screen.getByText('only-in-main.ts')).toBeInTheDocument();
     expect(screen.queryByText('only-in-wt.ts')).not.toBeInTheDocument();
+  });
+
+  it('入口决策：点冲突文件 → 开 conflict 修订（而非无条件 worktree）', () => {
+    useProjectStore.getState().applyStatus(snapshot(MAIN_KEY, [conflictedFile('conflict.ts')]));
+    const onSelectFile = vi.fn();
+    renderPanel(MAIN_KEY, onSelectFile);
+
+    fireEvent.click(screen.getByText('conflict.ts'));
+
+    expect(onSelectFile).toHaveBeenCalledWith('conflict.ts', { type: 'conflict' });
+  });
+
+  it('入口决策：点非冲突文件 → 仍开 worktree 修订（既有行为不变）', () => {
+    useProjectStore.getState().applyStatus(snapshot(MAIN_KEY, [file('normal.ts')]));
+    const onSelectFile = vi.fn();
+    renderPanel(MAIN_KEY, onSelectFile);
+
+    fireEvent.click(screen.getByText('normal.ts'));
+
+    expect(onSelectFile).toHaveBeenCalledWith('normal.ts', { type: 'worktree' });
   });
 });

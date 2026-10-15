@@ -326,12 +326,93 @@ export type ViewMode = 'unified' | 'split';
 export type DiffRevision =
   | { type: 'worktree' }
   | { type: 'commit'; commitHash: string }
-  | { type: 'stash'; selector: string };
+  | { type: 'stash'; selector: string }
+  // 修订维度天然容纳「index 的 unmerged 状态」——冲突是「对 index 做 diff」，
+  // 故落在 DiffRevision 而非新增 tab 类型（R7：不新增 TabData.kind / 地址类型）。
+  | { type: 'conflict' };
 
 /** diff 的完整地址：Workspace（`projectId` + `worktreePath`）+ 修订维度。 */
 export interface DiffSource {
   workspace: WorkspaceSession;
   revision: DiffRevision;
+}
+
+// ─── Git 冲突三态（index unmerged stages）─────────────────────────────────────
+
+/**
+ * 冲突类型（与 Rust `ConflictKind` 的 serde `snake_case` 逐字对齐）。
+ *
+ * 不含 `both_deleted`：双方都删（DD）不产生 unmerged 条目，永远不进入本读路径。
+ */
+export type ConflictKind =
+  | 'both_modified'
+  | 'both_added'
+  | 'modify_delete'
+  | 'rename_rename'
+  | 'binary';
+
+/**
+ * 冲突的一个阶段侧。**`content === null` = 该 stage 不存在**（DU 的 ours、UD 的 theirs、
+ * AA 的 base、binary 的任意侧）——与「文件确实是空的」（`content === ''`）是两种语义，
+ * 渲染上必须区分（R3：缺失 stage 绝不被归一为空串）。
+ */
+export interface ConflictSide {
+  /** 该侧路径（rename/rename 下三侧可不同）。 */
+  path: string | null;
+  /** 该侧内容；`null` = stage 缺失或 binary 不解码。 */
+  content: string | null;
+  /** 该侧内容原始字节数（内容被载荷预算截断时仍报截断前大小）。 */
+  size: number;
+  /** 是否二进制（前 8KB 含 `0x00`）。 */
+  is_binary: boolean;
+  /** 内容是否因载荷预算被截断。 */
+  truncated: boolean;
+}
+
+/** 合并输出中的单个冲突区域（行区间 + 三侧候选）。 */
+export interface MergeRegion {
+  /** 区域 id（自 0 递增）。 */
+  id: number;
+  /** 合并输出中的起始行（0-based）。 */
+  merged_start: number;
+  /** 合并输出中的结束行（0-based 半开）。 */
+  merged_end: number;
+  /** base 侧候选行。 */
+  base_lines: string[];
+  /** ours 侧候选行。 */
+  our_lines: string[];
+  /** theirs 侧候选行。 */
+  their_lines: string[];
+  /** base 侧原文起始行号（三栏对齐用）。 */
+  base_start: number;
+  /** ours 侧原文起始行号（三栏对齐用）。 */
+  our_start: number;
+  /** theirs 侧原文起始行号（三栏对齐用）。 */
+  their_start: number;
+}
+
+/** 一个冲突文件的完整三态视图（`get_conflict_stages` 的返回值）。 */
+export interface ConflictStages {
+  /** 冲突文件路径（仓库相对）。 */
+  path: string;
+  kind: ConflictKind;
+  ancestor: ConflictSide | null;
+  ours: ConflictSide | null;
+  theirs: ConflictSide | null;
+  /** 合并文本（仅可区域合并且非 binary 时存在）。 */
+  merged: string | null;
+  /** 冲突区域列表（可区域合并时非空）。 */
+  regions: MergeRegion[];
+  /** 任一侧 / merged / regions 是否被载荷预算截断。 */
+  truncated: boolean;
+  /**
+   * 是否可做区域级合并（后端 `ConflictKind::is_region_mergeable` 的权威结论）。
+   *
+   * **前端不得按 `kind` 重算**这条语义（那是同一条领域判据的第二份实现，改一处必漏
+   * 另一处）；也**不得**用 `merged !== null` 反推 —— `merged` 是派生展示数据，它的存在与否
+   * 由载荷预算支配（`cap_conflict_payload`）而不是由语义支配，两者同进退只是巧合。
+   */
+  region_mergeable: boolean;
 }
 
 // ─── PR Comment Types ───────────────────────────────────────────────────────

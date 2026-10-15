@@ -18,6 +18,10 @@ export type {
   PRMergeResult,
   GitStatusFile,
   GitStatusDiff,
+  ConflictKind,
+  ConflictSide,
+  MergeRegion,
+  ConflictStages,
 } from './types';
 
 // Hooks
@@ -30,6 +34,7 @@ export { useRefreshGitInfo } from './hooks/useRefreshGitInfo';
 export { default as BranchStatusBarWidget } from './components/BranchStatusBarWidget';
 export { default as CommitDialog } from './components/CommitDialog';
 export { default as DiffView } from './components/diff';
+export { ConflictView } from './components/conflict';
 export { default as GitControlPanel } from './components/GitControlPanel';
 export { default as PullRequestsPanel } from './components/PullRequestsPanel';
 export { PRDetailView } from './components/pr-detail';

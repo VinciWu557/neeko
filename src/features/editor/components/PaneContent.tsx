@@ -3,7 +3,7 @@ import React from 'react';
 import { AgentChatTabView } from '@/features/agent-chat';
 import { BrowserTabView } from '@/features/browser';
 import { ConversationViewer } from '@/features/conversation';
-import { DiffView, PRDetailView } from '@/features/git';
+import { ConflictView, DiffView, PRDetailView } from '@/features/git';
 import { SplitLayout, TerminalView } from '@/features/terminal';
 import { useEditorStore } from '@/shared/store/editorStore';
 import type { AgentConfig, AuthMethod, DiffSource } from '@/shared/types';
@@ -129,6 +129,16 @@ function PaneContent({
         </div>
       );
     case 'diff':
+      // 修订维度二选一：冲突（index unmerged stages）→ 三侧只读视图；其余 → 既有 DiffView（零改动）。
+      if (activeTab.data.diffSource.revision.type === 'conflict') {
+        return (
+          <ConflictView
+            workspace={tabSession}
+            filePath={activeTab.data.filePath}
+            onBack={() => onCloseTab(activeTab.id)}
+          />
+        );
+      }
       return (
         <DiffView
           projectId={projectId}

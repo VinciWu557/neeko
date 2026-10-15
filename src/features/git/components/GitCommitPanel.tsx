@@ -3,7 +3,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { openProjectFile } from '@/features/quick-open';
 import { useGitStore } from '@/shared/store/gitStore';
 import { useProjectStore, selectStatus } from '@/shared/store/projectStore';
-import type { AheadBehind } from '@/shared/types';
+import type { AheadBehind, DiffRevision } from '@/shared/types';
 import type {
   ProjectView,
   ProjectCommands,
@@ -20,6 +20,7 @@ import { useDiscardConfirm } from '../hooks/useDiscardConfirm';
 import { useFileSelection } from '../hooks/useFileSelection';
 import { useGitActions } from '../hooks/useGitActions';
 import { useGitDialogRequest } from '../hooks/useGitDialogRequest';
+import { revisionForChange } from '../utils/conflictEntry';
 
 import BranchInfo from './BranchInfo';
 import ChangesList from './ChangesList';
@@ -34,7 +35,7 @@ interface GitCommitPanelProps {
   commands: ProjectCommands;
   capabilities: ProjectCapabilities;
   onRefreshGit: () => Promise<void>;
-  onSelectFile?: (filePath: string) => void;
+  onSelectFile?: (filePath: string, revision?: DiffRevision) => void;
   onShowToast?: (message: string, type?: 'info' | 'error') => void;
   onOpenDialog?: (type: 'new-branch' | 'new-worktree', e: React.MouseEvent) => void;
   aheadBehind: AheadBehind | null;
@@ -150,7 +151,15 @@ const GitCommitPanel: React.FC<GitCommitPanelProps> = ({
     );
   }, [handleStageAllUntracked, changedFiles]);
 
-  const handleFileSelect = useCallback((path: string) => onSelectFile?.(path), [onSelectFile]);
+  // 入口决策（R6）：按 path 查变更条目 → `revisionForChange`（复用 isConflictedEntry）
+  // → 冲突文件开 conflict 修订（而非无条件 worktree），修掉「本地 git2 0 hunks → No changes」的入口成因。
+  const handleFileSelect = useCallback(
+    (path: string) => {
+      const entry = changedFiles.find((f) => f.path === path);
+      onSelectFile?.(path, entry ? revisionForChange(entry) : undefined);
+    },
+    [onSelectFile, changedFiles],
+  );
 
   const handleOpenFile = useCallback(
     (path: string) => void openProjectFile({ projectId: project.id, filePath: path }),

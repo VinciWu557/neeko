@@ -31,4 +31,8 @@ export type {
   StashActionResult,
   GitStatusSnapshot,
   WorkspaceActivation,
+  ConflictKind,
+  ConflictSide,
+  MergeRegion,
+  ConflictStages,
 } from '@/shared/types/git';

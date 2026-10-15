@@ -17,6 +17,7 @@ import type {
   StashEntry,
   GitStatusSnapshot,
   WorkspaceActivation,
+  ConflictStages,
 } from '../types';
 export type { PushOutcome };
 
@@ -303,6 +304,20 @@ export function getFileDiff(
     );
     return r;
   });
+}
+
+/**
+ * 读一个冲突文件的 index unmerged stages（三侧 + 区域）——Diff 面板的冲突视图数据源。
+ *
+ * **契约（与单文件 diff 三态契约同族）**：该 path 无 unmerged 条目时命令 `Err` ——
+ * 语义是「caller 应回退普通 diff」（已解决 / 非冲突路径），**不是错误**（R10）。
+ * 消费者 `useConflictStages` 负责把 `Err` 映射为 `notConflicted` 正常收敛态。
+ */
+export function getConflictStages(
+  workspace: WorkspaceSession,
+  filePath: string,
+): Promise<ConflictStages> {
+  return invoke<ConflictStages>('get_conflict_stages', { workspace, filePath });
 }
 
 export function isGitRepo(projectId: ProjectId): Promise<boolean> {
