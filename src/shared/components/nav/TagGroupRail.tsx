@@ -2,7 +2,7 @@ import { LayoutGrid, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import React, { useEffect, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
 import CountLabel from '@/shared/components/nav/CountLabel';
 import NavEmpty from '@/shared/components/nav/NavEmpty';
 import NavRow from '@/shared/components/nav/NavRow';
@@ -247,19 +247,13 @@ const TagGroupRail: React.FC<TagGroupRailProps> = ({
       </NavSection>
 
       {/* 弹框作为 NavSection 的兄弟节点：区块折叠时不渲染 children，弹框不能挂在里面 */}
-      {crud.pendingDelete ? (
-        <ConfirmDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) crud.cancelDelete();
-          }}
-          title={confirmTitle}
-          description={describeDelete(crud.pendingDelete)}
-          confirmLabel="Delete"
-          danger
-          onConfirm={crud.confirmDelete}
-        />
-      ) : null}
+      <DeleteConfirmDialog
+        pending={crud.pendingDelete}
+        onCancel={crud.cancelDelete}
+        onConfirm={() => crud.confirmDelete()}
+        title={confirmTitle}
+        describe={describeDelete}
+      />
     </>
   );
 };

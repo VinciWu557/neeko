@@ -5,44 +5,44 @@ import { ChevronRightIcon, PlusIcon, TrashIcon, MoreVerticalIcon } from '@/share
 import { getAvatarStyle, getProjectInitials } from '@/shared/utils/projectAvatar';
 
 interface ProjectGroupActions {
-  /** 折叠/展开切换。点�?header 主体�?chevron 按钮均触�?*/
+  /** 折叠/展开切换。点击 header 主体或 chevron 按钮均触发 */
   onToggle: () => void;
-  /** 头部 + 按钮：默认语�?= New Worktree */
+  /** 头部 + 按钮：默认语义 = New Worktree */
   onAddWorktree?: () => void;
   /** Hover 槽位：在 IDE 中打开。caller 决定是否提供 */
   onOpenIde?: () => void;
-  /** Hover 槽位：弹�?Git 下拉菜单（Commit/Push/Pull/...�?*/
+  /** Hover 槽位：弹出 Git 下拉菜单（Commit/Push/Pull/...） */
   onGitMenu?: (e: React.MouseEvent) => void;
-  /** Hover 槽位：移除项�?*/
+  /** Hover 槽位：移除项目 */
   onRemove?: () => void;
   /** 右键菜单 */
   onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 interface ProjectGroupProps {
-  /** 用于派生 avatar 与字�?*/
+  /** 用于派生 avatar 与首字母 */
   name: string;
   /**
-   * 用户�?ProjectSettingsDialog 中指定的 avatar 覆盖色�?
-   * `null/undefined` 表示�?name �?DJB2 hash 兜底�?
+   * 用户在 ProjectSettingsDialog 中指定的 avatar 覆盖色，
+   * `null/undefined` 表示由 name 的 DJB2 hash 兜底。
    */
   avatarColor?: string | null;
-  /** 会话总数（一�?= 1 主终�?+ worktrees.length�?*/
+  /** 会话总数（一项 = 1 主终端 + worktrees.length） */
   sessionCount: number;
   /** 是否展开 */
   expanded: boolean;
-  /** 是否 active 项目（影�?header bg + hover 槽位常驻可见�?*/
+  /** 是否 active 项目（影响 header bg + hover 槽位常驻可见） */
   isActive?: boolean;
-  /** 是否最后一个项目卡（决定要不要�?hairline 分隔�?*/
+  /** 是否最后一个项目卡（决定要不要画 hairline 分隔） */
   isLast?: boolean;
   actions: ProjectGroupActions;
-  /** 自定�?IDE 图标（src）。caller 通常通过 getIdeIconByCommand 提供 */
+  /** 自定义 IDE 图标（src）。caller 通常通过 getIdeIconByCommand 提供 */
   ideIconSrc?: string;
-  /** 项目 hover 时除 IDE/Git/Trash 之外要追加的按钮（保留扩展位�?*/
+  /** 项目 hover 时除 IDE/Git/Trash 之外要追加的按钮（保留扩展位） */
   headerExtra?: React.ReactNode;
-  /** 强制显示 hover 槽位（如 Git 下拉打开期间�?*/
+  /** 强制显示 hover 槽位（如 Git 下拉打开期间） */
   forceShowActions?: boolean;
-  /** 展开后的 session 行内�?*/
+  /** 展开后的 session 行内容 */
   children?: React.ReactNode;
 }
 

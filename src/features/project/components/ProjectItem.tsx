@@ -3,9 +3,10 @@ import { CSS } from '@dnd-kit/utilities';
 import React, { useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
 import type { DialogType } from '@/shared/components/GitDialog';
 import { MoreVerticalIcon } from '@/shared/components/icons';
+import ProjectGroup from '@/shared/components/ProjectGroup';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { getIdeIconByCommand } from '@/shared/utils/idePresets';
 
@@ -14,7 +15,6 @@ import { setProjectCollapsed as setProjectCollapsedApi } from '../api/projectApi
 import ContextMenu from './ContextMenu';
 import ProjectGitMenu from './ProjectGitMenu';
 import ProjectGitSection from './ProjectGitSection';
-import ProjectGroup from './ProjectGroup';
 import type { ProjectItemProps } from './projectItemTypes';
 import ProjectSettingsDialog from './ProjectSettingsDialog';
 import { useProjectItemMenu } from './useProjectItemMenu';
@@ -204,24 +204,23 @@ const ProjectItem: React.FC<ProjectItemProps & ProjectItemViewExtras> = ({
         />
       )}
 
-      <ConfirmDialog
-        open={confirmRemove}
-        onOpenChange={setConfirmRemove}
+      <DeleteConfirmDialog
+        pending={confirmRemove ? project : null}
+        onCancel={() => setConfirmRemove(false)}
+        onConfirm={(p) => onRemoveProject(p.id)}
         title="Remove Project"
-        description={
+        confirmLabel="Remove"
+        describe={(p) => (
           <>
             <p className="text-[13px] text-text-primary mb-3 leading-relaxed">
-              Are you sure you want to remove{' '}
-              <strong className="text-accent-blue">{project.name}</strong>?
+              Are you sure you want to remove <strong className="text-accent-blue">{p.name}</strong>
+              ?
             </p>
             <div className="flex flex-col gap-1 p-2 px-3 bg-bg-tertiary rounded-md mb-4 font-mono text-xs">
-              <span className="text-text-muted break-all">{project.path}</span>
+              <span className="text-text-muted break-all">{p.path}</span>
             </div>
           </>
-        }
-        confirmLabel="Remove"
-        onConfirm={() => onRemoveProject(project.id)}
-        danger
+        )}
       />
     </div>
   );

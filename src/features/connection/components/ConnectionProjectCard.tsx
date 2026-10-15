@@ -2,21 +2,19 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import React, { useCallback, useMemo, useState } from 'react';
 
-// eslint-disable-next-line import/no-restricted-paths -- connection project card uses project group/session row components
-import { ProjectGroup, SessionRow } from '@/features/project/components';
 import { cn } from '@/lib/utils';
-import ConfirmDialog from '@/shared/components/ConfirmDialog';
 import ContextMenu, { type ContextMenuItem } from '@/shared/components/ContextMenu';
+import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
+import ProjectGroup from '@/shared/components/ProjectGroup';
 import ProjectSettingsDialog from '@/shared/components/ProjectSettingsDialog';
+import SessionRow from '@/shared/components/SessionRow';
 import { useGitStore } from '@/shared/store/gitStore';
-import { selectEntries, useProjectStore } from '@/shared/store/projectStore';
 import {
   selectActiveCheckoutPath,
   useActiveWorkspaceKey,
   useWorkspaceStore,
 } from '@/shared/store/workspaceStore';
 import { getIdeIconByCommand } from '@/shared/utils/idePresets';
-import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { useConnectionWorktreeActions } from '../hooks/useConnectionWorktreeActions';
 
@@ -151,21 +149,8 @@ const ConnectionProjectCard: React.FC<ConnectionProjectCardProps> = React.memo(
       ? getIdeIconByCommand(project.selected_ide, ideCommandOverrides)
       : undefined;
 
-    // local 主终端行的 +A -D = **主仓单元**的 status 条目（worktree 单元各有自己的条目）。
-    // 缺失 = 未知（未挂载 / 刚被切走）→ 不显示 chip；绝不沿用其它单元的条目。
-    const mainEntries = useProjectStore((s) =>
-      selectEntries(s, WorkspaceSession.of(project.id, null).key),
-    );
-
-    const localChanges = useMemo(() => {
-      const files = mainEntries ?? [];
-      if (files.length === 0) return undefined;
-      const add = files.reduce((s, f) => s + f.additions, 0);
-      const del = files.reduce((s, f) => s + f.deletions, 0);
-      if (add === 0 && del === 0) return undefined;
-      return { add, del };
-    }, [mainEntries]);
-
+    // local 主终端行只展示 ↑N（待 push 提交数），取自**主仓单元**的键。
+    // 注：曾有 +A -D 聚合，数据源（`FileChange.additions/deletions`）在 G4 后恒为 0，已删除。
     const localActive = isActive && !activeCheckoutPath;
 
     const style = {
@@ -208,7 +193,6 @@ const ConnectionProjectCard: React.FC<ConnectionProjectCardProps> = React.memo(
               branch={gitInfo?.current_branch}
               isActive={localActive}
               ahead={localActive ? aheadBehind?.ahead : undefined}
-              changes={localChanges}
               title="Open primary terminal"
               onClick={(e) => {
                 e.stopPropagation();
@@ -222,7 +206,6 @@ const ConnectionProjectCard: React.FC<ConnectionProjectCardProps> = React.memo(
               onOpenWorktreeTerminal={handleOpenWorktreeTerminal}
               onCommitRenameWorktree={worktreeActions.rename}
               onRemoveWorktree={worktreeActions.remove}
-              onFetchStatus={worktreeActions.fetchStatus}
               onIsWorktreeDirty={worktreeActions.checkDirty}
             />
           </div>
@@ -252,27 +235,23 @@ const ConnectionProjectCard: React.FC<ConnectionProjectCardProps> = React.memo(
           />
         )}
 
-        <ConfirmDialog
-          open={confirmRemove}
-          onOpenChange={setConfirmRemove}
+        <DeleteConfirmDialog
+          pending={confirmRemove ? project : null}
+          onCancel={() => setConfirmRemove(false)}
+          onConfirm={(p) => onRemoveProject(entryId, p.id)}
           title="Remove Project"
-          description={
+          confirmLabel="Remove"
+          describe={(p) => (
             <>
               <p className="text-[13px] text-text-primary mb-3 leading-relaxed">
                 Are you sure you want to remove{' '}
-                <strong className="text-accent-blue">{project.name}</strong>?
+                <strong className="text-accent-blue">{p.name}</strong>?
               </p>
               <div className="flex flex-col gap-1 p-2 px-3 bg-bg-tertiary rounded-md mb-4 font-mono text-xs">
-                <span className="text-text-muted break-all">{project.path}</span>
+                <span className="text-text-muted break-all">{p.path}</span>
               </div>
             </>
-          }
-          confirmLabel="Remove"
-          onConfirm={() => {
-            setConfirmRemove(false);
-            onRemoveProject(entryId, project.id);
-          }}
-          danger
+          )}
         />
       </div>
     );
