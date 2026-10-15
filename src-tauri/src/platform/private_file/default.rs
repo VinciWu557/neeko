@@ -4,6 +4,14 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// 创建（含父级）私有目录。
+///
+/// Windows 的目标位置（用户 profile）自带 per-user ACL，无需显式设权限位 ——
+/// 与 [`write_private_atomic`] 的口径一致。
+pub fn create_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)
+}
+
 /// 原子写入 `path`。Windows 无跨进程安全的同名 rename-over，
 /// 采用「先删后改名」：极小窗口内并发读者可能拿到 FileNotFound，
 /// hook 侧契约是 fail-open 静默（下一拍重读即恢复），不构成故障。

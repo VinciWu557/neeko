@@ -21,13 +21,37 @@ use super::targets::{HookTarget, HOOK_TARGETS};
 /// 归属标记前缀（模板与卸载判定的单一契约）。
 pub const MANAGED_MARKER: &str = "// @neeko-managed-hook";
 
-/// 归属标记里应有的版本位（与 `Cargo.toml` 同源）。
-fn version_token() -> String {
-    format!("v{}", env!("CARGO_PKG_VERSION"))
+/// 归属标记里应有的版本位（**内容寻址**）：`v{应用版本}+{模板正文 hash}`。
+///
+/// 为什么含 hash：`version_current` 是「已装 hook 文件是否过期」的**缓存键**，
+/// 它必须从**被缓存的内容本身**派生（内容寻址），而不是从发布版本号派生 —— 后者只在
+/// 发版时递增，「同版本号内改模板」会永远不被识别 ⇒ 已装机器静默不更新。
+/// 应用版本仍保留在标记里，供人眼辨识（D13）。
+fn content_token(template: &str) -> String {
+    format!(
+        "v{}+{:016x}",
+        env!("CARGO_PKG_VERSION"),
+        fnv1a(template.as_bytes())
+    )
+}
+
+/// FNV-1a（64-bit）—— 跨 Rust 版本稳定的内容哈希。
+///
+/// **禁用 `std::hash::DefaultHasher`**：它的输出不保证跨 Rust 版本/平台稳定，
+/// 用它会让「同一模板在不同构建下算出不同键」⇒ 每次升级都误判过期。
+fn fnv1a(bytes: &[u8]) -> u64 {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
 }
 
 fn render(template: &str) -> String {
-    format!("{MANAGED_MARKER} {}\n{template}", version_token())
+    format!("{MANAGED_MARKER} {}\n{template}", content_token(template))
 }
 
 /// 单个 CLI 的一次 hook 应用结果状态（机器可读，序列化后与前端联合类型一一对应）。
@@ -79,14 +103,17 @@ enum Ownership {
 }
 
 /// 不可读（含非 UTF-8）一律按**他人资产**对待 —— 宁可拒绝覆盖也不能破坏用户文件（R6.5）。
-fn ownership_of(path: &Path) -> Ownership {
+///
+/// `expected_token` = 当前模板的 [`content_token`]：版本位是内容寻址的，判「是否当前」
+/// 必须拿到当前模板才能算出期望键（三条调用路径 `status_at`/`install_at`/`uninstall_at` 同口径）。
+fn ownership_of(path: &Path, expected_token: &str) -> Ownership {
     let first = std::fs::read_to_string(path)
         .ok()
         .and_then(|content| content.lines().next().map(str::to_string));
     match first.and_then(|line| line.strip_prefix(MANAGED_MARKER).map(str::to_string)) {
         None => Ownership::Foreign,
         Some(rest) => Ownership::Managed {
-            version_current: rest.trim() == version_token(),
+            version_current: rest.trim() == expected_token,
         },
     }
 }
@@ -118,10 +145,12 @@ pub fn status_all() -> Vec<HookInstallStatus> {
 
 fn status_at(target: &HookTarget, dir: &Path) -> HookInstallStatus {
     let (installed, version_current) = match dir_to_file(target, dir) {
-        Some(path) if path.is_file() => match ownership_of(&path) {
-            Ownership::Foreign => (false, false),
-            Ownership::Managed { version_current } => (true, version_current),
-        },
+        Some(path) if path.is_file() => {
+            match ownership_of(&path, &content_token(target.template)) {
+                Ownership::Foreign => (false, false),
+                Ownership::Managed { version_current } => (true, version_current),
+            }
+        }
         // 目录不存在 = 该 CLI 未在此机器初始化过配置面；状态查询不代创建（客人不喧宾）。
         _ => (false, false),
     };
@@ -174,7 +203,12 @@ fn install_at(target: &HookTarget, dir: &Path) -> HookApplyOutcome {
             format!("mkdir {}: {err}", dir.display()),
         );
     }
-    if path.is_file() && matches!(ownership_of(&path), Ownership::Foreign) {
+    if path.is_file()
+        && matches!(
+            ownership_of(&path, &content_token(target.template)),
+            Ownership::Foreign
+        )
+    {
         return outcome(
             target,
             HookApplyStatus::Skipped,
@@ -196,7 +230,7 @@ fn uninstall_at(target: &HookTarget, dir: &Path) -> Option<HookApplyOutcome> {
     if !path.is_file() {
         return None; // 从未安装：不产生噪音行
     }
-    Some(match ownership_of(&path) {
+    Some(match ownership_of(&path, &content_token(target.template)) {
         Ownership::Foreign => outcome(
             target,
             HookApplyStatus::Skipped,
@@ -328,6 +362,60 @@ mod tests {
         );
     }
 
+    /// 内容寻址标记键（D13）：同内容稳定、内容变则键变、含应用版本前缀。
+    #[test]
+    fn content_token_is_stable_and_content_addressed() {
+        let a = content_token("BODY");
+        assert_eq!(a, content_token("BODY"), "同一模板两次必须算出同一键");
+        assert!(
+            a.starts_with(&format!("v{}+", env!("CARGO_PKG_VERSION"))),
+            "标记键必须带应用版本前缀（人眼可辨识）：{a}"
+        );
+        assert_ne!(a, content_token("BODY "), "模板改一字节 → 键必须变");
+        // FNV-1a 已知向量（"" 的 offset basis）—— 钉死算法跨版本稳定，防换成 DefaultHasher。
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+    }
+
+    /// D13 的核心不变量：模板正文变了（版本号不变）→ 已装文件被判过期 → 收敛触发 Install。
+    ///
+    /// 反证：把 `content_token` 退回 `v{CARGO_PKG_VERSION}` 实现，本用例必红。
+    #[test]
+    fn template_body_change_marks_install_stale_without_version_bump() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("neeko-status.js");
+        // 用旧正文安装。
+        write_at(&file, &render("OLD_BODY"));
+
+        // 同版本号、新正文：status 必须判过期。
+        let updated = HookTarget {
+            source: "demo",
+            file_name: "neeko-status.js",
+            template: "NEW_BODY",
+            dir: || None,
+        };
+        let s = status_at(&updated, tmp.path());
+        assert!(s.installed && !s.version_current, "改正文必须判过期");
+        assert_eq!(
+            reconcile_action(true, &[s]),
+            Some(ReconcileAction::Install),
+            "过期 + 意图开 → 必须自动重装（不需要碰发布版本）"
+        );
+    }
+
+    /// 旧标记（无 `+hash`，如 `v1.0.9`）与当前期望键不匹配 → 首启自动重装一次（迁移方向安全）。
+    #[test]
+    fn legacy_version_marker_triggers_reinstall() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file = tmp.path().join("neeko-status.js");
+        let t = target("neeko-status.js");
+        write_at(
+            &file,
+            &format!("{MANAGED_MARKER} v{}\nBODY", env!("CARGO_PKG_VERSION")),
+        );
+        let s = status_at(&t, tmp.path());
+        assert!(s.installed && !s.version_current, "旧纯版本标记应被判过期");
+    }
+
     /// uninstall_at：只删受管文件；他人文件 Skipped；从未安装不产生回执行。
     #[test]
     fn uninstall_only_removes_managed() {
@@ -358,14 +446,17 @@ mod tests {
         assert!(!missing.exists());
     }
 
-    /// 模板自校验：每个受管 CLI 的嵌入模板必须含 endpoint 重读、token 头与 loopback 锚点
+    /// 模板自校验：每个受管 CLI 的嵌入模板必须含坐标目录扫描、token 头与 loopback 锚点
     /// （防手改丢关键行为）。断言引用**常量本身** —— 任一侧改名，测试立刻红。
     #[test]
     fn embedded_templates_keep_contract_anchors() {
         use crate::agent::hooks::{endpoint, server};
         for target in HOOK_TARGETS {
             for anchor in [
-                "endpoint.env",
+                // v5 多实例：坐标是目录扫描（不是单文件），扫描 + fan-out 是两个独立失活面。
+                endpoint::ENDPOINTS_DIR_NAME,
+                "readdirSync",
+                "Promise.allSettled",
                 endpoint::ENV_KEY_PORT,
                 endpoint::ENV_KEY_TOKEN,
                 server::TOKEN_HEADER,
@@ -373,10 +464,19 @@ mod tests {
             ] {
                 assert!(
                     target.template.contains(anchor),
-                    "{} 模板缺少契约锚点 {anchor:?}（endpoint 重读 / token / loopback）",
+                    "{} 模板缺少契约锚点 {anchor:?}（坐标目录扫描 / fan-out / token / loopback）",
                     target.source
                 );
             }
+            // 单文件覆盖保留（调试/夹具）：env 键名是双端契约，丢了会静默退回目录扫描。
+            // 断言带 `||` 的**读取形态**而非裸键名 —— 裸键名是 plural 目录键
+            // （`NEEKO_AGENT_HOOK_ENDPOINTS_DIR`）的子串，会被后者替身通过（非承重锚点）。
+            let override_read = format!("{} ||", endpoint::ENV_KEY_OVERRIDE);
+            assert!(
+                target.template.contains(&override_read),
+                "{} 模板缺少单文件覆盖读取 {override_read:?}",
+                target.source
+            );
             // 主题上报（R7.5）：双模板都必须带 title 字段，否则副标题整条链静默失效。
             assert!(
                 target.template.contains("title:"),
@@ -432,9 +532,10 @@ mod tests {
             "event.subscribe",   // V2 事件订阅（替代 V1 的 event 回调）
             "session.execution", // V2 生命周期族（started/succeeded/failed/interrupted）
             "permission.asked",  // 权限门（2.0.28 二进制仍在发射）
-            "endpoint.env",      // endpoint 重读
-            "127.0.0.1",         // loopback 锚点
-            "title:",            // 主题上报（R7.5）
+            "readdirSync",       // v5 多实例：坐标目录扫描 + fan-out
+            "Promise.allSettled",
+            "127.0.0.1", // loopback 锚点
+            "title:",    // 主题上报（R7.5）
         ] {
             assert!(V2.contains(anchor), "V2 模板缺少契约锚点 {anchor:?}");
         }

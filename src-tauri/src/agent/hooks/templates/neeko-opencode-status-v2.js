@@ -10,72 +10,119 @@
 // - 包络是 `{ type, data }`（V1 是 `{ type, properties }`），读 `data ?? properties` 双兼容。
 // 语义与 V1 对齐：仅 completed 上报 turn_completed（failed/interrupted 不报，用户主动停不通知）；
 // 硬约束（design T5）不变：
-// - 每次上报前重读 endpoint 文件（mtime+ino 缓存）→ Neeko 重启换端口后自动跟上；
+// - 每次上报前重扫坐标（目录 mtime 缓存）→ Neeko 重启换端口 / 多实例并存都自动跟上；
 // - 800ms 超时 + 全异常吞掉（fail-open）→ 绝不阻塞或拖慢 OpenCode；
-// - 未知事件一律忽略；Neeko 未运行（endpoint 缺失）静默。
-import { readFileSync, statSync } from "node:fs";
+// - 未知事件一律忽略；Neeko 未运行（坐标缺失）静默。
+// v5 多实例（R6.8）：坐标是 `~/.neeko/agent-hooks/endpoints/*.env`（每实例一个文件），
+// 逐个 POST；死坐标连接失败静默跳过，不影响其余实例与 CLI。
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const ENDPOINT_FILE =
-  process.env.NEEKO_AGENT_HOOK_ENDPOINT ||
-  join(homedir(), ".neeko", "agent-hooks", "endpoint.env");
+// 单文件覆盖（调试/测试夹具）：设置后只读该文件，不扫目录。
+const ENDPOINT_FILE = process.env.NEEKO_AGENT_HOOK_ENDPOINT || null;
+// v5 多实例：每实例一个坐标文件，上报前扫全部并逐个投递。
+const ENDPOINTS_DIR =
+  process.env.NEEKO_AGENT_HOOK_ENDPOINTS_DIR ||
+  join(homedir(), ".neeko", "agent-hooks", "endpoints");
 const REPORT_TIMEOUT_MS = 800;
 
 let cacheKey = "";
-let cachedCoords = null;
+let cachedCoords = [];
 
-function coords() {
+function parseCoords(text) {
+  const get = (name) => {
+    const m = text.match(new RegExp("^" + name + "=(.+)$", "m"));
+    return m ? m[1].trim() : undefined;
+  };
+  const port = get("NEEKO_AGENT_HOOK_PORT");
+  const token = get("NEEKO_AGENT_HOOK_TOKEN");
+  return port && token ? { port, token } : null;
+}
+
+function readCoords(file) {
   try {
-    const st = statSync(ENDPOINT_FILE);
-    const key = st.mtimeMs + ":" + st.ino;
+    return parseCoords(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+// 坐标发现（每次上报前调用，缓存避免重复读盘）：
+// - 单文件覆盖：cache key = 文件 mtime+ino；
+// - 多实例目录：cache key = **目录** mtime（增删实例文件会改目录 mtime）。
+// 任何失败 → 空数组（Neeko 未运行 → 静默）；数组天然兼容 0..N 个坐标。
+function coords() {
+  if (ENDPOINT_FILE) {
+    try {
+      const st = statSync(ENDPOINT_FILE);
+      const key = "f:" + st.mtimeMs + ":" + st.ino;
+      if (key !== cacheKey) {
+        cacheKey = key;
+        const c = readCoords(ENDPOINT_FILE);
+        cachedCoords = c ? [c] : [];
+      }
+    } catch {
+      cacheKey = "";
+      cachedCoords = [];
+    }
+    return cachedCoords;
+  }
+  try {
+    const st = statSync(ENDPOINTS_DIR);
+    const key = "d:" + st.mtimeMs;
     if (key !== cacheKey) {
-      const text = readFileSync(ENDPOINT_FILE, "utf8");
-      const get = (name) => {
-        const m = text.match(new RegExp("^" + name + "=(.+)$", "m"));
-        return m ? m[1].trim() : undefined;
-      };
-      const port = get("NEEKO_AGENT_HOOK_PORT");
-      const token = get("NEEKO_AGENT_HOOK_TOKEN");
+      const list = [];
+      for (const name of readdirSync(ENDPOINTS_DIR)) {
+        if (!name.endsWith(".env")) continue;
+        const c = readCoords(join(ENDPOINTS_DIR, name));
+        if (c) list.push(c);
+      }
       cacheKey = key;
-      cachedCoords = port && token ? { port, token } : null;
+      cachedCoords = list;
     }
   } catch {
     cacheKey = "";
-    cachedCoords = null; // Neeko 未运行 → 静默
+    cachedCoords = []; // Neeko 未运行 / 目录不存在 → 静默
   }
   return cachedCoords;
 }
 
 async function post(event, agentSessionId, cwd, detail, title) {
-  const c = coords();
-  if (!c || !agentSessionId) return;
-  try {
-    await fetch(`http://127.0.0.1:${c.port}/hook/opencode`, {
-      method: "POST",
-      signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
-      headers: {
-        "content-type": "application/json",
-        "x-neeko-agent-hook-token": c.token,
-      },
-      body: JSON.stringify({
-        agent_session_id: String(agentSessionId),
-        event,
-        cwd: cwd || process.cwd(),
-        detail: typeof detail === "string" ? detail.slice(0, 500) : null,
-        // 会话主题（Neeko R7）：opencode 的 Session.title（AI 命名或用户命名）。
-        // 占位形态（`New session - <ISO>`）由服务端过滤 —— 模板只如实上报。
-        title: typeof title === "string" && title ? title.slice(0, 200) : null,
-        hints: {
-          // Neeko 自有终端启动的 OpenCode 才带有这两个 env（外部终端为 null → cwd 归属）。
-          neeko_session_id: process.env.NEEKO_SESSION_ID || null,
-          project_id: process.env.NEEKO_PROJECT_ID || null,
-        },
-      }),
-    });
-  } catch {
-    // fail-open：Neeko 不在/超时/被拒 —— 与 OpenCode 会话无关，静默。
-  }
+  const list = coords();
+  if (!list.length || !agentSessionId) return;
+  const body = JSON.stringify({
+    agent_session_id: String(agentSessionId),
+    event,
+    cwd: cwd || process.cwd(),
+    detail: typeof detail === "string" ? detail.slice(0, 500) : null,
+    // 会话主题（Neeko R7）：opencode 的 Session.title（AI 命名或用户命名）。
+    // 占位形态（`New session - <ISO>`）由服务端过滤 —— 模板只如实上报。
+    title: typeof title === "string" && title ? title.slice(0, 200) : null,
+    hints: {
+      // Neeko 自有终端启动的 OpenCode 才带有这两个 env（外部终端为 null → cwd 归属）。
+      neeko_session_id: process.env.NEEKO_SESSION_ID || null,
+      project_id: process.env.NEEKO_PROJECT_ID || null,
+    },
+  });
+  // fan-out：每个坐标一次 POST，逐个 fail-open（单坐标失败不影响其余，也不影响 CLI）。
+  await Promise.allSettled(
+    list.map(async (c) => {
+      try {
+        await fetch(`http://127.0.0.1:${c.port}/hook/opencode`, {
+          method: "POST",
+          signal: AbortSignal.timeout(REPORT_TIMEOUT_MS),
+          headers: {
+            "content-type": "application/json",
+            "x-neeko-agent-hook-token": c.token,
+          },
+          body,
+        });
+      } catch {
+        // fail-open：Neeko 不在/超时/被拒 —— 与 OpenCode 会话无关，静默。
+      }
+    }),
+  );
 }
 
 // 取首个非空字符串（V2 各事件载荷字段位置不一，多候选直读，缺失即 undefined）。

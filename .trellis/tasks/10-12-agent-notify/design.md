@@ -1,9 +1,10 @@
 # Design — Agent 系统通知（Pi/Opencode 先行）
 
-> 状态：**Phase A（源 A）+ Phase B（源 B：CLI hook）均已实施**（notification 核心域 +
+> 状态：**Phase A（源 A）+ Phase B（源 B：CLI hook）+ Phase C（会话主题）+ Phase F
+> （多实例坐标共存）+ Phase G（hook 标记键内容寻址）均已实施**（notification 核心域 +
 > agent 桥挂接 + 设置 + 前端；agent/hooks 域：事实表 + endpoint + 归属 + 投影 + loopback
 > ingest + writers + 域启动入口；macOS 系统通知走 `platform/system_notify`）。
-> `pnpm check` 25 护栏全绿；/neeko-check 四轮审核整改完成：capabilities 收紧、依赖方向护栏
+> `pnpm check` 30 护栏全绿；/neeko-check 四轮审核整改完成：capabilities 收紧、依赖方向护栏
 > `check_notification_core_direction` 落地、`NotificationSettings::normalized()` 边界归一双入口、
 > 双端常量镜像测试（事件名/deepLink/event_keys/hook 回执枚举）、设置保存串行链、测试投递下沉
 > dispatch、hook 目标事实表化、启动逻辑回归域内 `boot`。
@@ -28,6 +29,11 @@
 >   主线程 + bundle 守卫），其余平台由同签名 stub 返回 `None` 回退插件 —— 门面契约：
 >   `Some(())` = 已被平台后端消费，`None` = 调用方走插件。点击回流（userInfo.deepLink）
 >   在 UN 后端上尚未接 delegate，登记为遗留项（应用内列表仍可精确回流）。
+> - v4（Phase C）—— 通知显示会话主题：`NotificationDraft` 增 `subtitle`（macOS 原生第二行；
+>   Win/Linux 降级为 body 前缀），主题取原生标题优先、回退首条用户消息（D12）。
+> - v5（Phase F，2026-10-15 实测修订）—— 多实例坐标共存：单文件 `endpoint.env` 被「打包版
+>   + dev 同开」覆写后留下死坐标（通知全断）证伪单实例假设；改为 `endpoints/<instance-id>.env`
+>   每实例一文件 + 上报端 fan-out 全部坐标（D11 / R6.8 / AC18）。
 
 ## 1. 第一性原理拆解
 
@@ -112,7 +118,7 @@
 | `agent/hooks/boot.rs` | 本域唯一启动入口：发布 ingest 坐标 + 开机收敛意图→文件（与四域 boot 对称） | B |
 | `agent/hooks/targets.rs` | **受管 CLI 事实表**：source / 扩展目录 / 文件名 / 模板的唯一来源（接新 CLI = 加一行数据） | B |
 | `agent/hooks/server.rs` | loopback HTTP ingest：`POST /hook/{source}` + token 鉴权 + fail-open（白名单由事实表派生） | B |
-| `agent/hooks/endpoint.rs` | endpoint 文件发布（`~/.neeko/agent-hooks/endpoint.env`，0600、原子替换） | B |
+| `agent/hooks/endpoint.rs` | 多实例坐标发布（`~/.neeko/agent-hooks/endpoints/<instance>.env`，目录 0700 / 文件 0600、原子替换） | B |
 | `agent/hooks/attribution.rs` | 归属纯函数：env 提示 / cwd 反查项目 / basename 兜底（D8） | B |
 | `agent/hooks/writers.rs` | hook 文件写入器（差异落数据 = `targets` 表；独立文件即插拔；回执为机器可读 `HookApplyOutcome`） | B |
 | `agent/hooks/templates/` | opencode plugin / pi extension 模板（`include_str!` 嵌入，锚点由测试引用常量钉住） | B |
@@ -157,7 +163,7 @@
 5. **既有用户级配置写入先例** —— `theme/opencode.rs` 已在写 `~/.config/opencode/themes`、
    pi skills 已部署到 `~/.pi/skills`：writers 沿用同形态的「用户级配置客人」模式与清理义务。
 6. **项目清单（ProjectStore）** —— cwd 反查归属直接消费既有项目 root 数据，不新建索引。
-7. **orca 已验证的协议要素**（借鉴而非引码）：endpoint.env 格式、`x-*-agent-hook-token` 头、
+7. **orca 已验证的协议要素**（借鉴而非引码）：endpoint 坐标文件 `KEY=value` 格式、`x-*-agent-hook-token` 头、
    fail-open 204、回调前重读坐标、hook command 的防御性包装（文件存在性检查 + 排空 stdin）。
 
 ## 2.5 源 B 详解：Agent CLI hook 回调（v3 新增）
@@ -167,8 +173,9 @@
 ```
 用户终端里的 agent CLI (pi / opencode，任意终端启动，含 Neeko 自有 PTY)
    → 用户级 hook 配置触发的上报代码（writers 安装的 plugin/extension）
-      → 读 ~/.neeko/agent-hooks/endpoint.env（每次回调前重读，跨 Neeko 重启存活）
-      → POST http://127.0.0.1:{port}/hook/{pi|opencode}   [header: token]
+      → 读 ~/.neeko/agent-hooks/endpoints/*.env（每次回调前重读；v5 多实例：全部坐标逐个 POST，
+         死坐标连接失败静默跳过，跨 Neeko 重启存活）
+      → POST http://127.0.0.1:{port}/hook/{pi|opencode}   [header: token]（逐坐标）
          （短超时 + 全错误吞掉 = fail-open，绝不阻塞 agent）
    → agent/hooks/server.rs（鉴权 → 204 fail-open 兜底）
       → attribution.rs 归属（env 提示 → cwd 反查 → basename 兜底，纯函数）
@@ -176,18 +183,33 @@
       → NotificationCenter.observe()  ← 与源 A 汇合，之后完全同一条管线
 ```
 
-### 坐标发现与鉴权（endpoint 文件契约）
+### 坐标发现与鉴权（endpoint 文件契约；**v5 多实例修订 2026-10-15**）
 
-`~/.neeko/agent-hooks/endpoint.env`（POSIX 0600；Windows 同内容 `endpoint.cmd`）：
+坐标目录 `~/.neeko/agent-hooks/endpoints/`（POSIX 0700，仅属主可列）下**每实例一个文件**：
+`endpoints/<instance-id>.env`（POSIX 0600；Windows 同内容）。文件格式不变：
 
 ```sh
 NEEKO_AGENT_HOOK_PORT=53124        # 每次启动随机（bind :0）
 NEEKO_AGENT_HOOK_TOKEN=<uuid-v4>   # 每次启动随机，内存持有，不落 config
 ```
 
-写入 = 临时文件 + 原子 rename（防 hook 读到半截文件）。Neeko 退出时**不删除**（下一次启动
-覆盖；删除反而制造「重启窗口期回调失败」）。token 校验失败 → 403 + warn 日志（可能是旧实例
-残留进程，不升级为错误）。
+写入 = 临时文件 + 原子 rename（防 hook 读到半截文件），`instance-id` = 进程启动时生成的
+随机 uuid（仅本进程内存持有，用作文件名）。上报端（pi/opencode 模板）读**目录下全部
+`*.env`**，逐个 POST；单个坐标连接失败/超时/被拒一律静默跳过，不影响其余坐标与 CLI 本身
+（fail-open 语义不变，R6.2）。
+
+**为什么不是单文件（R6.8 / Phase F）**：单文件是「全局唯一会合点」，在结构上无法同时
+表示 N 个活实例。实测事故（2026-10-15）：打包版 + `pnpm tauri dev` 同时运行，dev 实例
+启动时覆写 `endpoint.env` 指向自己的随机端口，36 秒后 dev 退出、坐标留在死端口（`lsof` 无监听、
+`curl` 连接被拒）；pi 每次上报前重读该文件 → 全部打到死端口 → 被 catch 吞掉 →
+「刚启动能通知、运行着就不通知」。代码无 single-instance 约束，而用户工作流**必须**同时开
+两者，故单实例假设（原 D11）被证伪，改为多实例共存。
+
+**退役单文件**：启动时若存在旧的 `agent-hooks/endpoint.env` 一律删除（一次清理，避免
+上报端同时读到新旧两种形态；上报端只需支持目录形态）。**进程退出不删除自己的坐标文件**
+（下一次同 id 启动会覆盖，id 随机故基本不复用）—— 删除反而制造「重启窗口期回调失败」，
+且死坐标已被上报端的 fail-open 覆盖，不再是故障源。token 校验失败 → 403 + warn 日志
+（可能是旧实例残留，不升级为错误）。
 
 ### hook 事件映射（Phase B MVP 集合；**B0 实测修订 2026-10-12**）
 
@@ -248,9 +270,10 @@ hook 面与事件名随 CLI 版本漂移快，**实施期以官方文档实测�
 - **D9（v3）源 B 回流尽力而为**：无对应 UI 会话时按归属项目聚焦，不报错。
 - **D10（v3）分期**：Phase A = 源 A（应用内管道）全链路；Phase B = 源 B（CLI hook，local
   先行，WSL 次之）；设计一次到位，实施分期验收。**核心域两期之间零改动**（架构自证）。
-- **D11（v3）单实例假设**：endpoint 文件全局唯一 → 多 Neeko 实例并存时后启动者接管坐标，
-  先启动实例的 ingest 收到 403 期外 token 会静默（fail-open）。若 Neeko 已有 single-instance
-  约束则天然成立；实施期核实并登记。
+- **D11（v3→v5）多实例坐标共存**：原假设「endpoint 文件全局唯一 + 单实例」被实测证伪
+  （打包版 + dev 必须同开，dev 覆写后退出留下死坐标 → 通知全断）。改为 `endpoints/` 目录
+  每实例一文件 + 上报端 fan-out 全部活坐标（R6.8 / AC18）。死坐标由上报端 fail-open 跳过。
+  若未来引入 single-instance 约束，目录形态仍然正确（只是目录里通常只有一个文件）。
 
 - **D12（v4）主题取原生标题优先、回退首条用户消息**（2026-10-13 用户决策）。理由：原生标题
   语义最准（用户/AI 都精炼过），但两条链路都**可能没有**——pi 仅在用户显式命名时有
@@ -261,6 +284,16 @@ hook 面与事件名随 CLI 版本漂移快，**实施期以官方文档实测�
   这类承载「要不要现在看」的决策信息）；body 与 detail 混排、长正文截断时副标题先被吃掉。macOS
   原生第二行是无损选项；Win/Linux 无 subtitle 概念时降级为 body 前缀（可接受的信息损失，
   且不引入第三套拼接逻辑）。
+
+- **D13（v6）hook 标记键改为内容寻址（2026-10-15 用户决策）**：`version_token()` 原为
+  `v{CARGO_PKG_VERSION}`（**发布版本**），但它的职责其实是「已装 hook 文件是否过期」的比较键。
+  用发布版本当内容缓存键是把两个生命周期不同的东西绑在一起：只改模板必须手碰发布版本 →
+  三处版本漂移；忘了碰 → 已装机器**静默不更新**（原「已知限制」）。改为
+  `v{CARGO_PKG_VERSION}+{template_hash}`（hash 从**已渲染全文**派生，FNV-1a 等跨版本稳定算法，
+  不用 `DefaultHasher`）：模板字节一变就 hash 变 → `version_current=false` → 自动重装，
+  **不再需要碰发布版本**；人眼仍可读到应用版本。代价：会覆盖用户对受管文件的手改 —— 但这些
+  文件首行本就写「请勿原地编辑」，语义上更正确。旧标记（`v1.0.9`）与新标记不匹配 →
+  首启自动重装一次（方向安全）。
 
 ## 4. 数据契约（原型即文档，详见 prototype/）
 
@@ -335,8 +368,9 @@ SessionNotifyContext { session_id, agent_id, project_name, topic: Option<String>
 | 事件风暴 | 节流 + AC4；hook 源同样经核心节流（同 event_key 命名空间的额外收益） |
 | hook 面随 CLI 版本漂移（opencode/pi 事件名变更） | writers 文件头登记验证版本；ingest 对未知事件 fail-open 204 不报错；实施期实测钉住 |
 | 用户全局配置污染 / 与其他工具冲突 | 只用独立文件形态（neeko-* 前缀），不改用户既有配置文件；开关默认关；可一键清理 |
-| Neeko 多实例 | D11 单实例假设 + token 403 静默；实施期核实 single-instance 现状 |
-| WSL2 内 agent 访问 Windows host loopback | WSL→Windows 方向 localhost 转发不保证：endpoint.env 增补 host 地址行（如 `NEEKO_AGENT_HOOK_HOST`，取自 WSL 视角的宿主 IP），Phase B2 实测；不通则参照 orca 的 guest relay 再立项 |
+| Neeko 多实例（打包版 + dev 同开） | v5 已转正为 Phase F：`endpoints/` 目录每实例一文件 + 上报端 fan-out（R6.8 / AC18）；死坐标 fail-open 跳过 |
+| **多实例坐标文件无界累积**（未解决） | 坐标文件**退出不删**（避免重启窗口期失败），而 instance-id 每次随机不复用 ⇒ `endpoints/` 随每次启动单调增长；上报端 `coords()` 无上限地 `readdirSync` + `Promise.allSettled`，每次事件对**全部历史坐标**各发一次 fetch。短期内（每次启动约 60B 文件、死坐标 ECONNREFUSED 即时失败）无感，但长期（月/年计）会让每次上报的并发 fetch 数无界增长，极端下触发 agent CLI 侧 EMFILE —— 与「绝不阻塞 CLI」（T5/R6.2）相抵。**推荐修法**：坐标文件增写 `NEEKO_AGENT_HOOK_PID` + host，启动时按「同 host 且 pid 已死」剪除（pid 存活判定只会误留死文件、不会误删活实例，方向安全）；另可选上报端 fan-out 上限兜底。属本轮范围外，登记为后续项。 |
+| WSL2 内 agent 访问 Windows host loopback | WSL→Windows 方向 localhost 转发不保证：endpoint 坐标文件增补 host 地址行（如 `NEEKO_AGENT_HOOK_HOST`，取自 WSL 视角的宿主 IP），Phase B2 实测；不通则参照 orca 的 guest relay 再立项 |
 | SSH 远端 agent | 需反向隧道，登记 E5 不实施 |
 | hook 上报泄漏隐私（cwd/prompt 片段） | 只走 loopback；payload 字段白名单（server 端丢弃未知字段）；正文截断 |
 
@@ -356,7 +390,7 @@ SessionNotifyContext { session_id, agent_id, project_name, topic: Option<String>
 
 | 风险 | 对策 |
 | --- | --- |
-| 模板改了但已装机器不更新（`version_token` = 应用版本） | 版本位 +1 触发既有重装机制（implement.md Step C5 ②）；不新增代码 |
+| 模板改了但已装机器不更新（`version_token` = 应用版本） | **v6 已收口（D13）**：标记键改内容寻址（`v{app}+{template_hash}`），改模板即自动推送，无需碰发布版本 |
 | opencode `New session - <时间戳>` 占位标题（实测 206/621） | R7.2 噪声过滤 → 视为无标题走回退，不把时间戳当"主题"展示 |
 | pi 首条用户消息读取开销（`getEntries()` 全量拷贝） | 每会话只取一次并缓存（与 `sessionDirs` 同生命周期/上限）；失败即 `null` |
 | 多轮会话主题漂移（每轮 `req.prompt` 不同） | 只取**首轮** prompt（续轮不覆盖）；pi/opencode 侧原生标题本身稳定 |

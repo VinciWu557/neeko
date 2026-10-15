@@ -6,7 +6,7 @@
 //! 组成（每单元单一职责）：
 //! - `boot`：本域唯一启动入口（发布坐标 + 开机收敛）
 //! - `targets`：受管 CLI 事实表（source / 目录 / 文件名 / 模板的唯一来源）
-//! - `endpoint`：`~/.neeko/agent-hooks/endpoint.env` 坐标发布（跨 Neeko 重启存活，R6.1）
+//! - `endpoint`：`~/.neeko/agent-hooks/endpoints/<instance>.env` 多实例坐标发布（跨 Neeko 重启存活，R6.1/R6.8）
 //! - `attribution`：归属降级链纯函数（env → cwd 反查 → basename 兜底，D8）
 //! - `notify`：hook 上报 → `NotificationSignal` 投影（与源 A 同 event_key 命名空间，R6.6）
 //! - `server`：loopback HTTP ingest（127.0.0.1 随机端口 + token + fail-open，R6.2/R6.3）

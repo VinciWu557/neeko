@@ -2,11 +2,8 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
-
-#[cfg(test)]
-use std::os::unix::fs::PermissionsExt;
 
 /// 以「仅属主可读写」权限原子写入 `path`。
 ///
@@ -41,6 +38,16 @@ pub fn write_private_atomic(path: &Path, content: &str) -> io::Result<()> {
         let _ = fs::remove_file(&tmp);
     }
     result
+}
+
+/// 创建（含父级）**仅属主可访问**的目录（`0700`）。
+///
+/// 目录权限与文件权限是同一威胁模型的两半：文件 0600 只挡住文件内容，若目录可列（0755），
+/// 同机其他用户仍能枚举出实例坐标文件名。`create_dir_all` 以 `0o777 & ~umask`（典型 0755）
+/// 创建，故这里显式收紧 —— 与 [`write_private_atomic`] 的 0600 同源。
+pub fn create_private_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
 /// 断言用：`path` 的权限位（八进制）。
@@ -108,6 +115,27 @@ mod tests {
         write_private_atomic(&path, "new\n").expect("write");
         assert_eq!(mode_of(&path).expect("mode"), 0o600);
         assert_eq!(fs::read_to_string(&path).expect("read"), "new\n");
+    }
+
+    /// 目录创建为 0700（列出目录同样属于泄漏面）。
+    #[test]
+    fn creates_dir_owner_only_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("agent-hooks").join("endpoints");
+        create_private_dir(&nested).expect("create");
+        assert!(nested.is_dir());
+        assert_eq!(mode_of(&nested).expect("mode"), 0o700);
+    }
+
+    /// 已存在（更宽权限）的目录被再次创建时收紧为 0700。
+    #[test]
+    fn create_dir_tightens_existing_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("endpoints");
+        fs::create_dir(&nested).expect("seed");
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o755)).expect("loosen");
+        create_private_dir(&nested).expect("create");
+        assert_eq!(mode_of(&nested).expect("mode"), 0o700);
     }
 
     /// 失败路径不残留 tmp（承载 token 的文件不允许留下可读副本）。

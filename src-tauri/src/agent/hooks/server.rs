@@ -19,7 +19,7 @@ use tauri::{AppHandle, Manager};
 use crate::common::runtime::AppRuntime;
 
 use super::attribution::{attribute, ProjectRef};
-use super::endpoint::EndpointPublication;
+use super::endpoint::{self, EndpointPublication};
 use super::notify::{project, HookEnvelope};
 use super::targets::HOOK_TARGETS;
 use crate::AppStateWrapper;
@@ -158,11 +158,25 @@ pub fn spawn(
 ) -> std::io::Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
     let port = listener.local_addr()?.port();
-    let publication = EndpointPublication::new(&neeko_dir, port, uuid::Uuid::new_v4().to_string());
+    // 一次性迁移（v5 多实例）：旧单文件坐标退役，避免上报端同时读到新旧两种形态。
+    // 失败只警告不阻断（通知是旁路；上报端的目录扫描本就忽略旧文件）。
+    if let Err(err) = endpoint::remove_legacy_endpoint(&neeko_dir) {
+        log::warn!("[agent-hooks] remove legacy endpoint.env failed: {err}");
+    }
+    // instance_id = 进程启动时随机 uuid，仅内存持有、仅用作文件名：每实例一个坐标文件，
+    // 多实例共存互不覆写（R6.8 / AC18）。
+    let instance_id = uuid::Uuid::new_v4().to_string();
+    let publication = EndpointPublication::new(
+        &neeko_dir,
+        instance_id,
+        port,
+        uuid::Uuid::new_v4().to_string(),
+    );
     publication.publish()?;
     let token = publication.token.clone();
     log::info!(
-        "[agent-hooks] ingest listening on 127.0.0.1:{port} (endpoint: {})",
+        "[agent-hooks] ingest listening on 127.0.0.1:{port} (instance {}, endpoint: {})",
+        publication.instance_id,
         publication.path.display()
     );
 

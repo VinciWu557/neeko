@@ -27,6 +27,7 @@
 | [Git 域](./git-domain.md) | 历史展示范围（HEAD）、refs 分类、stash 查询、换行/路径契约、只读 git 语义单点注入、写后快照新鲜度 | 已填写 |
 | [DAP 域](./dap-domain.md) | 调试域分层、断点单锁仓储、语言身份归一、事件端口、路径不降级 | 已填写 |
 | [LSP 域](./lsp-domain.md) | 三通道模型、applyEdit 跨层转发契约、诊断单写点、失败诊断归属（证据锚键 + 环境同源）、F1-F7 重构台账 | 已填写 |
+| [Agent Hooks 域](./agent-hooks-domain.md) | 外部 Agent CLI 状态上报：多实例坐标目录 + 上报端 fan-out、私有目录/文件权限、旧单文件迁移 | 已填写 |
 
 ---
 

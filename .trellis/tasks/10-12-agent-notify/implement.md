@@ -101,10 +101,11 @@
 - [ ] ⚠ AC13：会话存活期间重启 Neeko → 后续事件仍送达（endpoint 重读逻辑有单测，实机待验）
 - [ ] ⚠ AC14：设置页开启 → 两文件真实落盘 → 关闭清理（writers 单测已过，实机待验；
       遵守客人义务：本环境未替用户安装，需用户在设置页显式开启）
+- [ ] ⚠ AC18（Phase F）：打包版 + dev 同时开 → 两者都收到同一 pi 上报；关闭任一不影响另一（见 Step F3）
 
 ### Step B4（次优先）WSL 可达性
 
-- [ ] endpoint.env 增补 `NEEKO_AGENT_HOOK_HOST`（WSL 视角宿主地址）实测；
+- [ ] endpoint 坐标文件增补 `NEEKO_AGENT_HOOK_HOST`（WSL 视角宿主地址）实测；
       不通则参照 orca guest relay 另立任务（E5 同路径覆盖 SSH）
 
 ## Step C 审核整改（第四轮 /neeko-check，2026-10-13）
@@ -175,11 +176,8 @@
       （含 9 处测试断言）。**在落地前不要删除字段** —— 它是缺口的路标。
 - [ ] （登记未做）macOS UN 后端点击 delegate（`userInfo.deepLink` 精确回流）—— 当前
       应用内列表兜底；`platform/notify_base` 更名 `uri_base`（与 system_notify 名字相邻易误读）。
-- [ ] **已知限制（本轮新发现，未改语义）**：`version_current` 只比归属标记里的**应用版本**，
-      不比模板正文。因此「同版本号内改模板」不会自动推到用户机器（本轮 `sessionDirs` 上限
-      就属于这一类：要等版本位变化，或用户在设置页把开关关开一次）。若改成「与 `render()`
-      全文比对」即可自愈，但那会覆盖用户对受管文件的手改 —— 模板头写的是「请勿原地编辑」，
-      两种语义都说得通，留给下一次决策，勿顺手改。
+- [x] （已收口，D13/Phase G）~~已知限制：`version_current` 只比应用版本、不比模板正文~~：
+      标记键已改为内容寻址（`v{app}+{template_hash}`），「同版本号内改模板」现在会自动推送。
 
 ## Phase C —— 通知显示会话主题（2026-10-13 规划，待实施）
 
@@ -410,6 +408,86 @@
 - [x] 护栏：`notification/` 核心域禁止 `use crate::{agent,git,terminal,...}`
       （`check_notification_core_direction` + selftest 已登记，含 `app` 组合根边界用例）
 - [ ] 护栏：ingest server 禁止绑非 loopback 地址（grep 钉子）
+
+## Phase F —— 多实例坐标共存（2026-10-15 实测定位，已实施）
+
+> 需求/验收：prd.md R6.8 / AC18；决策：design.md D11（v5）与「坐标发现与鉴权」段。
+> **根因证据（2026-10-15 现场）**：`~/.neeko/agent-hooks/endpoint.env` 写着 dev 实例的
+> 死端口 51356（已无监听、`curl` 连拒），而打包版实际监听 60226；日志 13:21:00 第二次
+> `Neeko starting` + `ingest listening … 51356`，13:21:36 `shutdown_all_background … exiting`。
+> 用户工作流必须同时开打包版与 dev ⇒ 单文件全局会合点结构性失效。
+
+### Step F1 后端：单文件 → `endpoints/` 目录（TDD）
+
+- [x] `agent/hooks/endpoint.rs`：`EndpointPublication` 改多实例形态 —— 文件落
+      `{neeko_dir}/agent-hooks/endpoints/{instance_id}.env`（`instance_id` = 进程内随机 uuid，
+      server 启动时生成并随 publication 持有）；目录 0700、文件仍走
+      `platform::private_file::write_private_atomic`（0600 + 原子替换）。新增平台原语
+      `private_file::create_private_dir`（unix 0700 / windows no-op，红线 10）。
+- [x] 单测（tempdir）：多实例两个 publication 共存互不覆写；各自内容/权限正确；
+      **旧的单文件 `endpoint.env` 被清理**（迁移一次，`remove_legacy_endpoint` 幂等）；
+      目录权限 0700（unix）。
+- [x] `agent/hooks/server.rs`：spawn 时生成 instance_id → publication；启动日志带上实例文件路径。
+
+### Step F2 上报模板：fan-out 全部坐标（TDD）
+
+- [x] `templates/neeko-pi-status.ts` / `templates/neeko-opencode-status-v2.js`：`coords()` 由
+      「读单文件」改为「扫 `endpoints/*.env` 目录 → 返回坐标数组」；`post()` 对每个坐标发一次
+      POST（`Promise.allSettled` 逐个 fail-open，单坐标失败不影响其余，也不影响 CLI）。缓存键从
+      单文件 mtime+ino 改为**目录** mtime（目录内容变化会改目录 mtime；不依赖单文件 inode）。
+- [x] 保留 `NEEKO_AGENT_HOOK_ENDPOINT` 环境变量覆盖（指向单个文件，兼容调试/测试夹具）；
+      另加 `NEEKO_AGENT_HOOK_ENDPOINTS_DIR` 覆盖坐标目录（测试夹具用）。
+- [x] 模板锚点测试（`writers.rs`）同步：断言模板含 `endpoints` 目录扫描 + `readdirSync` +
+      `Promise.allSettled` fan-out 锚点（`endpoint::ENDPOINTS_DIR_NAME` 常量）；另断言单文件
+      覆盖键 `endpoint::ENV_KEY_OVERRIDE` 仍存在，防单边回退。
+
+### Step F3 验收
+
+- [x] 单测：`endpoint.rs` 多实例共存/旧文件清理；`server.rs` ingest 仍 204/403 不变。
+      TDD Red 已核：HEAD 模板不含 `endpoints`/`readdirSync`/`Promise.allSettled`（新锚点必红）。
+- [x] 模板 fan-out 行为用真实模板 + Node harness 实证：两个坐标文件 → 两处 POST（死坐标
+      `fetch` 抛错被吞，另一坐标照常收到）；单文件覆盖仍只发一处；目录缺失 → 零 fetch 零抛错。
+- [x] `pnpm check` 全绿（含 30/30 护栏 + lint_rust_all_targets + test_fe/test_rust）。
+- [x] 模板推送：~~`Cargo.toml` 版本位 `1.0.9` → `1.0.10`~~ **已废弃** —— D13/Phase G 把
+      标记键改为内容寻址，改模板即自动推送，版本号回退至 `1.0.9`（与 package.json / tauri.conf.json 同步）。
+- [ ] ⚠ 真机（AC18）：同时开打包版 + `pnpm tauri dev`，两实例 `lsof` 各占一端口；pi 触发一次完成/审批
+      → **两实例都收到通知**；关闭 dev → 打包版仍能收到（死坐标被跳过）。（需真实 pi 登录态，用户环境）
+- [ ] （登记未做，本轮 check 发现）**坐标文件无界累积 + O(N) fan-out**：见 design.md §7 风险表。
+      坐标文件退出不删（有意决策）而 instance-id 随即，`endpoints/` 随每次启动单调增长，
+      上报端每次事件对全部历史坐标发 fetch。推荐修法：文件增写 PID + host，启动时剪除
+      「同 host 且 pid 已死」的坐标（方向安全：只误留不误删）；可选上报端 fan-out 上限兜底。
+      属 Phase F 范围外，未实施（避免在本轮改动冻结的坐标文件契约）。
+
+## Phase G —— hook 标记键内容寻址（2026-10-15 用户决策 D13，已实施）
+
+> 需求背景：`version_token()` 用**发布版本**当「已装 hook 是否过期」的比较键 —— 两个生命周期
+> 不同的东西被绑在一起（只改模板要手碰发布版本 → 三处版本漂移；忘了碰 → 已装机器静默不更新）。
+> 用户判定不优雅，采纳方案 A：标记键改为从**已渲染全文**派生的内容寻址。
+
+### Step G1 `writers.rs`：标记键 = 应用版本 + 模板内容 hash
+
+- [x] `version_token()` → 新增 `content_token(template)`：`v{CARGO_PKG_VERSION}+{fnv1a_hex}`，
+      hash 取**已渲染全文**（含标记行自身之外的部分不对 —— 实现选择对 `template` 正文取
+      FNV-1a 64-bit 十六进制；**不用 `std::hash::DefaultHasher`**，它不保证跨 Rust 版本稳定）。
+- [x] `render()` 改接 `content_token(template)`；`ownership_of(path)` 的比较须拿到**当前模板**
+      才能算出期望键 → `ownership_of` 增 `expected: &str` 入参（或改由调用方传入期望标记），
+      保证 `status_at` / `install_at` / `uninstall_at` 三条路径口径一致。
+- [x] 手写 FNV-1a（无新依赖）—— 纯函数，可单测；钉死空串 / 已知向量的稳定值。
+- [x] 单测：① 同一模板两次 `render()` 结果恒等；② 模板改一个字节 → 标记键变 →
+      `version_current=false`；③ 旧标记（无 `+hash`，如 `v1.0.9`）与当前期望键不匹配 →
+      触发重装（迁移方向安全）；④ `install_at` 幂等仍成立（内容一致 → `Unchanged`）；
+      ⑤ 他人文件仍 `Foreign` 不被碰。
+
+### Step G2 回退发布版本
+
+- [x] `src-tauri/Cargo.toml` version 回退 `1.0.10` → `1.0.9`（与 `package.json` / `tauri.conf.json`
+      恢复同步）；`Cargo.lock` 随之回归。
+
+### Step G3 验收
+
+- [x] `cargo test agent::hooks`（新旧 writer 用例全绿）；`pnpm lint:rust:all-targets`。
+- [ ] ⚠ 真机：改动模板正文（不改版本）→ 下次 Neeko 启动自动重装（`version_current=false` → Install）。
+- [x] `pnpm check` 全绿。
 
 ## 回滚策略
 
