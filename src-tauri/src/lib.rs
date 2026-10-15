@@ -243,6 +243,7 @@ macro_rules! neeko_invoke_handler {
             $crate::git::commands::get_untracked_files,
             $crate::git::commands::get_changed_files_diff_stats,
             $crate::git::commands::get_file_diff,
+            $crate::git::commands::get_conflict_stages,
             $crate::git::commands::is_git_repo,
             $crate::git::commands::canonical_worktree_path,
             // commit log / history

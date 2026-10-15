@@ -9,6 +9,8 @@ mod support;
 pub mod branch;
 /// 提交与历史改写：提交选中文件、cherry-pick、revert、打 tag。
 pub mod commit;
+/// 冲突读路径（index unmerged stages → 三侧 + 区域）。
+pub mod conflict;
 /// Diff 读取：staged / 单文件 / 变更统计。
 pub mod diff;
 pub mod discard;
@@ -33,6 +35,7 @@ pub use support::resolve_worktree_path;
 
 pub use branch::*;
 pub use commit::*;
+pub use conflict::*;
 pub use diff::*;
 pub use discard::*;
 pub use files::*;

@@ -358,7 +358,17 @@ def scan_backend(ctx: Context) -> tuple:
 COMMANDS_SCOPE = "src-tauri/src/git/commands/"
 STATUS_CLOSURE_CALLS = ("wait_status_fresh", "wait_main_status_fresh", "release_workspace")
 # 只读形态（前缀判定）：不写任何东西，自然没有收口义务。
-READ_ONLY_PREFIXES = ("get_", "list_", "is_", "detect_", "has_", "find_", "default_branch")
+# `read_`：读接口的命名族（如 `read_conflict_stages` —— 读 index unmerged stages，只读）。
+READ_ONLY_PREFIXES = (
+    "get_",
+    "list_",
+    "read_",
+    "is_",
+    "detect_",
+    "has_",
+    "find_",
+    "default_branch",
+)
 # 显式台账：确实写仓库、但不改变**被调用单元**的 HEAD / index / workdir 的操作。
 NO_STATUS_IMPACT_OPERATIONS = {
     "create_branch": "只建 ref，HEAD 仍指原提交（工作树与 index 一字不动）",

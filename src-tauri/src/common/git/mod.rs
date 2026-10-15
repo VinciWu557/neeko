@@ -4,6 +4,8 @@
 pub mod cache;
 /// Workspace路径（身份 / 执行双渲染，红线 12）。
 pub mod checkout_path;
+/// Git 冲突读路径的纯语义层（index unmerged stages 真值 + 载荷预算）。
+pub mod conflict;
 pub mod credential;
 pub mod gh;
 pub mod local;
@@ -25,6 +27,7 @@ pub mod wsl;
 
 pub use cache::*;
 pub use checkout_path::CheckoutPath;
+pub use conflict::types::{ConflictKind, ConflictSide, ConflictStages, MergeRegion};
 pub use parsers::*;
 pub use pr::*;
 pub use provider::*;

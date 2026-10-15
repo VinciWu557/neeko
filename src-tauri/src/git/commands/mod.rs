@@ -7,6 +7,8 @@
 pub mod branch;
 /// 提交：提交选中文件、cherry-pick、revert、打 tag。
 pub mod commit;
+/// 冲突：读取 index unmerged stages（三侧 + 区域）。
+pub mod conflict;
 /// 历史：commit log/detail/files/diff、stash 浏览与应用、ahead-behind。
 pub mod history;
 /// 暂存区：stage / unstage / discard（单文件与全量）。
@@ -22,6 +24,7 @@ pub mod worktree;
 
 pub use branch::*;
 pub use commit::*;
+pub use conflict::*;
 pub use history::*;
 pub use index::*;
 pub use pr::*;
