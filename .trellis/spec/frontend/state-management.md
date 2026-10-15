@@ -1161,9 +1161,34 @@ export function createDebouncedStatusRefresh(ms: number): { schedule(workspaceKe
     需要按**多个 key** 取值（循环里不能订阅 hook，如 worktree 侧栏为每个 worktree 取条目）用
     `useProjectStore(useShallow((s) => keys.map((k) => selectEntries(s, k))))` —— 精确到「本列表
     这些单元」，别的单元 / 项目的快照不触发重渲；存在性判断用 `selectHasStatus`（区分「未知」与
-    「已知且干净」）。**远端（WSL/SSH）侧栏 worktree chip 与本地侧栏读同一张表**：两侧共用
-    `shared/hooks/useWorktreeChangeStats`（按单元浅订阅 + 挂载级新鲜度守卫，拉不到 = 未知、
-    不出 chip 且允许重试），不存在第二份组件本地 `useState`。
+    「已知且干净」）。
+11. **列表行数字的来源 = 同一个快照，按单元读**（`↑N` 待 push 提交数等）：行组件的 props
+    由 **adapter** 提供（`ProjectGitSection` / `ConnectionProjectCard` 已接 `gitStore`），
+    **展示组件不得读 store / `invoke`**（`component-guidelines.md` 的「展示组件 + 数据 adapter
+    跨域复用模式」）。键 = `WorkspaceSession.of(projectId, unitPath ?? null).key`，
+    `unitPath` 取自 `useActiveWorkspaceKey(projectId)`——与 local 行逐字同一条规则，
+    **禁止**另造 worktree 专属通道，也禁止把 adapter 层逻辑下沉到行组件。
+    **未知（store 无该键）⇒ `undefined` 不渲染**，不得折算成 `0`。
+12. **快照只承载廉价且必得的派生值**：`entries` / `branch` / `ahead` / `behind` 与快照**同批同
+    版本**产出（`GitStatusSnapshot`），行级 `+A/−D`（`git diff --numstat`）**不进快照**——
+    它由 G4 有意移出 status 热路径，正确出口是按需的 `get_changed_files_diff_stats`
+    （Git 面板内使用，不回写 store）。**禁止**在消费侧对 `entries[].additions/deletions` 求和
+    当行级统计：porcelain 不产出行数（`parsers/status.rs` 恒 0），那是恒空的死码通道
+    （栈侧同款契约见 `backend/git-domain.md`）。
+13. **异步响应落地前必须做单射取代判定（`requestId` / 序号），且号源不得在清空时归零**：
+    store 自己的 async handler（如 `searchStore.run`）在 `await` 前后可能已被更晚的请求（新查询 /
+    **切单元**）取代。此时旧响应携带的是**另一个根**下的相对路径，写进去就是把别的单元的文件
+    当成本单元的事实（与红线 12 同族的「基准错位」形态，只是出现在异步路径上）。
+    - **判据**：`if (get().requestId !== requestId) return;` —— 成功与**失败**两条分支都要判
+      （旧请求的 reject 不得把新单元的搜索报成 `error`）。
+    - **号源约束**：`clear()` **不得**重置单调计数器。否则切单元后的新请求**重用旧 id**，
+      两个请求不可区分，陈旧响应照样能写进去（实测：切 A→B 后 A 的迟到响应污染 store）。
+    - **与 §3 契约 3（后端 version 闸门）的分工**：后端 version 管「同一 key 内新老」，
+      本条的 `requestId` 管「同一发起者在飞请求的取代」—— 两者不可互代。
+    - **与已退役的「2026-08-07 generation Map」的区别**：那里是前端自造 per-project 身份
+      （错），这里只是**单次请求的代际**（与身份无关，不回退成第二份身份表示）。
+    **回归测试**：`searchStore.test.ts` —— 发起 A → `clear()` → 发起 B → 再 resolve A，断言
+    A 的路径**不得**出现在结果里（临时删掉 `requestId` 判定必须 RED）。
 
 ### 4. Validation & Error Matrix
 

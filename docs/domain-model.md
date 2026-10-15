@@ -90,6 +90,13 @@ Workspace」的命令**（含 branch / PR 两个子域）一律收首参 `worksp
 只需 project 环境或 run id）仍用各自参数，逐个登记于
 `.trellis/spec/backend/git-domain.md`「git 命令寻址契约」。
 
+**search 域（本次落地）**：`search_run` 同样收首参 `workspace: WorkspaceSession`，根 = `WorkspaceRef::root()`。
+此前它只收 `project_id` 并直取 `project.path` ⇒ 三重基准错位：worktree 视图**扫主仓**；结果路径相对
+**项目根**而点击打开时相对**单元根**（`openFile.ts`）⇒ 点开错文件；同一结果列表里文件名匹配（走
+`fileStore`，已按单元）与内容匹配（走项目根）**两种基准**。`SearchPage.project_id` 仍保留但降为
+**元数据**（前端不参与寻址）。前端同理：`activeWorkspaceSession` / `useActiveWorkspaceSession` 派生地址，
+`SearchPanel` 内点击打开与搜索根**同源**。
+
 **编辑 tab 组键 = checkout 的身份 `WorkspaceKey`**（唯一编码；`:wt:` 已退役）。
 
 **editor tab 已按 `Workspace` 隔离**（10-10 落地）：`Tab` 携带 `TabScope`（`{ workspace, session }` |
