@@ -1442,3 +1442,72 @@ neeko-check 发现：未知/缺失 region id 被 splice_regions 静默丢弃后�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 296: 编辑器 tab 状态单源化（删除 activeTabId/order 双表示）
+
+**Date**: 2026-10-15
+**Task**: 编辑器 tab 状态单源化（删除 activeTabId/order 双表示）
+**Branch**: `main`
+
+### Summary
+
+从状态模型层面根治：删除 ProjectTabs.activeTabId / Tab.order / 顶层 activeTabId，新增 editorTabSelectors 唯一派生点；分屏/换 pane/pin 后拖拽与 Cmd+W 落点正确
+
+### Main Changes
+
+### 任务
+`10-15-editor-tab-single-source` — 编辑器 tab 状态单源化（根治，非补同步）。
+
+### 诊断（第一性原理）
+用户实测「分屏后拖文件落到上一个 pane 的输入框」。定位：`editorStore` 把同一「tab 空间」用两个结构描述
+（平铺的 `ProjectTabs{tabs, activeTabId}` + `Tab.order`，与分屏权威 `editorLayout`），于是「哪个 tab 在前台」
+与「tab 顺序」**各有两个表示**。分屏前两者恰好重合、冗余无害；2026-05-13 引入分屏后分离，冗余即缺陷。
+从分屏出生起 `setActiveGroup` 就只改布局不同步投影 → 是**约定**而非**构造**；已落地补丁 `projectActiveTab`
+实测仍漏 `pinTab`/`unpinTab` —— 证明「逐点补同步」不是根治。
+
+### 方案
+删字段让错误不可表示：删除 `ProjectTabs.activeTabId` / `Tab.order` / 顶层 `EditorStoreState.activeTabId` /
+`restoreActiveTabId`（含 4 处调用）/ 补丁 `projectActiveTab`。新增唯一派生点
+`src/shared/store/editorTabSelectors.ts`（`selectActiveTabId` / `selectOrderedTabIds` / `selectOrderedTabs` /
+`selectActiveTab`）。布局成为唯一权威：顺序 = `groups[*].tabIds`（左→右→pinned），前台 =
+`groups[activeGroupId].activeTabId`。pinned 激活态保持正交（有意保留）。
+
+### 执行
+- 批 1 建派生点 + AC 用例（Red 先行）；批 2 改全部读点；批 3 删字段（TS 编译期列全漏改点）；批 4 护栏 + 文档；
+  批 5 验证。80+ 文件改动，含 14 个测试文件夹具迁移（跨两个并行子代理）。
+- 护栏：A1 的 `owner` 概念退役（删 `Tab.order` 后那处唯一 sort 彻底消失，顺序改为纯数据派生）；新增 A5
+  判据钉住三字段不得回潮。
+
+### 验证
+- `pnpm test:fe` 552 files / 4841 passed；`pnpm check` 30/30；`type-check` 干净。
+- Red 已实测：AC1/AC2（前台错位）、AC4（顺序陈旧）在旧读法下必红，恢复即绿。
+- AC5 四符号字面零命中。
+
+### 审查（trellis-check 独立验证）发现并修复
+1. 漏删的生产构造点 `PaneContent.tsx` 的 `order: 0` —— 被赋给推断类型的 `const tab`，绕过 tsc 的
+   excess-property 检查。修复：删字段 + 显式标注 `const tab: Tab`。
+2. AC5 过度声称：测试夹具约 40 处对已删字段的死写入（`tsconfig` 排除 `__tests__` 故不可见）。已全量清扫。
+附带：A5 regex 放宽覆盖 `activeTabId?:` / `readonly order?:` 变体；`terminalRouting` 两处陈旧 docstring 改写。
+
+### 交付物
+`prd.md` / `design.md` / `implement.md`（含 Red 证据 + 验收结果 + 审查修复记录）；
+spec 同步：`state-management.md`（新增「编辑器 tab 前台/顺序单源化」场景七段契约）/ `interaction-patterns.md` /
+`docs/domain-model.md`。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

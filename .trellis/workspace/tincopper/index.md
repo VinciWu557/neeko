@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 295
+- **Total Sessions**: 296
 - **Last Active**: 2026-10-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1444 | Active |
+| `journal-6.md` | ~1513 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 296 | 2026-10-15 | 编辑器 tab 状态单源化（删除 activeTabId/order 双表示） | - | `main` |
 | 295 | 2026-10-15 | 冲突决议复审：UU 整文件决议可达性修复（声明与实现一致） | - | `main` |
 | 294 | 2026-10-15 | 冲突决议审查整改：区域决议全函数化（修 Block 静默半截 + Warning 分批契约） | - | `main` |
 | 293 | 2026-10-15 | 冲突决议闭环（Layer 2）：三条写回原语 + stage 存在性分派 + 区域 splice | - | `main` |

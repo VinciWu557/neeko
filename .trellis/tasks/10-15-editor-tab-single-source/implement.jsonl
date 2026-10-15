@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "tab 激活态/身份契约 + 单一表示/派生点原则（本任务的判据来源）"}
+{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "拖拽到输入框 + 前台仲裁的唯一入口契约（缺陷直接落点）"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "删除字段的编译期收口纪律（批 3 清单来源）"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "前端测试层级与 Vitest 约定（AC1-AC4 回归用例）"}
+{"file": "docs/domain-model.md", "reason": "领域模型：tab/前台仲裁/身份的唯一正文"}
