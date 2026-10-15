@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 292
+- **Total Sessions**: 295
 - **Last Active**: 2026-10-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1351 | Active |
+| `journal-6.md` | ~1444 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,9 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 295 | 2026-10-15 | 冲突决议复审：UU 整文件决议可达性修复（声明与实现一致） | - | `main` |
+| 294 | 2026-10-15 | 冲突决议审查整改：区域决议全函数化（修 Block 静默半截 + Warning 分批契约） | - | `main` |
+| 293 | 2026-10-15 | 冲突决议闭环（Layer 2）：三条写回原语 + stage 存在性分派 + 区域 splice | - | `main` |
 | 292 | 2026-10-15 | git-conflict-diff-view: 审核修复（Block /dev/null + DRY 收敛 + region_mergeable 上 wire + 惰性映射 + A5/A6 护栏） | - | `main` |
 | 291 | 2026-10-15 | git-conflict-diff-view: Layer 1 独立复核（修 2 处跨 transport 真分叉） | - | `main` |
 | 290 | 2026-10-14 | git-conflict-diff-view: Layer 1 批 4+批 5（护栏 A1-A4 + spec 沉淀 + @@ 登记 + pnpm check 全绿） | - | `main` |

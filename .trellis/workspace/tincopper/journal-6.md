@@ -1349,3 +1349,96 @@ A6 首版把「返回类型位置 `-> ConflictStages {`」整行豁免，被自�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 293: 冲突决议闭环（Layer 2）：三条写回原语 + stage 存在性分派 + 区域 splice
+
+**Date**: 2026-10-15
+**Task**: 冲突决议闭环（Layer 2）：三条写回原语 + stage 存在性分派 + 区域 splice
+**Branch**: `main`
+
+### Summary
+
+实现期修正 design 缺陷（binary/截断被当删除侧）；后端 apply_conflict_resolution（write_text/checkout_side/delete_path）+ resolve_conflict 命令 + splice_regions 纯函数；前端 useConflictResolve + 决议按钮；删除侧四分支逐条断言（porcelain 逐例不同）；T18 变异验证可红；pnpm check 30/30 全绿
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 294: 冲突决议审查整改：区域决议全函数化（修 Block 静默半截 + Warning 分批契约）
+
+**Date**: 2026-10-15
+**Task**: 冲突决议审查整改：区域决议全函数化（修 Block 静默半截 + Warning 分批契约）
+**Branch**: `main`
+
+### Summary
+
+neeko-check 发现：未知/缺失 region id 被 splice_regions 静默丢弃后仍 git add → 带 marker 的文件被标为已解决（可提交）。按第一性原理修复：区域决议是全函数，新增纯函数 validate_region_decisions（id 集合必须恰好相等，无未知/缺失/重复），前端 canApply 要求 regions.size===regionCount；分批决议改由草稿累积实现。T20 变异验证可红。后端 conflict 78 绿 / 前端 19 绿 / pnpm check 30/30
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 295: 冲突决议复审：UU 整文件决议可达性修复（声明与实现一致）
+
+**Date**: 2026-10-15
+**Task**: 冲突决议复审：UU 整文件决议可达性修复（声明与实现一致）
+**Branch**: `main`
+
+### Summary
+
+第二轮 neeko-check 复审发现：PRD AC 表要求「UU 支持整文件二选一」，后端支持但前端把 UU 的整文件按钮隐藏（wholeFileResolvable = resolvable && !regionMergeable），且前端测试把该缺口固化成期望。修复为 wholeFileResolvable = resolvable（UU 同时给区域与整文件按钮，草稿互斥），修正测试断言 + 新增后端 uu_whole_file 用例。conflict 79 绿 / 前端 20 绿 / pnpm check 30/30
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
