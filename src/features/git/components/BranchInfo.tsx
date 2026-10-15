@@ -1,5 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useShallow } from 'zustand/shallow';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 
 import {
   BranchIcon,
@@ -10,11 +9,10 @@ import {
   FolderGit2,
   CloudDownload,
 } from '@/shared/components/icons';
-import { useGitStore } from '@/shared/store/gitStore';
-import { useActiveCheckoutPath, useActiveCheckoutBranch } from '@/shared/store/workspaceStore';
 import type { GitInfo, AheadBehind } from '@/shared/types';
-import { filterWorktreeBranches, isActiveWorktree } from '@/shared/utils';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
+
+import { useBranchDisplay } from '../hooks/useBranchDisplay';
 
 import BranchSwitcherPanel from './BranchSwitcherPanel';
 
@@ -48,18 +46,23 @@ const BranchInfo: React.FC<BranchInfoProps> = ({
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
   const branchDropdownRef = useRef<HTMLDivElement>(null);
 
-  const favoriteBranches = useGitStore(useShallow((s) => s.favoriteBranches[projectId] ?? []));
-  const toggleFavorite = useGitStore((s) => s.toggleFavorite);
-
-  // Worktree 绑定独立分支，不允许在 changes 面板切换分支（与 BranchStatusBarWidget 一致）
-  const activeCheckoutPath = useActiveCheckoutPath();
-  const activeCheckoutBranch = useActiveCheckoutBranch();
-  const isWorktreeActive = isActiveWorktree(activeCheckoutPath);
+  // 分支行派生规则（displayBranch / availableBranches / aheadBehindMap / 切分支门）
+  // 的唯一实现，与 `BranchStatusBarWidget` 共用 —— 见 `useBranchDisplay`。
+  const {
+    isWorktreeActive,
+    currentBranch,
+    displayBranch,
+    availableBranches,
+    aheadBehindMap,
+    favoriteBranches,
+    toggleFavorite,
+    canSwitchBranch,
+  } = useBranchDisplay(projectId, gitInfo, aheadBehind);
 
   const handleToggleBranchDropdown = useCallback(() => {
-    if (isWorktreeActive) return;
+    if (!canSwitchBranch) return;
     setBranchDropdownOpen((v) => !v);
-  }, [isWorktreeActive]);
+  }, [canSwitchBranch]);
 
   // Close on outside click
   useEffect(() => {
@@ -73,34 +76,11 @@ const BranchInfo: React.FC<BranchInfoProps> = ({
     return () => document.removeEventListener('mousedown', handler);
   }, [branchDropdownOpen]);
 
-  const currentBranch = gitInfo?.current_branch ?? '';
-  // worktree 激活时显示 worktree 分支名，而非主分支的 current_branch
-  const displayBranch = isWorktreeActive ? activeCheckoutBranch : currentBranch;
-  const branches = useMemo(() => gitInfo?.branches ?? [], [gitInfo?.branches]);
-  const worktrees = useMemo(() => gitInfo?.worktrees ?? [], [gitInfo?.worktrees]);
-  // Exclude branches that are already checked out in a worktree
-  const availableBranches = useMemo(
-    () => filterWorktreeBranches(branches, worktrees),
-    [worktrees, branches],
-  );
-
-  const aheadBehindMap = useMemo(() => {
-    if (!aheadBehind || !displayBranch) return {};
-    return { [displayBranch]: { ahead: aheadBehind.ahead, behind: aheadBehind.behind } };
-  }, [aheadBehind, displayBranch]);
-
   const handleCheckout = (branchName: string) => {
     onCheckoutBranch(branchName);
   };
 
   const handleClose = () => setBranchDropdownOpen(false);
-
-  const handleToggleFavorite = useCallback(
-    (branchName: string) => {
-      toggleFavorite(projectId, branchName);
-    },
-    [projectId, toggleFavorite],
-  );
 
   return (
     <div className="flex items-center gap-2 px-2.5 py-1.5 bg-bg-tertiary/50 rounded-md">
@@ -147,7 +127,7 @@ const BranchInfo: React.FC<BranchInfoProps> = ({
                   favoriteBranches={favoriteBranches}
                   aheadBehind={aheadBehindMap}
                   onCheckout={handleCheckout}
-                  onToggleFavorite={handleToggleFavorite}
+                  onToggleFavorite={toggleFavorite}
                   onNewBranch={() => {
                     setBranchDropdownOpen(false);
                     onNewBranch();

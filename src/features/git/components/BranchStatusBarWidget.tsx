@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useShallow } from 'zustand/shallow';
 
@@ -6,19 +6,17 @@ import { cn } from '@/lib/utils';
 import { BranchIcon, ArrowDown, ArrowUp } from '@/shared/components/icons';
 import { useGitStore } from '@/shared/store/gitStore';
 import { useProjectStore } from '@/shared/store/projectStore';
-import {
-  useActiveCheckoutPath,
-  useActiveCheckoutBranch,
-  useActiveWorkspaceKey,
-} from '@/shared/store/workspaceStore';
+import { useActiveWorkspaceKey } from '@/shared/store/workspaceStore';
 import type { GitInfo } from '@/shared/types';
-import { filterWorktreeBranches, isActiveWorktree } from '@/shared/utils';
+
+import { useBranchDisplay } from '../hooks/useBranchDisplay';
 
 import BranchSwitcherPanel from './BranchSwitcherPanel';
 
 interface BranchStatusBarWidgetProps {
-  onNewBranch: () => void;
-  onNewWorktree: () => void;
+  /** 不传 = 状态栏无弹窗宿主（见 `BranchItem`）→ 对应入口不渲染。 */
+  onNewBranch?: () => void;
+  onNewWorktree?: () => void;
   onCheckoutBranch: (branchName: string) => void;
 }
 
@@ -36,17 +34,7 @@ function BranchStatusBarWidget({
   const activeProject = useProjectStore((s) => s.activeProject);
   const gitInfo: GitInfo | null = activeProject?.git_info ?? null;
   const projectId = activeProject?.id ?? null;
-  const currentBranch = gitInfo?.current_branch ?? '';
 
-  const activeCheckoutPath = useActiveCheckoutPath();
-  const activeCheckoutBranch = useActiveCheckoutBranch();
-  const isWorktreeActive = isActiveWorktree(activeCheckoutPath);
-  const displayBranch = isWorktreeActive ? activeCheckoutBranch : currentBranch;
-
-  const favoriteBranches = useGitStore(
-    useShallow((s) => (projectId ? (s.favoriteBranches[projectId] ?? []) : [])),
-  );
-  const toggleFavorite = useGitStore((s) => s.toggleFavorite);
   // ahead/behind 按**Workspace**取（显示的分支就来自该单元的 HEAD）：
   // 旧实现读 `aheadBehind[projectId]` —— 键空间里从来没有这个键，徽标恒空。
   const workspaceKey = useActiveWorkspaceKey(projectId);
@@ -54,36 +42,23 @@ function BranchStatusBarWidget({
     useShallow((s) => (projectId ? (s.aheadBehind[workspaceKey ?? ''] ?? null) : null)),
   );
 
-  const availableBranches = useMemo(
-    () => filterWorktreeBranches(gitInfo?.branches ?? [], gitInfo?.worktrees ?? []),
-    [gitInfo],
-  );
-
-  const aheadBehindMap = useMemo(() => {
-    if (!aheadBehind || !displayBranch) return {};
-    return { [displayBranch]: { ahead: aheadBehind.ahead, behind: aheadBehind.behind } };
-  }, [aheadBehind, displayBranch]);
-
-  const handleToggleFavorite = useCallback(
-    (branchName: string) => {
-      if (!projectId) return;
-      toggleFavorite(projectId, branchName);
-    },
-    [projectId, toggleFavorite],
-  );
-
-  const handleCheckout = useCallback(
-    (branchName: string) => {
-      onCheckoutBranch(branchName);
-    },
-    [onCheckoutBranch],
-  );
+  // 分支行派生规则（displayBranch / availableBranches / aheadBehindMap / 切分支门）
+  // 的唯一实现，与 `BranchInfo` 共用 —— 见 `useBranchDisplay`。
+  const {
+    isWorktreeActive,
+    displayBranch,
+    availableBranches,
+    aheadBehindMap,
+    favoriteBranches,
+    toggleFavorite,
+    canSwitchBranch,
+  } = useBranchDisplay(projectId, gitInfo, aheadBehind);
 
   // Worktree cannot switch branches — disable panel when worktree is active
   const handleTogglePanel = useCallback(() => {
-    if (isWorktreeActive) return;
+    if (!canSwitchBranch) return;
     setPanelOpen((v) => !v);
-  }, [isWorktreeActive]);
+  }, [canSwitchBranch]);
 
   useEffect(() => {
     if (panelOpen && ref.current) {
@@ -165,18 +140,26 @@ function BranchStatusBarWidget({
                 favoriteBranches={favoriteBranches}
                 aheadBehind={aheadBehindMap}
                 onCheckout={(name) => {
-                  handleCheckout(name);
+                  onCheckoutBranch(name);
                   setPanelOpen(false);
                 }}
-                onToggleFavorite={handleToggleFavorite}
-                onNewBranch={() => {
-                  setPanelOpen(false);
-                  onNewBranch();
-                }}
-                onNewWorktree={() => {
-                  setPanelOpen(false);
-                  onNewWorktree();
-                }}
+                onToggleFavorite={toggleFavorite}
+                onNewBranch={
+                  onNewBranch
+                    ? () => {
+                        setPanelOpen(false);
+                        onNewBranch();
+                      }
+                    : undefined
+                }
+                onNewWorktree={
+                  onNewWorktree
+                    ? () => {
+                        setPanelOpen(false);
+                        onNewWorktree();
+                      }
+                    : undefined
+                }
                 onClose={() => setPanelOpen(false)}
               />
             </div>

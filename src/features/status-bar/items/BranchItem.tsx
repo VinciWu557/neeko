@@ -26,11 +26,7 @@ export function BranchItem() {
 
   if (!activeProjectId) return null;
 
-  return (
-    <BranchStatusBarWidget
-      onNewBranch={() => {}}
-      onNewWorktree={() => {}}
-      onCheckoutBranch={handleStatusBarCheckout}
-    />
-  );
+  // 不传 `onNewBranch` / `onNewWorktree`：状态栏没有 GitDialog 弹窗宿主，传 `() => {}`
+  // 只会让面板底部摆出两个点了没反应的死按钮。不传 ⇒ 那两项整体不渲染。
+  return <BranchStatusBarWidget onCheckoutBranch={handleStatusBarCheckout} />;
 }
