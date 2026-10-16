@@ -10,6 +10,7 @@ import remarkGfm from 'remark-gfm';
 
 import { cn } from '@/lib/utils';
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
+import { useTransientFlag } from '@/shared/hooks/useTransientFlag';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import type { AppTheme } from '@/shared/types';
 import { resolveInternalHref } from '@/shared/utils/markdownLinks';
@@ -244,15 +245,14 @@ interface FencedCodeBlockProps {
 
 function FencedCodeBlock({ lang, code, codeClassName, children }: FencedCodeBlockProps) {
   const copyToClipboard = useCopyToClipboard();
-  const [copied, setCopied] = useState(false);
+  const { flag: copied, flash } = useTransientFlag(1500);
 
   const handleCopy = useCallback(async () => {
     const ok = await copyToClipboard(code, 'code block');
     if (ok) {
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      flash();
     }
-  }, [code, copyToClipboard]);
+  }, [code, copyToClipboard, flash]);
 
   return (
     <div className="group relative my-4">

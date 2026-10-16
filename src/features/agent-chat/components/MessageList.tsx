@@ -1,5 +1,7 @@
 import { Check, ChevronRight, Copy } from 'lucide-react';
-import { useState, type RefObject } from 'react';
+import type { RefObject } from 'react';
+
+import { useTransientFlag } from '@/shared/hooks/useTransientFlag';
 
 import FilesChangedCard from './FilesChangedCard';
 import MessageContent from './MessageContent';
@@ -88,11 +90,10 @@ function copyText(text: string): Promise<void> {
 
 /** 复制按钮 —— 点击复制消息文本，短暂显示 ✓ 反馈。 */
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
+  const { flag: copied, flash } = useTransientFlag(1500);
   const handleCopy = () => {
     void copyText(text).catch(() => {});
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    flash();
   };
   return (
     <button

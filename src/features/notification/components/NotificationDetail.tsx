@@ -8,9 +8,10 @@ import {
   Check,
   ExternalLink,
 } from 'lucide-react';
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
 
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
+import { useTransientFlag } from '@/shared/hooks/useTransientFlag';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import type { Notification, NotificationType } from '@/shared/store/notificationTypes';
 
@@ -48,7 +49,7 @@ function formatDateTime(ts: number): string {
 }
 
 export function NotificationDetail({ notification, onClose }: NotificationDetailProps) {
-  const [copied, setCopied] = useState(false);
+  const { flag: copied, flash } = useTransientFlag(2000);
   const addNotification = useNotificationStore((s) => s.addNotification);
   const markAsRead = useNotificationStore((s) => s.markAsRead);
   const copyToClipboard = useCopyToClipboard();
@@ -60,8 +61,7 @@ export function NotificationDetail({ notification, onClose }: NotificationDetail
       'notification',
     );
     if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      flash();
     } else {
       addNotification({
         type: 'error',
@@ -69,7 +69,7 @@ export function NotificationDetail({ notification, onClose }: NotificationDetail
         message: 'Clipboard is not available. Please select and copy the text manually.',
       });
     }
-  }, [notification, addNotification, copyToClipboard]);
+  }, [notification, addNotification, copyToClipboard, flash]);
 
   /** 精确回流（D9）：复用既有 selectProject+activateTab 路径；找不到目标（会话已关）静默关闭。 */
   const handleOpenSession = useCallback(() => {

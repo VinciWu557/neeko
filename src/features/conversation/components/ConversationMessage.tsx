@@ -1,7 +1,8 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback } from 'react';
 
 import ProjectAvatar from '@/shared/components/ProjectAvatar';
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
+import { useTransientFlag } from '@/shared/hooks/useTransientFlag';
 
 import type { ConversationMessage as ConversationMessageType } from '../types';
 import { messageToText } from '../utils/messageToText';
@@ -24,17 +25,16 @@ const ConversationMessage: React.FC<ConversationMessageProps> = React.memo(
     const isUser = message.role === 'user';
     const isSystem = message.role === 'system';
     const copyToClipboard = useCopyToClipboard();
-    const [copied, setCopied] = useState(false);
+    const { flag: copied, flash } = useTransientFlag(1500);
 
     const handleCopy = useCallback(async () => {
       const text = messageToText(message);
       if (!text) return;
       const ok = await copyToClipboard(text, 'message');
       if (ok) {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
+        flash();
       }
-    }, [message, copyToClipboard]);
+    }, [message, copyToClipboard, flash]);
 
     if (isSystem) {
       return (
