@@ -2,6 +2,7 @@ import { closeSearchPanel, openSearchPanel, searchPanelOpen } from '@codemirror/
 import type { EditorView } from '@codemirror/view';
 import { useCallback, type RefObject } from 'react';
 
+import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 
 import { useFileActionsContext } from '../FileActionsContext';
@@ -11,7 +12,7 @@ interface Params {
   editorViewRef: RefObject<EditorView | null>;
 }
 
-/** FileEditor 的视图级交互回调：内部链接跳转 / 页内搜索。 */
+/** FileEditor 的视图级交互回调：内部链接跳转 / 页内搜索 / 复制选中文本。 */
 export function useFileEditorCallbacks({ editorViewRef }: Params) {
   // Markdown / HTML preview 模式下点击内部链接时打开目标文件
   const { onFileSelect } = useFileActionsContext();
@@ -36,5 +37,17 @@ export function useFileEditorCallbacks({ editorViewRef }: Params) {
     else openSearchPanel(view);
   }, [editorViewRef]);
 
-  return { handleInternalLinkClick, handleOpenSearch };
+  // 复制选中文本：单一真值是当前 selection（不再为它另存一份文本 state ——
+  // 那会与 selectionLines 构成同一事实的双表示）。
+  // 剪贴板写入复用唯一入口 useCopyToClipboard（Tauri 插件优先免权限提示）。
+  const copyToClipboard = useCopyToClipboard();
+  const handleCopySelection = useCallback(() => {
+    const view = editorViewRef.current;
+    if (!view) return;
+    const range = view.state.selection.main;
+    if (range.empty) return;
+    void copyToClipboard(view.state.sliceDoc(range.from, range.to));
+  }, [editorViewRef, copyToClipboard]);
+
+  return { handleInternalLinkClick, handleOpenSearch, handleCopySelection };
 }

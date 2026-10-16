@@ -64,6 +64,8 @@ interface FileEditorViewProps {
   onToolbarClose: () => void;
   pendingAgentName: string | null;
   onCreateAgentTab: () => void;
+  /** 复制选中文本（SelectionToolbar 的剪贴板动作，宿主注入）。 */
+  onCopySelection: () => void;
 }
 
 /**
@@ -99,6 +101,7 @@ function FileEditorView({
   onToolbarClose,
   pendingAgentName,
   onCreateAgentTab,
+  onCopySelection,
 }: FileEditorViewProps) {
   const showPreview = (isMd || isHtml || isSvg || isJson) && previewMode === 'preview';
   const translatable = isTranslatableFile(tab.filePath);
@@ -199,6 +202,7 @@ function FileEditorView({
         needsAgentTab={pendingAgentName !== null}
         agentName="Agent"
         onCreateTab={onCreateAgentTab}
+        onCopySelection={onCopySelection}
       />
     </div>
   );

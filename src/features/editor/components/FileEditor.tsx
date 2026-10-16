@@ -221,9 +221,11 @@ function FileEditor({
     handleLnLeave,
   });
 
-  const { handleInternalLinkClick, handleOpenSearch } = useFileEditorCallbacks({
-    editorViewRef,
-  });
+  const { handleInternalLinkClick, handleOpenSearch, handleCopySelection } = useFileEditorCallbacks(
+    {
+      editorViewRef,
+    },
+  );
 
   // 二进制（含本地图片预览）/ 超大文件 → 只读兜底视图（分支判定见 fileEditorFallbackKind）。
   const fallbackKind = fileEditorFallbackKind(tab, isBinaryImage);
@@ -276,6 +278,7 @@ function FileEditor({
         onToolbarClose={handleCloseToolbar}
         pendingAgentName={pending !== null ? 'Agent' : null}
         onCreateAgentTab={handleCreateTab}
+        onCopySelection={handleCopySelection}
       />
 
       {/* Run/Debug 下拉菜单（Rust/Go/Java 用例与 main 入口共用；选择后/Esc/外点关闭） */}
