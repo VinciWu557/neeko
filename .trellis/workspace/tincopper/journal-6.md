@@ -1511,3 +1511,45 @@ spec 同步：`state-management.md`（新增「编辑器 tab 前台/顺序单源
 ### Next Steps
 
 - None - task complete
+
+
+## Session 297: Guard wall clock: --jobs auto and node-environment migration
+<!-- trellis-session: v=2 fp=b1944b4418196cbe -->
+
+**Date**: 2026-10-16
+**Task**: Guard wall clock: --jobs auto and node-environment migration
+**Branch**: `main`
+
+### Summary
+
+Cut pnpm check wall clock by making command gates concurrent and moving DOM-free test files to the node vitest environment.
+
+### Main Changes
+
+- perf(guards): add --jobs auto so the framework derives min(cpu_count, 4); point check and lefthook's pre-push at it instead of a literal.
+- Add A5 to check_gate_topology plus the gate-jobs-derivation-single-source invariant: call sites must write auto, never a literal cap.
+- test(frontend): opt 24 DOM-free suites into the node environment via docblock; four candidates rolled back on transitive DOM deps.
+- Docs: quality-guidelines, frontend-testing and invariant-enforcement synced to the new behavior.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `683f0e7d` | perf(guards): run command gates concurrently in the local stage |
+| `934b2036` | test(frontend): move DOM-free suites to the node vitest environment |
+| `3c63b07d` | docs(trellis): record the guard concurrency and node-environment migration |
+
+### Testing
+
+- [OK] pnpm check 30/30 guards green, 0 violations
+- [OK] pnpm test: test_fe / test_rust / test_host all pass; guards self-test 570 OK
+- [OK] Measured idle window: 135s -> 82s wall clock (-39%); converges to the test_fe floor
+- [OK] Mutation-verified A5 catches a literal --jobs 4 before revert
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- AC1-AC6 all satisfied; task ready for finish-work

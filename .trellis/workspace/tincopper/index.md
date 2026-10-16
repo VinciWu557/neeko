@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 296
-- **Last Active**: 2026-10-15
+- **Total Sessions**: 297
+- **Last Active**: 2026-10-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1513 | Active |
+| `journal-6.md` | ~1555 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 297 | 2026-10-16 | Guard wall clock: --jobs auto and node-environment migration | `683f0e7d`, `934b2036`, `3c63b07d` | `main` |
 | 296 | 2026-10-15 | 编辑器 tab 状态单源化（删除 activeTabId/order 双表示） | - | `main` |
 | 295 | 2026-10-15 | 冲突决议复审：UU 整文件决议可达性修复（声明与实现一致） | - | `main` |
 | 294 | 2026-10-15 | 冲突决议审查整改：区域决议全函数化（修 Block 静默半截 + Warning 分批契约） | - | `main` |
