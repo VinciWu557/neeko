@@ -13,21 +13,19 @@
   但**不中断已在跑的**（中断一个跑了一半的外部命令会浪费它已付的暖缓存成本）。
   这是对现状 `&&` 语义的逐条保持。
 
-已知平台限制：Windows 上超时只能杀直接子进程，孙进程可能存活（POSIX 走 `os.killpg` 清进程组）。
-本模块不把这条差异交给 `subprocess` 的 timeout 默默掩盖，而是显式写在这里。
+执行本身（spawn / 超时 / 进程组清场）在 `core/proc.py` —— 那是「怎么跑外部命令」的
+唯一实现，`quick` 也复用它；本模块只保留「原始事实 → 门禁三态」这个属于门禁的判据。
+平台限制（Windows 只能杀直接子进程）随之落在 proc.py 的模块头。
 """
 from __future__ import annotations
 
-import os
-import signal
-import subprocess
 import sys
 import time
 import traceback
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 
-from . import report, repo, selftest
+from . import proc, report, repo, selftest
 from .contract import (
     ERROR,
     EXIT_GUARD_ERROR,
@@ -159,19 +157,12 @@ def _last_line(text: str) -> str:
     return ""
 
 
-def _kill_tree(proc) -> None:
-    """超时清场。POSIX 杀整个进程组；Windows 只能杀直接子进程（见模块头限制）。"""
-    if os.name == "posix":
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-    else:
-        proc.kill()
-
-
 def _run_gate(reg, context) -> Outcome:
-    """命令门禁的唯一执行路径：argv + 退出码 → 三态。"""
+    """命令门禁的唯一执行路径：argv + 退出码 → 三态。
+
+    执行本身交给 `core.proc`（平台相关的进程组清场只在那里有一份实现）；本函数只负责
+    「把原始事实翻译成门禁三态」这个**属于门禁的判据** —— 什么算通过、什么算护栏失效。
+    """
     gate = reg.guard
     started = time.perf_counter()
     tag = platform_tag()
@@ -186,28 +177,14 @@ def _run_gate(reg, context) -> Outcome:
     def finish(result: GuardResult) -> Outcome:
         return Outcome(gate, result, int((time.perf_counter() - started) * 1000))
 
-    try:
-        proc = subprocess.Popen(
-            list(gate.argv),
-            cwd=str(context.repo_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-    except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
+    result = proc.run(list(gate.argv), cwd=context.repo_root, timeout_ms=gate.budget_ms)
+
+    if result.kind == proc.SPAWN_FAILED:
         # 命令不存在 = 工具链坏了，不是代码违规。
         return finish(
-            GuardResult.broken(
-                f"命令无法启动：{gate.argv[0]!r}（{type(exc).__name__}: {exc}）"
-            )
+            GuardResult.broken(f"命令无法启动：{gate.argv[0]!r}（{result.detail}）")
         )
-
-    try:
-        stdout, stderr = proc.communicate(timeout=gate.budget_ms / 1000)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        proc.communicate()
+    if result.kind == proc.TIMED_OUT:
         return finish(
             GuardResult.broken(
                 f"超时：{gate.id} 超过预算 {gate.budget_ms:,}ms —— 超预算的门禁"
@@ -215,9 +192,9 @@ def _run_gate(reg, context) -> Outcome:
             )
         )
 
-    output = (stdout or "") + (("\n" + stderr) if stderr else "")
+    output = result.output
     metrics = _last_line(output)
-    if proc.returncode == 0:
+    if result.returncode == 0:
         return finish(GuardResult.passed(1, metrics=metrics))
     findings = _bounded_findings(output)
     if not findings:
@@ -225,7 +202,7 @@ def _run_gate(reg, context) -> Outcome:
         # 这正是「静默失败伪装成通过」。必须显式合成一条，让退出码自己说话。
         findings = (
             Finding(
-                f"{gate.argv[0]} 退出码 {proc.returncode} 且没有任何输出 —— "
+                f"{gate.argv[0]} 退出码 {result.returncode} 且没有任何输出 —— "
                 "非零退出即违规，没有输出不代表通过"
             ),
         )
