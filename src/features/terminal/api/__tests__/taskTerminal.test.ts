@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * taskTerminal 端口（F2）：配额/ID/排序收敛 terminal 域 —— editor 侧只调它，不手造 Tab。
  */

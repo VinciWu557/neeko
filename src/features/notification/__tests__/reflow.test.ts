@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * reflow 路由表单测：deep link → 既有 selectProject/activateTab 路径。
  * （铁律验证：回流不新造「打开会话」逻辑，只编排两个既有 store action。）

@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
 import { isMainCheckout, WORKSPACE_KEY_SEP, WorkspaceSession } from '../workspaceRef';

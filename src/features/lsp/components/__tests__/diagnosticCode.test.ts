@@ -1,3 +1,4 @@
+// @vitest-environment node
 import type { LspDiagnostic } from '../../types';
 import { diagnosticCodeBadge, diagnosticCodeTooltip } from '../diagnosticCode';
 

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * 运行根按 Workspace 寻址：`taskStore.runTask` 的缺省 cwd 由激活 Workspace 身份派生，
  * 不再用 `activeProject.path`。

@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * rust 命令构造测试（跑测 / 主入口 / LSP runnable / 产物解析）
  */

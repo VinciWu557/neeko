@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * 定时器收口的机制用例（注入假 scope ⇒ 确定性，不依赖真实时间）。
  *
