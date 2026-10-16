@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 303
+- **Total Sessions**: 304
 - **Last Active**: 2026-10-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1736 | Active |
+| `journal-6.md` | ~1756 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 304 | 2026-10-16 | 10-16-notify-codex: A 方案（审批通知）—— 多面模型 + trust_probe 精确化 + 三态缺失区分（两个新真 bug） | - | `main` |
 | 303 | 2026-10-16 | 10-16-notify-codex: 修复用户实测「装了但没通知」（NotifyArgv 漏写 shim 文件 + 卸载/状态同类缺口） | - | `main` |
 | 302 | 2026-10-16 | 10-16-notify-codex: Codex 通知接入（spike 推翻 hooks.json → notify 通道；TOML 表作用域 bug + e2e 打通） | - | `main` |
 | 301 | 2026-10-16 | 10-16-notify-claude-compat: OMP + Claude/CodeBuddy/Qoder 通知接入（InstallShape 双形态 + 结构化合并 + 逐 CLI opt-in） | - | `main` |

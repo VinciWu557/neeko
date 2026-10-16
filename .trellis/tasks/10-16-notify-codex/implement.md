@@ -69,6 +69,78 @@
 
 固化教训：**任何会写配置的探测必须先设 `CODEX_HOME=<tempdir>`**。
 
+### Phase 2（A 方案）：审批通知接入（2026-10-16 第四/五轮）
+
+用户决策走 **A 方案**（`hooks.json` 的 `PermissionRequest` + 一次 TUI 确认）。
+本轮实测确认了机制可行，并在实施中抓到**两个新的真 bug**。
+
+#### 关键实测（pty 驱动真实 TUI）
+
+```
+场景：codex --dangerously-bypass-hook-trust --ask-for-approval on-request --sandbox read-only
+TUI  ： [ ! ] Action Required | Run blocked shell command
+probe： CALLED approval        ← PermissionRequest hook 真实触发 ✅
+```
+
+- `hooks.json` schema 与 Claude **同形**（`matcher` / `StopFailure` 都被接受）→ **复用 `CLAUDE_COMPAT_ENTRIES`**。
+- **未信任条目静默跳过、不报错**（实测）→ 可安全写入。
+
+#### 架构变化：`HookTarget.shape` → `shapes: &[InstallShape]`
+
+一个 CLI 可以有**多条通道**，Codex 就是两条（互不替代）：
+
+| 面 | 事件 | 信任门 | 作用 |
+| --- | --- | --- | --- |
+| `NotifyArgv`（`config.toml` 的 `notify`） | 仅 `agent-turn-complete` | 无 | 完成通知，**零交互** |
+| `Structured`（`hooks.json`） | `PermissionRequest`/`Stop`/`StopFailure` | **有** | **审批**/失败，需一次确认 |
+
+只接其一会功能性缺失 → 必须两面并存。`installed` = **所有面都在位**。
+
+#### 本轮抓到的两个真 bug
+
+**Bug 3：`trust_probe` 判据太宽 → 谎报「已确认」**
+
+`hooks.json` 是**共享文件** —— 用户机上 superset 的 hook 也在里面**且已被信任**
+（`[hooks.state]` 有 `<path>:stop:0:0` 等键）。早期实现只判「有没有以我们路径开头的键」
+→ 命中**他人的**键 → 谎报已确认 → 用户以为审批通知生效了。
+修正：算出**我们自己每条条目**的期望键（`<path>:<event_snake>:<gi>:<hi>`）逐个检查。
+新增 `camel_to_snake` + 反证钉子测试。
+
+**Bug 4：`hooks.json` 不存在时审批面静默缺失**
+
+`install_structured` 原判据是「settings_file 不存在 → Skipped」。但实测
+**Codex 的 `~/.codex/` 通常存在，而 `hooks.json` 往往不存在** → 审批面**永远装不上**，
+且设置页只显示「已安装」（因为另一个面在位）→ 又一次「装了但没通知」。
+
+修正：把 `read_settings` 的 `None` 拆成**三态**：
+
+| 状态 | 行为 |
+| --- | --- |
+| 文件不存在 + CLI 目录在 | **创建**空壳并安装 |
+| 文件存在但不可解析 | `Skipped` + 逐字保留（**绝不覆盖**） |
+| CLI 目录不存在 | `Skipped`，不建目录（客人不喧宾） |
+
+新增两条反证钉子（缺失即 Skipped 必红；不区分三态必红）。
+
+#### 前端
+
+`HookInstallStatus` 增 `trusted: Option<bool>`；`CliHooksSection` 增 `describeHookStatus` ——
+`trusted === false` 时显示 **「needs confirmation in the CLI」**，不再让用户以为已生效。
+
+#### 状态
+
+**`pnpm check` 30/30 全绿**（agent::hooks 128 测试，前端 69）。
+
+### 用户机器上的现状（2026-10-16 19:39）
+
+dev 版 reconcile 已写入两个面：
+
+- `config.toml` 顶层 `notify` ✅
+- `hooks.json`：我们的 `PermissionRequest:0:0` / `Stop:1:0` / `StopFailure:0:0` ✅
+  （superset 的 `SessionStart` / `Stop:0:0` / `UserPromptSubmit` **逐字保留** ✅）
+- `trusted`：`Some(false)`（用户尚未在 Codex TUI 里确认）→ 审批通知**暂时不生效**，
+  设置页会如实显示需确认。
+
 ### 待手工验证（AC4 实测版）
 
 自动化已覆盖全部纯逻辑（19 + 12 条）。以下可选做：

@@ -382,3 +382,137 @@ notify before tables → 顶层有 notify? True
 - shim 已按真实 `render()` 产物**逐字节**补写（`v1.0.9+c87418ae76fc2d5f`，7946B，已核验 BYTE-IDENTICAL）；
 - 重启 Neeko 后 `reconcile` 也会自动补写（新逻辑已含该路径），两条路等价。
 - 端到端复验：真 Codex（沙箱）→ shim → 假 ingest 收到 `turn_completed`，字段全对。
+
+---
+
+## 附 3：Codex 通知面全景（2026-10-16 第三轮调研，用户问「审批通知支持吗」）
+
+用户问「只能完成后才提示吗？如果有权限确认的通知呢」。以下为本轮实测/取证结论。
+
+### Codex 有 **三条**独立的通知/事件通道（不是一条）
+
+| # | 通道 | 事件面 | 能否外接 | 信任门 | 实测结论 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `notify`（`config.toml` 的 argv 数组） | **仅 `agent-turn-complete`** | ✅ 已接（本任务） | 无 | 已完成 ✅ |
+| 2 | `hooks.json` 的 hook 面 | **12 个事件，含 `PermissionRequest`** | ✅ 可接 | **有（两层）** | 见下 |
+| 3 | `[tui.notifications]`（`config.toml`） | Codex 自己的 TUI 通知 | ❌ 不外接（走系统通知，不调我们） | 无 | 与 Neeko 无关 |
+
+**关键**：#3 说明 Codex **自己就有**「审批 / 计划 / 提问」的通知（二进制里 4 个 notice 变体：
+`agent-turn-complete` / `approval-requested` / `plan-mode-prompt` / `async-question`，
+文案 `"Approval needed in "` / `" needs your approval."`），但它是 **TUI 内建行为**，
+配置为 `[tui.notifications] notification_method/notification_condition ∈ {unfocused, always}` —— 
+**不经过我们的 shim，Neeko 拿不到**。
+
+### `hooks.json` 能否作为审批通知通道？（本轮实测）
+
+**能触发，且投递完整 JSON**。实测（用户级 `hooks.json` + `--dangerously-bypass-hook-trust`）：
+
+```json
+{"session_id":"01a14476-...","turn_id":"01a14476-...",
+ "transcript_path":".../rollout-....jsonl","cwd":"/private/tmp",
+ "hook_event_name":"Stop","model":"...","permission_mode":"bypassPermissions",
+ "stop_hook_active":false,"last_assistant_message":"..."}
+```
+
+→ `Stop` hook 真实执行、载荷是**完整 Claude 兼容 JSON**（含 `hook_event_name`、`session_id`）。
+
+**但信任门不可自动化**（本轮再次确认，且更精确）：
+
+| 尝试 | 结果 |
+| --- | --- |
+| `hooks.json` 无信任 → 不执行 | ❌（第二轮已证） |
+| `bypass_hook_trust = true` 作为 config.toml **顶层键** | ❌ 无效 |
+| `bypass_hook_trust = true` 落在 `[hooks.state]` 表内 | ❌ 无效（且被 schema 忽略） |
+| CLI `--dangerously-bypass-hook-trust` | ✅ 有效，但**仅限该次调用**，不可持久化到 config |
+
+二进制佐证：`bypass_hook_trust` 只出现在 **`exec/src/lib.rs`（CLI 参数）** 与
+**`app-server/src/config_manager.rs`（config 加载但要求 boolean override）**，
+即它是 **session-flags 作用域的一次性开关**，不是可持久化设置。
+
+### 为什么 `exec` 模式下审批不触发
+
+`codex exec` 对**已策略允许**的命令自动批准，故不进审批门。实测：
+`approval_policy=on-request` + `sandbox_mode=workspace-write` → 命令直接执行、无 `PermissionRequest`。
+`approval_policy=untrusted` 已废弃（`no longer supported`）。
+TUI 需要真实 tty（`stdin is not a terminal`），无法非交互驱动。
+
+→ **审批事件的真实触发面是交互式 TUI**，而 `hooks.json` 的 `PermissionRequest`
+在 TUI 下能触发（前提：该 hook 已信任）。
+
+### 结论：Codex 审批通知的两条路
+
+| 方案 | 可行性 | 代价 |
+| --- | --- | --- |
+| **A. `hooks.json` 的 `PermissionRequest`** | 机制可行（实测 hook 会执行、载荷完整） | 需要用户**在 Codex TUI 里确认一次**（信任哈希由 Codex 自己写）；或用户每次加 `--dangerously-bypass-hook-trust`（不可接受） |
+| **B. `notify` 扩展** | ❌ 不可能 | `notify` 只有 `agent-turn-complete`（二进制 `legacy_notify.rs` 只认识它） |
+| **C. Codex 自己的 `[tui.notifications]`** | ❌ 拿不到 | 走系统通知，不经过 Neeko |
+
+**D（推荐，待用户决策）**：**A + 一次性 UX 引导** ——
+Neeko 写 `hooks.json` 的 `PermissionRequest` 条目（**不写** `trusted_hash`），
+设置页提示「请在 Codex 中确认一次以便启用审批通知」；Codex 首次运行时会展示待信任的 hook
+并让用户确认，之后哈希由 Codex 写入，审批通知即生效。
+
+这比「完全不支持」好，但**不是零交互** —— 诚实告知用户这一点。
+
+---
+
+## 附 4：A 方案可行性实测（2026-10-16 第四轮，已确认实施）
+
+### 实测证据（pty 驱动真实 TUI）
+
+**`PermissionRequest` 在交互式 TUI 下确实触发**：
+
+```
+场景：codex --dangerously-bypass-hook-trust --ask-for-approval on-request --sandbox read-only \
+      "Run exactly this shell command: touch /tmp/cxS/BLOCKED"
+TUI 状态行： [ ! ] Action Required | Run blocked shell command
+probe.log ： CALLED approval        ← PermissionRequest hook 真实执行 ✅
+BLOCKED   ： 未创建                 ← 确实需要用户批准
+```
+
+**未信任条目静默跳过、不报错**（关键安全性）：
+
+```
+无 hooks.json 信任 + 无任何 bypass flag → 跑一轮 exec
+结果：正常完成，probe.log 未创建，无任何错误/警告/卡顿
+```
+
+→ **可以安全写入未信任条目** —— Codex 忽略它，不会让用户的应用出错。
+
+**`hooks.json` schema 与 Claude 同形**（决定能否复用 `CLAUDE_COMPAT_ENTRIES`）：
+
+| 形态 | 是否被接受 |
+| --- | --- |
+| `PermissionRequest` 无 `matcher` | ✅ 接受（无 schema 警告） |
+| `PermissionRequest` + `matcher: "*"` | ✅ 接受 |
+| `StopFailure` | ✅ 接受 |
+
+→ **可以直接复用 `CLAUDE_COMPAT_ENTRIES`**（`PermissionRequest`/`Stop`/`StopFailure`），
+零新增数据表。
+
+### 用户确认流程的 TUI 文案（二进制取证）
+
+```
+Managed / New hook - review required / Trusted /
+Modified since last trusted - review required / Trust / No hooks installed for this event. details
+```
+
+即：Codex TUI **有内建的 hook 审查 UI**，用户能看到「New hook - review required」并点击
+`Trust`。这正是我们引导用户做的动作。相关 TUI action：
+`TrustHook` / `SetHookEnabled` / `SetHookEnabledTrustHooks`（二进制 action 枚举）。
+
+### 结论：A 方案定稿
+
+| 项 | 决定 |
+| --- | --- |
+| 通道 | `~/.codex/hooks.json` 的 `hooks.<Event>[]`（与 Claude 同形） |
+| 复用 | `InstallShape::Structured { settings_file: "hooks.json", entries: CLAUDE_COMPAT_ENTRIES }` —— **零新增形态** |
+| 不写 | `[hooks.state]` 的 `trusted_hash`（不可反推，且是 Codex 内部契约） |
+| 用户动作 | 一次：Codex TUI 里看到「New hook - review required」→ 点 `Trust` |
+| 与 `notify` 的关系 | **两者并存**：`notify` = 完成（零交互、即装即用）；`hooks.json` = 审批/失败（需一次确认）|
+| 状态展示 | `installed` 用既有双面检查（shim 在 + 条目在）；`version_current` 需知「信任与否」—— 见下 |
+
+**新增待办**：`HookInstallStatus` 可能需要表达「已安装但未信任」（否则用户看到「已安装」
+却收不到审批通知 = 又一次「装了但没通知」）。这需要一个**只读探测**：
+读 `config.toml` 的 `[hooks.state]` 里是否有对应键（有键 = 用户已确认过）。
+这是**读**而非写，且判据简单（键存在即已信任）。
