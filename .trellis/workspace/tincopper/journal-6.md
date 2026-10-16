@@ -1595,3 +1595,44 @@ Cut pnpm check wall clock by making command gates concurrent and moving DOM-free
 
 - 端到端 GUI 手测（pnpm tauri dev：造 UU/DU/UD/binary 冲突→决议→写回→视图收敛）与真 WSL/SSH transport 仍未执行（本机无 GUI），已如实登记为非自动化项。
 - rebase 场景（--ours/--theirs 语义相反）按父任务 T4 登记不修。
+
+
+## Session 299: opencode 2.x 插件与通知兼容收尾核验与归档
+<!-- trellis-session: v=2 fp=0c34e385eb0fd603 -->
+
+**Date**: 2026-10-16
+**Task**: opencode 2.x 插件与通知兼容收尾核验与归档
+**Branch**: `main`
+
+### Summary
+
+核验 10-14-opencode-2x-support 四项 AC 全部落地；V2 插件与通知模板已随 0ec055df / 16163f31 合入 main，工作区无遗留改动；记录 session 并归档。
+
+### Main Changes
+
+- V2 重写三个项目插件（trellis-inject-subagent / trellis-session-start / trellis-workflow-state，{id, setup} 裸对象零依赖），形状检查全过。
+- 通知模板 neeko-opencode-status-v2.js 接入 targets.rs（安装文件名不变，版本号变化触发重装）；V1 模板与 V1 插件文件物理冻结在 plugins-v1/ 存档。
+- Rust 侧 V2 契约锚点测试 opencode_v2_template_keep_contract_anchors（形状 + V2 生命周期事件 + 上报硬约束 + V1 已死形态不得出现）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0ec055df` | feat(agent-hooks): add OpenCode 2.x status reporter template |
+| `16163f31` | feat(agent-hooks): support multi-instance coordinates and content-addressed markers |
+| `81e05f5d` | chore(release): bump the version to 1.0.9 |
+
+### Testing
+
+- [OK] node --check 4 个文件全过；check-plugin-shape.mjs 三个插件 ok（id 唯一）。
+- [OK] cargo test agent::hooks：48 passed / 0 failed。
+- [OK] opencode.log 中我方 4 个文件在 10-15/10-16 重启后均为 loading plugin（无 failed to load）；历史失败记录全部早于 10-14 修复。真机 ~/.config/opencode/plugins/neeko-status.js 正文与 V2 模板逐字节一致。
+- [OK] pnpm check：30 条护栏全通过 / 0 违规 / 0 失效。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机 opencode 触发一次 turn 完成与一次 permission 的手工确认仍待执行（需用户在真实 CLI 会话操作）；open-island.js 为用户个人插件，其 V1 拒载故障需另行告知用户（本任务非目标）。
