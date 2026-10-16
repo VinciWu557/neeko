@@ -11,6 +11,8 @@
   且带词边界（`pnpm build` 不得被 `pnpm build:host` 满足）。
 - **A3**：`lefthook.yml` 的 pre-commit / pre-push 只允许出现对护栏框架的**单次**调用，
   不得再出现手写门禁命令，也不允许 `&&`。（commit-msg 的 commitlint 不在 A3 范围。）
+- **A5**：并发度派生策略只有一处（`core/platform.py`）。调用点不得把 `JOBS_CAP` 抄成字面量
+  `--jobs 4` —— 那会让 `JOBS_CAP` 调整只生效在框架侧，push 档与本地档真的跑出不同并发度。
 - **A4**：证据类 job（`*-test` / `*-coverage`）的 `needs` 不得含检查类 job（`*-check`）
   —— check 红时证据信号被整体短路。2026-10 事故：`backend-test needs backend-check`，
   静态检查红了一周 ⇒ 测试从未执行 ⇒ 测试层 flaky 积压到修复当天才第一次现身。
@@ -34,6 +36,7 @@ from guards.core.gates import GATES_LEDGER, GateLedgerError, load_gates
 
 CI_REL = ".github/workflows/ci.yml"
 LEFTHOOK_REL = "lefthook.yml"
+PACKAGE_JSON_REL = "package.json"
 GATES_REL = f"tools/guards/ledger/{GATES_LEDGER}.json"
 
 # A3 治理的 hook（commit-msg 跑 commitlint，不在此列）。
@@ -46,7 +49,7 @@ CHECK_JOB_SUFFIX = "-check"
 
 GUARD = Guard(
     id="check_gate_topology",
-    title="门禁声明与 CI/lefthook 接线一致（A1 命令落在指定 job；A3 hook 只有一条框架调用）",
+    title="门禁声明与 CI/lefthook 接线一致（A1 接线；A3 单次框架调用；A5 并发度派生单源）",
     scopes=(
         CI_REL,
         LEFTHOOK_REL,
@@ -59,6 +62,8 @@ GUARD = Guard(
         "改 ledger/gates.json 的声明，或把 ci.yml 的 job / lefthook.yml 的命令接回去；"
         "两者只能有一个事实源，不要手抄第二份清单。A4 违规则去掉证据类 job（*-test / "
         "*-coverage）指向 *-check 的 needs：check 红时测试/覆盖率信号必须仍被暴露。"
+        "A5 违规则把调用点（package.json / lefthook.yml / ci.yml）的 `--jobs <整数>` "
+        "改成 `--jobs auto`：并发度策略只允许在 core/platform.py 定义一次。"
     ),
 )
 
@@ -168,6 +173,49 @@ def _parse_lefthook_runs(text: str) -> dict[str, list[str]]:
     return hooks
 
 
+def _jobs_spec(text: str) -> str | None:
+    """取 `--jobs` 后紧跟的取值；没有 `--jobs` 返回 None。
+
+    JSON 里取值尾部跟引号（`--jobs 4"`），shell/YAML 里跟行尾或空格 —— 用正则剥掉
+    非取值字符，避免把引号算进取值。
+    """
+    match = re.search(r"--jobs\s+([\w-]+)", text)
+    return match.group(1) if match else None
+
+
+def check_jobs_derivation_single_source(
+    hooks: dict[str, list[str]], package_json_text: str, ci_text: str
+) -> list[Finding]:
+    """A5：并发度派生策略只允许有一处 —— `tools/guards/core/platform.py`。
+
+    为什么：派生规则 `min(cpu_count, JOBS_CAP)` 是**策略**。策略一旦在调用点被抄成字面量
+    （`lefthook.yml` 写 `--jobs 4`、help 文案写死 `min(cpu_count, 4)`），调 `JOBS_CAP`
+    就只改了框架、没改调用点 —— push 档与本地档会真的跑出不同并发度，help 会静默说谎。
+    这正是 `platform.py` 模块 docstring 自己反对的「同一规则抄成多份」的形状。
+
+    判据：**提交进仓库的调用点**（package.json / lefthook.yml / ci.yml）只允许写 `auto`
+    —— 调用点表达意图，不表达策略。写成正整数即违规：那是一次性调试值，不该留下。
+    命令行手工 `--jobs 3` 不在本判据内（它不是仓库里的调用点）。
+    """
+    findings: list[Finding] = []
+    for rel, text in (
+        (PACKAGE_JSON_REL, package_json_text),
+        (LEFTHOOK_REL, "\n".join(line for runs in hooks.values() for line in runs)),
+        (CI_REL, ci_text),
+    ):
+        spec = _jobs_spec(text)
+        if spec is not None and spec.isdigit():
+            findings.append(
+                Finding(
+                    f"{rel} 把并发度写死成 `--jobs {spec}` —— 派生策略只允许在 "
+                    "tools/guards/core/platform.py 有一处。改用 `--jobs auto` 表达「按机器并发」的意图",
+                    rel,
+                )
+            )
+    return findings
+    return findings
+
+
 def check_ci(gates, jobs) -> list[Finding]:
     """A1：CI 门禁的命令必须落在它点名的 job 里。"""
     findings: list[Finding] = []
@@ -261,9 +309,10 @@ def check(ctx: Context) -> GuardResult:
     try:
         ci_text = ctx.read(CI_REL)
         lefthook_text = ctx.read(LEFTHOOK_REL)
+        package_json_text = ctx.read(PACKAGE_JSON_REL)
     except (OSError, UnicodeDecodeError) as exc:
         return GuardResult.broken(
-            f"无法读取 {CI_REL} 或 {LEFTHOOK_REL}：{type(exc).__name__}: {exc}"
+            f"无法读取 {CI_REL} / {LEFTHOOK_REL} / {PACKAGE_JSON_REL}：{type(exc).__name__}: {exc}"
         )
     if not ci_text.strip() or not lefthook_text.strip():
         return GuardResult.broken(
@@ -285,6 +334,7 @@ def check(ctx: Context) -> GuardResult:
     findings = (
         check_ci(gates, jobs)
         + check_lefthook(hooks)
+        + check_jobs_derivation_single_source(hooks, package_json_text, ci_text)
         + check_signal_independence(needs)
     )
     scanned = len(gates) + len(jobs) + len(hooks)

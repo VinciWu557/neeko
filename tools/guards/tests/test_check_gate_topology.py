@@ -75,6 +75,11 @@ def ci_with_needs(job: str, needs_line: str) -> str:
     )
 
 
+DEFAULT_PACKAGE_JSON = json.dumps(
+    {"scripts": {"check": "python3 tools/guards/run.py run --stage local --jobs auto"}},
+    ensure_ascii=False,
+)
+
 VALID_LEFTHOOK = (
     "pre-commit:\n"
     "  commands:\n"
@@ -87,11 +92,11 @@ VALID_LEFTHOOK = (
     "pre-push:\n"
     "  commands:\n"
     "    gates:\n"
-    "      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs 3\n"
+    "      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs auto\n"
 )
 
 
-def build(test, gates, ci, lefthook=VALID_LEFTHOOK):
+def build(test, gates, ci, lefthook=VALID_LEFTHOOK, package_json=None):
     root = temp_repo(test)
     make_repo(
         root,
@@ -101,14 +106,15 @@ def build(test, gates, ci, lefthook=VALID_LEFTHOOK):
             ),
             ".github/workflows/ci.yml": ci,
             "lefthook.yml": lefthook,
+            "package.json": package_json if package_json is not None else DEFAULT_PACKAGE_JSON,
         },
     )
     return context(root)
 
 
 class CiTopologyTest(unittest.TestCase):
-    def check(self, gates, ci, lefthook=VALID_LEFTHOOK):
-        return topology.check(build(self, gates, ci, lefthook))
+    def check(self, gates, ci, lefthook=VALID_LEFTHOOK, package_json=None):
+        return topology.check(build(self, gates, ci, lefthook, package_json))
 
     def test_declared_job_missing_is_a_violation(self):
         result = self.check([gate_entry(ci_job="ghost-job")], ci_with_job("other", "pnpm lint:fe"))
@@ -167,8 +173,8 @@ class CiTopologyTest(unittest.TestCase):
 class SignalIndependenceTest(unittest.TestCase):
     """A4：门禁信号相互独立 —— 检查类 job 不得短路证据类 job（2026-10 事故）。"""
 
-    def check(self, ci):
-        return topology.check(build(self, [gate_entry()], ci))
+    def check(self, ci, lefthook=VALID_LEFTHOOK, package_json=None):
+        return topology.check(build(self, [gate_entry()], ci, lefthook, package_json))
 
     def test_test_job_needing_a_check_job_is_a_violation(self):
         result = self.check(ci_with_needs("backend-test", "    needs: frontend-check\n"))
@@ -255,7 +261,7 @@ class LefthookTopologyTest(unittest.TestCase):
             "pre-push:\n"
             "  commands:\n"
             "    gates:\n"
-            "      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs 3\n"
+            "      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs auto\n"
         )
         result = self.check(lefthook)
         self.assertEqual(result.verdict, VIOLATION)
@@ -269,7 +275,7 @@ class LefthookTopologyTest(unittest.TestCase):
 
     def test_a_missing_framework_call_in_a_hook_is_a_violation(self):
         lefthook = VALID_LEFTHOOK.replace(
-            "      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs 3\n",
+            "      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs auto\n",
             "      run: echo ok\n",
         )
         self.assertEqual(self.check(lefthook).verdict, VIOLATION)
@@ -288,6 +294,41 @@ class LefthookTopologyTest(unittest.TestCase):
         self.assertEqual(self.check(VALID_LEFTHOOK).verdict, PASS)
 
 
+class JobsDerivationSingleSourceTest(unittest.TestCase):
+    """A5：并发度派生策略只有一处 —— core/platform.py；调用点只写 auto。"""
+
+    def check(self, lefthook=VALID_LEFTHOOK, package_json=DEFAULT_PACKAGE_JSON, ci=None):
+        ci = ci or ci_with_job("frontend-check", "pnpm lint:fe")
+        return topology.check(build(self, [gate_entry()], ci, lefthook, package_json))
+
+    def test_auto_at_every_call_site_is_a_pass(self):
+        self.assertEqual(self.check().verdict, PASS)
+
+    def test_lefthook_writing_a_literal_number_is_a_violation(self):
+        lefthook = VALID_LEFTHOOK.replace("--jobs auto", "--jobs 4")
+        result = self.check(lefthook=lefthook)
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertIn("--jobs 4", "\n".join(f.message for f in result.findings))
+
+    def test_package_json_writing_a_literal_number_is_a_violation(self):
+        package_json = json.dumps(
+            {"scripts": {"check": "python3 tools/guards/run.py run --stage local --jobs 4"}}
+        )
+        result = self.check(package_json=package_json)
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertIn("package.json", "\n".join(str(f.file) for f in result.findings))
+
+    def test_ci_yaml_writing_a_literal_number_is_a_violation(self):
+        ci = ci_with_job("frontend-check", "python3 tools/guards/run.py run --stage ci --jobs 4")
+        result = self.check(ci=ci)
+        self.assertEqual(result.verdict, VIOLATION)
+
+    def test_a_call_site_without_jobs_is_not_flagged(self):
+        """没写 `--jobs` 的调用点（走默认值 1）不受本判据管辖。"""
+        package_json = json.dumps({"scripts": {"check": "echo nothing here"}})
+        self.assertEqual(self.check(package_json=package_json).verdict, PASS)
+
+
 class AntiVacuityTest(unittest.TestCase):
     def test_missing_ci_file_is_an_error_not_a_pass(self):
         root = temp_repo(self)
@@ -296,6 +337,7 @@ class AntiVacuityTest(unittest.TestCase):
             {
                 "tools/guards/ledger/gates.json": json.dumps({"gates": [gate_entry()]}),
                 "lefthook.yml": VALID_LEFTHOOK,
+                "package.json": DEFAULT_PACKAGE_JSON,
             },
         )
         result = topology.check(context(root))

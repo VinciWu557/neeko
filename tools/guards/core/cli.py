@@ -9,7 +9,7 @@ import argparse
 import subprocess
 import sys
 
-from . import repo, runner
+from . import platform, repo, runner
 from .contract import KINDS, STAGES
 from .registry import RegistryError, discover
 from .report import FORMATS
@@ -38,9 +38,20 @@ def _changed(args, extra: list[str]) -> list:
     return list(args.changed or [])
 
 
-def _positive_int(value: str) -> int:
-    """`--jobs 0` 会被 ThreadPoolExecutor 拒绝；在 argparse 层就说清楚，别等到运行期。"""
-    number = int(value)
+def _jobs_value(value: str) -> int | str:
+    """`--jobs`：正整数原样返回；`auto` 交给框架按机器派生（见 core/platform.resolve_jobs）。
+
+    `_positive_int` 改名而来，`--jobs 0` 的报错文案逐字保留（在 argparse 层说清楚，
+    别等到 ThreadPoolExecutor 才拒绝）。
+    """
+    if value == platform.JOBS_AUTO:
+        return value
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--jobs 必须是正整数或 {platform.jobs_rule()}（收到 {value}）"
+        ) from None
     if number < 1:
         raise argparse.ArgumentTypeError(f"--jobs 必须 ≥ 1（收到 {value}）")
     return number
@@ -114,7 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="any",
         help="按形态过滤：python=进程内判据 / command=外部命令门禁",
     )
-    run.add_argument("--jobs", type=_positive_int, default=1, help="命令门禁并发度")
+    run.add_argument(
+        "--jobs",
+        type=_jobs_value,
+        default=1,
+        help=f"命令门禁并发度（正整数，或 {platform.jobs_rule()}）",
+    )
     run.add_argument("--staged", action="store_true", help="用 git 暂存集跳过无关护栏")
     run.add_argument("--changed", nargs="*", default=[], help="显式改动集（相对仓库根）")
     run.add_argument("--no-selftest", action="store_true", help="跳过护栏自身单测")
@@ -152,5 +168,5 @@ def main(argv: list[str]) -> int:
         run_selftest=not args.no_selftest,
         suite=args.suite,
         source=args.source,
-        jobs=args.jobs,
+        jobs=platform.resolve_jobs(args.jobs),
     )

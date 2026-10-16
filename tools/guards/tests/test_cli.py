@@ -219,6 +219,22 @@ class RunCommandTest(CliTestBase):
             self.capture(["run", "--jobs", "0"])
         self.assertEqual(ctx.exception.code, 2)
 
+    def test_jobs_rejects_a_non_numeric_value(self):
+        with self.assertRaises(SystemExit) as ctx:
+            self.capture(["run", "--jobs", "many"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_jobs_auto_is_resolved_by_the_framework(self):
+        """`auto` 是调用方表达「按机器并发」的意图，而不是在 package.json 里写死数字。"""
+        self._patch("platform.default_jobs", lambda: 4)
+        self.capture(["run", "--jobs", "auto"])
+        self.assertEqual(self.calls["jobs"], 4)
+
+    def test_explicit_jobs_is_not_overridden_by_the_auto_default(self):
+        self._patch("platform.default_jobs", lambda: 4)
+        self.capture(["run", "--jobs", "3"])
+        self.assertEqual(self.calls["jobs"], 3)
+
     def test_unknown_suite_or_source_is_rejected_by_the_parser(self):
         for flag, value in (("--suite", "nope"), ("--source", "shell")):
             with self.subTest(flag=flag):

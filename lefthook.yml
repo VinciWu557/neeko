@@ -28,6 +28,6 @@ commit-msg:
 pre-push:
   commands:
     # stage=push 的门禁恰好是 lint_rust_all_targets / test_fe / test_rust / test_host（四条）。
-    # `--jobs 4` 保持并发；--changed 用 push 文件集做增量跳过。
+    # `--jobs auto` 复用框架内的派生（min(cpu_count, 4)）；--changed 用 push 文件集做增量跳过。
     gates:
-      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs 4
+      run: python3 tools/guards/run.py run --stage push --changed {push_files} --jobs auto

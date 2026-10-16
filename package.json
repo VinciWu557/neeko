@@ -24,7 +24,7 @@
     "test:host": "bash tools/java-host/test.sh",
     "build:host": "bash tools/java-host/build.sh",
     "test:coverage": "python3 tools/guards/run.py run --stage manual",
-    "check": "python3 tools/guards/run.py run --stage local",
+    "check": "python3 tools/guards/run.py run --stage local --jobs auto",
     "commitlint": "commitlint",
     "prepare": "lefthook install || true",
     "release": "node scripts/release.mjs"

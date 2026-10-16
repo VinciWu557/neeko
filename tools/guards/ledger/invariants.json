@@ -354,6 +354,23 @@
       "red_line": null
     },
     {
+      "id": "gate-jobs-derivation-single-source",
+      "title": "并发度派生策略只有一处（core/platform.py），调用点只表达意图（--jobs auto）",
+      "tier": "guard",
+      "enforcement": [
+        {
+          "kind": "guard",
+          "ref": "check_gate_topology",
+          "note": "A5：package.json / lefthook.yml / ci.yml 不得出现字面量 --jobs <整数>。策略一旦被抄到调用点，调 JOBS_CAP 就只改到框架侧，push 档与本地档会真的跑出不同并发度（2026-10-16 实测：lefthook 写 --jobs 4 而本地走 auto）"
+        },
+        {
+          "kind": "test",
+          "ref": "tools/guards/tests/test_check_gate_topology.py"
+        }
+      ],
+      "red_line": null
+    },
+    {
       "id": "terminal-foreground-arbitration-single-source",
       "title": "「该往哪个 tab」只有一处实现（order 升序），tabId 必填不回退",
       "tier": "guard",
