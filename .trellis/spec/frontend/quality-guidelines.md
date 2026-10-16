@@ -341,6 +341,7 @@ pnpm test:fe        # 跑一次前端测试（push 档用它）
 pnpm test:fe:coverage  # 带覆盖率跑同一套（CI 用它；地板见 vitest.config.ts）
 pnpm test           # 三套串接：test:fe + test:rust + test:host
 pnpm check          # 本地全量：lint + 两套单元测试 + host 自检（--jobs auto，按机器并发）
+pnpm check:quick    # 延迟预算内的轻量检查（~15-20s）；**不是门禁**，判据弱于 check（见下）
 ```
 
 > 命令的**定义单点在 `package.json`**（本文件只引用脚本名）。hook 与 CI 调用的名字必须与它一致 ——
@@ -356,6 +357,43 @@ pnpm check          # 本地全量：lint + 两套单元测试 + host 自检（-
 > CI 都写 `--jobs auto` 复用它；**调用点不得把上限抄成字面量 `--jobs <整数>`**
 > （护栏 `check_gate_topology` 的 A5 判据强制 —— 否则调上限只改到框架侧，push 档与本地档
 > 会真的跑出不同并发度）。要一次性覆盖才在命令行显式传正整数（`--jobs 3`）。
+>
+> **`pnpm check:quick` 是「延迟预算内的轻量检查」，不是门禁 —— 结果不能作为提交 / 合并依据。**
+>
+> 定位（第一性原理）：**阶段边界按延迟预算划，不按语言划** —— 这条原则本仓库早已写在
+> `lefthook.yml` 文件头（commit = 快静态检查 / push = 全套分钟级门禁 / CI = 三平台终审）。
+> `check:quick` 就是其中的「开发循环档」：**不该让人等的不在这，分钟级的留在 push**。
+> 它的边界不是「改动文件」—— 改动集只是「单元测试」这一项需要的机制。
+>
+> | 轻量（本命令，~15-20s） | 重量（`pnpm check` / push） |
+> | --- | --- |
+> | 静态检查：eslint + tsc + fmt + clippy | 集成测试 |
+> | 仓库护栏（25 条进程内判据） | 全量单元测试（`test_fe` 74–132s / `test_rust` 26–48s） |
+> | 改动文件的单元测试（`vitest related`） | 覆盖率地板、生产打包 |
+>
+> **静态检查不在这里自造清单**：它直接复用框架的「lint 档」（`runner.execute(stage="local",
+> suite="lint")`）。框架的 `kind=lint` 就是「静态检查」这个概念的**唯一定义点** ——
+> 新增一条 lint 门禁会自动纳入本命令，这里一行都不用改。早先的实现把 `eslint` / `tsc` /
+> `lint:rust:all-targets` 抄在这里，那是一份与 `gates.json` 重复、必然漂移的清单。
+>
+> **只有单元测试需要「改动集」**：前端用 `vitest related <改动文件>`（vitest 原生按 import
+> 图反推）。两处**不做而是声明缺口**（都不静默跳过，否则「绿」会被读成「都查过了」）：
+> - `.rs`：Rust 无 import 图，`cargo test` 的粒度是整个 crate，推不出该跑哪些测试。
+> - `tools/java-host/**`：它的**唯一**门禁就是重量级的 `test:host`（本命令不含）。
+>   —— 该目录不受任何 lint 门禁覆盖，所以这条声明尤其重要。
+>
+> **`vitest related` 的盲区**（这是它不能替代 `check` 的根本原因）：动态 `import()`、
+> `vi.mock` 隔离掉真实依赖、模块级单例（store）造成的跨文件影响都可能**漏判**。
+> 因此「没有相关测试」被显式报告为**失败**而不是通过（`vitest related` 在该情形下退出码
+> 仍是 0，当成通过就是本仓库反复踩的静默绿失效模式）。
+>
+> **退出码三档与门禁同构**：`0` 通过 / `1` 有代码问题 / `2` 是**工具/环境问题**
+> （工具链缺失、单步超时）—— 2 必须与 1 可区分，否则「跑不起来」会被当成「代码有问题」，
+> 把人引向不该改的地方。
+>
+> 执行本身复用 `tools/guards/core/proc.py`（「怎么跑外部命令」的唯一实现：cwd / 超时 /
+> 进程组清场）—— 与门禁共用同一份，不抄第二份平台相关逻辑（Windows 只能杀直接子进程）。
+> 实现：`tools/guards/core/quick.py`（薄启动器 `tools/guards/quick.py`）。
 >
 > **覆盖率是 CI 门禁，不进本地 hook**（延迟预算）：`vitest.config.ts` 的全局地板与 per-file pin
 > 只在 `pnpm test:fe:coverage` 下判定 —— 该命令此前没有任何调用方，于是 pin 漂了也没人知道
