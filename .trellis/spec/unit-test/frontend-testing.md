@@ -374,6 +374,18 @@ import { describe, expect, it } from 'vitest';
 **变异验证先例**：误标文件（传递性 DOM 依赖）在 node 环境必红——10 个误标已实证回退；
 分类标记集见 `.trellis/spec/unit-test/frontend-testing.md` 本节所用 grep 模式。
 
+**如何判断某个文件该不该迁到 node**（迁移已有文件时逐条走，不要凭印象批量标）：
+
+1. **静态圈候选**：`.ts`（非 `.tsx`）+ 不含 `@testing-library/react` + 源码里无
+   `document` / `window` / `HTMLElement` / `KeyboardEvent` / `DOMParser` 等 Web 全局直写。
+2. **候选只是候选** —— 静态判据看不见**传递性依赖**：一个纯逻辑 util 只要 import 链上
+   碰了 DOM（`modKeyState` 顶层就 `document.addEventListener`、`blocks.ts` 用 `DOMParser`），
+   该测试文件在 node 环境必红。
+3. **逐个实测**：只给该文件首行加 `// @vitest-environment node` 后单独跑它；红了就删 docblock
+   回退，并在提交信息 / 任务记录里写明原因（`document is not defined`、`DOMParser is not
+   defined`、`KeyboardEvent is not defined` 是三类典型）。**不得为了凑迁移数量保留红的迁移。**
+4. **`renderHook` / 组件用例永不能迁**：`renderHook` 与 DOM 断言需要 `document`，那是 jsdom 的职责。
+
 ### 测试结构
 
 遵循 **Arrange-Act-Assert** 模式：

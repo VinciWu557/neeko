@@ -340,11 +340,22 @@ pnpm lint:fix       # 写回修复：cargo fmt（Rust）+ eslint --fix（前端�
 pnpm test:fe        # 跑一次前端测试（push 档用它）
 pnpm test:fe:coverage  # 带覆盖率跑同一套（CI 用它；地板见 vitest.config.ts）
 pnpm test           # 三套串接：test:fe + test:rust + test:host
-pnpm check          # 本地全量：lint + 两套单元测试 + host 自检
+pnpm check          # 本地全量：lint + 两套单元测试 + host 自检（--jobs auto，按机器并发）
 ```
 
 > 命令的**定义单点在 `package.json`**（本文件只引用脚本名）。hook 与 CI 调用的名字必须与它一致 ——
 > 这是必需的：改名时漏改一处，门就会静默失效。
+>
+> **`pnpm check` 走并发（`--jobs auto`）**：命令门禁之间由框架用线程池调度，并发度取
+> `min(cpu_count, 4)` —— 上限 4 是因为长杆 `test_fe` 自带 vitest 的 6 worker，再高的门禁并发
+> 只放大竞争衰减（实测 `lint_fe` 在 `--jobs 4` 下已从 9.5s 劣化到 34.5s）而长杆不会变快；
+> CPU < 4 时退回串行。`auto` 是**显式选择的取值**，`--jobs` 的默认值仍是 1（串行）——
+> 「默认 = 无过滤 + 串行」是框架契约（`tools/guards/tests/test_cli.py` 有意钉住），
+> `commit` 档（增量快反馈）不应继承本地全量的并发选择。派生的唯一定义在
+> `tools/guards/core/platform.py::default_jobs`，`package.json` / `lefthook.yml` 的 pre-push /
+> CI 都写 `--jobs auto` 复用它；**调用点不得把上限抄成字面量 `--jobs <整数>`**
+> （护栏 `check_gate_topology` 的 A5 判据强制 —— 否则调上限只改到框架侧，push 档与本地档
+> 会真的跑出不同并发度）。要一次性覆盖才在命令行显式传正整数（`--jobs 3`）。
 >
 > **覆盖率是 CI 门禁，不进本地 hook**（延迟预算）：`vitest.config.ts` 的全局地板与 per-file pin
 > 只在 `pnpm test:fe:coverage` 下判定 —— 该命令此前没有任何调用方，于是 pin 漂了也没人知道

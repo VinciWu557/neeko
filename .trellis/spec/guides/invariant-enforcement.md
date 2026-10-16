@@ -96,7 +96,11 @@
 `lefthook.yml`、`.github/workflows/ci.yml`）只**读**它，不再各自手抄门禁清单。
 不变量 `gate-topology-single-source` 由 `check_gate_topology` 强制：
 **A1** 声明了 `ci` 的 gate 必须出现在它声明的 `ci_job` 里（支持 `pnpm <script>` 与裸命令）；
-**A3** `lefthook.yml` 的 hook 只允许对框架的单次调用，不得再手写门禁命令或出现 `&&`。
+**A3** `lefthook.yml` 的 hook 只允许对框架的单次调用，不得再手写门禁命令或出现 `&&`；
+**A5** 并发度派生策略只有一处（`core/platform.py::default_jobs`），三个调用点
+（`package.json` / `lefthook.yml` / `ci.yml`）只写 `--jobs auto` 表达意图，不得把
+`JOBS_CAP` 抄成字面量 —— 否则调上限只改到框架侧，本地档与 push 档会真的跑出不同并发度。
+不变量 `gate-jobs-derivation-single-source` 由同一条护栏的 A5 判据强制。
 
 **可见债务（批次 2，尚未落地）**：`BRANCH_PROTECTION.md` 的 required check 集 ==
 `ci.yml` 的 job 集（A2）、`AGENTS.md` 的 `packages/` 豁免 == registry excludes（A4）、
