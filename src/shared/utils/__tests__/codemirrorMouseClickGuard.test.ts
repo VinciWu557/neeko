@@ -4,10 +4,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { makeMouseClickGuardStyle } from '../codemirrorMouseClickGuard';
 
-/** Queue of {pos, assoc} results returned by the fake posAndSideAtCoords, in call order. */
-function makeView(mappings: Array<{ pos: number; assoc?: -1 | 1 }>, sel?: EditorSelection) {
+/** Queue of {pos, assoc} results returned by the fake posAndSideAtCoords, in call order.
+ *
+ * `hasFocus` defaults to **false** so the guard stays active (unfocused path) —
+ * the focused-delegation gate is exercised explicitly by its own cases below. */
+function makeView(
+  mappings: Array<{ pos: number; assoc?: -1 | 1 }>,
+  sel?: EditorSelection,
+  hasFocus = false,
+) {
   let call = 0;
   const view = {
+    hasFocus,
     dom: { contains: vi.fn(() => true), ownerDocument: document },
     state: { selection: sel ?? EditorSelection.cursor(0), doc: { length: 1_000_000 } },
     posAndSideAtCoords: vi.fn(() => {
@@ -20,6 +28,7 @@ function makeView(mappings: Array<{ pos: number; assoc?: -1 | 1 }>, sel?: Editor
     dispatch: vi.fn(),
   };
   return view as unknown as EditorView & {
+    hasFocus: boolean;
     posAndSideAtCoords: ReturnType<typeof vi.fn>;
     posAtDOM: ReturnType<typeof vi.fn>;
     scrollDOM: { scrollTop: number };
@@ -52,6 +61,31 @@ describe('makeMouseClickGuardStyle', () => {
     const view = makeView([{ pos: 0 }]);
     const style = makeMouseClickGuardStyle(view, mouseEvent('mousedown', { ...DOWN, button: 2 }));
     expect(style).toBeNull();
+  });
+
+  /**
+   * 激活门控：编辑器**已聚焦**时返回 null，整条手势交还 CM 原生
+   * basicMouseSelection。这是爆炸半径收窄的核心 —— 漂移 bug 只在 mousedown
+   * 触发 focus()（即未聚焦）时发生，故 focused 路径无此问题、无需接管。
+   * 返回 null 时必须**零副作用**（不 dispatch、不触碰坐标映射），否则会污染
+   * 原生路径。
+   */
+  it('should_delegate_to_native_when_view_already_focused', () => {
+    const view = makeView([{ pos: 100 }, { pos: 5000 }], undefined, true);
+    const style = makeMouseClickGuardStyle(view, mouseEvent('mousedown', DOWN));
+    expect(style).toBeNull();
+    // 零副作用：不能预先 dispatch selection（那会打乱原生 basicMouseSelection）
+    expect(view.dispatch).not.toHaveBeenCalled();
+    expect(view.posAndSideAtCoords).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 对照：未聚焦时仍接管（这是被修复的滚动漂移场景）。
+   */
+  it('should_take_over_when_view_not_focused', () => {
+    const view = makeView([{ pos: 100 }], undefined, false);
+    const style = makeMouseClickGuardStyle(view, mouseEvent('mousedown', DOWN));
+    expect(style).not.toBeNull();
   });
 
   it('should_return_null_for_double_click_falling_back_to_default_style', () => {
