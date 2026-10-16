@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/security/allowlist.md", "reason": "审查：改写用户 settings.json 不得扩大 capabilities；路径必须 home 派生（红线 8）"}
+{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "审查 shim 与既有模板契约面一致性（坐标/token/路由/fail-open/exit 0）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审查红线 9/10：mod.rs 极薄、平台差异集中化、无平铺 #[cfg]"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "审查 merger 四条不变量是否被测试钉死、夹具是否平台无关（红线 13）"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "审查命令层是否仍薄、IPC 载荷是否越界（红线 4/6）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "审查设置页数据驱动行清单与导入防火墙"}

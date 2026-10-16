@@ -1674,3 +1674,23 @@ Cut pnpm check wall clock by making command gates concurrent and moving DOM-free
 ### Next Steps
 
 - AC1-AC6 全满足（AC1 空载实测 82s ≤ 100s）；本任务待归档。
+
+
+## Session 301: 10-16-notify-claude-compat: OMP + Claude/CodeBuddy/Qoder 通知接入（InstallShape 双形态 + 结构化合并 + 逐 CLI opt-in）
+<!-- trellis-session: v=2 fp=3d47d0296ed2e9af -->
+
+**Date**: 2026-10-16
+**Task**: 10-16-notify-claude-compat: OMP + Claude/CodeBuddy/Qoder 通知接入（InstallShape 双形态 + 结构化合并 + 逐 CLI opt-in）
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
