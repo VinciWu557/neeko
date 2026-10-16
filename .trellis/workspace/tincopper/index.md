@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 301
+- **Total Sessions**: 302
 - **Last Active**: 2026-10-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1696 | Active |
+| `journal-6.md` | ~1716 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 302 | 2026-10-16 | 10-16-notify-codex: Codex 通知接入（spike 推翻 hooks.json → notify 通道；TOML 表作用域 bug + e2e 打通） | - | `main` |
 | 301 | 2026-10-16 | 10-16-notify-claude-compat: OMP + Claude/CodeBuddy/Qoder 通知接入（InstallShape 双形态 + 结构化合并 + 逐 CLI opt-in） | - | `main` |
 | 300 | 2026-10-16 | check:quick 轻量档与 Agent 门禁指令（R4-R8） | `51a9a3e1`, `190d0d98`, `b4e3d83f`, `f0bdfcad`, `64b93fe1` | `main` |
 | 299 | 2026-10-16 | opencode 2.x 插件与通知兼容收尾核验与归档 | `0ec055df`, `16163f31`, `81e05f5d` | `main` |

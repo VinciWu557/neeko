@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-16-notify-codex/design.md", "reason": "本子任务设计：为什么 Codex 独立、toml_merger 契约、信任门两条路径、shim 运行时前提"}
+{"file": ".trellis/tasks/10-16-notify-codex/prd.md", "reason": "本子任务需求 R1-R4、验收 AC1-AC7、Step 0 spike（U5 信任哈希 / U6 Interrupt 语义）"}
+{"file": ".trellis/tasks/10-16-notify-claude-compat/design.md", "reason": "前置依赖：shim（report.mjs）、merger.rs 判定语义、InstallShape::Structured 分派骨架，本任务复用不重复实现"}
+{"file": ".trellis/tasks/10-16-agent-notify-more-clis/design.md", "reason": "父任务跨子任务契约：T7 信任门约束轴、T8 http 不可用、T9 shim 可共享"}
+{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "本域跨层契约：坐标格式/token/路由/fail-open，Codex 复用同一 shim"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "红线 10：无新增平台差异（复用既有）；红线 9 mod.rs 极薄"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "toml_merger 纯函数测试与「无关 section 逐字不变」的夹具写法（红线 13）"}
+{"file": ".trellis/spec/security/allowlist.md", "reason": "改写用户 config.toml（含敏感 token）的边界：只增改自家 hooks.state 键（红线 8）"}

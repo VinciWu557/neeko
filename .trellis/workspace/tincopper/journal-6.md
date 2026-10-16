@@ -1694,3 +1694,23 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 302: 10-16-notify-codex: Codex 通知接入（spike 推翻 hooks.json → notify 通道；TOML 表作用域 bug + e2e 打通）
+<!-- trellis-session: v=2 fp=ef4dd0c1846b23f0 -->
+
+**Date**: 2026-10-16
+**Task**: 10-16-notify-codex: Codex 通知接入（spike 推翻 hooks.json → notify 通道；TOML 表作用域 bug + e2e 打通）
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
