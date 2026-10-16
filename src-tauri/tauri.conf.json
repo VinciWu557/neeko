@@ -45,6 +45,9 @@
     "license": "Apache-2.0",
     "licenseFile": "LICENSE.rtf",
     "publisher": "汤圆（Tincopper）",
-    "copyright": "Copyright © 2024 汤圆（Tincopper）. All rights reserved."
+    "copyright": "Copyright © 2024 汤圆（Tincopper）. All rights reserved.",
+    "macOS": {
+      "signingIdentity": null
+    }
   }
 }

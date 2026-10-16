@@ -1,5 +1,5 @@
 #!/bin/sh
-# macOS 开发态：把 `cargo run` 的产物包进一个 adhoc 签名的 dev .app 再执行。
+# macOS 开发态：把 `cargo run` 的产物包进一个**与生产包同身份**的 dev .app 再执行。
 #
 # ## 为什么必须包（2026-10-13 实测，macOS 27.0.1 / build 26A434）
 #
@@ -14,15 +14,27 @@
 #    实测调用"成功"、日志零错误、usernoted 收下记录但从不弹横幅 —— 开发态于是只剩应用内通知。
 # 3. 让 UN 可用的最小充分条件（逐项实测，**缺一即失败**，失败形态都是
 #    `UNErrorDomain Code=1 not allowed`）：.app 目录 + `Info.plist`(CFBundleIdentifier)
-#    + **adhoc `codesign`** + **LaunchServices `lsregister` 注册**，
+#    + **有效 `codesign`** + **LaunchServices `lsregister` 注册**，
 #    且进程可执行文件路径必须在 .app 内（直接 exec 包内二进制即可，**无需** `open`）。
+#
+#    「有效」≠ adhoc。2026-10-16 实测复盘：adhoc (`-s -`) 不写证书，身份随内容派生 ——
+#    每台机器、每次构建都是**新身份**。而 UN 授权记录按 bundleIdentifier 归集、却校验代码身份：
+#    打包版 + dev 包同用 `com.neeko.desktop` 时，身份切换会让此前授予的授权作废并被系统标记
+#    `denied`（且**此后连授权弹窗都不再弹**），表现为「之前能通知、突然再也收不到」。
+#    修复 = 一张自签名代码签名证书（Keychain Access → 显示 → 证书助理，CN 即身份名，恒定不变），
+#    脚本优先用它、签名环境（`NEEKO_CODESIGN_IDENTITY`）可覆盖，缺省回退 adhoc 保持 fail-open。
+#
+# 4. **去重**：不要再让多个不同身份的 .app 抢同一个 bundleIdentifier（实例：/Applications 一份、
+#    `target/dev-bundle/` 一份、各 worktree 各一份、外加历史 dmg 副本）。身份相同才共享授权；
+#    身份不同只会互相顶掉。故本脚本与 `tauri.conf.json` 的 `bundle.macOS.signingIdentity`
+#    必须指向**同一张证书**，dev 包与生产包才会被系统当成同一个应用。
 #
 # ## 本脚本做什么
 #
 # 生成 `target/dev-bundle/NeekoDev.app`（identifier / 版本 / 名称从 `tauri.conf.json` 读取，
-# 与生产包同 identifier —— 继承系统里已授予的通知授权，不额外弹窗），把刚构建好的二进制
-# clonefile 进去、签名、注册，然后 `exec` 它。PID 与 stdio 原样保留，`tauri dev` 的进程控制
-# （热重启 / kill）不受影响。
+# 与生产包同 identifier —— 身份一致时**继承并共享**系统里已授予的通知授权，不额外弹窗），
+# 把刚构建好的二进制 clonefile 进去、签名、注册，然后 `exec` 它。PID 与 stdio 原样保留，
+# `tauri dev` 的进程控制（热重启 / kill）不受影响。
 #
 # ## 触发方式与边界
 #
@@ -122,7 +134,17 @@ PLIST
   # 缺签名 / 缺注册都会被 UN 以 `Code=1 not allowed` 拒绝（见头注释第 3 条）。
   # 显式 `|| return 1`：本函数在 if 条件位置执行，`set -e` 对条件不生效，缺了会把
   # 半成品 app 当成功交付。
-  codesign --force --sign - "$APP" >/dev/null 2>&1 || return 1
+  #
+  # 身份优先级（见头注释第 3/4 条）：
+  #   1. `NEEKO_CODESIGN_IDENTITY` —— 显式覆盖（CI / 多证书机器）；
+  #   2. 未设置 → adhoc (`-`)，保留 fail-open（本地不建证书也不阻塞开发）。
+  # 证书缺失或被拒时**不**静默吞掉：宁可 warn 让开发者看见「本机没建证书、系统通知仍会随
+  # adhoc 身份漂移」，也不要退回 2026-10-16 那种「上次能通知这次不能」的无提示故障。
+  local identity="${NEEKO_CODESIGN_IDENTITY--}"
+  if ! codesign --force --sign "$identity" "$APP" >/dev/null 2>&1; then
+    [ "$identity" != "-" ] && warn "codesign with '$identity' failed; falling back to adhoc"
+    codesign --force --sign - "$APP" >/dev/null 2>&1 || return 1
+  fi
   "$LSREGISTER" -f "$APP" >/dev/null 2>&1 || return 1
 }
 
