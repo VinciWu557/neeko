@@ -1553,3 +1553,45 @@ Cut pnpm check wall clock by making command gates concurrent and moving DOM-free
 ### Next Steps
 
 - AC1-AC6 all satisfied; task ready for finish-work
+
+
+## Session 298: 冲突决议闭环（Layer 2）收尾核验与归档
+<!-- trellis-session: v=2 fp=1f0ab38f69c4b698 -->
+
+**Date**: 2026-10-16
+**Task**: 冲突决议闭环（Layer 2）收尾核验与归档
+**Branch**: `main`
+
+### Summary
+
+核验 10-14-git-conflict-resolve 全部 AC 已落地并全量门禁复跑通过；spec 沉淀完成（git-domain.md §5d + docs/domain-model.md）；记录 session 并归档任务。
+
+### Main Changes
+
+- 后端 apply_conflict_resolution 三条写回原语（write_text / checkout_side / delete_path）+ resolve_conflict 命令（写后 wait_status_fresh 收口），分派判据 = stage 存在性而非 content 存在性（T18）。
+- 前端 useConflictResolve + ConflictView 决议按钮（区域 Ours/Theirs/Both 与整文件二选一互斥草稿），收敛走既有 notConflicted 路径。
+- 删除侧四分支逐条断言（porcelain 逐例不同），binary 选对方不得删文件，rename/rename 与不可合并 kind 显式报错；区域决议全函数化（validate_region_decisions）。
+- spec 沉淀：.trellis/spec/backend/git-domain.md §5d 决议写回小节 + docs/domain-model.md git 冲突决议小节。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `43bc29d7` | feat(git): resolve conflicts by writing whole sides or per-region splices |
+| `02d5a784` | docs(trellis): record git-conflict-resolve Layer 2 sessions and task state |
+
+### Testing
+
+- [OK] cargo test conflict：79 passed / 0 failed（含 T18/T19/T20 变异可红的回归钉子）。
+- [OK] npx vitest run src/features/git：68 files / 596 passed。
+- [OK] pnpm lint：27 条护栏全过 / 617 护栏自测 OK / lint_fe(tsc) / lint_rust_all_targets 干净。
+- [OK] pnpm check：30 条护栏全通过 / 0 违规 / 0 失效（test_fe + test_host + test_rust 全绿）。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 端到端 GUI 手测（pnpm tauri dev：造 UU/DU/UD/binary 冲突→决议→写回→视图收敛）与真 WSL/SSH transport 仍未执行（本机无 GUI），已如实登记为非自动化项。
+- rebase 场景（--ours/--theirs 语义相反）按父任务 T4 登记不修。

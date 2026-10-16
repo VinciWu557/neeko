@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 297
+- **Total Sessions**: 298
 - **Last Active**: 2026-10-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1555 | Active |
+| `journal-6.md` | ~1597 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 298 | 2026-10-16 | 冲突决议闭环（Layer 2）收尾核验与归档 | `43bc29d7`, `02d5a784` | `main` |
 | 297 | 2026-10-16 | Guard wall clock: --jobs auto and node-environment migration | `683f0e7d`, `934b2036`, `3c63b07d` | `main` |
 | 296 | 2026-10-15 | 编辑器 tab 状态单源化（删除 activeTabId/order 双表示） | - | `main` |
 | 295 | 2026-10-15 | 冲突决议复审：UU 整文件决议可达性修复（声明与实现一致） | - | `main` |
