@@ -550,7 +550,9 @@ The check agent's job:
 - Review code changes against specs
 - Review code changes against `prd.md`, `design.md` if present, and `implement.md` if present
 - Auto-fix issues it finds
-- Run lint and typecheck to verify
+- Run the project's **dev-loop check command** to verify. That command is declared by the
+  project (root `AGENTS.md`); do not assume it is the full gate — the heavy gate is reserved
+  for wrap-up / pre-push.
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
@@ -558,14 +560,23 @@ The check agent's job:
 
 Load the `trellis-check` skill and verify the code per its guidance:
 - Spec compliance
-- lint / type-check / tests
+- The project's **dev-loop check command** (see root `AGENTS.md`)
 - Cross-layer consistency (when changes span layers)
 
 If issues are found → fix → re-check, until green.
 
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
-**Final pass (before Phase 3.4 commit)**: the last 2.2 of a task must run full-scope, not just on the latest implement chunk. List all affected packages with `python3 ./.trellis/scripts/get_context.py --mode packages`, then load each package's spec index Quality Check section. This catches cross-layer / multi-package issues a mid-iteration local 2.2 cannot.
+**Final pass (before Phase 3.4 commit)**: the last 2.2 of a task must be **full-scope in
+review coverage** — not just the latest implement chunk. List all affected packages with
+`python3 ./.trellis/scripts/get_context.py --mode packages`, then load each package's spec
+index Quality Check section. This catches cross-layer / multi-package issues a mid-iteration
+local 2.2 cannot.
+
+> **"full-scope" means review coverage, not "re-run every gate".** Running the heavy
+> full-gate command on every iteration is what this note is *not* asking for. The project
+> declares which command the dev loop uses (root `AGENTS.md`); the heavy gate belongs to
+> wrap-up / pre-push, and running it once then is enough.
 
 #### 2.3 Rollback `[on demand]`
 

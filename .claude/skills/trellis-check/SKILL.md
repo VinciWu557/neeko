@@ -38,7 +38,13 @@ Read the specific guideline files referenced — the index is a pointer, not the
 
 ## Step 3: Run Project Checks
 
-Run the project's lint, type-check, and test commands. Fix any failures before proceeding.
+Run the project's **dev-loop check command** — the fast one, not the full gate. Which command
+that is, is declared by the project (root `AGENTS.md`, "AI Assistant Workflow Notes" — this
+repo: `pnpm check:quick`). Fix any failures before proceeding.
+
+Do NOT run the full gate (suite-wide lint + all unit tests) at this step: it is minute-scale
+and belongs to wrap-up / pre-push. Run it only when the user explicitly asks, or when the
+change plausibly crosses module boundaries that the fast check cannot cover.
 
 ## Step 4: Review Against Checklist
 

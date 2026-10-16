@@ -55,6 +55,8 @@ required check 核对属批次 2。
 pnpm install                 pnpm tauri dev            pnpm tauri build
 pnpm lint          # 全部静态检查：进程内判据 + lint_fe（eslint + tsc）+ lint_rust:all-targets（fmt + clippy 全目标）
 pnpm check         # 本地全量门禁：lint + test（单次框架调用，组成声明在 ledger/gates.json）
+pnpm check:quick   # 延迟预算内的轻量检查（~15-20s）：静态检查（框架 lint 档）+ 改动文件的单元测试
+                   # **不是门禁** —— 分钟级的（全量测试/集成/覆盖率）留在 push（见 quality-guidelines.md）
 pnpm guards list   # 列当前门禁清单与其 stage/scope/argv（checks/ 目录 + ledger/gates.json）
 pnpm lint:fix      # 写回修复：cargo fmt（Rust）+ eslint --fix（前端）
 pnpm type-check    # 仅 TypeScript 类型检查
@@ -172,8 +174,14 @@ Tauri Event 字符串（如 `terminal-output-{id}`、`git-status-diff`）禁止�
 **开发前**：`python3 ./.trellis/scripts/get_context.py` → 读相关 spec index → 创建/选择任务目录 →
 `task.py init-context` + `task.py add-context` → `task.py start` 激活上下文。
 
-**收尾**：跑质量命令确认通过 → 同步必要 spec 文档 → `python3 ./.trellis/scripts/add_session.py
---title "<title>" --commit "<hash>"` → **不要主动提交代码**。
+**检查用哪条命令（硬指令）**：开发循环（Phase 2.2 每一轮）用 `pnpm check:quick`；
+`pnpm check`（全量、分钟级）只留给**收尾那一次**、用户明确要求、或怀疑跨模块影响时。
+**不要在开发循环里跑 `pnpm check`**。理由与覆盖面：
+`.trellis/spec/frontend/quality-guidelines.md`「质量门禁」。
+
+**收尾**：跑 `pnpm check`（全量那一次）确认通过 → 同步必要 spec 文档 →
+`python3 ./.trellis/scripts/add_session.py --title "<title>" --commit "<hash>"` →
+**不要主动提交代码**。
 
 ## Quick Change Playbooks
 
