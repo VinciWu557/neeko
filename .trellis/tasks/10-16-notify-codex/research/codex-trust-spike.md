@@ -321,3 +321,64 @@ notify before tables → 顶层有 notify? True
 
 回归钉子（三条）：`insert_lands_at_top_level_even_when_file_ends_with_a_table`（真实场景）、
 `inserted_key_sits_before_the_first_table_header`、`insert_into_flat_file_without_tables`。
+
+---
+
+## 附 2：用户实测「装了但没通知」的根因（2026-10-16 第二轮）
+
+### 症状
+
+用户开 `cliHooks` 后用 Codex 实测无通知。取证发现：
+
+```
+~/.codex/config.toml  →  有 notify 条目（指向 ~/.codex/neeko-status.mjs）
+~/.codex/neeko-status.mjs  →  **不存在**
+```
+
+配置写了，但 shim 从未落盘 → Codex 每次调用都失败 → 无通知。**而安装回执是 `Applied`。**
+
+### 根因（我实现里的 bug）
+
+`install_notify_argv` **只改了 `config.toml`，从未写 shim 文件**。
+对比 `install_structured`（它写了 shim），`NotifyArgv` 分支漏了这一步。
+
+连带两个同类缺口：
+
+| 环节 | 缺口 | 后果 |
+| --- | --- | --- |
+| `install_notify_argv` | 不写 shim | 配置指向不存在的脚本；回执却 `Applied` |
+| `uninstall_notify_argv` | 不删 shim | 留孤儿文件 |
+| `notify_argv_status` | 不检查 shim 存在 | 只报「已安装」= 撒谎，掩盖该故障 |
+
+**为什么原测试没抓住**：三个测试都只断言 `config.toml` 的**文本**（`read_notify` 解析出的条目），
+从未断言 **shim 文件是否存在**。这是「只测一个面」的典型盲区 —— 与 TOML 表作用域那个 bug 同类：
+**oracle 覆盖面不全**（一个只测字符串、一个只测配置面）。
+
+### 修法
+
+1. `install_notify_argv`：**先写 shim（幂等，内容寻址标记），再写配置**；
+   并把「配置已 `Unchanged` 但 shim 缺失/过期」也视为需要写盘
+   （否则早期故障态永不修复 —— 配置 merge 得 `Unchanged` 就提前返回了）。
+2. `uninstall_notify_argv`：两处独立清理（条目 + shim），任一有动作即报 `Removed`。
+3. `notify_argv_status`：`installed = shim 在位 && 条目在位`；
+   `version_current = argv 一致 && shim 在位`。
+
+### 新增的 4 条回归钉子（每条都能反证）
+
+| 测试 | 反证什么 |
+| --- | --- |
+| `notify_install_writes_both_shim_file_and_config_entry` | 删掉 shim 写入 → 必红 |
+| `notify_install_repairs_missing_shim_when_config_already_correct` | 只看 merge 结果就提前返回 → 必红（加入 `Applied` 分支的 shim 补写） |
+| `notify_status_requires_shim_file_too` | status 不查 shim → 必红 |
+| `notify_uninstall_removes_shim_file_too` | 卸载不删 shim → 必红 |
+
+### 固化教训（写入 spec）
+
+**「配置面 + 文件面」类安装的 oracle 必须断言**两个面**（配置条目 **与** 落盘文件），
+不能只断言配置文本。** —— 与「配置文件改写用解析器回读」并列，构成该场景的两条测试纪律。
+
+### 用户机器上的修复
+
+- shim 已按真实 `render()` 产物**逐字节**补写（`v1.0.9+c87418ae76fc2d5f`，7946B，已核验 BYTE-IDENTICAL）；
+- 重启 Neeko 后 `reconcile` 也会自动补写（新逻辑已含该路径），两条路等价。
+- 端到端复验：真 Codex（沙箱）→ shim → 假 ingest 收到 `turn_completed`，字段全对。

@@ -21,9 +21,36 @@
 | 4 writers 第三分支 | ✅ | `install/uninstall/status_notify_argv` + `platform::hook_command::report_argv`（argv 形态） |
 | 5 实测 | ✅ | **e2e 打通**（真实 Codex → shim → ingest POST，字段映射全对，见 spike 附录） |
 
-### 实施期发现并修掉的真实 bug（最有价值的产出）
+### 实施期发现并修掉的两个真实 bug（最有价值的产出）
 
-**TOML 表作用域**：`toml_merger` 原实现把 `notify` 追加到**文件末尾** —— 而 TOML 的表作用域
+#### Bug 2（**用户实测发现**）：`NotifyArgv` 只写配置不写 shim 文件
+
+**症状**：用户开 `cliHooks` 后 Codex 实测无通知。取证：`config.toml` 有条目、
+`~/.codex/neeko-status.mjs` **不存在** → Codex 调用不存在的脚本。
+
+**根因**：`install_notify_argv` 只改 `config.toml`，从未写 shim（对比 `install_structured` 会写）。
+**回执却是 `Applied`** —— 比不报更糟。
+
+**三个同类缺口**（安装 / 卸载 / 状态）：
+
+| 环节 | 缺口 | 后果 |
+| --- | --- | --- |
+| `install_notify_argv` | 不写 shim | 配置指向不存在的脚本 |
+| `uninstall_notify_argv` | 不删 shim | 孤儿文件 |
+| `notify_argv_status` | 不查 shim 存在 | 谎报「已安装」，掩盖故障 |
+
+**为什么原测试没抓住**：三条测试都只断言 `config.toml` 的**文本**，从未看 shim 是否存在 ——
+「只测一个面」的盲区（与下面的 TOML 表作用域 bug 同类：oracle 覆盖面不全）。
+
+**修法**：两个面都落盘（先 shim 后配置）；「配置已对但 shim 缺失」也要补写
+（否则 merge 得 `Unchanged` 就提前返回，早期故障态永不修复）；
+卸载两处都清；status 要求 shim 在位。**新增 4 条反证钉子。**
+
+**用户机器上的修复**：shim 已按真实 `render()` 产物**逐字节**补写
+（`v1.0.9+c87418ae76fc2d5f`，7946B，核验 BYTE-IDENTICAL）；重启 Neeko 走 reconcile 亦可。
+端到端复验：真 Codex（沙箱）→ shim → ingest 收到 `turn_completed`。
+
+#### Bug 1：TOML 表作用域：`toml_merger` 原实现把 `notify` 追加到**文件末尾** —— 而 TOML 的表作用域
 延续到下一个表头，用户 `config.toml` 末尾是 `[hooks.state."…"]`，新键因此落进**那个表内部**。
 `tomllib` 实证顶层根本没有 `notify` → **Codex 从不调用 shim**（而配置文件看起来是对的）。
 

@@ -1714,3 +1714,23 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 303: 10-16-notify-codex: 修复用户实测「装了但没通知」（NotifyArgv 漏写 shim 文件 + 卸载/状态同类缺口）
+<!-- trellis-session: v=2 fp=c83975f348b16004 -->
+
+**Date**: 2026-10-16
+**Task**: 10-16-notify-codex: 修复用户实测「装了但没通知」（NotifyArgv 漏写 shim 文件 + 卸载/状态同类缺口）
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
