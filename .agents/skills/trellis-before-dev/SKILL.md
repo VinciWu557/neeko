@@ -7,12 +7,6 @@ Read the relevant development guidelines before starting your task.
 
 Execute these steps:
 
-0. **写码前预检（改码硬闸门，不可跳过）**：在修改任何代码之前，先确认以下三条：
-   1. **文档完成**：当前任务的规划文档是否齐全——复杂任务需 `prd.md` + `design.md` + `implement.md` 全部完成并经 review（简单/轻量任务无需任务文档，直接内联实现）。
-   2. **用户确认**：用户是否已明确确认「文档已完成、可以开始实现」。仅"同意创建任务"或默认沉默不算。
-   3. **任务激活**：任务状态是否为 `in_progress`（`python3 ./.trellis/scripts/task.py current`）。
-   任一未满足 → **停止写代码**，先补完规划文档、向用户请求明确确认，再回来。即使被催促也不要提前改码。
-
 1. **Read current task artifacts**:
    - `prd.md` for requirements and acceptance criteria
    - `design.md` if present for technical design
@@ -41,6 +35,17 @@ Execute these steps:
    cat .trellis/spec/guides/index.md
    ```
 
-7. Understand the coding standards and patterns you need to follow, then proceed with your development plan.
+7. **For a non-trivial task, state the change boundary before writing code.** Non-trivial means it touches more than one file, crosses a layer, changes a public interface, or edits code you did not just write. Write down:
+   - the smallest behavior gap between what happens now and what should happen
+   - where that behavior actually lives (not where it is easiest to intercept)
+   - which files you expect to change, and why each one is necessary
+   - what you are explicitly not doing in this task
+   - if a local refactor is needed, how you will show it did not change behavior
+
+   A small, well-scoped change does not need this — do it directly.
+
+   If the real scope turns out to be clearly larger than this, say so and why before continuing. Do not widen the change on your own.
+
+8. Understand the coding standards and patterns you need to follow, then proceed with your development plan.
 
 This step is **mandatory** before writing any code.

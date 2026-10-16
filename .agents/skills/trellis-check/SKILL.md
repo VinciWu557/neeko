@@ -50,17 +50,6 @@ Run the project's lint, type-check, and test commands. Fix any failures before p
 - [ ] No debug logging left in?
 - [ ] No suppressed warnings or type-safety bypasses?
 
-### Review Gates (Neeko-specific)
-
-- [ ] **Cross-platform shell**: any `ExecTarget::Local` path uses `cmd /c` on Windows and `sh -c` on Unix via `#[cfg]`? No unconditional `sh -c` / `bash -lc` on local paths?
-- [ ] **Blocking I/O isolation**: async Commands use `spawn_blocking` for `std::fs::*`, `std::process::Command`, or PTY blocking reads? No blocking I/O on Tokio worker threads?
-- [ ] **IPC payload size**: single Command return under 2MB? Large text (diff, PTY buffer) uses binary stream or pagination?
-- [ ] **Event name constants**: Tauri event strings defined as constants on Rust side, referenced (not re-hardcoded) on frontend?
-- [ ] **Skinny Commands**: `#[tauri::command]` only does param validation + dispatch? No business logic (Git/SSH/PTY) inlined?
-- [ ] **if-let nesting**: no 3+ level `if let` chains? Flattened to `match`? Conversely, no over-engineered `match` with `_ => {}` for a single Happy Path?
-- [ ] **Path safety**: frontend-supplied paths `canonicalize()`d before use? No `fs:allow-all` / `shell:allow-all` in capabilities?
-- [ ] **Slim mod.rs**: `mod.rs` only has `mod` declarations and `pub use`? Business logic extracted to `services.rs` / `manager.rs` / `types.rs`?
-
 ### Test Coverage
 
 - [ ] New function → unit test added?
@@ -72,6 +61,14 @@ Run the project's lint, type-check, and test commands. Fix any failures before p
 - [ ] Does `.trellis/spec/` need updates? (new patterns, conventions, lessons learned)
 
 > "If I fixed a bug or discovered something non-obvious, should I document it so future me won't hit the same issue?" → If YES, update the relevant spec doc.
+
+### Scope Discipline
+
+- [ ] Any tidying of code the task did not require?
+- [ ] Any abstraction, config or extension point added for a case that does not exist yet?
+- [ ] Any speculative fallback for a state that cannot occur?
+- [ ] Any file changed that the acceptance criteria do not mention?
+- [ ] Any workaround added at the caller instead of a fix where the behavior actually lives?
 
 ## Step 5: Cross-Layer Dimensions (if applicable)
 
@@ -90,7 +87,7 @@ Skip this step if your change is confined to a single layer.
   ```bash
   grep -r "pattern" src/
   ```
-- [ ] If 2+ places define same value → extracted to shared constant?
+- [ ] If the same value repeats, does it represent one stable concept whose callers must change together? Extract only then — two literals that merely happen to match today should stay separate.
 - [ ] After batch modification, all occurrences updated?
 
 ### C. Import/Dependency (creating new files)
@@ -106,4 +103,9 @@ Skip this step if your change is confined to a single layer.
 
 ## Step 6: Report and Fix
 
-Report violations found and fix them directly. Re-run project checks after fixes.
+Report every violation you find. Then:
+
+- Mechanical and local (lint nit, missing type, wrong import, dead branch, failing assertion) → fix in place, then re-run project checks.
+- Design or judgment (naming a shared concept, moving a module boundary, changing a public interface, reassigning where behavior lives) → record the evidence and your recommendation, and stop. Do not rewrite it silently.
+
+If a fix would touch files outside the current task's scope, say so and stop instead of widening the change.

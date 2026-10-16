@@ -3,15 +3,7 @@
   "extensions": [
     "./extensions/trellis/index.ts"
   ],
-  "packages": [
-    "npm:@tintinweb/pi-subagents",
-    "npm:pi-timing"
-  ],
   "prompts": [
     "./prompts"
-  ],
-  "skills": [
-    "./skills"
-  ],
-  "theme": "neeko-one-dark-pro"
+  ]
 }
