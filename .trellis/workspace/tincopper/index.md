@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 299
+- **Total Sessions**: 300
 - **Last Active**: 2026-10-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1638 | Active |
+| `journal-6.md` | ~1676 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 300 | 2026-10-16 | check:quick 轻量档与 Agent 门禁指令（R4-R8） | `51a9a3e1`, `190d0d98`, `b4e3d83f`, `f0bdfcad`, `64b93fe1` | `main` |
 | 299 | 2026-10-16 | opencode 2.x 插件与通知兼容收尾核验与归档 | `0ec055df`, `16163f31`, `81e05f5d` | `main` |
 | 298 | 2026-10-16 | 冲突决议闭环（Layer 2）收尾核验与归档 | `43bc29d7`, `02d5a784` | `main` |
 | 297 | 2026-10-16 | Guard wall clock: --jobs auto and node-environment migration | `683f0e7d`, `934b2036`, `3c63b07d` | `main` |

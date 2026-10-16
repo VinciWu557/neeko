@@ -1636,3 +1636,41 @@ Cut pnpm check wall clock by making command gates concurrent and moving DOM-free
 ### Next Steps
 
 - 真机 opencode 触发一次 turn 完成与一次 permission 的手工确认仍待执行（需用户在真实 CLI 会话操作）；open-island.js 为用户个人插件，其 V1 拒载故障需另行告知用户（本任务非目标）。
+
+
+## Session 300: check:quick 轻量档与 Agent 门禁指令（R4-R8）
+<!-- trellis-session: v=2 fp=e9b4ba129b7f1eb2 -->
+
+**Date**: 2026-10-16
+**Task**: check:quick 轻量档与 Agent 门禁指令（R4-R8）
+**Branch**: `main`
+
+### Summary
+
+在 R1-R3（--jobs auto + node 环境迁移）之上追加轻量检查档 pnpm check:quick，并把 Agent 的开发循环指令从含糊的「跑质量命令」钉到「快的那个」。核心是把 check:quick 的身份从「只查改动文件」修正为「延迟预算内的轻量检查」——与 lefthook 头部的分档原则一致。
+
+### Main Changes
+
+- 新增 tools/guards/core/quick.py + 薄启动器 quick.py：静态检查复用框架 lint 档（runner.execute(suite="lint")，清单零重复），单元测试用 vitest related 按 import 图反推。抽出公开原语 core/proc.py::run()（cwd/timeout/平台收口），runner 与 quick 共用，消除 _kill_tree 被抄成第二份的漂移风险。缺口显式声明而非静默跳过：.rs 不跑 cargo test（无 import 图）、tools/java-host/ 不跑 test:host（重量级且是该目录唯一门禁）。静默绿防线：识别 vitest related 的 "No test files found"（退出码仍 0）并判失败；回归测试钉住 quick.py 不得硬编码 lint 命令字面量、不得调用重量级门禁。Agent 指令单源化：命令名只在 AGENTS.md 出现一次，workflow.md 与 5 份 trellis-check SKILL.md 只写「开发循环检查命令」并指向 AGENTS.md；workflow.md 的 "full-scope" 澄清为「覆盖全部受影响包」而非「重跑每个门禁」。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `51a9a3e1` | refactor(guards): extract a shared external-command primitive |
+| `190d0d98` | feat(guards): add pnpm check:quick for the dev loop |
+| `b4e3d83f` | docs(trellis): steer the dev-loop check to check:quick |
+| `f0bdfcad` | docs(spec): document the lightweight check:quick tier |
+| `64b93fe1` | docs(task): record the guard wall-clock reductions and review fixes |
+
+### Testing
+
+- [OK] 护栏框架自测 619 条 OK（含 proc 9 条 + quick 33 条，正序/反序均绿）；变异验证：拿掉 run_step 的 cwd 即红。pnpm check 30/30 绿（复跑 1m14s）。实测：纯文档 13.9s / 前端 1 文件 26.7s / 后端 1 文件 16.0s（含 clippy），对照全量 1m55s。AGENTS.md 16,182B ≤ 上限。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- AC1-AC6 全满足（AC1 空载实测 82s ≤ 100s）；本任务待归档。
