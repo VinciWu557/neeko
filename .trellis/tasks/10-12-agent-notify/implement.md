@@ -506,3 +506,201 @@ Phase B 额外回滚面 = writers 清理用户级 hook 文件（uninstall 命令
 - [ ] Windows：Toast 弹出（打包与非打包 AUMID 行为）、点击回前台
 - [ ] Linux：GNOME/KDE 各验一次通知弹出与回前台
 - [ ] 失焦抑制：窗口聚焦且正看该会话时不弹系统通知（AC3）
+
+---
+
+## Phase H —— macOS 系统通知静默失效的定位与签名身份修复（2026-10-16，**已闭环**）
+
+> **现象**（用户报告）：系统通知又失效了，应用内通知正常。环境：Pi Agent + macOS 27.0.1 (26A434)。
+>
+> **结论先行**：整条通知链**全部正确**，唯一断点在最后一格 ——
+> `UNUserNotificationCenter` 返回 `UNErrorDomain Code=1 (not allowed)`。
+> 根因不是代码缺陷，而是**代码签名身份不稳定**：adhoc 签名不写证书，身份随内容派生；
+> 同一个 `.app` 被重装 / 覆盖后身份即变，UN 授权随之失效。
+>
+> **修复 = 稳定签名 + 重启进程**（一张自签名证书），**不需要 `tccutil reset`**。
+> 2026-10-16 15:21 起 4/4 `UN accepted`，跨两次重启仍然有效（详见 H6）。
+>
+> 本次只做分析 + 修复签发方式，**未改任何通知链路代码**。
+
+### H0 取证：四条独立证据（全部可复现）
+
+| # | 证据 | 得到什么 |
+|---|---|---|
+| 1 | 向活实例 ingest 端口手工 POST 合法 `turn_completed` 上报 | 得 `HTTP 204`，日志随即出现 `[notify] macOS: UN authorization not granted (… UNErrorDomain error 1.)` |
+| 2 | `grep -a "UN accepted" ~/.neeko/neeko.log*` | 历史共 23 次成功，**最后一次 = `2026-10-15 13:21:23`**；同实例 `13:21:00 Neeko starting` → `13:21:36 shutdown_all_background`（成功了 36 秒后即退出）。此后三个实例（10-15 22:59 / 10-16 11:10 / 10-16 13:36）**零成功、全部 `not granted`** |
+| 3 | `codesign -dv /Applications/Neeko.app` | `Signature=adhoc`、`TeamIdentifier=not set`、`Info.plist=not bound`、`Identifier=neeko-70af984a44c3d43e`（adhoc 派生身份而非 bundle id） |
+| 4 | `lsregister -dump` | **25 个 `.app` 共用 `com.neeko.desktop`**，codeInfoID 各不相同：`/Applications/Neeko.app`、源码树 `target/dev-bundle/NeekoDev.app`、worktree ×2、`/private/tmp` ×2、`/Volumes/dmg.*` ×22 |
+
+**证据 1 的意义**：手工上报能穿透「坐标发现 → HTTP ingest → token 鉴权 → envelope 解析 →
+classify 投影 → policy 裁决 → dispatch → macos::try_deliver」**全部环节**，只是被 UN 拦下。
+所以这不是链断，是**身份不被信任**。（同时反证了 Pi hook 与坐标发现在当时是工作的。）
+
+**证据 2 的意义**：把「慢慢坏的」精确为「2026-10-15 13:21 附近发生身份切换」。
+10-14/10-15 白天成功时跑的是源码树 dev bundle（当时被接受的 adhoc 身份）；
+之后切到 `/Applications/Neeko.app`（另一个 adhoc 身份）顶掉了同一 bundle id 的注册。
+
+**证据 4 的意义**：解释了为什么这个问题会反复发作，也解释了「为什么你从未见过授权弹窗」——
+系统已经在多个身份间反复改判，最终停在 denied，而 denied 态不再询问。
+
+> **结论（可迁移）**：macOS 的 UN 授权**按 bundleIdentifier 归集、但按代码签名身份判真伪**。
+> 要让「同一个应用」在多次构建、多台机器、dev/生产两种形态下共享同一份授权，
+> 必须让它有**一个稳定的身份**。
+
+### H1 修复：一张自签名代码签名证书（免费，无需 Apple Developer 账号）
+
+**为什么不需要花钱**：让 UN 工作的最小充分条件是「.app 目录 + Info.plist(CFBundleIdentifier) +
+有效 codesign + lsregister 注册」（`macos-dev-bundle.sh` 头注释 2026-10-13 已实测确认）。
+这里「有效」从来不要求 Developer ID，只要求**身份稳定**。自签名证书恰好满足：
+
+| | adhoc (`-s -`) | 自签名证书 | Developer ID |
+|---|---|---|---|
+| UN 能否工作 | ✅ | ✅ | ✅ |
+| **重建后身份是否稳定** | ❌ 每次变 | ✅ 恒定 | ✅ |
+| 多形态 dev/生产能否共享授权 | ❌ | ✅ | ✅ |
+| 分发他人 | ❌ Gatekeeper 拦 | ⚠️ 需右键打开 | ✅ 干净 |
+| 成本 | 免费 | **免费** | $99/年 |
+
+→ 本机长期使用选自签名；要公开发售 DMG 时再升 Developer ID。
+
+**建证书（一次性）**：钥匙串访问 → 菜单栏 **「显示」→「证书助理」→「创建证书…」**
+（macOS 13+ 该菜单被移进「显示」，旧版在菜单栏直接可见 —— 这是找不到它的直接原因）
+
+| 字段 | 值 |
+|---|---|
+| 名称 | `Neeko Development`（**定下来别改**，身份名言即身份） |
+| 身份类型 | 自签名根证书 |
+| 证书类型 | 代码签名 |
+| 「默认值」勾选框 | ✅ 覆盖整个对话框 |
+
+建完**必须设信任**：双击证书 →「信任」→「使用此证书时」= **始终信任**。
+
+**验证身份被 codesign 识别**：
+
+```bash
+security find-identity -v -p codesigning
+# 期望：1) <HASH> "Neeko Development"
+```
+
+### H2 为什么签名不写进 `tauri.conf.json`（关键取舍）
+
+`tauri.conf.json` 的 `bundle.macOS.signingIdentity` **只接受字面字符串**，不支持环境变量展开
+（已核对官方 schema：`signingIdentity: {type: [string, null]}`，无 env 语义）。
+
+若写死 `"Neeko Development"`：**所有没建这张证书的机器都会在 `pnpm tauri build` 直接失败** ——
+包括 CI runner 与新克隆的开发机（`build.yml` 的 macOS job 就跑 `tauri build` 并上传 `*.app`）。
+
+故：conf 保持 `signingIdentity: null`（显式不签名），签名统一走显式脚本、按环境变量决定。
+代价是 `pnpm tauri build` 默认产出未签名 app，要带签名需显式跑 `macos-sign.sh`。
+
+### H3 改动清单（4 个文件）
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/macos-sign.sh` | **新增**：签名逻辑单点，读 `NEEKO_CODESIGN_IDENTITY` |
+| `src-tauri/tauri.conf.json` | `bundle.macOS.signingIdentity: null` |
+| `src-tauri/scripts/macos-dev-bundle.sh` | dev 包签名身份也由 `NEEKO_CODESIGN_IDENTITY` 覆盖，缺省 adhoc（保留 fail-open） |
+| `scripts/release.mjs` | 发布流程接入签名：有身份才签，没有则 warn 跳过（不中断发布） |
+
+### H4 `macos-sign.sh` 用法与已实测路径
+
+```bash
+# 常规：build 之后签最新产物（自动发现 target/release/bundle/macos/*.app，取最新）
+pnpm tauri build
+NEEKO_CODESIGN_IDENTITY="Neeko Development" pnpm release 1.0.10   # release.mjs 内部调用
+
+# 单独签任意 app（路径作第一个参数）
+NEEKO_CODESIGN_IDENTITY="Neeko Development" scripts/macos-sign.sh /Applications/Neeko.app
+```
+
+已逐条实测的行为（非推断）：
+
+| 场景 | 行为 |
+|---|---|
+| `NEEKO_CODESIGN_IDENTITY` 未设置 | 打印证书创建步骤后 `exit 1`（**不静默 adhoc**） |
+| 身份名拼错 | 列出现有身份供比对后 `exit 1` |
+| 正常签名 | `codesign --force --deep --sign` + `lsregister -f` + `--verify --deep --strict`，**幂等可重跑** |
+| 无 `.app` 产物 | 提示先 `tauri build`，或传路径 |
+| 传错路径（非 app） | `不是 macOS app bundle（缺少 Contents/Info.plist）`，而非 `codesign` 那句晦涩的 `bundle format unrecognized` |
+
+两个设计取舍：
+
+1. **自动发现而非硬编码应用名** —— `.app` 名由 `productName` 决定，改名应自动跟上；且
+   `bundle/macos/` 下可能残留多个版本的 `.app`（本地实测见 4 个历史 dmg），必须取本次
+   产物而不是签到旧包上，故 `ls -dt … | head -1`。
+2. **校验前置 + 人话报错** —— 用 `Contents/Info.plist` 存在性判 bundle，拦住传错路径；
+   身份校验也前置，报 `钥匙串里没有身份 X。现有身份：…` 而不是让 codesign 抛术语。
+
+### H5 现场处置记录（已执行，全部有复现命令）
+
+| 操作 | 结果 |
+|---|---|
+| `codesign --force --deep --sign "Neeko Development" /Applications/Neeko.app` | ✅ `Authority=Neeko Development`、`Identifier=com.neeko.desktop`、`codesign --verify --deep --strict` = valid |
+| 同证书重签 `target/dev-bundle/NeekoDev.app` | ✅ 消除最后一个身份竞争者（dev 与生产同身份） |
+| `lsregister -f /Applications/Neeko.app` | ✅ 重新注册 |
+| 卸载并移除 `/Volumes/dmg.*` | ✅ 原 22 个同 bundle id 副本全部退出（`diskutil` eject + 删 dev bundle） |
+| `lsregister -u` 注销 4 个幽灵路径 | ✅ worktree×2、`/private/tmp`×2；剩余 20 条 `/Volumes/dmg.*` 指向已不存在路径、无法手动注销，待系统自行回收（不参与实际决策） |
+| `pnpm check:quick` | ✅ 617 tests OK，护栏未受影响 |
+
+### H6 ~~⚠ 未完成：TCC 授权重置~~ → **已解决：不需要 tccutil**
+
+**初版结论（错误）**：曾认为「denied 记忆是旧进程写入、必须 `sudo tccutil reset` + 重启」。
+`tccutil reset` 实测失败（`sudo` 要不到密码、直接跑 exit 70），一度卡在这里。
+
+**为什么那个结论错**：漏了一个中间变量 —— **签名会在会话中途被抹掉**。
+用户 15:13 重启时 `.app` 被整体重装（二进制 mtime `15:13:24`、`_CodeSignature` 消失、
+`Signature` 退回 `adhoc`），于是重启后磁盘上又是一个**新的 adhoc 身份**。
+这种情况下 `tccutil reset` 即使成功也无济于事 —— 系统看到的始终是漂移中的身份。
+
+**关键机制**：只重签**不够**，还必须让**进程也用上新签名**。重签后进程仍在跑旧的
+（15:13 启动、当时磁盘是 adhoc），故继续 `not granted`；直到重启进程 → 新签名生效 →
+**立刻 `UN accepted`**。
+
+**最终验证（15:21，`Neeko Development` 签名 + 重启）**：
+
+```text
+15:21:12  UN accepted neeko-2efe6942-…
+15:21:26  UN accepted neeko-0199776b-…   ← 第二次，可重复
+15:21:47  重启进程（第 2 次）
+15:21:59  UN accepted neeko-7f47897b-…   ← 重启后仍有效
+15:22:16  UN accepted neeko-02dadf6f-…   ← 4/4
+```
+
+**结论**：**身份稳定即可，无需 `tccutil reset`。** 系统在身份变得可信后会自行接受授权请求。
+
+> 这条修正很重要：若照初版结论去手动 `tccutil reset`（甚至重装系统权限），既无必要，
+> 也解决不了问题 —— 真正的开关是「稳定签名 + 进程重启」，不是 TCC 数据库。
+
+### H7 ⚠ 必须记住的运维约束：重装会清掉签名
+
+本次就是这么复发的 —— **覆盖 `/Applications/Neeko.app` 会抹掉签名**。故每次重装或
+`pnpm tauri build` 产出新 app 后，必须重新签：
+
+```bash
+NEEKO_CODESIGN_IDENTITY="Neeko Development" scripts/macos-sign.sh /Applications/Neeko.app
+```
+
+走 `pnpm release` 时 `release.mjs` 已自动带上这步。
+
+**未解决的可观测性缺口**：签名丢失时**没有任何机制会提醒**，故障形态仍是静默的
+（日志里只有一行 `UNErrorDomain error 1`）。建议加启动自检 —— 进程启动时若发现自己是
+adhoc（无 `Authority`），往 `neeko.log` 打一条明确 warn，把这类静默复发变成可发现的。
+
+### H8 顺带发现（登记，不在本次范围）
+
+- **Pi 1.3.0 事件面未适配**（用户环境 `pi --version` = 1.3.0，而 `neeko-status.ts` 头注释写
+  「按 pi 1.1.0 实测」，跨两个 minor）：
+  1. `agent_end` 语义已变 —— doc 明说其后可能还有 retry / overflow recovery / steering；
+     「不会再自动继续」的正确信号是 **`agent_settled`**。当前用 `agent_end` 会**提前**发完成通知。
+  2. `ToolCallEvent` 联合在 1.3.0 只剩 `bash/powershell/read/edit/write/grep/find/ls`，
+     **无 ask 类工具** → `isAskTool` 那条腿可能收不到事件；等待审批应改走 `ui_prompt_start`
+     + `kind` 判定（模板里已实现该腿，`tool_call` 分支实为死代码）。
+  3. `getSessionId` / `getSessionName` / `getEntries` 仍在 `ReadonlySessionManager` 上 → R7 主题链路无需改。
+  → 建议并入 `10-14-opencode-2x-support` 或单独开项。
+- **决策层静默抑制不可观测**：`policy.rs::evaluate()` 返回 `None` 时零日志，「用户盯着窗口」
+  （R2.1 抑制）与「系统通知坏了」表现完全一致。建议让 `evaluate()` 返回 `NotSent{reason}`
+  并由 `dispatch` emit 结构化诊断事件 → 前端设置页可见（同时把 R4.5 的权限引导落到实处）。
+  新抑制规则（如免打扰时段）只需加 enum variant，符合可扩展性要求。
+- **模板版本标记检测不到宿主 CLI 的 API 漂移**：当前标记键是应用版本 + 模板内容 hash
+  （Phase G），能抓 Neeko 侧变更，但抓不到 pi/opencode 侧事件面变化。
+  可在模板头加 `api-surface: 1.1.0` 类元数据，配合 CI 对宿主版本生命周期的检查。

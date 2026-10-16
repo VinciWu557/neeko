@@ -159,6 +159,15 @@
 - [ ] AC18（Phase F）：打包版与 `pnpm tauri dev` **同时运行**时，两个实例都能收到同一条 pi
   上报（R6.8）；关闭/重启任一实例后，另一实例的通知不受影响；退出实例留下的坐标不再让上报
   打到死端口（AC13 的单实例版语义推广到多实例）。
+- [ ] AC19（Phase H）：macOS 上**同一 bundleIdentifier 的多个构建形态**（打包版 / dev bundle /
+  本地 build）必须共享同一份系统通知授权 —— 由稳定自签名证书保证身份恒定
+  （`NEEKO_CODESIGN_IDENTITY` + `scripts/macos-sign.sh`）；身份缺失或漂移时**不得静默**降级
+  （dev bundle 走 adhoc 必须 warn，签名脚本未设身份必须 fail 而非静默跳过）。
+- [ ] AC20（Phase H，**已验收 2026-10-16 15:21**）：`~/.neeko/neeko.log` 出现 `UN accepted`
+  而非 `not granted`。实测 15:21 起 **4/4 accepted 且跨两次重启仍有效**；
+  **不依赖** `sudo tccutil reset Notifications com.neeko.desktop`（该命令实测 exit 70，且非必要）——
+  恢复动作是「稳定签名 + 重启进程」。收敛判据：重装 app 后必须重签
+  （`NEEKO_CODESIGN_IDENTITY="Neeko Development" scripts/macos-sign.sh <app>`），否则复发。
 
 ## Constraints
 

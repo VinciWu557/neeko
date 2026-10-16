@@ -249,6 +249,36 @@ hook 面与事件名随 CLI 版本漂移快，**实施期以官方文档实测�
   claude settings.json 里遇到的结构化合并难题）；关闭开关/应用卸载时删除自己的文件。
 - **版本升级**：writer 文件头注释携带 Neeko 版本号，启动时内容 hash 不一致 → 重写。
 
+## 2.6 macOS 系统通知的身份契约（Phase H 新增，2026-10-16）
+
+**物理约束**：macOS 的 `UNUserNotificationCenter` 授权**按 `bundleIdentifier` 归集、但按代码签名
+身份判真伪**。两者不是一回事，这是本次故障的根源。
+
+| 事实 | 证据 |
+|---|---|
+| adhoc 签名（`codesign -s -`）**不写证书**，身份随内容派生 | `codesign -dv` 显示 `Identifier=neeko-<hash>`（派生值）、`Signature=adhoc` |
+| **覆盖 / 重装 `.app` 会抹掉签名**，之后退回 adhoc | 实测：重签成功后会话中间 `.app` 被重装 → `_CodeSignature` 目录消失、`Authority` 变回 adhoc（2026-10-16 15:13） |
+| 重签后**必须重启进程**才生效 | 重签后进程仍跑旧签名 → 继续 `not granted`；重启 → 立刻 `UN accepted`（15:20 重启，15:21:12 起） |
+| **身份稳定即可恢复，无需 `tccutil reset`** | 换稳定证书 + 重启后，15:21 起 4/4 `UN accepted`、跨两次重启仍有效。曾误判「必须重置 TCC」，已证伪 |
+| 同一 bundle id 可被多个不同身份的 `.app` 登记 | `lsregister -dump` 实测 **25 个** `.app` 共用 `com.neeko.desktop`，codeInfoID 各异 |
+
+**契约**：
+
+1. 所有构建形态（打包版 / dev bundle / 本地 build）**共用一张稳定证书**，身份恒定；
+2. **重装 / 覆盖后必须重签** —— 覆盖会抹掉签名，这是本次复发的直接机制；
+3. 证书身份名通过 `NEEKO_CODESIGN_IDENTITY` 注入，**不硬编码** 在 `tauri.conf.json` ——
+   Tauri 的 `signingIdentity` 只接受字面字符串、不支持环境变量展开，写死会让 CI 与
+   新克隆机器在 `tauri build` 直接失败（`build.yml` 的 macOS job 就构建 `*.app`）；
+4. **不得静默降级**：签名脚本未设身份 → fail（并告知如何建证书）；dev bundle 用 adhoc → warn。
+   静默正是本次「上次能通知这次不能」故障的放大器。
+
+**实现落点**：`scripts/macos-sign.sh`（签名单点）、`scripts/release.mjs`（发布接入）、
+`src-tauri/scripts/macos-dev-bundle.sh`（dev 形态）、`src-tauri/tauri.conf.json`（`signingIdentity: null`）。
+
+**自签名证书足够**：让 UN 工作的最小充分条件是「.app 目录 + `Info.plist`(CFBundleIdentifier) +
+有效 codesign + `lsregister` 注册」（2026-10-13 实测），从来不要求 Developer ID——
+只要求身份**稳定**。自签名免费、免账号、身份恒定；要公开发售 DMG 时再升 Developer ID。
+
 ## 3. 关键设计决策记录（ADR 摘要）
 
 - **D1 决策在后端而非前端**（同 v2）。
@@ -294,6 +324,15 @@ hook 面与事件名随 CLI 版本漂移快，**实施期以官方文档实测�
   **不再需要碰发布版本**；人眼仍可读到应用版本。代价：会覆盖用户对受管文件的手改 —— 但这些
   文件首行本就写「请勿原地编辑」，语义上更正确。旧标记（`v1.0.9`）与新标记不匹配 →
   首启自动重装一次（方向安全）。
+- **D14（Phase H）macOS 签名身份必须稳定，且不得硬编码在 tauri.conf.json**（2026-10-16 实测闭环）：
+  adhoc 身份随内容派生、且**覆盖 .app 即抹掉签名** → 授权失效，形态是「上次能通知、这次不能」
+  而日志只有一行 `UNErrorDomain error 1`。修复用一张**自签名代码签名证书**（免费、免账号、
+  身份恒定；让 UN 可用的最小充分条件从来不要求 Developer ID，只要求身份稳定 —— 见 §2.6）。
+  **收尾动作是「重签 + 重启进程」两步**：只签不重启不生效（进程仍持旧签名）。
+  经评测**不需要 `tccutil reset`**（初版结论误判，已证伪）。
+  身份名经 `NEEKO_CODESIGN_IDENTITY` 注入而非写死 conf：Tauri 的 `signingIdentity`
+  不吃环境变量，写死会让 CI / 新克隆机器 `tauri build` 直接失败。
+  代价：`pnpm tauri build` 默认产物未签名，要带签名须显式跑 `scripts/macos-sign.sh`。
 
 ## 4. 数据契约（原型即文档，详见 prototype/）
 
