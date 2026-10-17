@@ -106,11 +106,25 @@ class StepResult:
     unavailable: bool = False
 
 
+# 前端源码根（vitest.config.ts 的 `include`/`coverage.include` 均为 `src/**`）。
+# 判据必须与之一致：仓库里存在 `src/` **之外**的 `.ts`/`.tsx`，它们不是前端源码 ——
+# 最典型的是 `src-tauri/src/agent/hooks/templates/*.ts`（**嵌进 Rust 二进制的模板**，
+# 由 `include_str!` 消费），以及 `packages/**`（独立发布、门禁豁免，见根 AGENTS.md）、
+# `.pi/` / `.omp/` 扩展、根配置（`vite.config.ts` / `commitlint.config.ts`）。
+# 只判后缀会把它们喂给 `vitest related` → 恒为「无相关测试」→ 本命令**假失败**，
+# 而失败原因与改动无关（2026-10-16 实测：改 OMP 模板触发）。
+FRONTEND_ROOT = "src/"
+
+
 def _is_frontend(path: str) -> bool:
-    return path.endswith(".ts") or path.endswith(".tsx")
+    normalized = path.replace("\\", "/")
+    return normalized.startswith(FRONTEND_ROOT) and normalized.endswith((".ts", ".tsx"))
 
 
 def _is_rust(path: str) -> bool:
+    # **不需要**反斜杠归一：判据是纯后缀 `.rs`，分隔符与它无关
+    #（`src\a.rs` 与 `src/a.rs` 都命中）。归一化真正必要的是**前缀型**判据
+    #（`_is_frontend` / `_is_java_host`）—— 那里反斜杠会让 `startswith` 失效。
     return path.endswith(".rs")
 
 

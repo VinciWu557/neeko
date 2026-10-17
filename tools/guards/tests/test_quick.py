@@ -75,6 +75,48 @@ class PlanTest(unittest.TestCase):
     def test_unrelated_files_produce_no_steps(self):
         self.assertEqual(quick.plan(["docs/x.md", "package.json"]).steps, [])
 
+    def test_typescript_outside_src_is_not_a_frontend_change(self):
+        """回归（2026-10-16）：判据曾只看后缀，把 `src/` 之外的 `.ts` 也当前端源码。
+
+        `src-tauri/src/agent/hooks/templates/*.ts` 是**嵌进 Rust 二进制的模板**
+        （由 `include_str!` 消费），vitest 的 `include`/`coverage.include` 都是 `src/**` ——
+        把它们喂给 `vitest related` 恒得「无相关测试」→ 本命令**假失败**，
+        而失败原因与改动无关。反证：把 `_is_frontend` 退回只判后缀，本用例必红。
+        """
+        for path in [
+            "src-tauri/src/agent/hooks/templates/neeko-pi-status.ts",
+            "src-tauri/src/agent/hooks/templates/neeko-omp-status.ts",
+            "packages/dsh-neeko/src/protocol.ts",
+            ".pi/extensions/trellis/index.ts",
+            "vite.config.ts",
+            "commitlint.config.ts",
+        ]:
+            self.assertFalse(quick._is_frontend(path), f"{path} 不是前端源码")
+            self.assertEqual(quick.plan([path]).steps, [], f"{path} 不该产生前端测试步骤")
+
+    def test_src_typescript_is_still_a_frontend_change(self):
+        """反向：`src/` 下的 `.ts`/`.tsx` 必须仍然被识别（修正不得过度收紧）。"""
+        for path in ["src/a.ts", "src/b.tsx", "src/x/__tests__/a.test.ts"]:
+            self.assertTrue(quick._is_frontend(path), f"{path} 应被视为前端源码")
+
+    def test_windows_separators_are_normalized_before_classification(self):
+        """Windows 上 git 可能给出反斜杠路径 —— 归一后才判，否则会漏报（前端改动不被测）。"""
+        self.assertTrue(quick._is_frontend("src\\features\\a.ts"))
+        self.assertFalse(quick._is_frontend("src-tauri\\src\\agent\\hooks\\templates\\t.ts"))
+
+    def test_java_host_classification_normalizes_windows_separators(self):
+        """**前缀型**判据必须归一反斜杠 —— 与 `_is_rust`（纯后缀）不同。
+
+        `_is_java_host` 判的是「以 JAVA_HOST_DIR 开头」，而 Windows 上
+        编辑器/手工传参可能给 `tools\\java-host\\x.java`；不归一则 `startswith` 判假，
+        Java host 改动被静默排除出测试计划（假失败）。
+
+        反证：把 `_is_java_host` 的 `.replace("\\\\", "/")` 去掉，本用例必红。
+        """
+        self.assertTrue(quick._is_java_host("tools\\java-host\\x.java"))
+        self.assertTrue(quick._is_java_host("tools/java-host/x.java"))
+        self.assertFalse(quick._is_java_host("src\\a.java"))
+
     def test_kinds_are_unique_so_they_can_be_used_as_dispatch_keys(self):
         kinds = self.kinds(["src/a.ts", "src/b.tsx"])
         self.assertEqual(len(kinds), len(set(kinds)))
