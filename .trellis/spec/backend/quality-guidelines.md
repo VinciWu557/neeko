@@ -90,10 +90,16 @@
 4. **API 换代先查权威类型定义，不猜。** 权威源是上游包的 `lib/types/*.d.ts`
    （如 `SessionEventMap`、`AssistantStreamFrame`），不是旧代码、不是文档摘要。
 5. **依赖升级后必须从干净 `node_modules` 复验一次。** 增量安装会保留旧解析结果，
-   让「版本范围写错」看起来是通过的。实测：`@deepseek-ai/cordis: ^4.0.0` 解析到 4.0.1，
-   而 dsh 0.2.0-rc.2 各包声明 `~4.0.4`（4.0.1 缺 `Volatile` 导出）—— 本机一直绿，
-   `rm -rf node_modules && pnpm install` 后才暴露。
+   让「版本范围写错」看起来是通过的。
    判据：`rm -rf node_modules && pnpm install && tsc` 必须与增量安装同结果。
+6. **子包不得自带 `pnpm-workspace.yaml`。** 它会把自己变成**独立 workspace 根**，
+   于是根的 `overrides` / 单实例收敛规则**全部失效**。
+   实测：`packages/dsh-neeko/pnpm-workspace.yaml`（原本只为 `dsh plugin install` 绕
+   release-age 门禁）导致 `@deepseek-ai/schemastery` 解析出 3.18.4 与 3.18.5 两份，
+   两份 `.d.ts` 顶层声明同名类型 → `TS6200` 标识符冲突。而根 `overrides` 根本无法介入。
+   修法：删子包 workspace 文件，把需要豁免的包提升到**根** `overrides`（本仓已有
+   `@codemirror/view` 先例）。判据：`ls packages/*/pnpm-workspace.yaml` 必须为空；
+   同一依赖在 `node_modules/.pnpm/` 下只应有一份。
 
 ### 测试形态要求
 
