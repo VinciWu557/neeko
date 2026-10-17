@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/10-17-dsh-neeko-bridge-fix/prd.md", "reason": "三条根因的实证（含实测命令与输出）、AC1-AC7"}
+{"file": ".trellis/tasks/10-17-dsh-neeko-bridge-fix/design.md", "reason": "修法与取舍：① 兜底双向对齐、② waterfall 与 approval 同构、③ peer/dev 同代、inject 保留理由"}
+{"file": "packages/dsh-neeko/src/index.ts", "reason": "待修主体：157 行 registerProvider、302 行 setupAgent（approval 已对，question 照抄）、37 行 inject"}
+{"file": "packages/dsh-neeko/cordis.patch.yml", "reason": "① 的落点：20-21 行 autoSpawn 有兜底 / spawnCommand 无兜底"}
+{"file": "packages/dsh-neeko/src/startup.ts", "reason": "① 的成因链：commander --no-spawn → spawnEnabled:false → autoSpawn:false（103 行）"}
+{"file": "packages/dsh-neeko/package.json", "reason": "③ 的落点：peerDependencies 与 devDependencies 停在 0.1.x，是类型假绿的直接原因"}

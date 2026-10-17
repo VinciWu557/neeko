@@ -59,6 +59,55 @@
 
 ---
 
+## 依赖契约与实际运行时同代（类型假绿）
+
+> 2026-10 `dsh-neeko` 事故的类：**类型检查跑在一份运行时不存在的 API 上**。
+> `tsc` 全绿、测试全绿、构建成功 —— 而 `dsh --profile neeko` 启动即崩。
+
+### 事故形态
+
+插件声明并开发依赖 `@deepseek-ai/dsh-*@0.1.0-rc.6/rc.8`，宿主 CLI 实际加载 `0.2.0-rc.2`：
+
+```
+类型检查看到的：  dsh-user-questions 0.1.0-rc.8   （devDependencies）
+运行时真实加载：  dsh-user-questions 0.2.0-rc.2   （宿主自带 peer）
+```
+
+`userQuestions.registerProvider()` 在 rc.8 存在、在 rc.2 已被移除，且 `UserQuestionProvider`
+类型在 rc.2 的公开导出里也消失了。于是 `tsc` 通过**毫无意义** —— 它校验的是一份不存在的契约。
+同一事故还有两个同族缺陷：`session.events`（属性）→ `snapshotEvents()`（方法）、
+`assistant/chunk`（事件）→ `assistant/message` + 独立的 `agent/assistant-stream` 通道。
+
+### 判据（可机器检查）
+
+1. **`peerDependencies` 与 `devDependencies` 必须同代。** dev 依赖落后是假绿的**直接原因**：
+   它让类型检查对着旧契约通过。只改 peer 不改 dev 等于没修。
+2. **`peerDependencies` 必须能覆盖宿主实际版本。** 写宽范围（`^0.1.0`）而实际只支持
+   `0.2.x` 是撒谎；范围如实收窄、并在 README 写明支持代际。
+3. **上游包的类型若 import 其自身 devDependency，必须显式补为精确版本。**
+   例：`dsh-llm@0.2.0-rc.2` 的 `.d.ts` import `@deepseek-ai/dsh-attachment`，而后者只是它的
+   devDep。用 npm `latest`（`^0.0.1-rc.1`）会报 `has no exported member`；必须写 `0.2.0-rc.2`。
+4. **API 换代先查权威类型定义，不猜。** 权威源是上游包的 `lib/types/*.d.ts`
+   （如 `SessionEventMap`、`AssistantStreamFrame`），不是旧代码、不是文档摘要。
+
+### 测试形态要求
+
+「能跑通」的测试不足以区分两种实现。反证导向：
+
+- 断言**注册在哪个 seam 上**（`user-questions/request` waterfall），而不只是「某个 provider 被登记」。
+- 用**变异验证**测试有效性：把 `next()` 改成不调用（会让每个 agent 永久挂起），
+  测试必须变红。本仓实测过：早期版本 58 条全绿而该变异不可见 —— 那就是假绿本身。
+- 监听器实现**不要用 `as never` 之类的 cast** 绕过真实签名。能结构化满足真实 `Context`
+  的接口才让「用错 API」成为编译错误，而不是运行时崩溃。
+
+### 双来源不变量（流式 + 落盘）
+
+0.2.x 把实时流与持久日志拆成两个来源。**落盘日志不得被当作 delta 源**：
+若两边都发，每个 token 双发；若只依赖日志，助手文本全丢。
+落盘侧只贡献工具生命周期，实时侧只贡献文本/推理增量。
+
+---
+
 ## 代码风格
 
 ### 注释风格 —— 中文为主
