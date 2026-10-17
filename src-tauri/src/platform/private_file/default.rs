@@ -16,6 +16,15 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 /// 采用「先删后改名」：极小窗口内并发读者可能拿到 FileNotFound，
 /// hook 侧契约是 fail-open 静默（下一拍重读即恢复），不构成故障。
 pub fn write_private_atomic(path: &Path, content: &str) -> io::Result<()> {
+    write_atomic_preserving_mode(path, content)
+}
+
+/// 原子替换**用户既有文件**，保留原权限。
+///
+/// Windows 的权限模型是 ACL 而非 POSIX mode 位：用户 profile 下的文件继承父目录 ACL，
+/// 「保留原权限」= 不改 ACL（本函数不碰 ACL）。与 Unix 实现同签名，
+/// 业务代码无条件调用统一接口（红线 10）。
+pub fn write_atomic_preserving_mode(path: &Path, content: &str) -> io::Result<()> {
     let file_name = path
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?

@@ -11,7 +11,7 @@
 //! | 主题 | 统一接口 | 主要来源 |
 //! |------|---------|---------|
 //! | `reveal` | `build_reveal_command` / `normalize_path` | `file/commands.rs` |
-//! | `private_file` | `write_private_atomic` | `agent/hooks/endpoint.rs`（0600 + 原子替换） |
+//! | `private_file` | `write_private_atomic` | `agent/hooks/ingest/endpoint.rs`（0600 + 原子替换） |
 //! | `process_tree` | `snapshot_process_tree` | `terminal/process_reaper.rs` |
 //! | `process_memory` | `sample_process_memory_mb` | `lsp/session/utils.rs` |
 //! | `host_path` | `resolve_host_path` | `core/exec_env.rs` |
@@ -28,12 +28,15 @@
 //! | `fonts` | `get_system_fonts` | `common/utils/fonts.rs` |
 //! | `close_tab` | `CloseTabFlag`（`mark` / `take`） | `app/close.rs` |
 //! | `system_notify` | `try_deliver` | `notification/dispatch.rs`（macOS=UNUserNotificationCenter；其余同签名 stub 回退官方插件） |
+//! | `hook_command` | `render_report_command` / `resolve_node` | `agent/hooks/install/shape/*`（写进 CLI 配置的 shim 启动命令） |
 
 pub mod close_tab;
 pub mod devtools;
 pub mod file_url;
 pub mod fonts;
 pub mod git_credential;
+/// hook shim 启动命令的平台渲染（CLI 配置里的 `command` 字段）。
+pub mod hook_command;
 pub mod host_path;
 pub mod ide_launch;
 pub mod menu;

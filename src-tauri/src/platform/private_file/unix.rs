@@ -50,6 +50,46 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
 }
 
+/// 原子替换**用户既有文件**，且**保留原权限位**。
+///
+/// 与 [`write_private_atomic`] 的区别：后者总是收紧为 0600（它写的是 Neeko 自己的
+/// 凭据文件），而本函数写的是**用户的** `settings.json` / `config.toml` ——
+/// 用户的文件可能是 0644（默认）或 0600（用户自己收紧过）。
+/// 无条件写 0600 会把用户的 0644 静默降权（可能打断 CLI 自己的读取）；
+/// 无条件写 0644 会把用户的 0600 静默泄漏。故一律**继承原权限**。
+///
+/// 文件不存在时回落为「默认创建模式」（`0o666 & ~umask`），与用户手动创建一致。
+pub fn write_atomic_preserving_mode(path: &Path, content: &str) -> io::Result<()> {
+    // 先取原权限（文件可能不存在 → None，走默认模式）。
+    let previous_mode = fs::metadata(path)
+        .ok()
+        .map(|m| m.permissions().mode() & 0o777);
+
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?
+        .to_string_lossy();
+    let tmp = path.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
+
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    if let Some(mode) = previous_mode {
+        options.mode(mode);
+    }
+    let mut file = options.open(&tmp)?;
+    let result = file
+        .write_all(content.as_bytes())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| {
+            drop(file);
+            fs::rename(&tmp, path)
+        });
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
 /// 断言用：`path` 的权限位（八进制）。
 #[cfg(test)]
 pub(crate) fn mode_of(path: &Path) -> io::Result<u32> {
@@ -151,5 +191,49 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
             .collect();
         assert!(leftovers.is_empty(), "tmp residue: {leftovers:?}");
+    }
+
+    /// **权限继承**（父任务 AC4）：改写用户既有配置文件后，原权限位必须不变。
+    ///
+    /// 反证：若实现无条件写 0600（照搬 [`write_private_atomic`]），本用例必红 ——
+    /// 用户的 0644 被静默降权。
+    #[test]
+    fn preserving_write_keeps_original_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "{\"a\":1}").expect("seed");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod 644");
+
+        write_atomic_preserving_mode(&path, "{\"a\":2}").expect("write");
+        assert_eq!(fs::read_to_string(&path).expect("read"), "{\"a\":2}");
+        assert_eq!(
+            mode_of(&path).expect("mode"),
+            0o644,
+            "用户文件的 0644 必须保留（不得降权）"
+        );
+    }
+
+    /// 用户把配置收紧到 0600 时，改写**不得放宽**（反向的不对称危害更大：泄漏）。
+    #[test]
+    fn preserving_write_does_not_loosen_owner_only_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "x = 1\n").expect("seed");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("chmod 600");
+
+        write_atomic_preserving_mode(&path, "x = 2\n").expect("write");
+        assert_eq!(mode_of(&path).expect("mode"), 0o600);
+    }
+
+    /// 文件不存在时按默认模式创建（与用户手动创建一致，不引入意外收紧）。
+    #[test]
+    fn preserving_write_creates_missing_file_with_default_mode() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fresh.json");
+        write_atomic_preserving_mode(&path, "{}").expect("write");
+        assert_eq!(fs::read_to_string(&path).expect("read"), "{}");
+        // 不断言具体模式（受 umask 影响）—— 只要求可读且非 0600-only 之外的意外收紧。
+        let mode = mode_of(&path).expect("mode");
+        assert!(mode & 0o400 != 0, "属主必须可读，got {mode:o}");
     }
 }
