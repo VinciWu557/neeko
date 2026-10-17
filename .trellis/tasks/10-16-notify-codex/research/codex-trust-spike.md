@@ -516,3 +516,67 @@ Modified since last trusted - review required / Trust / No hooks installed for t
 却收不到审批通知 = 又一次「装了但没通知」）。这需要一个**只读探测**：
 读 `config.toml` 的 `[hooks.state]` 里是否有对应键（有键 = 用户已确认过）。
 这是**读**而非写，且判据简单（键存在即已信任）。
+
+---
+
+## 附 5：用户实测「第一次通知后不再通知」的根因（2026-10-16 第六轮）
+
+### 症状
+
+用户：Codex 通知**不能持续** —— 第一次通知后，后续执行都不再发通知。
+
+### 取证（决定性对照实验）
+
+运行中的 Neeko = `/Applications/Neeko.app/.../neeko`，**15:19 构建**，PID 11466，监听 `127.0.0.1:64175`。
+
+用**同一个 token / 同一份 body** 打两个路由：
+
+| 路由 | HTTP | 实际投递（`UN accepted` 增量） |
+| --- | --- | --- |
+| `/hook/pi` | 204 | **+1** ✅ |
+| `/hook/codex` | 204 | **0** ❌ |
+
+→ **`/hook/codex` 不在运行中二进制的路由白名单里**，被 `hook_source()` 判为未知 →
+`ingest()` 走 fail-open 分支返回 204（**设计如此**：未知 source 静默吞掉，不报错）。
+
+### 根因
+
+**运行中的二进制早于 `codex` 那一行被加入 `HOOK_TARGETS`。**
+
+- 打包版构建：**15:19**
+- `codex` 行加入 `targets.rs`：**19:39**（本轮实施）
+- `HOOK_TARGETS` 是**编译期常量**（`&'static [HookTarget]`），路由白名单由它派生
+  （`server.rs::hook_source`）—— 加一行必须**重新构建并重启**才生效。
+
+那 3 次成功投递（19:57 / 20:01 / 20:04）来自当时运行的新代码实例（dev 版），
+它退出后，只剩旧的打包版 → 后续全部静默丢弃。
+
+### 这不是 bug，是**部署时序**问题
+
+代码行为**完全正确**：
+- `204` 是 fail-open 的正确返回（未知 source 不该让 CLI 侧出错）；
+- 路由白名单从事实表派生（加行自动生效）—— 但「自动」的前提是**重新编译**。
+
+**用户需要做的**：重新构建 / 重启 Neeko（`pnpm tauri dev` 或重新 `tauri build`）。
+本次任务全程跑 `cargo test`，只重建了 `target/debug/neeko` 与 dev-bundle，
+**没有重装 `/Applications/Neeko.app`**。
+
+### 教训（值得固化）
+
+**「编译期事实表 + 运行中进程」的时序**：验证新 CLI 接入时必须确认
+「跑的是含新代码的进程」。诊断锚点：
+
+```bash
+# 运行中的二进制构建时间 vs 代码改动时间
+stat -f '%Sm' /Applications/Neeko.app/Contents/MacOS/neeko
+# 路由白名单是否认识该 source（决定性对照）
+curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:<port>/hook/<source> -H "x-neeko-agent-hook-token: <token>" -d '...'
+# 已知 source → 投递；新 source → 204 但不投递
+```
+
+**诊断判据**：`204` 有两种语义 —— 「受理但静默丢弃（未知 source / 畸形载荷）」与
+「受理并投递」。仅看 HTTP 状态**无法区分**。要看日志里的下游痕迹
+（本项目 = `[notify] macOS: UN accepted ...`）。
+
+这暴露一个**可观测性缺口**：未知 source 静默丢弃时**没有任何日志**，
+使「路由未注册」与「载荷非法」无法区分。已在代码里补 warn 日志（见实施）。

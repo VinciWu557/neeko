@@ -423,6 +423,12 @@ SessionNotifyContext { session_id, agent_id, project_name, topic: Option<String>
 - **E6** transcript/状态文件轮询兜底腿（orca 的第三腿；hook 丢失事件时的补偿，含
   「欠账通知」语义 —— orca 的 owed-task-notifications 模式）。
 - **E7** 更多 CLI hook 源（Claude Code / jcode / Codex…）：writers/ 加文件即可（§2.3）。
+  **2026-10-16 更新：已在 `10-16-agent-notify-more-clis` 实施**（OMP + Claude/CodeBuddy/Qoder；
+  Codex 与 DSH 拆为独立子任务）。实施发现「加文件即可」低估了两件事：
+  ① Claude 系把 hook 面放在**用户既有 settings.json**（需新增 `InstallShape::Structured`
+     形态 + 结构化合并纯函数，不能只写独立文件）；② `{"type":"http"}` hook 不可用
+     （静态 URL vs 动态多实例坐标）。契约见 `.trellis/spec/backend/agent-hooks-domain.md`
+     的「受管 CLI 的两种接入形态」场景。
 - **E8** 移动端/远程推送（orca cloud fan-out 模式），依赖账号体系，远期。
 
 ## 9. Phase C（会话主题）风险与对策

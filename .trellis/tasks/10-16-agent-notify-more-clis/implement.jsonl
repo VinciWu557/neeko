@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-16-agent-notify-more-clis/design.md", "reason": "父任务设计：T6 拓扑三分类 / T7 三个约束轴 / T8 http hook 不可用 / T9 shim 可共享 / T10 事实表缺口，以及 InstallShape / HookEntry / MergeOutcome 跨子任务契约"}
+{"file": ".trellis/tasks/10-16-agent-notify-more-clis/prd.md", "reason": "父任务需求 R1-R5 与跨子任务验收 AC1-AC5（含核心域零改动硬约束）"}
+{"file": ".trellis/tasks/10-12-agent-notify/design.md", "reason": "前置设计 T1-T5 与 D1-D14：通知核心域、源 A/源 B 二相性、客人义务、内容寻址标记、多实例坐标"}
+{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "本域跨层契约：坐标文件格式 / 上报端 fan-out / 模板锚点测试，新增 shim 必须沿用同契约"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "平台差异集中化边界（红线 10）：shim 启动命令渲染必须落 platform/ 而非业务文件平铺 #[cfg]"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "agent_hooks_apply/status 薄命令边界与 IPC 载荷限制（红线 4/6）"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "merger/toml_merger 纯函数 100% 覆盖要求与 tempdir 夹具规则（红线 13）"}
+{"file": ".trellis/spec/security/allowlist.md", "reason": "用户配置写入不得扩大 capabilities；ingest 仍只绑 loopback（红线 8）"}

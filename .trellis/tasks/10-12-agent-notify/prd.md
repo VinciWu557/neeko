@@ -128,6 +128,8 @@
 - SSH 远端终端里的 agent hook 回调（需反向隧道 / guest relay，登记 design.md E5）。
 - hook 上报失败的落盘补发（spool）与 transcript/状态文件轮询兜底腿（登记 E6）。
 - 除 Pi / Opencode 外的其他 CLI hook 源（Claude Code / jcode 等，writers 加文件即可，登记 E7）。
+  **2026-10-16：已转入 `10-16-agent-notify-more-clis` 实施**（OMP + Claude/CodeBuddy/Qoder
+  先行；Codex / DSH 独立子任务）—— 见该任务 design.md 的 T6 拓扑三分类。
 - 自定义通知声音、通知分组堆叠策略、免打扰时段、移动端/远程推送（E2/E3/E8）。
 - 通知历史中心（复用既有 `notificationStore` 即可，不新建域）。
 

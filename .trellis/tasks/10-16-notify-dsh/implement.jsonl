@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-16-notify-dsh/design.md", "reason": "本子任务设计：为什么走源 A、分支 A/B 落点地图、归属与主题、U7 定案前是条件式设计"}
+{"file": ".trellis/tasks/10-16-notify-dsh/prd.md", "reason": "本子任务需求 R1-R4、验收 AC1-AC6、Step 0 spike（U7 消费侧归属）"}
+{"file": ".trellis/tasks/10-16-agent-notify-more-clis/design.md", "reason": "父任务 T6 推论 1：DSH 属源 A 而非源 B 的判据；AC2 拓扑分类正确性"}
+{"file": ".trellis/tasks/10-12-agent-notify/design.md", "reason": "前置设计 T1-T5：源 A 投影链路与 StreamEvent 协议，DSH 走这条腿"}
+{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "AgentSessionAdapter 契约与 all_adapters 注册流程（若 U7 定案 A 需新增/复用 adapter）"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新域（agent/dsh/）的目录约定与 mod.rs 极薄要求（红线 9）"}
+{"file": ".trellis/spec/backend/command-execution.md", "reason": "红线 1：若 adapter 起子进程必须走 core::exec（deepseek.rs 已是范例）"}
+{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "分支 B 的 WebSocket 监听是常驻任务，需经 AppRuntime 且不阻塞启动（只读「常驻任务/旁路不反压」两节）"}

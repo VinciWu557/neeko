@@ -224,3 +224,547 @@ fn content_token(template: &str) -> String {
   fetch 数无界增长，极端触发 CLI 侧 EMFILE（与「绝不阻塞 CLI」相抵）。
   **推荐修法**：坐标文件增写 `NEEKO_AGENT_HOOK_PID` + host，启动时按「同 host 且 pid 已死」剪除
   （pid 存活判定只会误留死文件、不会误删活实例，方向安全）；可选 fan-out 上限兜底。
+
+---
+
+## 场景：受管 CLI 的两种接入形态（`InstallShape`）
+
+> 任务源：`10-16-notify-claude-compat`（2026-10-16）。此前本域只覆盖「独立文件即插拔」一种形态。
+
+### 1. Scope / Trigger
+
+- **Trigger**：要接入的 CLI 把 hook 面放在**用户既有配置文件**里（`~/.claude/settings.json` 的
+  `hooks` 键），而不是「一个独立文件就是全部」。此时「只写自己的文件」这条客人义务不够用了。
+- **Scope**：`agent/hooks/targets.rs`（形态数据）、`agent/hooks/merger.rs`（JSON 纯函数）、
+  `agent/hooks/writers.rs`（按形态分派）、`agent/hooks/templates.rs`（模板门面）、
+  `platform/hook_command/`（命令渲染）、`agent/hooks/settings.rs`（逐 CLI 开关）。
+
+### 2. Signatures
+
+```rust
+// targets.rs —— 接入形态是**数据**，不是通用模块里的 CLI 分支
+pub enum InstallShape {
+    /// 独立文件即插拔：只写一个受管文件，绝不碰用户既有配置（opencode / pi / omp）。
+    Standalone,
+    /// 独立 shim 文件 + 结构化插入点：shim 仍是独立文件，
+    /// 但需把 hook 条目插入用户既有的 `settings_file`（claude / codebuddy / qoder / codex）。
+    Structured { settings_file: &'static str, entries: &'static [HookEntry] },
+}
+
+/// 一条结构化插入点：CLI 原生事件名 → 语义 event_key 的纯数据映射。
+pub struct HookEntry {
+    pub native_event: &'static str,
+    /// `None` = **不写该字段**（不是写空串 —— 语义不同）。
+    pub matcher: Option<&'static str>,
+    pub event_key: &'static str,
+}
+
+// merger.rs —— 纯 JSON 变换，零 IO（IO / 原子写 / 权限在 writers 外层）
+pub enum MergeAction { Insert, Remove }
+pub enum MergeOutcome { Changed, Unchanged, Removed, Noop }
+pub fn apply(config: &mut serde_json::Value, native_event: &str,
+             matcher: Option<&str>, command: &str, action: MergeAction) -> MergeOutcome;
+
+// writers.rs —— 按形态分派
+pub fn install_selected(enabled: impl Fn(&str) -> bool) -> Vec<HookApplyOutcome>;
+pub fn uninstall_selected(enabled: impl Fn(&str) -> bool) -> Vec<HookApplyOutcome>;
+
+// platform/hook_command/ —— shim 启动命令的平台渲染（红线 2/10）
+pub fn render_report_command(shim: &Path, source: &str, event_key: &str) -> Option<String>;
+pub fn resolve_node() -> Option<String>;
+```
+
+### 3. Contracts
+
+**为什么用 `command` hook + shim，而不用 `{"type":"http"}` hook**（`10-16` design T8）：
+
+> **坐标是动态的（`bind :0` 随机端口 × N 个活实例），配置是静态的（写死在用户文件里）。
+> 二者不可调和 ⇒ 必须有运行时解析坐标的中间层。**
+
+http hook 的 URL 无法表达多实例（`10-12` R6.8），故一律走 `command` + 稳定路径的 shim。
+
+**shim 契约（Rust ↔ JS 是同一契约的两端，改一端必须同步另一端）**：
+
+```
+argv:  <source> <event_key>      ← 语义键由 argv 传入，shim 零 per-CLI 事件名知识
+stdin: CLI 的 hook input JSON（Claude Code 规范；Codex 字段名同形）
+env:   NEEKO_AGENT_HOOK_ENDPOINT / NEEKO_AGENT_HOOK_ENDPOINTS_DIR（调试/夹具覆盖）
+出站:  POST http://127.0.0.1:{port}/hook/{source}   header: x-neeko-agent-hook-token
+退出:  永远 0（非零退出会被 CLI 当作阻断/失败，违反「绝不阻塞用户 agent」）
+```
+
+**关键不变量：shim 不得认识任何 CLI 原生事件名** —— `(原生名 → event_key)` 的翻译
+全部落在 `HookEntry` 数据表。护栏：`report_shim_keeps_contract_anchors_and_knows_no_native_events`。
+
+**结构化合并的四条不变量**（`merger.rs`，各一个单测）：
+
+1. **他人条目逐字保留**（同事件下 orca / clawd / superset 的条目不受影响，含 `http` 型）；
+2. **fail-safe**：配置非对象 / `hooks` 非对象 / 事件值非数组 → `Noop` 且原样保留，
+   调用方据此**跳过写盘**（不留「shim 已装但条目没进去」的半成品）；
+3. **幂等 + 收敛**：同 command 重复插入 → `Unchanged`；多条自家条目 → 收敛到恰好一条；
+4. **空数组删键**：移除后 `hooks.<event>` 为空则删该键，不留空壳。
+
+**自家条目识别**：`command` 里的 shim **路径段**（`SHIM_MARKER`，需被 `/` `\` `'` `"` 前置）。
+判据是路径段而非裸子串 —— 否则 `node neeko-status.mjs`（相对路径、非 Neeko 生成）会被误判，
+导致我们去删改别人的 hook。**不往 CLI schema 里塞私有字段**（会被 CLI 拒载）。
+
+**权限继承**：改写用户既有配置文件必须**保留原权限位**
+（`platform::private_file::write_atomic_preserving_mode`）。无条件写 0600 会把用户的 0644
+静默降权；无条件写 0644 会把用户的 0600 静默泄漏。
+
+**两个开关的分工**（勿合并）：
+
+| 开关 | 位置 | 语义 |
+| --- | --- | --- |
+| `cli_hooks` | `NotificationSettings`（通知核心域） | **主开关**：「用户是否同意 Neeko 装 hook」。默认 `false` |
+| `agentHookSources` | `config.json`（agent 域） | **逐 CLI 覆盖**：`{"claude": false}`；键缺失 ⇒ 跟随主开关 |
+
+生效判定：`effective(cli) = master && sources.get(cli).unwrap_or(true)`。
+**业务身份（CLI 名字）必须归业务域** —— 写进通知核心域会让核心域出现 CLI 分支
+（`10-16` 父任务 T4 禁止），且与「核心域零改动」验收冲突。
+
+### 4. Validation & Error Matrix
+
+| 场景 | 预期 |
+|------|------|
+| 用户配置不存在 | `Skipped`，**不创建** CLI 的配置目录（客人不喧宾） |
+| 用户配置非 JSON / `hooks` 非对象 | `Skipped`，**两个文件都不写**（fail-safe） |
+| 同名他人文件（`Standalone`） | `Skipped`，绝不覆盖 |
+| 解析不到 `node` | `Skipped("cannot resolve node executable")` |
+| `source` / `event_key` 含非法字符 | `render_report_command` 返回 `None`（token 白名单，防注入） |
+| 只有 shim 无条目 / 只有条目无 shim | `installed == false`（不生效才诚实） |
+| 用户配置 0600 | 改写后仍 0600（权限继承） |
+
+### 5. Good/Base/Bad Cases
+
+- **Good**：`HOOK_TARGETS` 加一行 `Structured { settings_file, entries }` 即接入一个新
+  Claude 兼容 fork；`entries` 复用 `CLAUDE_COMPAT_ENTRIES`（`&` 取址，指针判据可断言共享）。
+- **Base**：`Standalone` 形态完全沿用旧路径（`install_at` 分派后行为零漂移）。
+- **Bad**：把 `{"claude": false}` 写进 `NotificationSettings`（核心域出现 CLI 名字）；
+  用 `{"type":"http"}` hook（静态 URL 无法表达多实例）；在通用模块写
+  `if target.source == "codex"`（违反红线 15，应作为数据/形态声明）。
+
+### 6. Tests Required
+
+- `merger.rs`：四条不变量各一（`insert_preserves_foreign_entries_verbatim` /
+  `malformed_config_is_never_destroyed` / `insert_is_idempotent` + `insert_converges_duplicate_own_entries` /
+  `remove_prunes_event_key_when_only_ours`）+ `ownership_detection_covers_both_shapes`（路径段判据）。
+- `writers.rs`：`structured_install_writes_shim_and_entry_preserving_others` /
+  `structured_install_leaves_everything_untouched_on_malformed_config`（**反证钉子**：先写 shim 再 merge 本用例必红）/
+  `structured_install_preserves_settings_permissions`（Unix）/ `structured_status_requires_both_shim_and_entry` /
+  `structured_uninstall_removes_entry_and_shim` / `report_shim_keeps_contract_anchors_and_knows_no_native_events`。
+- `targets.rs`：`claude_compat_sources_share_one_entries_table`（**指针相等**，防复制三份漂移）/
+  `claude_compat_entries_never_map_notification`（U4 反证钉子）/
+  `omp_variant_omits_ui_prompt_and_keeps_other_legs`（U1 反证钉子）。
+- `platform/hook_command/`：`unsafe_tokens_are_rejected` / `quote_handles_spaces_and_single_quotes`。
+- `settings.rs`：`master_off_disables_everything` / `per_cli_override_disables_only_that_one` /
+  `override_true_does_not_bypass_master` / `malformed_overrides_are_tolerated`。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// ❌ 把 CLI 身份与形态分支写进通用模块
+if target.source == "claude" {
+    merge_into_settings_json(...)
+} else {
+    write_standalone_file(...)
+}
+```
+
+#### Correct
+
+```rust
+// ✅ 形态是数据；writers 只按形态分派，零 CLI 名字
+match &target.shape {
+    InstallShape::Standalone => install_standalone(target, dir),
+    InstallShape::Structured { settings_file, entries } =>
+        install_structured(target, dir, settings_file, entries),
+}
+```
+
+---
+
+## 已知遗留（`10-16-notify-claude-compat` 登记）
+
+- **Claude 系无「等待输入」事件**：`Notification` 事件的 `matcher` 在 Claude Code 规范里
+  **不生效**（规范原文：`UserPromptSubmit, Notification, Stop, SubagentStop: matcher is not used`），
+  映射它会让所有空闲提示误报为 `input_requested`。故不映射 ——
+  「等待用户行动」由 `PermissionRequest` 覆盖。若未来某 CLI 提供可靠的「等待输入」事件，
+  加一行 `HookEntry` 即可。
+- **OMP 无 `ui_prompt_start`**：OMP 与 pi 同扩展 API 但少此事件（二进制 0 命中
+  `withUIPrompt` / `emitUIPromptEvent` / `UIPromptStartEvent`），故 OMP 用 pi 模板的**派生变体**
+  （`templates/neeko-omp-status.ts`）。OMP 升级若补上该事件，删变体改引 pi 模板即可。
+- **Codex 未接入**：它是 Rust 二进制（无 node）+ 配置跨 JSON/TOML 两处 + 有信任门，
+  属独立机制 → `10-16-notify-codex`。
+
+---
+
+## 场景：`InstallShape::NotifyArgv`（Codex 的 `notify` 通道）
+
+> 任务源：`10-16-notify-codex`（2026-10-16）。同一子任务推翻了原「`hooks.json` + 信任哈希」设计，
+> 依据与证据见 `.trellis/tasks/10-16-notify-codex/research/codex-trust-spike.md`。
+
+### 1. Scope / Trigger
+
+- **Trigger**：要接入的 CLI 有「一条命令 + 一串 argv」形态的**通知钩子**（Codex 的 `notify`），
+  而不是「按事件名分组的 hook 对象」。它既不是 `Standalone`（不是独立文件即插拔），
+  也不是 `Structured`（不是嵌套对象 + matcher），故需要第三种形态。
+- **Scope**：`agent/hooks/targets.rs`（形态数据）、`agent/hooks/toml_merger.rs`（TOML 纯函数）、
+  `agent/hooks/writers.rs`（第三分支）、`platform/hook_command`（argv 形态渲染）、
+  `agent/hooks/templates/neeko-report.mjs`（双来源载荷）。
+
+### 2. Signatures
+
+```rust
+// targets.rs
+NotifyArgv { config_file: &'static str, key: &'static str }   // codex: ("config.toml", "notify")
+
+// toml_merger.rs —— 纯字符串变换，零 IO
+pub enum TomlMergeAction { Insert, Remove }
+pub enum TomlMergeOutcome { Changed, Unchanged, Removed, Noop }
+pub fn apply_notify(text: &str, key: &str, entry: &[String], action: TomlMergeAction)
+    -> (String, TomlMergeOutcome);
+pub fn read_notify(text: &str, key: &str) -> Option<Vec<String>>;
+pub fn notify_is_current(text: &str, key: &str, entry: &[String]) -> bool;
+pub fn entry_targets_shim(entry: &str) -> bool;   // 路径段判据（与 merger 同源）
+
+// platform/hook_command —— argv 形态（不经 shell）
+pub fn report_argv(shim: &Path, source: &str, event_key: &str) -> Option<Vec<String>>;
+```
+
+### 3. Contracts
+
+**形态语义**：`notify` 是「**一条命令的 argv**」，不是「命令列表」——
+`notify = [exe, arg1, ...]`，CLI 执行 `exe arg1 ... <json>`（JSON 追加为**最后一个参数**）。
+
+**由此推出一条硬结论**：**不能把自家 argv 追加到用户已有的 `notify` 后面** ——
+那会变成 `用户的exe 用户的args 我们的exe 我们的args`（垃圾命令）。
+故用户已有**非自家** `notify` 时一律 `Noop`（不覆盖、不追加）：宁可不装。
+
+**`notify` 与 `Structured` 的四处差异**（不可共用一个变体）：
+
+| | `Structured`（Claude 系） | `NotifyArgv`（Codex） |
+| --- | --- | --- |
+| 格式 | JSON 嵌套对象 | TOML 数组键 |
+| 语义 | 按事件名分组，一个配置可携带多条 | **一条 argv**，只能有一条 |
+| 载荷投递 | stdin | **argv[last]** |
+| 合并算法 | 逐事件 merge + matcher | 单键整体替换 / 删除 |
+
+**`status` 语义差异**：`NotifyArgv` 指向的是 **shim 路径**而非嵌入内容，
+故**没有「文件过期」概念**（shim 内容变了行为自然跟着变）—— `version_current` 只比 argv。
+
+**shim 载荷双来源**（两种 CLI 投递形态不同，同一个 shim 都支持）：
+
+```
+Claude 面：argv = [shim, source, event_key]          载荷来自 stdin
+Codex  面：argv = [shim, source, event_key, <json>]   载荷来自 argv[3]
+```
+
+解析顺序：**先试 argv，再回退 stdin**（顺序不可交换 —— Claude 面 argv[4] 恒 undefined，
+自然落到 stdin；Codex 面 stdin 可能是 TTY/已关闭）。`source` / `event_key` 两路取法一致
+⇒ shim 仍零 per-CLI 知识。
+
+**⚠️ TOML 表作用域**（实施期实测踩坑，最易错的一条）：
+
+> **在新键插入 `[table]` 之前，绝不能追加到文件末尾。**
+
+TOML 的**表作用域延续到下一个表头**。用户 `~/.codex/config.toml` 末尾通常是
+`[hooks.state."…"]` —— 在末尾追加的 `notify` 会落在**那个表内部**，不是顶层键。
+症状极隐蔽：**文件看起来写对了**（字符串包含成立），但解析后顶层没有该键
+（Codex 因此从不调用 shim）。`tomllib` 实证：
+
+```
+notify at EOF        → 顶层有 notify? False   （实际落在 hooks.state.<key>.notify）
+notify before tables → 顶层有 notify? True
+```
+
+故 `top_level_insert_offset()` 的判据是**第一个 `[` 开头的行（允许前导空白）之前**；
+无表头时文件末尾即顶层键区。
+
+**→ 测试形态要求（两条，缺一不可）**：
+
+1. **oracle 用解析器回读**，不是字符串包含 ——
+   `toml::from_str` 后断言顶层键存在、且不落进任何子表。
+   用 `contains("notify = ")` 会漏掉表作用域错误。
+2. **同时断言两个面**：配置条目 **与** 落盘的 shim 文件。
+   2026-10-16 用户实测「装了但没通知」的根因是 `install_notify_argv` **只写配置不写 shim** ——
+   而当时三条测试全都只断言配置文本，**没有一个看 shim 是否存在**。
+   → 安装/卸载/状态三处都必须覆盖两个面（见下方 Error Matrix 与 Tests Required）。
+
+**文本级而非解析-重序列化**（同「权限继承」的理由）：`config.toml` 含用户敏感内容与个人格式，
+`toml::to_string` 会重排键序、丢注释、改引号风格 → AC4「逐字不变」无法保证。
+文本级只插入/删除**那一行**，其余字节原样搬运（测试判据：删掉新增行后与原文逐字节相等）。
+
+### 4. Validation & Error Matrix
+
+| 场景 | 预期 |
+|------|------|
+| 键不存在 | Insert 在**第一个表头之前**插入一行（语义回读验证属于顶层） |
+| 值是自家 argv 且完全一致 | `Unchanged`（零改写） |
+| 值是自家 argv 但不一致（如 shim 路径变） | 整条替换（收敛，不留两条） |
+| 值是**非自家** argv | `Noop` + 原样（不覆盖 —— 见 §3 硬结论） |
+| 空数组 `notify = []` | 视为「没有命令」→ 填上我们的 |
+| 值非数组（字符串 / 内联表 / 整数） | `Noop` + 原样（fail-safe） |
+| 跨行数组 / 单引号字面量 / 数组后跟杂项 | `Noop` + 原样（不支持就不改） |
+| 行内注释（`notify = [] # 备注`） | 解析容忍，正常填充 |
+| 注释行 / `xnotify` / `notify_extra` | 不匹配（判据是行首为键名且后接 `=`） |
+| 移除时本就没有 / 非自家 | `Noop`（不产生噪音回执行） |
+| 移除自家 | 整行删除（留 `notify = []` 会让 Codex 执行空命令） |
+| 配置不存在 | `Skipped` + **不创建** |
+| **配置条目在但 shim 文件缺失** | `installed == false`（不撒谎）；`install` 必须**补写 shim**（不能因配置 merge 得 `Unchanged` 就提前返回） |
+| 卸载 | **两个面都清**（删条目 + 删 shim），任一有动作即报 `Removed`，不留孤儿 |
+
+### 5. Good/Base/Bad Cases
+
+- **Good**：`HOOK_TARGETS` 加一行 `NotifyArgv { config_file, key }` 即接入同类 CLI；
+  `report_argv` 与 `render_report_command` 共用 node 解析与 token 校验（只差交付形态）。
+- **Base**：用户 `config.toml` 无 `notify` → 插入到顶层键区，其余内容逐字节不变。
+- **Bad**：追加到文件末尾（落入最后一个表 —— 本任务实测的 bug）；
+  把自家 argv 追加到用户已有 `notify` 后面（垃圾命令）；
+  用解析-重序列化改用户配置（丢格式）；
+  测试用字符串包含断言（抓不住表作用域错误）。
+
+### 6. Tests Required
+
+- `toml_merger.rs`（19 条）：`insert_lands_at_top_level_even_when_file_ends_with_a_table`
+  （**关键回归钉子** —— 反证：退回「追加末尾」必红）、`inserted_key_sits_before_the_first_table_header`、
+  `insert_into_flat_file_without_tables`、`insert_skips_when_user_has_own_notify`、
+  `insert_is_idempotent`、`insert_converges_stale_own_entry`、`non_array_value_is_untouched`、
+  `unsupported_shapes_are_untouched`、`comments_and_similar_keys_are_not_matched`、
+  `remove_prunes_the_whole_line`、`escape_round_trips_backslashes_and_quotes`、
+  `append_handles_missing_trailing_newline`、`inline_comment_after_array_is_tolerated`。
+- `writers.rs`（**两个面都要断言**）：
+  `notify_install_writes_both_shim_file_and_config_entry`（**反证钉子**：删掉 shim 写入必红）、
+  `notify_install_repairs_missing_shim_when_config_already_correct`（**反证钉子**：
+  只在 merge `Changed` 时写盘必红）、`notify_status_requires_shim_file_too`、
+  `notify_uninstall_removes_shim_file_too`、
+  `notify_install_writes_argv_entry_preserving_rest` /
+  `notify_install_is_idempotent` / `notify_install_skips_when_config_absent` /
+  `notify_install_skips_when_user_has_own_notify` / `notify_install_preserves_config_permissions`（Unix）/
+  `notify_status_tracks_entry_presence_and_argv` / `notify_uninstall_removes_own_entry_only` /
+  `notify_uninstall_leaves_user_own_notify`。
+- `targets.rs`：`codex_target_uses_notify_argv_not_hooks_json`（**AC1 反证钉子**：
+  防回退到被否决的 `hooks.json` 通道）/ `codex_dir_honors_codex_home_env`。
+- `platform/hook_command`：`report_argv_shapes_plain_array_without_quoting` /
+  `report_argv_rejects_unsafe_tokens`（两形态共用白名单）。
+- shim：`report_shim_keeps_contract_anchors_and_knows_no_native_events`（含 `process.argv` 锚点）。
+- **e2e（人工）**：真机 Codex → shim → ingest 收到 `turn_completed`。
+  步骤与捕获样例见 `10-16-notify-codex/research/codex-trust-spike.md` 附录。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// ❌ 只写配置面、不写 shim 文件（2026-10-16 实测的 bug）：
+// config.toml 指向不存在的脚本 → CLI 每次调用都失败，而回执却是 Applied
+let (updated, merge) = toml_merger::apply_notify(&text, key, &entry, Insert);
+if merge == Changed {
+    write_atomic_preserving_mode(&config_path, &updated)?;   // ← shim 从未落盘
+}
+```
+
+```rust
+// ❌ 追加到文件末尾：TOML 表作用域会让它落进最后一个 [table] 内部
+out.push_str(text);
+out.push_str(&format!("notify = [...]\n"));
+```
+
+```rust
+// ❌ 用户已有 notify 时追加自家 argv → 变成垃圾命令
+// 用户的: notify = ["/their/tool.sh", "--flag"]
+// 追加后: notify = ["/their/tool.sh", "--flag", "/usr/bin/node", "/a/neeko-status.mjs", ...]
+```
+
+```rust
+// ❌ 测试用字符串包含（抓不住上面的表作用域 bug）
+assert!(after.contains("notify = "));
+```
+
+#### Correct
+
+```rust
+// ✅ 两个面都落盘：先 shim（配置指向它），再配置；
+//    且「配置已对但 shim 缺失」也要补写（否则早期故障态永不修复）
+let shim_current = read(&shim_path).is_ok_and(|c| c == render(target.template));
+match merge {
+    Unchanged if shim_current => Unchanged,
+    Unchanged => { write_shim()?; Applied }        // 只补文件面
+    Changed => { if !shim_current { write_shim()?; } write_config()?; Applied }
+}
+```
+
+```rust
+// ✅ 插入到第一个表头之前（无表头则末尾）
+let at = top_level_insert_offset(text);
+out.push_str(&text[..at]);
+out.push_str(&render_key_line(key, entry));
+out.push_str(&text[at..]);
+```
+
+```rust
+// ✅ 用户已有非自家 notify → 不动
+if !ours && !items.is_empty() {
+    return (text.to_string(), TomlMergeOutcome::Noop);
+}
+```
+
+```rust
+// ✅ oracle = 解析器回读（语义层）
+let parsed: toml::Value = toml::from_str(&after).expect("valid TOML");
+assert!(parsed.get("notify").is_some(), "必须在顶层");
+```
+
+### 8. 探测安全（本次事故的固化教训）
+
+**任何会写 CLI 配置的探测必须先设 `CODEX_HOME=<tempdir>`**。
+实测：`codex exec -c <key>=<value>` 的 `-c` 覆盖**会被写回** `~/.codex/config.toml`
+（配置持久化，不是纯内存）—— 本任务期间两次探测因此污染了用户真实配置
+（多了一个 `[projects."…"]` 块与一行 `notify`），已恢复。
+
+同类风险适用于任何「CLI 会自动持久化其配置」的场景：探测前先确认
+「这个环境变量能否把配置重定向到沙箱」，不能则先备份并在探测后逐字核对。
+
+---
+
+## 场景：一个 CLI 可以有**多个接入面**（`HookTarget::shapes`）
+
+> 任务源：`10-16-notify-codex`（2026-10-16 A 方案）。**修正了本文件上一节「一个 CLI 一个 `shape`」的隐含假设。**
+
+### 1. Scope / Trigger
+
+- **Trigger**：Codex 有**两条互不替代**的通知通道：
+  1. `notify`（`config.toml` 数组键）→ 只报**轮次完成**，**零交互即装即用**；
+  2. `hooks.json` 的 `PermissionRequest`/`Stop`/`StopFailure` → **审批/失败**，但受**信任门**约束。
+
+  只接其一会**功能性缺失**：只接 (1) 拿不到审批通知；只接 (2) 在用户未确认信任时
+  **一条都收不到**（连完成通知都没有）。
+- **Scope**：`agent/hooks/targets.rs`（`HookTarget::shapes`）、`agent/hooks/writers.rs`
+  （`shape_status` / `install_at` / `uninstall_at` / `combine_outcomes` / `trust_probe`）。
+
+### 2. Signatures
+
+```rust
+pub struct HookTarget {
+    pub source: &'static str,
+    pub file_name: &'static str,
+    pub template: &'static str,
+    pub dir: fn() -> Option<PathBuf>,
+    /// 该 CLI 的**全部接入面**（一个 CLI 可有多条通道）。
+    pub shapes: &'static [InstallShape],
+}
+
+// writers.rs —— 面聚合
+fn shape_status(target, dir) -> (bool, bool);          // installed = 所有面都在位
+fn install_at(target, dir) -> HookApplyOutcome;        // 遍历面 → combine_outcomes
+fn uninstall_at(target, dir) -> Option<HookApplyOutcome>;
+fn combine_outcomes(target, outcomes) -> HookApplyOutcome;  // Failed > Applied > Skipped > Removed > Unchanged
+fn trust_probe(target, dir) -> Option<bool>;           // None=不适用 / Some(true)=已确认 / Some(false)=待确认
+fn camel_to_snake(name: &str) -> String;               // Codex 信任键用 snake_case 事件名
+```
+
+**`HookInstallStatus` 新增字段**：
+
+```rust
+pub trusted: Option<bool>,   // None = 该 CLI 无信任概念；false = 已装但用户未确认（功能不生效）
+```
+
+### 3. Contracts
+
+**面聚合**：`installed` 是**所有面**的与（缺任一 = 未安装）。
+理由：只报部分面就位 = 撒谎，且会掩盖「审批通知没生效」—— 又一次「装了但没通知」。
+
+**回执聚合优先级**：`Failed` > `Applied` > `Skipped` > `Removed` > `Unchanged`；
+多面时 `detail` 汇总各面非空说明（用户需要知道**哪个面**出了问题）。
+
+**`trust_probe` 的判据必须精确到「我们自己的条目」**（**这是本轮抓到的第二个真 bug**）：
+
+> `hooks.json` 是**共享文件**。用户机实测（2026-10-16）它同时被 superset 等他人工具占用，
+> 且**他人的 hook 已被信任**（`[hooks.state]` 里有 `<path>:stop:0:0`、
+> `<path>:session_start:0:0` 等键）。若只判「有没有以我们 `hooks.json` 路径开头的键」，
+> 会命中**他人的**键 → 谎报「已确认」→ 用户看到「已安装」却收不到审批通知。
+
+正确判据：算出**我们每条条目**的期望键并逐个检查 ——
+`<abs path>:<event_snake>:<group_idx>:<hook_idx>`，
+其中 `group_idx`/`hook_idx` 是条目在 `hooks.<Event>[]` 数组里的位置（用
+`merger::command_targets_shim` 定位自家条目）。
+**只读**：绝不代写 hash（不可反推，且是 Codex 内部契约）。
+
+**`settings_file` 缺失时的三态区分**（**本轮抓到的第三个真 bug**）：
+
+`read_settings` 的 `None` 涵盖三种语义完全不同的情况，必须分开：
+
+| 状态 | 行为 | 理由 |
+| --- | --- | --- |
+| 文件**不存在** 且 **CLI 目录在** | **创建**空壳 `{"hooks":{}}` 并继续 | 实测：Codex 的 `~/.codex/` 通常存在（`config.toml`/`auth.json`/`sessions/` 都在），而 **`hooks.json` 往往不存在**。沿用「文件不在就 `Skipped`」→ 审批面**静默缺失**且设置页看不出 |
+| 文件**存在但不可解析** | `Skipped` + 原样保留 | **绝不覆盖用户内容**（fail-safe） |
+| **CLI 目录不存在** | `Skipped`，不代建目录 | 客人不喧宾（既有契约） |
+
+### 4. Validation & Error Matrix
+
+| 场景 | 预期 |
+|------|------|
+| 双面 CLI（Codex）首次安装 | 两个面都落盘；`installed=true`；`trusted=Some(false)` |
+| 缺任一面的文件/条目 | `installed=false`（不撒谎） |
+| 他人信任键存在、我们的不存在 | `trusted=Some(false)`（**不得**因他人的键谎报 true） |
+| `hooks.json` 不存在但 `.codex/` 存在 | **创建**并安装（非 `Skipped`） |
+| `hooks.json` 存在但非法 JSON | `Skipped` + 逐字保留 |
+| `.codex/` 不存在 | `Skipped`，不建目录 |
+| 卸载 | 两个面都清；任一有动作即 `Removed` |
+| 无 `hooks.json` 面的 CLI | `trusted=None`（UI 不展示信任态） |
+
+### 5. Good/Base/Bad Cases
+
+- **Good**：Codex 的 `shapes` = `[NotifyArgv, Structured{hooks.json}]`。
+  设置页显示「已安装 — needs confirmation in the CLI」直到用户确认。
+- **Base**：只有一个面的 CLI（claude/pi/omp）→ 行为与单 `shape` 时代完全等价。
+- **Bad**：把一个 CLI 建模成单 `shape`（会丢通道）；
+  信任判据用「路径前缀」（会被他人键命中）；
+  把「文件不存在」与「不可解析」归到同一个分支（会覆盖用户坏文件）。
+
+### 6. Tests Required
+
+- `writers.rs`：`dual_face_install_writes_every_face`（**反证**：只处理第一个面必红）、
+  `dual_face_uninstall_clears_every_face`、`partial_faces_report_not_installed`、
+  `combine_outcomes_uses_strictest_status`、
+  `trust_probe_requires_our_own_entry_keys`（**反证钉子**：只判路径前缀必红）、
+  `camel_to_snake_matches_codex_key_format`、
+  `structured_install_creates_missing_settings_file_when_dir_exists`（**反证**：缺失即 Skipped 必红）、
+  `structured_install_never_overwrites_unparseable_existing_file`（**反证**：不区分三态必红）。
+- `targets.rs`：`codex_has_both_notify_and_hooks_json_faces`（**反证**：缺任一面必红）。
+- 前端：`describeHookStatus`（`trusted: false` → 必须显示「needs confirmation」）。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// ❌ 单 shape：Codex 只能接一条通道（丢完成或丢审批）
+pub shape: InstallShape,
+
+// ❌ 信任判据用路径前缀：会被他人的信任键命中（hooks.json 是共享文件）
+let prefix = format!("[hooks.state.\"{}", hooks_json.display());
+Some(state.lines().any(|l| l.starts_with(&prefix)))
+
+// ❌ 把「不存在」与「不可解析」归到一起：会覆盖用户的坏文件
+let Some(config) = read_settings(&path) else { return Skipped };
+```
+
+#### Correct
+
+```rust
+// ✅ 多面 + 面聚合（installed = 所有面都在位）
+pub shapes: &'static [InstallShape],
+
+// ✅ 信任判据精确到自家条目的期望键
+state.contains(&format!("[hooks.state.\"{path}:{snake}:{gi}:{hi}\"]"))
+
+// ✅ 三态区分：不存在→创建（目录在时）；不可解析→保留；目录不在→跳过
+match read_settings(&path) {
+    Some(c) => c,
+    None if !path.exists() && dir.is_dir() => json!({ "hooks": {} }),
+    None => return Skipped,
+}
+```

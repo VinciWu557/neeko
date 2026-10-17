@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审查红线 9/15：mod.rs 极薄、通用模块零 DSH 分支"}
+{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "审查 adapter 是否守住 AgentAdapter/AgentSession 契约（分支 A）"}
+{"file": ".trellis/spec/backend/command-execution.md", "reason": "审查子进程是否走 core::exec（红线 1）"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "审查投影纯函数测试与未知事件 fail-open 覆盖（红线 13）"}
