@@ -35,6 +35,7 @@ import { useAppEntryAddRefresh } from './useAppEntryAddRefresh';
 import { useAppInitialGitRefresh } from './useAppInitialGitRefresh';
 import { useAppStoreSync } from './useAppStoreSync';
 import { useConfirmExit } from './useConfirmExit';
+import { useHiddenAgentToggle } from './useHiddenAgentToggle';
 import { useToolbarFooterProps } from './useToolbarFooterProps';
 
 export interface UseAppShellDataResult extends AppShellData {
@@ -278,16 +279,8 @@ export function useAppShellData(): UseAppShellDataResult {
     wslActions: wslActionsWrap,
     remoteActions: remoteActionsWrap,
   });
-  const handleToggleHiddenAgent = useCallback(
-    (agentId: string) => {
-      const current = config.hiddenAgentIds ?? [];
-      const next = current.includes(agentId)
-        ? current.filter((id) => id !== agentId)
-        : [...current, agentId];
-      saveConfig({ ...config, hiddenAgentIds: next });
-    },
-    [config, saveConfig],
-  );
+  // 「隐藏 agent」的 config.json 读写整体进全局串行门（见该 hook 的文档）。
+  const handleToggleHiddenAgent = useHiddenAgentToggle(saveConfig);
 
   const { handleWslEntryAddRefresh, handleRemoteEntryAddRefresh } = useAppEntryAddRefresh({
     handleWSLEntryAdd,

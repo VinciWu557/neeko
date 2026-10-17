@@ -41,12 +41,22 @@ export async function sendTestNotification(): Promise<boolean> {
 }
 
 /**
- * 应用「外部 Agent CLI hooks」开关（R6.5）：true 安装 / false 卸载 pi、opencode 上报文件。
+ * 应用 hook 开关（R6.5）：`enabled=false` 卸载全部；`enabled=true` 按 `enabledSources` 安装。
+ *
  * 返回逐 CLI 的机器可读回执（status + detail），由设置页按 status 分类呈现。
  * 命令在 agent 域（`agent_hooks_apply`）—— 业务知识依赖方向，见 `agent/hooks/commands.rs`。
+ *
+ * `enabledSources` 为 `null` = 全部启用（向后兼容）；给集合时，集合外的已装 CLI 会被卸载
+ * （「单独关掉某一个」的路径）。
  */
-export function applyCliHooks(enabled: boolean): Promise<HookApplyOutcome[]> {
-  return invoke<HookApplyOutcome[]>('agent_hooks_apply', { enabled });
+export function applyCliHooks(
+  enabled: boolean,
+  enabledSources?: string[] | null,
+): Promise<HookApplyOutcome[]> {
+  return invoke<HookApplyOutcome[]>('agent_hooks_apply', {
+    enabled,
+    enabledSources: enabledSources ?? null,
+  });
 }
 
 /** 查询各 CLI hook 安装状态（设置页数据行）。失败回空列表（未初始化配置目录的 CLI 不展示）。 */

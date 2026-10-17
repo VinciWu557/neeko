@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
+import { runConfigWrite } from '@/shared/utils/configWriteGate';
+
 export interface ProjectOnboardingState {
   version: number;
   completedSteps: string[];
@@ -24,16 +26,14 @@ export async function loadOnboardingState(key: string): Promise<ProjectOnboardin
   }
 }
 
-// Serialize onboarding config writes so that concurrent read-modify-write cycles
-// (e.g. two rapid step completions, or completion + dismiss) do not overwrite
-// each other's changes.
-let saveChain: Promise<void> = Promise.resolve();
-
 export async function saveOnboardingState(
   key: string,
   state: Partial<ProjectOnboardingState>,
 ): Promise<void> {
-  const task = saveChain.then(async () => {
+  // 进**全局** config 队列，而不是本模块私有的 `saveChain`（2026-10-16 审查）：
+  // `config.json` 的写入者横跨多个域（设置页 / CLI hook / 后端 RMW …），
+  // 私有链只在本模块内排序，与其它写入者之间没有任何顺序 ⇒ 仍会互删对方的键。
+  await runConfigWrite(async () => {
     const config = await invoke<Record<string, unknown>>('load_config');
     const raw = (config as unknown as OnboardingConfig).projectOnboarding ?? {};
     const existing = raw[key] ?? {
@@ -55,10 +55,4 @@ export async function saveOnboardingState(
       },
     });
   });
-  // Keep the chain moving even if one save fails so that subsequent saves are
-  // not permanently blocked. The returned promise still rejects to the caller.
-  // 保持链式写入继续推进（否则一次失败永久阻塞后续保存）；
-  // 错误仍通过下方 `await task` 抛给调用方，此处仅吞内部链，非静默吞错。
-  saveChain = task.catch(() => {});
-  await task;
 }

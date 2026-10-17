@@ -1,16 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-import { parseImportStrategy, setLspImportStrategy } from '@/features/lsp/api/lspImportStrategy';
+import { setLspImportStrategy } from '@/features/lsp/api/lspImportStrategy';
 import { applyCustomCssVars, clearCustomCssVars } from '@/features/settings/customThemeVars';
-import type {
-  AppConfig,
-  ThemeListItem,
-  CustomThemeData,
-  LspConfig,
-  CustomLspServerConfig,
-  LspAutoStart,
-} from '@/features/settings/types';
-import { BUILTIN_THEMES } from '@/features/settings/types';
+import type { AppConfig, ThemeListItem, CustomThemeData } from '@/features/settings/types';
 import { updateAllTerminalThemes } from '@/features/terminal';
 import { useConnectionStore } from '@/shared/store/connectionStore';
 import { useProjectStore } from '@/shared/store/projectStore';
@@ -24,80 +16,8 @@ import {
   getCustomTheme,
 } from '../api/settingsApi';
 
-const DEFAULT_CONFIG: AppConfig = {
-  theme: 'dark',
-  appearanceFontSize: 12,
-  editorFontSize: 14,
-  terminalFontSize: 14,
-  diffMode: 'unified',
-  shell: '',
-  fontFamily: '',
-  monoFontFamily: '',
-  uiFontFamily: '',
-  customIdes: [],
-  ideCommandOverrides: {},
-  agentCommandOverrides: {},
-  agentOverrides: {},
-  customAgents: [],
-  agentSelectorShowPresetBar: true,
-  agentSelectorCompactMode: false,
-  hiddenAgentIds: [],
-  shortcuts: {},
-  terminalGpuAcceleration: false,
-  enablePiThemeSync: false,
-  enableOpenCodeThemeSync: false,
-  enableDevTools: false,
-  autoLocateFileOnTabSwitch: true,
-  editorGitChangeHighlight: true,
-  watcherExclude: [],
-  lsp: {
-    autoStart: 'onFirstFile',
-    deactivateStopMinutes: 30,
-    customServers: [],
-    importStrategy: 'auto',
-  },
-  favoriteBranches: {},
-};
-type PartialLoadedConfig = Partial<AppConfig> & {
-  fontSize?: number;
-  theme?: unknown;
-  lsp?: Partial<LspConfig> & { customServers?: unknown };
-};
-
-function parseAutoStart(v: unknown): LspAutoStart {
-  if (v === 'onProjectSelect' || v === 'manual' || v === 'onFirstFile') return v;
-  return 'onFirstFile';
-}
-
-function mergeLspConfig(raw: unknown): LspConfig {
-  const base = DEFAULT_CONFIG.lsp;
-  if (!raw || typeof raw !== 'object') return { ...base, customServers: [] };
-  const o = raw as Record<string, unknown>;
-  const servers: CustomLspServerConfig[] = Array.isArray(o.customServers)
-    ? (o.customServers as CustomLspServerConfig[]).filter(
-        (s) =>
-          s &&
-          typeof s === 'object' &&
-          typeof s.languageId === 'string' &&
-          Array.isArray(s.command) &&
-          Array.isArray(s.file_extensions),
-      )
-    : [];
-  return {
-    autoStart: parseAutoStart(o.autoStart),
-    deactivateStopMinutes:
-      typeof o.deactivateStopMinutes === 'number' && o.deactivateStopMinutes > 0
-        ? Math.floor(o.deactivateStopMinutes)
-        : base.deactivateStopMinutes,
-    customServers: servers,
-    // 缺字段 / 非法值回落 `auto`（老 config.json 向后兼容；`#[serde(default)]` 的 TS 侧）。
-    importStrategy: parseImportStrategy(o.importStrategy),
-  };
-}
-
-function isBuiltinTheme(theme: string): boolean {
-  return (BUILTIN_THEMES as readonly string[]).includes(theme);
-}
+import { DEFAULT_CONFIG, isBuiltinTheme, normalizeLoadedConfig } from './appConfigNormalize';
+import { applyConfigSave, type ConfigSaveInput, persistConfigSave } from './appConfigSave';
 
 export function useAppConfig() {
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
@@ -164,18 +84,17 @@ export function useAppConfig() {
     [config.theme],
   );
 
+  /**
+   * `config.json` 的**唯一写点**：串行化 + 临界区内读盘合并。
+   *
+   * 契约全文见 `appConfigNormalize.applyConfigSave`。
+   * **调用方不得再包 `runConfigWrite`**（队列内二次入队 = 自我等待死锁）。
+   */
   const saveConfig = useCallback(
-    async (next: AppConfig) => {
-      // 幂等迁移：monoFontFamily 变化时同步写回 fontFamily 保持向后兼容
-      const withMonoSync: AppConfig =
-        typeof next.monoFontFamily === 'string' && next.monoFontFamily !== next.fontFamily
-          ? { ...next, fontFamily: next.monoFontFamily }
-          : next;
-      // Always normalize global lsp block so it is part of config.json
-      const normalized: AppConfig = {
-        ...withMonoSync,
-        lsp: mergeLspConfig(withMonoSync.lsp),
-      };
+    async (next: ConfigSaveInput) => {
+      // 乐观 UI：先用「增量 + 当前内存值」更新（合并规则是纯函数，见 `applyConfigSave`）。
+      // 落盘时会在临界区内用**磁盘现值**重算一次，那才是权威结果。
+      const normalized = applyConfigSave(config, next);
       // M4 单写点：补全源跑在 CM6 回调里，只能同步读模块缓存 —— 写入方唯一在此
       //（保存时同步；启动加载见下方 load effect）。
       setLspImportStrategy(normalized.lsp.importStrategy);
@@ -184,15 +103,14 @@ export function useAppConfig() {
         await loadCustomThemeVars(normalized.theme);
       }
       try {
-        // Persists entire AppConfig (including lsp) to ~/.neeko/config.json
-        // Backend save_config also applies config.lsp to the live LSP registry.
-        await saveConfigApi(normalized as unknown as Record<string, unknown>);
+        // 读盘 → 合并 → 落盘 整体不可交叠（实现在 `persistConfigSave`，可直测）。
+        await persistConfigSave(next, loadConfigApi, saveConfigApi);
       } catch (e) {
         console.error('[App] Failed to save config:', e);
         throw e;
       }
     },
-    [loadCustomThemeVars],
+    [config, loadCustomThemeVars],
   );
 
   useEffect(() => {
@@ -211,126 +129,15 @@ export function useAppConfig() {
       try {
         const loaded = await loadConfigApi();
         if (loaded && typeof loaded === 'object') {
-          const saved = loaded as PartialLoadedConfig;
-
-          if (typeof saved.fontSize === 'number' && typeof saved.terminalFontSize !== 'number') {
-            saved.terminalFontSize = saved.fontSize;
-          }
-
-          const theme = typeof saved.theme === 'string' ? saved.theme : 'dark';
-
-          if (!isBuiltinTheme(theme)) {
+          // 纯解析（含「未建模键原样带过」契约）抽在 `appConfigNormalize`：
+          // 那部分是零副作用的纯函数，可直测；本 hook 只负责副作用编排。
+          const { config: next, theme, needsCustomThemeVars } = normalizeLoadedConfig(loaded);
+          if (needsCustomThemeVars) {
             await loadCustomThemeVars(theme);
           }
-
-          // 迁移：旧 fontFamily → 新 monoFontFamily（幂等，读旧写新）
-          const rawMono =
-            typeof (saved as unknown as { monoFontFamily?: unknown }).monoFontFamily === 'string'
-              ? ((saved as unknown as { monoFontFamily: string }).monoFontFamily as string)
-              : typeof saved.fontFamily === 'string'
-                ? (saved.fontFamily as string)
-                : (DEFAULT_CONFIG.monoFontFamily ?? '');
-          const rawUi =
-            typeof (saved as unknown as { uiFontFamily?: unknown }).uiFontFamily === 'string'
-              ? ((saved as unknown as { uiFontFamily: string }).uiFontFamily as string)
-              : (DEFAULT_CONFIG.uiFontFamily ?? '');
-
-          // M4：启动加载同步补全策略缓存（`mergeLspConfig` 已回落 auto）。
-          const mergedLsp = mergeLspConfig(saved.lsp);
-          setLspImportStrategy(mergedLsp.importStrategy);
-
-          setConfig({
-            theme,
-            appearanceFontSize:
-              typeof saved.appearanceFontSize === 'number'
-                ? saved.appearanceFontSize
-                : DEFAULT_CONFIG.appearanceFontSize,
-            editorFontSize:
-              typeof saved.editorFontSize === 'number'
-                ? saved.editorFontSize
-                : DEFAULT_CONFIG.editorFontSize,
-            terminalFontSize:
-              typeof saved.terminalFontSize === 'number'
-                ? saved.terminalFontSize
-                : DEFAULT_CONFIG.terminalFontSize,
-            diffMode: saved.diffMode === 'split' ? 'split' : 'unified',
-            shell: typeof saved.shell === 'string' ? saved.shell : DEFAULT_CONFIG.shell,
-            fontFamily:
-              typeof saved.fontFamily === 'string' ? saved.fontFamily : DEFAULT_CONFIG.fontFamily,
-            monoFontFamily: rawMono,
-            uiFontFamily: rawUi,
-            customIdes: Array.isArray(saved.customIdes)
-              ? saved.customIdes
-              : DEFAULT_CONFIG.customIdes,
-            ideCommandOverrides:
-              saved.ideCommandOverrides && typeof saved.ideCommandOverrides === 'object'
-                ? saved.ideCommandOverrides
-                : DEFAULT_CONFIG.ideCommandOverrides,
-            agentCommandOverrides:
-              saved.agentCommandOverrides && typeof saved.agentCommandOverrides === 'object'
-                ? saved.agentCommandOverrides
-                : DEFAULT_CONFIG.agentCommandOverrides,
-            agentOverrides:
-              saved.agentOverrides && typeof saved.agentOverrides === 'object'
-                ? saved.agentOverrides
-                : DEFAULT_CONFIG.agentOverrides,
-            customAgents: Array.isArray(saved.customAgents)
-              ? saved.customAgents
-              : DEFAULT_CONFIG.customAgents,
-            agentSelectorShowPresetBar:
-              typeof saved.agentSelectorShowPresetBar === 'boolean'
-                ? saved.agentSelectorShowPresetBar
-                : DEFAULT_CONFIG.agentSelectorShowPresetBar,
-            agentSelectorCompactMode:
-              typeof saved.agentSelectorCompactMode === 'boolean'
-                ? saved.agentSelectorCompactMode
-                : DEFAULT_CONFIG.agentSelectorCompactMode,
-            hiddenAgentIds: Array.isArray(saved.hiddenAgentIds)
-              ? saved.hiddenAgentIds.filter((id: unknown) => typeof id === 'string')
-              : DEFAULT_CONFIG.hiddenAgentIds,
-            shortcuts:
-              saved.shortcuts && typeof saved.shortcuts === 'object'
-                ? saved.shortcuts
-                : DEFAULT_CONFIG.shortcuts,
-            terminalGpuAcceleration:
-              typeof saved.terminalGpuAcceleration === 'boolean'
-                ? saved.terminalGpuAcceleration
-                : DEFAULT_CONFIG.terminalGpuAcceleration,
-            enablePiThemeSync:
-              typeof saved.enablePiThemeSync === 'boolean'
-                ? saved.enablePiThemeSync
-                : DEFAULT_CONFIG.enablePiThemeSync,
-            enableOpenCodeThemeSync:
-              typeof saved.enableOpenCodeThemeSync === 'boolean'
-                ? saved.enableOpenCodeThemeSync
-                : DEFAULT_CONFIG.enableOpenCodeThemeSync,
-            enableDevTools:
-              typeof saved.enableDevTools === 'boolean'
-                ? saved.enableDevTools
-                : DEFAULT_CONFIG.enableDevTools,
-            autoLocateFileOnTabSwitch:
-              typeof saved.autoLocateFileOnTabSwitch === 'boolean'
-                ? saved.autoLocateFileOnTabSwitch
-                : DEFAULT_CONFIG.autoLocateFileOnTabSwitch,
-            editorGitChangeHighlight:
-              typeof saved.editorGitChangeHighlight === 'boolean'
-                ? saved.editorGitChangeHighlight
-                : DEFAULT_CONFIG.editorGitChangeHighlight,
-            watcherExclude: Array.isArray(saved.watcherExclude)
-              ? (saved.watcherExclude as unknown[]).filter(
-                  (p): p is string => typeof p === 'string',
-                )
-              : (DEFAULT_CONFIG.watcherExclude ?? []),
-            lsp: mergedLsp,
-            favoriteBranches:
-              saved.favoriteBranches && typeof saved.favoriteBranches === 'object'
-                ? saved.favoriteBranches
-                : DEFAULT_CONFIG.favoriteBranches,
-            translation:
-              saved.translation && typeof saved.translation === 'object'
-                ? saved.translation
-                : undefined,
-          });
+          // M4：启动加载同步补全策略缓存（`normalizeLoadedConfig` 已回落 auto）。
+          setLspImportStrategy(next.lsp.importStrategy);
+          setConfig(next);
         }
       } catch (e) {
         console.error('[App] Failed to load config:', e);

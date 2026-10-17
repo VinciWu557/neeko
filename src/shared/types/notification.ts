@@ -31,7 +31,15 @@ export interface NotificationSettings {
   eventOverrides: Record<string, boolean>;
   /** 仅在窗口失焦时通知（默认 true）。 */
   suppressWhenFocused: boolean;
-  /** 外部 Agent CLI hook 安装开关（R6.5，默认关）。保存联动 `agent_hooks_apply` 安装/卸载文件。 */
+  /** 外部 Agent CLI hook 主开关（R6.5，默认关 —— 用户全局配置是客人的家，须显式同意）。
+   *
+   * 本域只持有该**主开关意图**：文件的安装/卸载由 agent 域承担（`agent_hooks_apply` 命令 →
+   * `agent/hooks/writers.rs`），前端在保存设置后串行触发。核心域不 import 业务域，
+   * 故此处刻意不写具体落点函数名 —— 联动契约见 `.trellis/tasks/10-12-agent-notify/`。
+   *
+   * **逐 CLI 例外不在这里**：`{"claude": false}` 这类业务身份属于 agent 域，
+   * 落在 config.json 的 `agentHookSources` 键（见 `agent/hooks/settings.rs` 的分工说明）——
+   * 写进本类型会让核心域出现 CLI 名字（父任务 design T4 禁止的形态）。 */
   cliHooks: boolean;
   /** 节流与合并窗口（秒）——UI 高级项。 */
   throttleSecs: number;
@@ -56,6 +64,16 @@ export interface HookInstallStatus {
   path: string;
   installed: boolean;
   versionCurrent: boolean;
+  /**
+   * CLI 侧信任态（镜像 Rust `HookInstallStatus::trusted`）：
+   * - `null` = 该 CLI 无信任概念（无需展示）；
+   * - `true` = 需要且已确认；
+   * - `false` = **已安装但用户还没在 CLI 里确认** → 该面功能不生效。
+   *
+   * 目前只有 Codex 的 `hooks.json` 面（审批通知）需要：Codex 会对未信任的 hook
+   * 静默跳过且不报错，必须在 UI 上如实提示，否则又是「装了但没通知」。
+   */
+  trusted: boolean | null;
 }
 
 /**

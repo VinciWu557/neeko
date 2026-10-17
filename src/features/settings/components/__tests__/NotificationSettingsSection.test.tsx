@@ -1,6 +1,10 @@
 /**
  * NotificationSettingsSection 关键行为：加载渲染、开关即存（串行链）、事件覆盖写入、
- * 保存失败回滚磁盘现值。api 门面整体 mock，不触真实 invoke。
+ * 保存失败回滚磁盘现值、以及主开关驱动 `CliHooksSection` 同步文件面。
+ * api 门面整体 mock，不触真实 invoke。
+ *
+ * 逐 CLI 覆盖表的**纯函数**判定（`readSourceOverrides` / `enabledSourcesFor`）在
+ * `CliHooksSection.test.tsx` 单独覆盖。
  */
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -14,12 +18,19 @@ vi.mock('@/features/notification/api/notificationApi', () => ({
   getCliHookStatus: vi.fn(),
 }));
 
+// CliHooksSection（子组件）走通用 config 命令读逐 CLI 覆盖表，故一并 mock。
+vi.mock('@/features/settings/api/settingsApi', () => ({
+  loadConfig: vi.fn(),
+  saveConfig: vi.fn(),
+}));
+
 import {
   applyCliHooks,
   getCliHookStatus,
   getNotificationSettings,
   saveNotificationSettings,
 } from '@/features/notification/api/notificationApi';
+import { loadConfig, saveConfig } from '@/features/settings/api/settingsApi';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import { DEFAULT_NOTIFICATION_SETTINGS } from '@/shared/types/notification';
 
@@ -35,6 +46,8 @@ function setupSettings() {
   vi.mocked(saveNotificationSettings).mockResolvedValue(undefined);
   vi.mocked(applyCliHooks).mockResolvedValue([]);
   vi.mocked(getCliHookStatus).mockResolvedValue([]);
+  vi.mocked(loadConfig).mockResolvedValue({});
+  vi.mocked(saveConfig).mockResolvedValue(undefined);
 }
 
 async function renderLoaded() {
@@ -86,7 +99,8 @@ describe('NotificationSettingsSection', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('switch', { name: 'Notify agents launched in my terminal' }));
     await waitFor(() => expect(saveNotificationSettings).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(applyCliHooks).toHaveBeenCalledWith(true));
+    // status 列表为空（查询未返回）→ 回退 `null` = 全部启用，不得当作「零个启用」。
+    await waitFor(() => expect(applyCliHooks).toHaveBeenCalledWith(true, null));
     // 非 hooks 变更不触发联动（当前只点过一次开关）。
     expect(applyCliHooks).toHaveBeenCalledTimes(1);
   });
@@ -122,19 +136,6 @@ describe('NotificationSettingsSection', () => {
         message: 'CLI hooks: pi: skipped (neeko-status.ts is not Neeko-managed, kept)',
       }),
     );
-  });
-
-  /** 安装态数据行按 source 渲染三态（installed / needs update）。 */
-  it('renders per-CLI install status rows', async () => {
-    vi.mocked(getCliHookStatus).mockResolvedValue([
-      { source: 'pi', path: '/x/neeko-status.ts', installed: true, versionCurrent: true },
-      { source: 'opencode', path: '/y', installed: true, versionCurrent: false },
-    ]);
-    await renderLoaded();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('switch', { name: 'Notify agents launched in my terminal' }));
-    expect(await screen.findByText('installed')).toBeInTheDocument();
-    expect(screen.getByText('needs update')).toBeInTheDocument();
   });
 
   /** 保存失败 → 回读磁盘现值回滚（单一事实源在磁盘）。 */

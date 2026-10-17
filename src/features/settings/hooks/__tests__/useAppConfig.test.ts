@@ -158,6 +158,53 @@ describe('useAppConfig', () => {
     });
   });
 
+  it('未建模的 config 键必须原样保留（不得被整份保存静默删除）', async () => {
+    // 回归（2026-10-16 实测复现）：`config.json` 是**多域共享**文件，而 `save_config`
+    // 是**整份覆盖**。此前 load effect 只把已建模字段拼进 state，其余键（`notification` /
+    // `agentHookSources` / `projectOnboarding` …）一旦落盘就被删除 ——
+    // 表现为「设置页改个字号，CLI hook 开关与通知设置全部消失」。
+    //
+    // 反证：把 load 里的 `...passthrough` 去掉，本用例必红。
+    const unknownKeys = {
+      notification: { enabled: true, cliHooks: true },
+      agentHookSources: { claude: false },
+      projectOnboarding: { proj1: { done: true } },
+    };
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_config') {
+        return {
+          appearanceFontSize: 13,
+          editorFontSize: 14,
+          terminalFontSize: 14,
+          fontFamily: '',
+          customIdes: [],
+          ideCommandOverrides: {},
+          agentCommandOverrides: {},
+          customAgents: [],
+          ...unknownKeys,
+        } as never;
+      }
+      if (cmd === 'list_custom_themes') return [] as never;
+      return {} as never;
+    });
+
+    const { result } = renderHook(() => useAppConfig());
+    await waitFor(() => expect(result.current.config.appearanceFontSize).toBe(13));
+
+    // 模拟用户在设置页改一个字号（走同一条保存链）。
+    await act(async () => {
+      await result.current.saveConfig({ ...result.current.config, appearanceFontSize: 16 });
+    });
+
+    const saveCall = mockInvoke.mock.calls.find((c) => c[0] === 'save_config');
+    const written = (saveCall?.[1] as { config: Record<string, unknown> }).config;
+    expect(written.appearanceFontSize).toBe(16);
+    for (const [key, value] of Object.entries(unknownKeys)) {
+      // 逐键断言：失败信息里必须点名是哪个键（vitest 的 expect 不接受自定义消息参数）。
+      expect({ key, value: written[key] }).toEqual({ key, value });
+    }
+  });
+
   it('通过 invoke 保存配置', async () => {
     mockInvoke.mockResolvedValue(undefined);
 

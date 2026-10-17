@@ -7,14 +7,14 @@
  *   勾选状态 = `eventOverrides[key] ?? 类别开关`（显式覆盖优先，与 Rust `event_enabled` 同语义）；
  *   未显式覆盖的事件在勾选变更时写入显式布尔值。
  * 持久化走既有 config.json 域薄命令；保存失败回滚本地态并提示。
+ *
+ * 外部 CLI hooks 的开关面与状态呈现在 [`CliHooksSection`]（按职责拆出，见组件规模红线）。
  */
 
 import { BellOff, Check } from 'lucide-react';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  applyCliHooks,
-  getCliHookStatus,
   getNotificationSettings,
   saveNotificationSettings,
   sendTestNotification,
@@ -22,12 +22,13 @@ import {
 import { useNotify } from '@/shared/hooks/useNotify';
 import {
   NOTIFIABLE_EVENTS,
-  type HookApplyOutcome,
-  type HookInstallStatus,
   type NotificationClass,
   type NotificationSettings,
 } from '@/shared/types/notification';
+import { runConfigWrite } from '@/shared/utils/configWriteGate';
 import { Button, Switch } from '@/ui';
+
+import CliHooksSection from './CliHooksSection';
 
 /** 类别开关字段与展示名（与后端三层开关第二层一一对应）。 */
 const CLASS_ROWS: Array<{ field: 'actionRequired' | 'completed' | 'failed'; label: string }> = [
@@ -50,23 +51,23 @@ function classFieldForClass(c: NotificationClass): 'actionRequired' | 'completed
   return 'failed';
 }
 
-/** 回执呈现文案：`pi: skipped (…)` —— status 是判定源，detail 只做补充。 */
-function describeOutcome(outcome: HookApplyOutcome): string {
-  return outcome.detail
-    ? `${outcome.source}: ${outcome.status} (${outcome.detail})`
-    : `${outcome.source}: ${outcome.status}`;
-}
-
 const NotificationSettingsSection: React.FC = () => {
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
-  const [hookStatus, setHookStatus] = useState<HookInstallStatus[]>([]);
   /**
-   * 变更即保存，但保存**串行**（saveChain）：后端 `save` 是 config.json 的
-   * load-modify-save RMW，并发交叠会让后完成的旧值覆盖新值（丢更新）。
-   * 基线取 ref（渲染期闭包在快速连点下是旧值），失败回读磁盘现值 —— 单一事实源在磁盘。
+   * 变更即保存。**串行化交给 `configWriteGate`**（模块级队列，所有 config.json
+   * 写入者共享一个顺序）—— 不是本组件的 `useRef` 链。
+   *
+   * 为什么不能用 per-component ref 链（2026-10-16 审查发现）：`notification_settings_set`
+   * 是后端的整份 load-modify-save，而 `CliHooksSection` / `SettingsView` /
+   * `useAppShellData` 也在整份写同一个 `config.json`。per-component 链只在本组件内部
+   * 排序，与其它两条链之间**没有任何顺序** ⇒ 交叠时后完成者用自己的陈旧快照覆盖对方的键
+   *（表现为「刚改的通知设置被吞掉」）。并发控制必须落在**资源**上，故改走全局门。
+   *
+   * 基线仍取 ref（渲染期闭包在快速连点下是旧值），失败回读磁盘现值 —— 单一事实源在磁盘。
    */
   const settingsRef = useRef<NotificationSettings | null>(null);
-  const saveChain = useRef<Promise<void>>(Promise.resolve());
+  /** 主开关每次成功落盘后递增：驱动 [`CliHooksSection`] 同步文件面（它自有该知识）。 */
+  const [hooksSyncToken, setHooksSyncToken] = useState(0);
   const { notify } = useNotify();
 
   const publish = useCallback((next: NotificationSettings) => {
@@ -78,9 +79,6 @@ const NotificationSettingsSection: React.FC = () => {
     let alive = true;
     void getNotificationSettings().then((s) => {
       if (alive) publish(s);
-    });
-    void getCliHookStatus().then((s) => {
-      if (alive) setHookStatus(s);
     });
     return () => {
       alive = false;
@@ -94,31 +92,17 @@ const NotificationSettingsSection: React.FC = () => {
       const next = { ...base, ...patch };
       publish(next);
       const hooksToggled = patch.cliHooks !== undefined && patch.cliHooks !== base.cliHooks;
-      saveChain.current = saveChain.current
-        .then(async () => {
-          await saveNotificationSettings(next);
-          // 开关变更后联动文件面（agent 域命令）：先持久化意图，再安装/卸载 —— 顺序即
-          // 「设置是意图、文件是事实」的收敛方向；失败时把意图回滚为磁盘前值并提示。
-          if (hooksToggled) {
-            const results = await applyCliHooks(next.cliHooks);
-            setHookStatus(await getCliHookStatus());
-            const failed = results.filter((r) => r.status === 'failed');
-            const skipped = results.filter((r) => r.status === 'skipped');
-            if (failed.length) {
-              notify(`CLI hooks: ${failed.map(describeOutcome).join('; ')}`, 'error');
-            } else if (skipped.length) {
-              // 中性状态（同名他人文件保护等）：如实呈现，不弹错误。
-              notify(`CLI hooks: ${skipped.map(describeOutcome).join('; ')}`, 'info');
-            } else {
-              notify('CLI hooks updated', 'info');
-            }
-          }
-        })
-        .catch(async () => {
-          const current = await getNotificationSettings();
-          publish(current);
-          notify('Failed to save notification settings', 'error');
-        });
+      void runConfigWrite(async () => {
+        await saveNotificationSettings(next);
+        // 开关变更后联动文件面（agent 域命令）：先持久化意图，再安装/卸载 —— 顺序即
+        // 「设置是意图、文件是事实」的收敛方向；失败时把意图回滚为磁盘前值并提示。
+        // 具体同步逻辑在 CliHooksSection（它持有逐 CLI 覆盖表与状态），此处只递 token。
+        if (hooksToggled) setHooksSyncToken((n) => n + 1);
+      }).catch(async () => {
+        const current = await getNotificationSettings();
+        publish(current);
+        notify('Failed to save notification settings', 'error');
+      });
     },
     [publish, notify],
   );
@@ -200,35 +184,11 @@ const NotificationSettingsSection: React.FC = () => {
         );
       })}
 
-      <div className="text-[0.86em] text-text-primary font-medium mt-3 mb-1">
-        External agent CLI hooks
-      </div>
-      <SettingRow
-        label="Notify agents launched in my terminal"
-        hint="Installs status reporter files into pi / OpenCode config dirs (never edits your own files)"
-      >
-        <Switch
-          aria-label="Notify agents launched in my terminal"
-          checked={settings.cliHooks}
-          onCheckedChange={(checked) => void update({ cliHooks: checked })}
-        />
-      </SettingRow>
-      {settings.cliHooks &&
-        hookStatus.map((hook) => (
-          <div
-            key={hook.source}
-            className="flex justify-between py-1 text-[0.72em] text-text-muted"
-          >
-            <span className="capitalize">{hook.source}</span>
-            <span>
-              {hook.installed
-                ? hook.versionCurrent
-                  ? 'installed'
-                  : 'needs update'
-                : 'not installed'}
-            </span>
-          </div>
-        ))}
+      <CliHooksSection
+        master={settings.cliHooks}
+        onMasterChange={(checked) => void update({ cliHooks: checked })}
+        syncToken={hooksSyncToken}
+      />
 
       <div className="flex items-center gap-3 mt-4">
         <Button

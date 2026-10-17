@@ -4,10 +4,7 @@ import { useDockStore } from '@/shared/store/dockStore';
 import type { AppConfig, AgentConfig } from '@/shared/types';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
-import {
-  loadConfig as loadSessionConfig,
-  saveConfig as saveSessionConfig,
-} from '../../session/api/sessionApi';
+import { loadConfig as loadSessionConfig, patchConfig } from '../../session/api/sessionApi';
 import { checkAgentsInstalled, listAgents, setProjectAgents } from '../api/agentApi';
 
 import AgentIcon from './AgentIcon';
@@ -229,9 +226,8 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
 
   const saveConfigToBackend = useCallback(async (updates: Partial<AppConfig>) => {
     try {
-      const current = await loadSessionConfig();
-      const next = { ...current, ...updates } as unknown as AppConfig;
-      await saveSessionConfig(next as unknown as Record<string, unknown>);
+      // 排队的整份 RMW（契约实现见 `sessionApi.patchConfig`）。
+      await patchConfig(updates as Record<string, unknown>);
     } catch (e) {
       console.error('[AgentSelector] Failed to save config:', e);
     }
