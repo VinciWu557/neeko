@@ -1797,3 +1797,61 @@ Session summary was not supplied.
 - 实机人工验收项（AC11/13/14/15-18、Win/Linux 弹窗、设置页测试按钮交互）需用户在真实 CLI 登录态与多平台环境执行。
 - 登记不做项与遗留：D9 归属项目回流、macOS UN 点击 delegate、WSL 可达性（B4）、坐标文件无界累积、自有 PTY env 注入（走 cwd 归因）、pi 1.3.0 事件面适配（H8 建议并入 10-16 或另立项）。
 - 运维约束 H7：重装 app 会抹签名，须重跑 NEEKO_CODESIGN_IDENTITY=... scripts/macos-sign.sh <app>；签名丢失仍是静默故障（建议加启动 adhoc 自检 warn）。
+
+
+## Session 306: 10-16-notify-claude-compat / 10-16-notify-codex：完成度核验、AC 回填、spec 内联与归档
+<!-- trellis-session: v=2 fp=eb69611821a0838d -->
+
+**Date**: 2026-10-17
+**Task**: 10-16-notify-claude-compat / 10-16-notify-codex：完成度核验、AC 回填、spec 内联与归档
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Main Changes
+
+核验两个 notify 子任务的真实完成度后归档。两者 `implement.md` 的 checklist 全是空框，
+但代码已全部落地 —— 又是文档滞后于实现（同 Session 305 的 10-12 任务形态）。
+
+**完成度判定（不看 checkbox，看代码）**：
+- `agent/hooks/` 已拆成 `install/shape/{standalone,structured,notify_argv}.rs` 三种形态 +
+  `install/config/{json,toml,settings}.rs` 三个纯函数域 + `dispatch.rs` 多面聚合；
+  6 个 CLI 目标（opencode/pi/omp/claude/codebuddy/qoder/codex）在 `targets/data.rs` 事实表里。
+- `agent::hooks` 161 单测全绿，`pnpm check` 30/30。
+
+**AC 回填按证据分级**（`[x]` = 有单测钉子 / `[x]⚠` = 自动化已验、实机人工项未做）。
+回填时第一版引了 4 个我**臆测**的测试名（`omp_variant_shares_...` /
+`notify_install_skips_when_node_unavailable` / `notify_insert_lands_in_top_level_scope` /
+`insert_preserves_foreign_entries_in_array`）—— 全都不存在。改用 `cargo test` 的真实测试名重写。
+教训：**引用测试名必须 grep 或 cargo test 取得，不能凭命名习惯猜**；顺手查出 spec 里也有一个
+失效名（`codex_target_uses_notify_argv_not_hooks_json` → 实为 `codex_has_both_notify_and_hooks_json_faces`）。
+
+**发现两个覆盖缺口（已如实登记，未修）**：
+1. Codex 的 AC6「复用同一份 shim 模板」——`claude_compat_sources_share_one_shim_template`
+   只枚举 `["claude","codebuddy","qoder"]`，**不含 codex**。codex 复用靠数据表字面量保证，
+   无专属反证钉子。补一条含 codex 的迭代即封口。
+2. 四家 Claude 兼容 CLI 的实机通知未逐个验证（需各家登录态，自动化不可达）；e2e 通道本身
+   已由 Codex 侧打通。
+
+**归档前的悬空指针治理**（同 Session 305 W1）：5 处活代码注释指向
+`10-16-notify-codex/research/codex-trust-spike.md`，归档即成死链。改指 spec，
+并把 spec 里唯一一句「依据见 <任务路径>」也内联掉。**spike 的核心结论此前只活在任务目录**，
+不内联就丢：信任哈希 45 个候选全不匹配、`bypass_hook_trust` 三种注入均无效
+→ 已写成 spec 的「为什么不能代写信任哈希」实测表。
+
+**spec 漂移修正**：`已知遗留` 里「Codex 未接入」已被 Codex 任务推翻 —— 判据成立但结论过时，
+改为删除线标注 + 指向已实施的两节。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `41cf223e` | docs(hooks): repoint task-dir evidence pointers at the agent-hooks spec |
+| `4f6de2b5` | docs(task): backfill 10-16-notify AC state and archive-proof the hooks spec |
+
+### Status
+
+[OK] **Completed**
