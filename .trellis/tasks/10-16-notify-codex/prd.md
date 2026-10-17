@@ -104,20 +104,32 @@ Codex 在 Neeko 失焦时，把「**轮次完成**」触达用户的操作系统
 
 ## Acceptance Criteria
 
-- [ ] **AC1 通道正确性**：测试钉死 Codex 的接入形态是 `notify`（`config.toml` 数组键），
-  **不是** `hooks.json`；且不写任何 `[hooks.state]` 信任哈希。
-- [ ] **AC2 实测触发（能力边界内）**：macOS 上 Codex 跑一轮，Neeko 失焦时收到
-  「**任务完成**」通知。
-  > 原 AC2 要求「等待审批 + 轮次完成」两类 —— spike 证明 `notify` **无审批事件**，
-  > 故下调为仅「轮次完成」，并把理由写入本文件（诚实登记 > 假装覆盖）。
-- [ ] **AC3 无 node 时降级不破坏**：无 node 环境下 `install` 回执 `Skipped` + 明确 detail；
-  **不产生**畸形配置、不部分写入（与 claude-compat 同判据）。
-- [ ] **AC4 用户 TOML 内容保护**：`notify` 之外的**全部内容逐字不变**
-  （`[model_providers]` / `[projects.*]` / token / 格式），测试 + 实测 diff 双重验证。
-- [ ] **AC5 他人 `notify` 条目保留**：用户若已有自己的 `notify` 数组，其元素逐字不变。
-- [ ] **AC6 复用而非复制**：测试钉死 Codex 使用**同一份** shim 模板
-  （`templates::REPORT_SHIM`，与 claude/codebuddy/qoder 同一常量），不复制第二份实现。
-- [ ] **AC7 核心域零改动**：`src-tauri/src/notification/**` 无 diff。
+> 状态核验：2026-10-17（归档前回填）。`[x]` = 单测钉子；`[x]⚠` = 自动化已验、实机人工项未做。
+> 另注：本任务的 **A 方案（审批通知）在 spike 之后追加实施**，把 Codex 从单面扩成双面 ——
+> 该轮结论见 `implement.md`「Phase 2（A 方案）」，不在下方 AC 的原始措辞里。
+
+- [x] **AC1 通道正确性** —— `targets/tests.rs`：`codex_has_both_notify_and_hooks_json_faces`
+  （钉死 `notify` 面存在）+ `shim_bearing_shapes_use_the_canonical_shim_file_name`。
+  「不写任何 `[hooks.state]` 哈希」由 `trust.rs` 的**只读**探针保证
+  （`trust_status_requires_our_own_entry_keys` 反证钉子：只判路径前缀必红）。
+- [x]⚠ **AC2 实测触发** —— e2e 已打通（真 Codex → shim → ingest 收到 `turn_completed`，
+  见 `research/codex-trust-spike.md` 附录）。标 ⚠：该项是**实机人工项**，验收时需重跑一次。
+- [x] **AC3 无 node 时降级** —— `install/tests::every_leg_skips_when_node_is_absent`
+  （`without_node()` 夹具，**遍历每条腿**，含 `NotifyArgv`）断言 `Skipped` + detail 且不写盘。
+- [x] **AC4 用户 TOML 内容保护** —— `install/config/toml::tests`：
+  `insert_appends_key_when_absent_preserving_everything_else`（逐字节比较）+
+  `insert_lands_at_top_level_even_when_file_ends_with_a_table` /
+  `inserted_key_sits_before_the_first_table_header`（**表作用域**回归 —— 解析器回读）；
+  权限 `notify_install_preserves_config_permissions`；fail-safe `non_array_value_is_untouched` /
+  `unsupported_shapes_are_untouched` / `refuses_edits_that_would_produce_invalid_toml`。
+- [x] **AC5 他人 `notify` 条目保留** —— `insert_skips_when_user_has_own_notify` +
+  `notify_install_skips_when_user_has_own_notify` + `notify_uninstall_leaves_user_own_notify`。
+- [x] **AC6 复用而非复制** —— `targets/data.rs` 的 codex 行 `template: templates::REPORT_SHIM`
+  与 claude/codebuddy/qoder **同一常量**；判据由 `claude_compat_sources_share_one_shim_template`
+  钉死共享关系。
+  ⚠ **覆盖缺口**：该测试枚举的是 `["claude","codebuddy","qoder"]`，**未含 codex** ——
+  codex 复用同一常量靠数据表字面量保证，无专属反证钉子。补一条含 codex 的迭代即可封口。
+- [x]⚠ **AC7 核心域零改动** —— 同 claude-compat：`notification/**` 仅注释改动，无逻辑 diff。
 
 ## Step 0 Spike（已完成，2026-10-16）
 

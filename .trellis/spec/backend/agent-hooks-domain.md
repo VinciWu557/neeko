@@ -2,7 +2,9 @@
 
 > `src-tauri/src/agent/hooks/` 与嵌入模板（`templates/neeko-pi-status.ts` /
 > `templates/neeko-opencode-status-v2.js`）、`platform/private_file/` 的坐标发布契约。
-> 任务源：`10-12-agent-notify`（Phase B 建立，Phase F 多实例修订）。
+> 任务源：`10-12-agent-notify`（Phase B 建立，Phase F 多实例修订）；
+> `InstallShape` 三种形态与多面模型来自 `10-16-notify-claude-compat` / `10-16-notify-codex`
+> （两者均已归档，实测证据摘要已内联到下文各节 —— 不必回查任务目录）。
 >
 > 与[质量指南](./quality-guidelines.md)的红线互补：本文件只记录本域**特有**的跨层契约
 > （Rust 写坐标 ↔ TS 模板读坐标 ↔ 用户终端里的 CLI 进程），通用规则不在此重复。
@@ -396,15 +398,19 @@ match &target.shape {
 - **OMP 无 `ui_prompt_start`**：OMP 与 pi 同扩展 API 但少此事件（二进制 0 命中
   `withUIPrompt` / `emitUIPromptEvent` / `UIPromptStartEvent`），故 OMP 用 pi 模板的**派生变体**
   （`templates/neeko-omp-status.ts`）。OMP 升级若补上该事件，删变体改引 pi 模板即可。
-- **Codex 未接入**：它是 Rust 二进制（无 node）+ 配置跨 JSON/TOML 两处 + 有信任门，
-  属独立机制 → `10-16-notify-codex`。
+- ~~**Codex 未接入**~~ → **已由 `10-16-notify-codex` 实施**（双面：`notify` + `hooks.json`）。
+  原判据（「Rust 二进制 + 配置跨 JSON/TOML + 有信任门」）成立但结论已过时 ——
+  信任门通过只读探针处理，见下方两节。
+- **四家 Claude 兼容 CLI 的实机通知未逐个验证**（`10-16-notify-claude-compat` AC6）：
+  OMP / Claude / CodeBuddy / Qoder 各家需登录态才能跑真实轮次，自动化不可达。
+  e2e 通道本身已由 Codex 侧打通（真 CLI → shim → ingest POST）。
 
 ---
 
 ## 场景：`InstallShape::NotifyArgv`（Codex 的 `notify` 通道）
 
 > 任务源：`10-16-notify-codex`（2026-10-16）。同一子任务推翻了原「`hooks.json` + 信任哈希」设计，
-> 依据与证据见 `.trellis/tasks/10-16-notify-codex/research/codex-trust-spike.md`。
+> 依据与证据已内联到下方 §3/§8（信任哈希不可反推、信任门是执行级硬门、`notify` 绕过信任门）。
 
 ### 1. Scope / Trigger
 
@@ -545,13 +551,12 @@ notify before tables → 顶层有 notify? True
   `notify_install_skips_when_user_has_own_notify` / `notify_install_preserves_config_permissions`（Unix）/
   `notify_status_tracks_entry_presence_and_argv` / `notify_uninstall_removes_own_entry_only` /
   `notify_uninstall_leaves_user_own_notify`。
-- `targets.rs`：`codex_target_uses_notify_argv_not_hooks_json`（**AC1 反证钉子**：
-  防回退到被否决的 `hooks.json` 通道）/ `codex_dir_honors_codex_home_env`。
+- `targets.rs`：`codex_has_both_notify_and_hooks_json_faces`（**AC1 反证钉子**：缺任一面必红）
+  / `codex_dir_honors_codex_home_env`。
 - `platform/hook_command`：`report_argv_shapes_plain_array_without_quoting` /
   `report_argv_rejects_unsafe_tokens`（两形态共用白名单）。
 - shim：`report_shim_keeps_contract_anchors_and_knows_no_native_events`（含 `process.argv` 锚点）。
-- **e2e（人工）**：真机 Codex → shim → ingest 收到 `turn_completed`。
-  步骤与捕获样例见 `10-16-notify-codex/research/codex-trust-spike.md` 附录。
+- **e2e（人工）**：真机 Codex → shim → ingest 收到 `turn_completed`（2026-10-16 已打通一次）。
 
 ### 7. Wrong vs Correct
 
@@ -672,6 +677,17 @@ pub trusted: Option<bool>,   // None = 该 CLI 无信任概念；false = 已装�
 ```
 
 ### 3. Contracts
+
+**为什么不能代写信任哈希**（spike 实测结论，别重走这条路）：
+
+| 尝试 | 结果 |
+| --- | --- |
+| 枚举 45 个候选 hash 输入格式 | **全部不匹配** 真实 `trusted_hash` |
+| `-c bypass_hook_trust=true` / `-c hooks.bypass_hook_trust=true` | ❌ 探针未触发 |
+| `--dangerously-bypass-hook-trust` | ❌ 未触发 |
+
+二进制只暗示输入是「normalized hook identity 的 TOML 序列化」——**内部实现、非稳定契约**。
+故只能是**只读探针**：探测状态、如实向用户展示，代用户决策走 TUI 一次性确认。
 
 **面聚合**：`installed` 是**所有面**的与（缺任一 = 未安装）。
 理由：只报部分面就位 = 撒谎，且会掩盖「审批通知没生效」—— 又一次「装了但没通知」。

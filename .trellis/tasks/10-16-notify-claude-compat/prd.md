@@ -123,23 +123,36 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC1 OMP 使用 pi 模板的派生素材**：测试钉死 OMP 变体与 pi 模板**共享事件订阅集**
-  （除 `ui_prompt_start` 外一致），且 OMP 的目录解析指向 `~/.omp/agent/extensions`。
-  变体必须**不含** `ui_prompt_start`（U1：OMP 无该事件）。
-- [ ] **AC2 shim 单份三源共用**：Claude / CodeBuddy / Qoder 三行 `HookTarget`
-  引用同一 `entries` 常量与同一 shim 模板；测试钉死（新增第四个 CC 兼容 fork
-  只需加一行 `HookTarget`，无其他改动）。
-- [ ] **AC3 结构化合并四条不变量**（各至少一个单测）：
-  ① 他人条目逐字保留（含 `http` 型）② fail-safe（畸形配置原样保留）
-  ③ 幂等 + 收敛（不累积）④ 移除后空数组删键。
-- [ ] **AC4 权限继承**：改写一个 0600 的用户配置后，权限仍为 0600（Unix 测试）。
-- [ ] **AC5 逐 CLI opt-in**：默认全关时 `install_all` 不写任何用户配置；
-  单开一个 CLI 只影响该 CLI 的配置面。
-- [ ] **AC6 实测落地**：macOS 上四个 CLI 各自在 Neeko 失焦时弹出系统通知
-  （OMP / Claude / CodeBuddy / Qoder 各至少验证「等待审批」与「轮次完成」两类）。
-- [ ] **AC7 既有行为不变**：Pi / Opencode 的 hook 安装/卸载/status 行为与本任务前一致；
-  `pnpm check` 全绿。
-- [ ] **AC8 核心域零改动**：`src-tauri/src/notification/**` 无 diff。
+> 状态核验：2026-10-17（归档前回填）。分级口径 —— `[x]` = 有单测钉子；
+> `[x]⚠` = 自动化已验、实机人工项未做。**归档 ≠ 验收**，带 ⚠ 的均为已登记遗留
+> （真实 CLI 登录态 + 多 CLI 实机，自动化不可达）。落点文件以 `agent/hooks/**` 为准。
+
+- [x] **AC1 OMP 使用 pi 模板的派生物素材** —— `targets/tests.rs`：
+  `omp_variant_omits_ui_prompt_and_keeps_other_legs`（变体不含 `ui_prompt_start` 且其余腿齐全）
+  + `omp_template_keeps_shared_contract_anchors` + `omp_dir_sits_under_home_and_differs_from_pi`。
+- [x] **AC2 shim 单份三源共用** —— `claude_compat_sources_share_one_entries_table` 与
+  `claude_compat_sources_share_one_shim_template`（`std::ptr::eq` 同一常量指针，
+  比「文本相等」更强 —— 文本相等仍可能是两份拷贝）。
+- [x] **AC3 结构化合并四条不变量** —— `install/config/json::tests`：他人条目逐字保留
+  `insert_preserves_foreign_entries_verbatim`；fail-safe `malformed_config_is_never_destroyed`
+  （实机形态 `structured_install_leaves_everything_untouched_on_malformed_config`）；
+  幂等 + 收敛 `insert_is_idempotent` / `insert_converges_duplicate_own_entries`；
+  空数组删键 `remove_only_ours_and_prunes_empty_event` / `remove_prunes_event_key_when_only_ours`。
+- [x] **AC4 权限继承** —— `structured_install_preserves_settings_permissions`（`#[cfg(unix)]`）。
+- [x] **AC5 逐 CLI opt-in** —— `install/config/settings::tests`：`master_off_disables_everything` /
+  `master_on_defaults_all_and_per_cli_override_excludes_only_one` /
+  `override_true_does_not_bypass_master` / `absent_key_follows_master` /
+  `config_key_is_mirrored_in_frontend`（双端同键镜像）；前端 `CliHooksSection` 的
+  `readSourceOverrides` 归一化非法值。契约已入
+  `spec/backend/agent-hooks-domain.md`「两个开关的分工」。
+- [x]⚠ **AC6 实测落地** —— e2e 通道已由 Codex 侧实测打通（`codex-trust-spike.md` 附录：
+  真 Codex → shim → ingest POST 收到 `turn_completed`）；但 **OMP / Claude / CodeBuddy / Qoder
+  四家的实机通知未逐个验证**（需各家登录态）。**未验证的遗留。**
+- [x] **AC7 既有行为不变** —— Pi / Opencode 既有分支零改动（`Standalone` 分支 diff 为空）；
+  `pnpm check` 30/30 全绿（621 Rust 测试含 `agent::hooks` 161 条）。
+- [x]⚠ **AC8 核心域零改动** —— `notification/**` 仅 `types.rs` 一条**文档注释**改动
+  （把失效的 `writers.rs` / 任务目录指针改指 spec），**无逻辑 diff**。标 ⚠ 是因为
+  「零 diff」本意是「零逻辑改动」，实际有注释重写。
 
 ## Step 0 Spike（已完成，2026-10-16）
 
