@@ -230,7 +230,7 @@ fn claude_compat_sources_share_one_shim_template() {
 /// - 只留 `notify` → 拿不到审批通知（本用例反证）;
 /// - 只留 `hooks.json` → 未信任时**一条都收不到**（连完成的都没有），退化为「装了但没通知」。
 ///
-/// 证据：`10-16-notify-codex/research/codex-trust-spike.md` 附 3/4。
+/// 判据与实测表见 `.trellis/spec/backend/agent-hooks-domain.md`「为什么不能代写信任哈希」。
 /// Codex 与 Claude 兼容面同形，故 second face 复用同一份 `CLAUDE_COMPAT_ENTRIES`。
 #[test]
 fn codex_has_both_notify_and_hooks_json_faces() {

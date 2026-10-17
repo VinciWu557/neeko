@@ -19,7 +19,8 @@
 //! # 只读
 //!
 //! **绝不代写信任记录** —— Codex 的 `trusted_hash` 输入是不可反推的内部序列化
-//! （45 个候选全不匹配，见 `10-16-notify-codex/research/codex-trust-spike.md` 附 3）。
+//! （45 个候选全不匹配，`bypass_hook_trust` 三种注入亦无效 —— 实测表见
+//! `.trellis/spec/backend/agent-hooks-domain.md`「为什么不能代写信任哈希」）。
 //! 本模块只回答「用户是否已在 CLI 里确认过」。
 
 use std::path::Path;

@@ -15,7 +15,7 @@
 /// 「CLI 侧信任门」的探测规格。
 ///
 /// 有的 CLI（Codex）要求**每条 hook 先被用户确认**才执行，未确认的条目被**静默跳过**
-/// （实测见 `10-16-notify-codex/research/codex-trust-spike.md` 附 3/4）。确认记录由该 CLI
+/// （实测见 `.trellis/spec/backend/agent-hooks-domain.md`「为什么不能代写信任哈希」）。确认记录由该 CLI
 /// 写在自己的状态文件里 —— 这是**该 CLI 的私有契约**（键格式是未公开的内部序列化），
 /// 故连同状态文件名一起作为**数据**携带：通用 `writers` / `trust` 只按规格执行，
 /// 不知道任何 CLI 名，也不知道键长什么样。

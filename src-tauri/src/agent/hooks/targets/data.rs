@@ -43,7 +43,8 @@ pub struct HookTarget {
     /// 该 CLI 的**全部接入面**（一个 CLI 可以有多个配置面）。
     ///
     /// 为什么是数组而非单值：**「一个 CLI 一条通知通道」是错的**。
-    /// 实测（`10-16-notify-codex/research/codex-trust-spike.md` 附 3/4）Codex 有两条：
+    /// 实测（实测表见 `.trellis/spec/backend/agent-hooks-domain.md`「为什么不能代写信任哈希」）
+    /// Codex 有两条：
     /// - `notify`（`config.toml` 数组键）→ 轮次完成，**零交互即装即用**；
     /// - `hooks.json` 的 `PermissionRequest` → 审批/失败，**需用户一次性确认信任**。
     ///   两者事件面、信任门、投递形态都不同，故各自是一个 `InstallShape`。
@@ -130,8 +131,8 @@ pub const HOOK_TARGETS: &[HookTarget] = &[
     },
     // ── Codex（2026-10-16 spike 后定案：走 `notify`，不走 `hooks.json`）──────────
     //
-    // **为什么不是 `Structured { settings_file: "hooks.json" }`**（实测，见
-    // `.trellis/tasks/10-16-notify-codex/research/codex-trust-spike.md`）：
+    // **为什么不是 `Structured { settings_file: "hooks.json" }`**（实测表与判据见
+    // `.trellis/spec/backend/agent-hooks-domain.md`「为什么不能代写信任哈希」/「InstallShape::NotifyArgv」）：
     // `hooks.json` 的每条 hook 需要 `[hooks.state]` 里的 `trusted_hash` 才算生效
     // （信任门是**执行级**硬门：未信任的 hook 静默不跑）；而该 hash 的输入是 Codex 内部的
     // 「normalized hook identity 的 TOML 序列化」—— 45 个候选全不匹配，**不可反推**，
