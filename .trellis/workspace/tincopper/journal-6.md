@@ -1855,3 +1855,88 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 307: 10-17-dsh-neeko-bridge-fix: dsh 0.2.x 契约迁移（四条根因 + 两次复核抓假绿）
+<!-- trellis-session: v=2 fp=29943a91437646f6 -->
+
+**Date**: 2026-10-17
+**Task**: 10-17-dsh-neeko-bridge-fix: dsh 0.2.x 契约迁移（四条根因 + 两次复核抓假绿）
+**Branch**: `dsh-neeko`
+
+### Summary
+
+Session summary was not supplied.
+
+### Main Changes
+
+修 `packages/dsh-neeko` 让桥能在真实 dsh 0.2.0-rc.2 上跑。起点是「桥写完了但启动即崩」，
+查出**四条根因**，其中两条是我先判错、被实测推翻的 —— 过程本身比结论更值得记。
+
+**根因 ①（初判错，已纠正）**：初版 PRD 断言「`cordis.patch.yml` 的 `spawnCommand` 缺兜底」。
+用真实 `Config` 实测：缺键 OK、`false` 才炸 → schema 本来是对的。**改它会改坏一个正确文件。**
+真凶在 `startup.ts`：读 `options.spawnEnabled`（commander **从不产出**该键 → `--no-spawn` 的意图
+永远丢失），同时把 `options.spawn`（此时为 `false`）灌进 `spawnCommand`。commander 把
+`--spawn <cmd>` 与 `--no-spawn` 归一到同一 `spawn` 键（string/false/absent 三态）。
+修法：提取纯函数 `resolveStartupValues` + `spawn?: string | false` 让「可能是 false」在类型层可见。
+
+**根因 ②**：`userQuestions.registerProvider()` 在 0.2.0-rc.2 已移除。权威扩展点是 Agent 作用域
+Cordis waterfall `user-questions/request`。**决定性旁证**：桥的 approval 侧早就用对了同一模式
+（`agentCtx.on('approval/request')`）—— 所以这是单点漏写，不是架构重做。新建
+`agent-handlers.ts` 集中注册两个 waterfall。
+
+**根因 ③**：`agent.session.events` 在 0.2.x 不存在 → `snapshotEvents()`。首个 `dsh-agent`
+handshake 直接 `fatal load failure: TypeError: events is not iterable`。
+
+**根因 ④（上修 peer 后暴露，最大一条）**：整个翻译层照 0.1.x 写。`assistant/chunk` 在 0.2.x
+**不存在** —— 0.2.x 把 0.1.x 合一的流拆成**两个来源**：实时 delta 走独立通道
+`agent/assistant-stream`（`start`/`chunk`/`end`，`start` 带 turn/step），落盘日志只有 settled
+`assistant/message`。重写 `dsh-adapter.ts`：`translateEvent` 只留 tool 生命周期，新增
+`translateStreamFrame`，`buildHistory` 改 settled 折叠。
+**核心不变量**：落盘日志不得当 delta 源 —— 两边都发则每 token 双发，只靠日志则文本全丢。
+
+**门禁**：peer + dev 同代上修到 `^0.2.0-rc.2`（dev 落后是类型假绿的直接原因）；补
+`@deepseek-ai/dsh-attachment` **精确** `0.2.0-rc.2`（dsh-llm 的 `.d.ts` import 它，但只声明为
+自己的 devDep；用 npm latest 报 `has no exported member 'FileAttachmentRef'`）。
+
+**两次 check 子代理复核。第一次抓到真问题 —— 而且正是本任务要消灭的那一类**：
+decline/`next()` 路径无测试。子代理变异成「永不调 `next()`」（会让每个 agent 永久挂起），
+**58 条测试全绿**。我修了 9 条契约测试（decline→next / NO_PROVIDER 传播 / handler rejection
+传播 / answer 形状），并去掉 `agent-handlers.ts` 的 `as never` cast —— 改成对真实 dsh 契约的
+overloaded interface，真实 `Context` 结构化满足，于是「用错 API」重新成为**编译错误**
+（实测：`registerProvider` → TS2339）。同时修：`assistantMessageId` 加 `attemptId`
+（dsh 重试同一 turn/step，否则失败尝试的文本会被拼进成功重试）；`streamStart` 在
+detach/stop/agent 切换三处重置。
+
+**第二次复核又抓到两个非阻断项**：`sessionId` 是唯一「类型可漂移而测试不覆盖」的 Config 键
+（把 schema 改成 `z.number()` 仍全绿）；`answerQuestion` 的 decline 判断是最高后果分支
+（答错就挂死每个 agent）却无单测 → 提取 `canAnswerQuestions` 谓词补测。
+
+**变异验证**（每条都能反证，这才叫测试）：next() 永不调 → 2 红；总是调 next() → 2 红；
+删监听器 → 7 红；去掉 attemptId → 2 红；日志发 text.delta → 1 红；`canAnswerQuestions` 恒 true
+→ 1 红；`sessionId` schema 漂移 → 2 红。
+
+**真机终验**：`dsh --profile neeko --no-spawn --port 3197` → `bridge listening` + 端口 LISTEN
++ health 200 + WS handshake 收到 `session.init`。**撤销 allow-version 豁免**后干净重装 profile
+无 incompatibility 警告 → peer 范围自身已诚实（AC6 不靠本机豁免成立）。
+
+测试 35 → **68**，`pnpm run prepublishOnly` 全绿。教训入 spec
+（`quality-guidelines.md`「依赖契约与实际运行时同代（类型假绿）」：peer/dev 必须同代、
+范围必须覆盖真实宿主、上游类型 import 其自身 devDep 时须精确版本、API 换代先查
+`lib/types/*.d.ts` 不猜、测试要反证导向 + 变异验证、双来源不变量），并回填
+`10-16-notify-dsh` 的 U7 前置事实（桥已可用；A/B/C 归属仍留给它自己定案）。
+
+**教训**：文档滞后 ≠ 实现滞后，但两者都可能滞后于**真实契约**。三次判定都是靠
+「跑真实 CLI + 读上游 `.d.ts`」纠正的，不是靠读自己的代码或旧文档。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e272e3a7` | fix(dsh-neeko): migrate the bridge to dsh 0.2.x contracts |
+| `fb059ebf` | docs(spec): record the stale-contract false-green lesson and backfill U7 |
+
+### Status
+
+[OK] **Completed**
