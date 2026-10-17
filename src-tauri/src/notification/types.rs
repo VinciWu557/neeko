@@ -150,8 +150,9 @@ pub struct NotificationSettings {
     /// 外部 Agent CLI hook 安装开关（R6.5，默认关 —— 用户全局配置是客人的家，须显式同意）。
     ///
     /// 本域只持有该**意图**：文件的安装/卸载由 agent 域承担（`agent_hooks_apply` 命令 →
-    /// `agent/hooks/install/selection.rs`），前端在保存设置后串行触发。核心域不 import 业务域，
-    /// 故此处刻意不写具体落点函数名 —— 联动契约见 `.trellis/tasks/10-12-agent-notify/`。
+    /// `agent/hooks/install/`），前端在保存设置后串行触发。核心域不 import 业务域，
+    /// 故此处刻意不写具体落点函数名 —— 联动契约（主开关 vs 逐 CLI 覆盖的分工）见
+    /// `.trellis/spec/backend/agent-hooks-domain.md`「两个开关的分工」。
     pub cli_hooks: bool,
     /// 同实例同事件最小间隔秒数（默认 2）。u64 而非 Duration：serde 进 config.json 友好。
     pub throttle_secs: u64,

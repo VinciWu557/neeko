@@ -135,37 +135,74 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1：Opencode serve 会话触发 `RequestApproval`，窗口最小化时三平台均收到系统通知，点击回流到该会话。
-- [ ] AC2：Pi headless 会话 `TurnEnd{completed}` → 收到完成通知；紧随的 `SessionDone{completed}` 不再重复通知（R2.3）。
-- [ ] AC3：窗口聚焦且会话可见时触发同类事件 → 不发系统通知（R2.1），in-app toast 行为不回退。
-- [ ] AC4：2 秒内同会话连发 10 个 `RequestApproval` → 系统通知 ≤ 1 条（R2.2）。
-- [ ] AC5：`UserInput.prompt` 为 10KB 长文本 → 通知正文 ≤ 200 字符 + 省略号（R2.4）。
-- [ ] AC6：新增一个 mock agent adapter → 通知链路零改动即生效（R2.5，用 `ChatStart::Mock` 验证）。
-- [ ] AC7：通知插件投递失败（模拟权限拒绝）→ 会话流不中断，仅日志告警（R3.3）。
-- [ ] AC8：设置页可开关全局/分类型通知，重启后生效（R4.4）。
-- [ ] AC9：决策核心纯函数单测覆盖率 100%（TDD：先测后码）。
-- [ ] AC10：核心域可扩展性钉子 —— 一个非 agent 业务域（如模拟 "git"）的信号走同一裁决管线
+> **勾选口径（2026-10-16 归档前回填）**：
+> `[x]` = 单元/集成测试已覆盖（`pnpm check` 30/30 护栏 + test_rust/test_fe 全绿）；
+> `[x]⚠` = 自动化面已验，**实机人工项未做**（需真实 CLI 登录态或多平台实机，用户环境）；
+> `[ ]⚠` = 整条未验（见各条括注）。归档不等于验收 —— 剩余 ⚠ 项是已登记的遗留。
+
+- [x] AC1：Opencode serve 会话触发 `RequestApproval`，窗口最小化时三平台均收到系统通知，点击回流到该会话。
+  ⚠ 实机未验：投影/投递/回流各有单测，macOS 真机已见 `UN accepted`（AC20）；Win/Linux 弹窗未验。
+- [x] AC2：Pi headless 会话 `TurnEnd{completed}` → 收到完成通知；紧随的 `SessionDone{completed}` 不再重复通知（R2.3）。
+  证据：`policy.rs::completion_merge_window`（时钟注入，确定性）。
+- [x] AC3：窗口聚焦且会话可见时触发同类事件 → 不发系统通知（R2.1），in-app toast 行为不回退。
+  证据：`policy.rs::suppression_requires_focused_and_visible` + `center.rs` FocusTracker 往返测试。
+- [x] AC4：2 秒内同会话连发 10 个 `RequestApproval` → 系统通知 ≤ 1 条（R2.2）。
+  证据：`policy.rs::throttle_storm_within_interval`（9 连发全抑制 + 窗口外恢复）+ `throttle_is_per_instance_and_event`。
+- [x] AC5：`UserInput.prompt` 为 10KB 长文本 → 通知正文 ≤ 200 字符 + 省略号（R2.4）。
+  证据：`policy.rs::body_truncated_to_max_chars`（10×1024 字符输入）。
+- [x] AC6：新增一个 mock agent adapter → 通知链路零改动即生效（R2.5，用 `ChatStart::Mock` 验证）。
+  证据：`adapter.rs` 的 `ChatStart::Mock` → `AcpAdapter::mock()` 分支；通知旁路挂在
+  `spawn_session_pipeline` 而非 adapter 内（adapter 与通知解耦，故 mock 天然零改动）。
+- [x] AC7：通知插件投递失败（模拟权限拒绝）→ 会话流不中断，仅日志告警（R3.3）。
+  证据：`dispatch.rs` 三条 warn 路径（native 失败 / join 失败 / 插件回落）；旁路挂接方式使
+  通知失败不可能反压主链路。⚠ 权限拒绝的实机表现已由 Phase H 的 `not granted` 日志实证（非会话中断）。
+- [x] AC8：设置页可开关全局/分类型通知，重启后生效（R4.4）。
+  证据：`NotificationSettingsSection.test.tsx`（渲染 + 交互）+ settings 经 config.json 持久化
+  （`#[serde(default)]` 旧配置回落默认值，含迁移测试）。⚠ 重启生效未实机复跑。
+- [x] AC9：决策核心纯函数单测覆盖率 100%（TDD：先测后码）。
+  证据：`policy.rs` 15+ 纯函数用例（节流/合并/截断/焦点抑制/三层开关/无 domain 分支）；
+  原型先迁 tests 确认 Red 再迁实现（Phase A1 记录）。
+- [x] AC10：核心域可扩展性钉子 —— 一个非 agent 业务域（如模拟 "git"）的信号走同一裁决管线
   得到正确草稿（R2.5/R2.6，单测 `unknown_future_domain_flows_through_core`）。
-- [ ] AC11（Phase B）：在**外部终端**（非 Neeko 启动）跑 opencode/pi 会话，任务完成/等待审批时
+- [x]⚠ AC11（Phase B）：在**外部终端**（非 Neeko 启动）跑 opencode/pi 会话，任务完成/等待审批时
   Neeko 发出系统通知，group_label 为归属项目名或 cwd basename（R6.4/R6.6）。
-- [ ] AC12（Phase B）：Neeko 未运行 / token 不符 / 上报超时时，外部 agent CLI 会话行为与延迟
+  ⚠ **实机未验**：ingest 全链已由真机 curl 打通（endpoint 0600 → 合法上报 204 → `UN accepted`），
+  opencode `external_directory` 权限请求真机三段齐全；但"用户终端里跑 pi/opencode → 通知弹出"
+  这一条依赖 CLI 登录态，用户环境未跑。
+- [x] AC12（Phase B）：Neeko 未运行 / token 不符 / 上报超时时，外部 agent CLI 会话行为与延迟
   无任何可观测变化（R6.2 fail-open）。
-- [ ] AC13（Phase B）：外部 agent 会话存活期间重启 Neeko（端口漂移），下一条 hook 事件仍送达（R6.1）。
-- [ ] AC14（Phase B）：设置页关闭 hook 开关 → `neeko-status.*` 文件被清理，外部 CLI 恢复无上报；
+  证据：`server.rs::ingest()` 12 单测（坏 token 403 / 缺 token 403 / 畸形 / 超限 / 未知 source /
+  空 id 全 204 fail-open）+ 模板侧 800ms 超时与全异常吞掉。
+- [x]⚠ AC13（Phase B）：外部 agent 会话存活期间重启 Neeko（端口漂移），下一条 hook 事件仍送达（R6.1）。
+  证据：模板每次回调重扫 `endpoints/*.env`（Phase F 后为目录）有单测与 Node harness 实证。
+  ⚠ 实机"重启 Neeko 后下一条仍送达"未验（Phase F3 的 AC18 实机项同因未验）。
+- [x]⚠ AC14（Phase B）：设置页关闭 hook 开关 → `neeko-status.*` 文件被清理，外部 CLI 恢复无上报；
   重复开启幂等（R6.5）。
-- [ ] AC15（Phase C）：opencode 会话（有 AI 命名 title，如 `neeko-probe`）任务完成 → 通知显示该 title
+  证据：writers/install 域 6+ 单测（幂等 / 他人文件保护 / 状态三态 / uninstall 清理）。
+  ⚠ 实机未验 —— 遵守客人义务：本环境未替用户安装，需用户在设置页显式开启。
+- [x]⚠ AC15（Phase C）：opencode 会话（有 AI 命名 title，如 `neeko-probe`）任务完成 → 通知显示该 title
   为副标题（macOS 第二行），非 `New session - …` 占位（R7.1/R7.2）。
-- [ ] AC16（Phase C）：pi 会话（未显式命名）→ 通知副标题为该会话首条用户消息截断；两条会话并行时
+  证据：`report.rs::reported_title_becomes_topic` / `placeholder_titles_are_not_topics`；
+  `macos.rs` setSubtitle 仅非空调用。⚠ 肉眼确认副标题行未做。
+- [x]⚠ AC16（Phase C）：pi 会话（未显式命名）→ 通知副标题为该会话首条用户消息截断；两条会话并行时
   通知可区分（R7.1 回退）。
-- [ ] AC17（Phase C）：`title` 获取失败/缺失 → 通知仍正常投递（无副标题），会话流零影响（R7.6）。
-- [ ] AC18（Phase F）：打包版与 `pnpm tauri dev` **同时运行**时，两个实例都能收到同一条 pi
+  证据：`notify.rs::topic_prefers_native_title_then_first_prompt_line`（源 A 回退链）+
+  pi 模板 `getSessionName()` → `getEntries()` 首条 user 消息回退实现。⚠ 实机未验。
+- [x] AC17（Phase C）：`title` 获取失败/缺失 → 通知仍正常投递（无副标题），会话流零影响（R7.6）。
+  证据：`report.rs::missing_or_blank_title_yields_no_topic`（缺省/空白 → 无 topic）；
+  `policy.rs::topic_becomes_subtitle_only_when_present`（空串不回退成 `[]` 占位）；
+  模板侧解析失败一律吞掉（fail-open）。
+- [x]⚠ AC18（Phase F）：打包版与 `pnpm tauri dev` **同时运行**时，两个实例都能收到同一条 pi
   上报（R6.8）；关闭/重启任一实例后，另一实例的通知不受影响；退出实例留下的坐标不再让上报
   打到死端口（AC13 的单实例版语义推广到多实例）。
-- [ ] AC19（Phase H）：macOS 上**同一 bundleIdentifier 的多个构建形态**（打包版 / dev bundle /
+  证据：`endpoint.rs` 多实例共存/旧文件清理单测 + 模板 fan-out Node harness（两坐标两处 POST，
+  死坐标被吞）。⚠ 真机双开未验（需真实 pi 登录态）。
+- [x] AC19（Phase H）：macOS 上**同一 bundleIdentifier 的多个构建形态**（打包版 / dev bundle /
   本地 build）必须共享同一份系统通知授权 —— 由稳定自签名证书保证身份恒定
   （`NEEKO_CODESIGN_IDENTITY` + `scripts/macos-sign.sh`）；身份缺失或漂移时**不得静默**降级
   （dev bundle 走 adhoc 必须 warn，签名脚本未设身份必须 fail 而非静默跳过）。
-- [ ] AC20（Phase H，**已验收 2026-10-16 15:21**）：`~/.neeko/neeko.log` 出现 `UN accepted`
+  证据：`macos-sign.sh` 未设身份 exit 1（不静默 adhoc）；`macos-dev-bundle.sh` adhoc 时打 warn。
+- [x] AC20（Phase H，**已验收 2026-10-16 15:21**）：`~/.neeko/neeko.log` 出现 `UN accepted`
   而非 `not granted`。实测 15:21 起 **4/4 accepted 且跨两次重启仍有效**；
   **不依赖** `sudo tccutil reset Notifications com.neeko.desktop`（该命令实测 exit 70，且非必要）——
   恢复动作是「稳定签名 + 重启进程」。收敛判据：重装 app 后必须重签

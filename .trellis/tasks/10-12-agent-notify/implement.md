@@ -4,15 +4,22 @@
 > `trellis-before-dev` 载入 backend/frontend spec。原型代码在 `prototype/`，迁移时 TDD 测试先行。
 >
 > 落点总览（design.md §2.1）：
-> - 核心：`src-tauri/src/notification/{types,policy,center,dispatch,settings,mod}.rs`（业务无关）
+> - 核心：`src-tauri/src/notification/{types,policy,center,dispatch,commands,mod}.rs`（业务无关）
 > - agent 源 A：`src-tauri/src/agent/chat/notify.rs` + `commands.rs` 桥内 3 行
-> - agent 源 B：`src-tauri/src/agent/hooks/{boot,targets,endpoint,server,attribution,notify,writers}.rs`
->   + `templates/`
+> - agent 源 B：`src-tauri/src/agent/hooks/`（按失败策略分目录：`ingest/` fail-open 收上行、
+>   `install/` fail-safe 写下行、`boot.rs`/`targets/`/`templates/`）
 > - 平台层：`src-tauri/src/platform/{system_notify,private_file}/`（macOS UN 后端 + 私有文件原子写）
 > - 前端：`src/features/notification/` 域内扩展
 >
+> **目录形态漂移（2026-10-16 回填注记，勿照下方历史步骤里的旧路径 grep）**：
+> ① `notification/settings.rs` 不存在 —— settings 结构已并入 `notification/types.rs`；
+> ② `agent/hooks/{notify,writers}.rs` 已拆分 —— 上行解析在 `ingest/report.rs`、下行安装在
+>    `install/`（`a86aa437` 按「fail-open 收 / fail-safe 写」两策略分目录）；
+> ③ 命令在 `agent/hooks/commands.rs`，模板锚点测试在 `agent/hooks/templates/tests.rs`；
+> ④ opencode 模板文件名是 `neeko-opencode-status-v2.js`（2.x 事件面）。
+>
 > 分期（D10）：Phase A 先行独立可发布；Phase B 依赖 A 的核心域与设置页。**两期之间核心域零改动**
-> （架构自证点，验收时核对 notification/ 目录在 Phase B 的 diff 应为空或仅注释）。
+> （架构自证点，验收时核对 notification/ 目录在 Phase B 的 diff 应为空或仅注释 —— Phase B/C 已实测为零）。
 
 ## Phase A —— 源 A：应用内会话管道
 
@@ -179,68 +186,81 @@
 - [x] （已收口，D13/Phase G）~~已知限制：`version_current` 只比应用版本、不比模板正文~~：
       标记键已改为内容寻址（`v{app}+{template_hash}`），「同版本号内改模板」现在会自动推送。
 
-## Phase C —— 通知显示会话主题（2026-10-13 规划，待实施）
+## Phase C —— 通知显示会话主题（2026-10-16 回填勾选：实现先于文档）
 
 > 需求与验收见 prd.md R7 / AC15-17；决策与契约见 design.md D12 / §4。
 > 用户已确认两点：主题取**原生标题优先、回退首条用户消息**；载体 = **新增 subtitle 字段**
 > （macOS 原生副标题，Win/Linux 降级拼 body 前缀）。
+>
+> **实施与计划的落点偏差（本轮回填时实测，勿照计划 grep）**：
+>
+> - 源 B 的 envelope 投影不在 `agent/hooks/notify.rs`，实际在 **`agent/hooks/ingest/report.rs`**
+>   （B 侧拆出 `ingest/` 与 `install/` 两个反向失败策略目录，见 `a86aa437`）；
+> - opencode 模板文件名是 **`neeko-opencode-status-v2.js`**（2.x 事件面）；
+> - 模板锚点测试不在 `writers.rs`，实际在 **`agent/hooks/templates/tests.rs`**；
+> - 源 A 主题不是计划里"`spawn_session_pipeline` 取 `req.prompt`"一条腿：**前端显式传入**
+>   `StreamRequest.topic`（恢复既有会话时来自 conversation 扫描的 `userTitle`/`title`，
+>   `useAgentChat.ts`），新会话该字段为空 → 后端回退首轮 prompt 首个非空行。
+>   两条腿合在 `SessionNotifyContext::new(native_topic, prompt)` 一处裁决。
 
-### Step C1 核心域：`subtitle` 契约（TDD）
+### Step C1 核心域：`subtitle` 契约（TDD，已实施）
 
-- [ ] `notification/types.rs`：`NotificationSignal` 增 `topic: Option<String>`；`NotificationDraft` 增
+- [x] `notification/types.rs`：`NotificationSignal` 增 `topic: Option<String>`；`NotificationDraft` 增
       `subtitle: String`（空串 = 无副标题，序列化保持 snake_case，前端镜像同步）。
-- [ ] `notification/policy.rs::compose_draft`：`subtitle = truncate_chars(topic.trim(), MAX_SUBTITLE_CHARS)`；
+- [x] `notification/policy.rs::compose_draft`：`subtitle = truncate_chars(topic.trim(), MAX_SUBTITLE_CHARS)`；
       空/全空白 → 空串（**不回退成 `[]` 占位**，R7.1 第 3 档）。
       新增 `pub const MAX_SUBTITLE_CHARS: usize = 60;`（与 title 80 / body 配置化 200 区分：
       副标题是单行展示位，超长在 macOS 上会截断且不显示省略号）。
-- [ ] 单测：非空 topic 落 subtitle；`None` / `"   "` → 空串；超长 Unicode 安全截断（CJK/emoji）。
-- [ ] 平台后端：`platform/system_notify/macos.rs` 的 `try_deliver` 增 `subtitle: &str` 参数 +
+- [x] 单测：非空 topic 落 subtitle；`None` / `"   "` → 空串；超长 Unicode 安全截断（CJK/emoji）。
+- [x] 平台后端：`platform/system_notify/macos.rs` 的 `try_deliver` 增 `subtitle: &str` 参数 +
       `content.setSubtitle(&NSString::from_str(subtitle))`（**仅非空时调用** —— 空 subtitle 会让
       macOS 渲染出空的第二行）；`default.rs` stub 同步改签名（红线 10 门面完整性，`&str` 保持 `const fn`）。
-- [ ] `notification/dispatch.rs`：调 `try_deliver(&app, &draft.title, &draft.subtitle, &draft.body)`；
+- [x] `notification/dispatch.rs`：调 `try_deliver(&app, &draft.title, &draft.subtitle, &draft.body)`；
       插件回退路径（Win/Linux）在 subtitle 非空时把 `body` 前置 `[{subtitle}] `（R7.3 降级）。
 
-### Step C2 源 A：Neeko 自有会话主题
+### Step C2 源 A：Neeko 自有会话主题（已实施）
 
-- [ ] `agent/chat/notify.rs`：`SessionNotifyContext` 增 `topic: Option<String>`；`source()` 不含它
+- [x] `agent/chat/notify.rs`：`SessionNotifyContext` 增 `topic: Option<String>`；`source()` 不含它
       （主题属于**信号内容**不属于来源标识），由 `project()` 填入 `signal.topic`。
-- [ ] `agent/chat/commands.rs::spawn_session_pipeline`：`topic: first_turn_prompt(req)` —— 构造时
-      取 `req.prompt`；**续轮（`req.session_id` 命中既有会话）不覆盖**已有 topic（多轮时保留首轮
-      主题；实现 = `SessionHandle` 或 `SessionNotifyContext` 里只写一次，具体落点在实施时定）。
-- [ ] 单测：首轮 prompt → topic；续轮 → topic 保持首轮值；prompt 为空白 → `None`。
+- [x] `agent/chat/commands.rs`：`StreamRequest` 增 `topic`（前端显式传入原生标题），经
+      `spawn_session_pipeline` → `SessionNotifyContext::new(req.topic, &req.prompt)`；
+      **续轮天然不覆盖**：`SessionRequest::Turn` 不经 `spawn_session_pipeline`，上下文只在
+      会话启动时构造一次（比计划里"只写一次"的实现更结构性）。
+- [x] 单测：原生标题优先（`topic_prefers_native_title_then_first_prompt_line`）→ 回退首轮
+      首个非空行 → 两者皆空 `None`（不回退成占位）。
 
-### Step C3 源 B：hook 上报携带原生标题
+### Step C3 源 B：hook 上报携带原生标题（已实施，落点见上注）
 
-- [ ] `agent/hooks/notify.rs`：`HookEnvelope` 增 `#[serde(default)] title: Option<String>`（白名单，
-      R6.3 不变）；`project()` 把 `envelope.title` 过滤空串后填入 `signal.topic`，并做**噪声过滤**
-      （R7.2：形如 `New session - <ISO 时间戳>` 视为无标题 —— 判定函数放 agent 域，核心域零感知）。
-- [ ] opencode 模板（`templates/neeko-opencode-status.js`）：监听 `session.updated`
-      （`properties.info.title`，SDK 实测字段）→ 缓存 `sessionTitles`（与既有 `sessionDirs` 同
-      `MAX_TRACKED_SESSIONS` 上限）；`turn_completed` / `approval_requested` 上报时带 `title`。
-      注意 `session.created` 与 `session.updated` 都要记（新会话标题可能在 created 时即存在，
-      AI 命名则在 updated 到达）。
-- [ ] pi 模板（`templates/neeko-pi-status.ts`）：`title = ctx.sessionManager.getSessionName()`
+- [x] `agent/hooks/ingest/report.rs`：`HookEnvelope` 增 `#[serde(default)] title: Option<String>`
+      （白名单，R6.3 不变）；`project()` 把 `envelope.title` 过滤空串后填入 `signal.topic`，并做
+      **噪声过滤**（R7.2：`New session - <ISO 时间戳>` 视为无标题 —— 判定函数放 agent 域，
+      核心域零感知）。
+- [x] opencode 模板（`templates/neeko-opencode-status-v2.js`）：缓存 `sessionTitles`（与
+      `sessionDirs` 同 `MAX_TRACKED_SESSIONS` 上限），`session.updated` / `session.created` /
+      `session.deleted` 全生命周期维护；2.x 无 `session.updated` 事件面，标题后到 → 上报前
+      `session.get` 懒回查兜底。`turn_completed` / `approval_requested` 上报时带 `title`。
+- [x] pi 模板（`templates/neeko-pi-status.ts`）：`title = ctx.sessionManager.getSessionName()`
       （实测：仅用户显式命名才有值）；无值 → 回退该会话**首条用户消息**（`getEntries()` 取首个
-      `type === "message"` 且 `message.role === "user"` 的文本，截断后上报），两者都无 → `null`。
-      解析失败一律吞掉（fail-open，R7.6）。
-- [ ] 模板锚点测试：`writers.rs` 的模板契约测试补 `title` 字段名存在性断言（防单边改名）。
+      user role 文本，截断后上报），两者都无 → `null`。解析失败一律吞掉（fail-open，R7.6）。
+- [x] 模板锚点测试：`agent/hooks/templates/tests.rs` 的模板契约测试含 `title:` 字段存在性断言
+      （双模板断言 + 形状锚点清单，防单边改名）。
 
-### Step C4 前端：in-app 列表同源展示
+### Step C4 前端：in-app 列表同源展示（已实施）
 
-- [ ] `shared/types/notification.ts`：`NotificationDraft` 增 `subtitle: string`（镜像测试钉死）。
-- [ ] `features/notification/hooks/useNotificationDelivered.ts`：把 `subtitle` 写入 store；
-      `shared/store/notificationTypes.ts` 的 `Notification` 增可选 `subtitle`；列表/详情组件展示。
+- [x] `shared/types/notification.ts`：`NotificationDraft` 增 `subtitle: string`（镜像测试钉死）。
+- [x] `features/notification/hooks/useNotificationDelivered.ts`：把 `subtitle` 写入 store；
+      `shared/store/notificationTypes.ts` 的 `Notification` 增可选 `subtitle`；列表
+      （`NotificationList.tsx`）与详情（`NotificationDetail.tsx`）展示，空串折叠为 `undefined`
+      （渲染层不必区分两种"无"，含单测 `stores subtitle only when non-empty`）。
 
 ### Step C5 验证与推送到已装机器
 
-- [ ] 自动化：`cargo test`（核心域 + 两个投影 + 模板锚点）、`pnpm test:fe`、`pnpm check` 全绿。
-- [ ] 真机：`pnpm tauri dev` + 真实 pi / opencode 会话，`usernoted` 日志与肉眼各确认一次副标题。
-- [ ] **模板推送（关键，勿漏）**：`version_token()` 是 `v{CARGO_PKG_VERSION}`，**同版本号内改模板
-      不会自动重写**已装文件（见下方「已知限制」条目）。因此 C3 落地后必须：
-      ① `src-tauri/Cargo.toml` 版本位 +1（会让所有 `neeko-status.*` 被判 `version_current=false`，
-      `reconcile_action` 下次启动自动重装，**这是既有机制，无需新代码**）；
-      或 ② 让用户在设置页把 CLI hooks 开关关开一次。
-      **推荐 ①**：版本位变化是模板类的唯一可靠推送通道，且已有测试覆盖该路径。
+- [x] 自动化：`cargo test`（核心域 + 两个投影 + 模板锚点）、`pnpm test:fe`、`pnpm check` 全绿。
+- [ ] ⚠ 真机（AC15-17）：`pnpm tauri dev` + 真实 pi / opencode 会话，`usernoted` 日志与肉眼各确认
+      一次副标题（需 CLI 登录态，用户环境）。
+- [x] **模板推送**：本条已作废 —— Phase G（D13）把标记键改为内容寻址，同版本号内改模板
+      **会**自动重装（`version_current=false` → Install），不再需要手碰版本位。C3 落地走的是
+      这条既有机制，版本号维持在 `1.0.9`。
 
 ## Phase E —— neeko-check 审查整改（2026-10-13）
 
@@ -492,20 +512,23 @@
 ## 回滚策略
 
 每步独立可回滚；通知域是纯旁路（T2），Phase A 整体 revert 不影响业务主链路；
-Phase B 额外回滚面 = writers 清理用户级 hook 文件（uninstall 命令即回滚工具）。
+Phase B 额外回滚面 = 出站安装域（`agent/hooks/install/`）清理用户级 hook 文件
+（`agent_hooks_apply` 的卸载路径即回滚工具）。
 
 ## 人工验收清单（Phase A 合入前执行）
 
-自动化门禁已覆盖逻辑层（单测 1579+4675、护栏 24/24、macOS dev 启动无 panic）。
-以下需要人眼/实机：
+自动化门禁已覆盖逻辑层（`pnpm check` 30/30 护栏 + test_rust/test_fe 全绿，见文末各 Phase 记录）。
+以下需要人眼/实机（归档时仍为**未做**项，均为已登记遗留）：
 
 - [ ] macOS：设置 → Notifications → 「Send test notification」→ 系统横幅出现；
-      首次点击触发授权弹窗流程
+      首次点击触发授权弹窗流程（**部分已验**：Phase H 起真机 `UN accepted` 4/4，但未走
+      设置页按钮那条交互路径）
 - [ ] macOS：真实 pi/opencode 会话触发审批/完成 → 窗口最小化时收到通知；点击通知应用回前台；
-      in-app 通知列表条目点击 → 精确聚焦对应会话 tab
+      in-app 通知列表条目点击 → 精确聚焦对应会话 tab（= AC11 实机项）
 - [ ] Windows：Toast 弹出（打包与非打包 AUMID 行为）、点击回前台
 - [ ] Linux：GNOME/KDE 各验一次通知弹出与回前台
-- [ ] 失焦抑制：窗口聚焦且正看该会话时不弹系统通知（AC3）
+- [x] 失焦抑制：窗口聚焦且正看该会话时不弹系统通知（AC3）—— 单测覆盖
+      （`suppression_requires_focused_and_visible` + FocusTracker 往返），实机未复验
 
 ---
 

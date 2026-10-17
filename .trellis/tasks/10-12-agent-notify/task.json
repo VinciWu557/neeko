@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "实现已全部落地（Phase A/B/C/F/G/H，2026-10-16 `pnpm check` 30/30 护栏 + test_rust/test_fe 全绿）。剩余未勾项均为已登记遗留：① 实机人工验收（AC11/13/14/15-18 与 Win/Linux 弹窗，需真实 CLI 登录态与多平台实机）；② 登记不做的三项（D9 按归属项目回流、macOS UN 点击 delegate、WSL 可达性 B4）与坐标文件无界累积（design §7 风险表）；③ 自有 PTY env 注入（当前走 cwd 归因，精度降级可接受）；④ pi 1.3.0 事件面适配（已转 10-16 或另立项）。H7 运维约束：重装 app 会清签名，必须重跑 scripts/macos-sign.sh。",
   "meta": {}
 }

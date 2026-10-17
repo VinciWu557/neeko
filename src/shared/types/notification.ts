@@ -34,12 +34,13 @@ export interface NotificationSettings {
   /** 外部 Agent CLI hook 主开关（R6.5，默认关 —— 用户全局配置是客人的家，须显式同意）。
    *
    * 本域只持有该**主开关意图**：文件的安装/卸载由 agent 域承担（`agent_hooks_apply` 命令 →
-   * `agent/hooks/writers.rs`），前端在保存设置后串行触发。核心域不 import 业务域，
-   * 故此处刻意不写具体落点函数名 —— 联动契约见 `.trellis/tasks/10-12-agent-notify/`。
+   * `agent/hooks/install/`），前端在保存设置后串行触发。核心域不 import 业务域，
+   * 故此处刻意不写具体落点函数名 —— 联动契约见
+   * `.trellis/spec/backend/agent-hooks-domain.md`「两个开关的分工」。
    *
    * **逐 CLI 例外不在这里**：`{"claude": false}` 这类业务身份属于 agent 域，
-   * 落在 config.json 的 `agentHookSources` 键（见 `agent/hooks/settings.rs` 的分工说明）——
-   * 写进本类型会让核心域出现 CLI 名字（父任务 design T4 禁止的形态）。 */
+   * 落在 config.json 的 `agentHookSources` 键（见 `agent/hooks/install/config/settings.rs`
+   * 的分工说明）—— 写进本类型会让核心域出现 CLI 名字（父任务 design T4 禁止的形态）。 */
   cliHooks: boolean;
   /** 节流与合并窗口（秒）——UI 高级项。 */
   throttleSecs: number;
