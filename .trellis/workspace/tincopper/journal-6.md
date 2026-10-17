@@ -1754,3 +1754,46 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 305: 10-12-agent-notify: 完成度核验、Phase C/AC 文档回填、spec 沉淀与归档
+<!-- trellis-session: v=2 fp=854e2b11c57af6bc -->
+
+**Date**: 2026-10-17
+**Task**: 10-12-agent-notify: 完成度核验、Phase C/AC 文档回填、spec 沉淀与归档
+**Branch**: `main`
+
+### Summary
+
+核验 Agent 系统通知任务的真实完成度：Phase A/B/F/G/H 代码已全部落地，Phase C 的实现也早已在代码里但文档复选框全空（文档滞后于实现）。回填 Phase C 15 项与 20 条 AC 的勾选状态（按证据分级），沉淀两条 spec，修复归档后会断链的悬空指针，随后归档。
+
+### Main Changes
+
+- Phase C 15 个复选框回填为 [x]，并把落点偏差写进节首防后人误判：notify.rs 实际是 ingest/report.rs、opencode 模板文件名带 v2、锚点测试在 templates/tests.rs、源 A 主题走前端 native_topic（两条腿在 SessionNotifyContext::new 一处裁决）。
+- 20 条 AC 按证据分级勾选：[x] = 单测覆盖（每条附单测名，如 throttle_storm_within_interval / completion_merge_window / unknown_future_domain_flows_through_core）；[x]⚠ = 自动化已验但实机人工项未做（AC11/13/14/15-18，需真实 CLI 登录态与多平台实机）。归档 ≠ 验收，剩余项均为已登记遗留。
+- spec 沉淀两条到 quality-guidelines.md：① Phase H macOS 签名契约（UN 授权按 bundleIdentifier 归集、按签名身份判真伪；adhoc 身份随内容派生；重装抹签名须重签；重签后必须重启进程；不依赖 tccutil reset）此前只活在任务目录，归档即断。② 通知核心域的『业务无关核心 + 业务投影』分层与两个设置开关分工——护栏 check_notification_core_direction 的 docs 指针正指向该文件，但该文件此前不解释此不变量。
+- 修复两处活代码悬空指针（归档后成死链，同 W1）：types.rs 与 notification.ts 的任务目录引用 → spec/backend/agent-hooks-domain.md『两个开关的分工』，并修正已不存在的 writers.rs / agent/hooks/settings.rs / install/selection.rs。
+- 归档用 --skip-branch-validation：任务 base_branch 记为 neeko-notify 但全仓无此分支、工作全落 main，属从未分支/PR-backed 场景，非误用。归档脚本只 stage 任务目录路径，不扫走其他改动。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `944dafb25d16f76eada07fcb11b2cec552f0117b` | docs(spec): record the macOS notification identity contract and core-domain layering |
+| `d4bdc046536a9b7bedf90ab5089ea9ec14899bcd` | docs(task): backfill 10-12-agent-notify AC/Phase C state and fix dangling pointers |
+
+### Testing
+
+- [OK] [OK] pnpm check：30/30 护栏通过 / 0 违规，归档前后各跑一次均全绿。
+- [OK] [OK] 归档后 grep tasks/10-12-agent-notify 于 src/ src-tauri/ tools/guards/ spec/ 全零命中 —— 无悬空指针残留。
+- [OK] [OK] 两次工作提交的 pre-commit 护栏 + commitlint 全过。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实机人工验收项（AC11/13/14/15-18、Win/Linux 弹窗、设置页测试按钮交互）需用户在真实 CLI 登录态与多平台环境执行。
+- 登记不做项与遗留：D9 归属项目回流、macOS UN 点击 delegate、WSL 可达性（B4）、坐标文件无界累积、自有 PTY env 注入（走 cwd 归因）、pi 1.3.0 事件面适配（H8 建议并入 10-16 或另立项）。
+- 运维约束 H7：重装 app 会抹签名，须重跑 NEEKO_CODESIGN_IDENTITY=... scripts/macos-sign.sh <app>；签名丢失仍是静默故障（建议加启动 adhoc 自检 warn）。
