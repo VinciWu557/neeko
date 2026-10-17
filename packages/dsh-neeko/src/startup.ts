@@ -50,6 +50,46 @@ export interface NeekoStartupValues {
   spawnCommand?: string
 }
 
+/** Flags as commander actually reports them. */
+export interface StartupFlags {
+  daemon?: boolean
+  host?: string
+  port?: string
+  session?: string
+  /**
+   * `--spawn <cmd>` and `--no-spawn` share this key: a string, `false`, or absent.
+   * Typing it as `string` only is what let `--no-spawn` write `false` into
+   * `spawnCommand` (rejected by the Config schema, killing the whole row).
+   */
+  spawn?: string | false
+}
+
+/**
+ * Resolve the startup service values from parsed flags.
+ *
+ * Pure so the three-state `spawn` handling is testable without a real argv:
+ * - `spawn === false`      → `--no-spawn`: forbid spawning, no command.
+ * - `spawn` is a string    → `--spawn <cmd>`: use that command, keep the default.
+ * - `spawn === undefined`  → neither: leave both absent for the patch defaults.
+ *
+ * @param flags - parsed commander options.
+ * @param positional - the optional mode positional (`daemon`).
+ * @returns the immutable service values.
+ */
+export function resolveStartupValues(flags: StartupFlags, positional?: string): NeekoStartupValues {
+  const daemon = flags.daemon === true || positional === 'daemon'
+  const port = flags.port === undefined ? undefined : Number(flags.port)
+  const sessionId = flags.session?.trim()
+  return {
+    ...(daemon ? { daemon: true } : {}),
+    ...(flags.host === undefined ? {} : { host: flags.host }),
+    ...(port === undefined ? {} : { port }),
+    ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
+    ...(flags.spawn === false ? { autoSpawn: false } : {}),
+    ...(typeof flags.spawn === 'string' ? { spawnCommand: flags.spawn } : {}),
+  }
+}
+
 function neekoCommand(): Command {
   return new Command()
     .name('dsh --profile neeko')
@@ -78,32 +118,17 @@ Examples:
 export function apply(ctx: Context): void {
   const program = neekoCommand()
   program.action(() => {
-    const options = program.opts<{
-      daemon?: boolean
-      host?: string
-      port?: string
-      session?: string
-      spawn?: string
-      spawnEnabled?: boolean
-    }>()
+    const options = program.opts<StartupFlags>()
     const positional = program.args[0]
-    const daemon = options.daemon === true || positional === 'daemon'
     if (positional !== undefined && positional !== 'daemon') program.error(`unknown mode: ${positional}`)
     const port = options.port === undefined ? undefined : Number(options.port)
     if (options.port !== undefined && !Number.isInteger(port) || port !== undefined && port <= 0) {
       program.error(`--port expects a positive integer, got ${JSON.stringify(options.port)}`)
     }
-    const sessionId = options.session?.trim()
-    if (options.session !== undefined && sessionId === '') program.error('--session requires a non-empty id')
-    const values: NeekoStartupValues = {
-      ...(daemon ? { daemon: true } : {}),
-      ...(options.host === undefined ? {} : { host: options.host }),
-      ...(port === undefined ? {} : { port }),
-      ...(sessionId === undefined ? {} : { sessionId }),
-      ...(options.spawnEnabled === false ? { autoSpawn: false } : {}),
-      ...(options.spawn === undefined ? {} : { spawnCommand: options.spawn }),
+    if (options.session !== undefined && options.session.trim() === '') {
+      program.error('--session requires a non-empty id')
     }
-    ctx.provide(NEEKO_STARTUP_SERVICE, values)
+    ctx.provide(NEEKO_STARTUP_SERVICE, resolveStartupValues(options, positional))
   })
   parseCmdline(ctx, program)
 }

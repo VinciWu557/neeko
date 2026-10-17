@@ -121,15 +121,35 @@ Messages (see `src/protocol.ts` for the full types):
 
 ### DSH event → protocol mapping
 
+Two distinct sources feed Neeko — this split is the 0.2.x contract:
+
+**Live deltas** (`agent/assistant-stream`, agent-scoped):
+
+| Frame / chunk | Protocol message |
+|---|---|
+| `start` | *(records turn/step; emits nothing)* |
+| `chunk` → `text-delta` | `text.delta` |
+| `chunk` → `reasoning-delta` | `thinking.delta` |
+| `chunk` → `tool-call-delta`, `block-*`, `usage`, `finish` | *(nothing)* |
+| `end` | *(clears the attempt; emits nothing)* |
+
+**Durable log** (`session.snapshotEvents()`):
+
 | DSH event | Protocol message |
 |---|---|
-| `assistant/chunk` (text-delta) | `text.delta` |
-| `assistant/chunk` (reasoning-delta) | `thinking.delta` |
 | `tool/call` | `tool.start` |
 | `tool/result` | `tool.end` (with diff when the fs tool attaches one) |
-| `agent/status` / tool activity | `status.change` |
+| `assistant/message` | *(nothing — text already arrived as live deltas)* |
+| `user/message` | *(history rows only)* |
+| `agent/status` | `status.change` |
 | `approval/request` | `approval.request` |
-| `ask_user_question` | `question.request` |
+| `user-questions/request` | `question.request` |
+
+> **Supported DSH generation: `0.2.x` only.** 0.1.x carried assistant output as
+> `assistant/chunk` rows inside the session log and exposed `userQuestions.registerProvider()`;
+> both are gone in 0.2.x, where live streaming moved to `agent/assistant-stream` and question
+> answering moved to the agent-scoped `user-questions/request` waterfall. One codebase cannot
+> serve both, so `peerDependencies` pins `^0.2.0-rc.2` rather than claiming a wider range.
 
 ## Project layout
 
