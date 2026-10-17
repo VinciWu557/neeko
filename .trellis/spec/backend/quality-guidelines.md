@@ -179,7 +179,6 @@ fn no_window_cmd(program: &str) -> Command {
 ```
 
 ### 平台差异集中化（Platform Adapter 分层）—— 强制
-
 > 适用：**所有平台专属代码**，含两类：
 > 1. 多平台实现：同一接口需在 2 个及以上平台（macOS/Linux/Windows）分别实现；
 > 2. 单平台专属：仅 macOS / 仅 Windows / 仅 Linux 生效的代码（含 macOS-only 菜单）。
@@ -274,6 +273,35 @@ pub const fn build_edit_submenu(
 
   除此之外业务代码一律走统一命令接口（见 `command-guidelines.md`）。
 - 其余一律抽入 `platform/<theme>/`。**历史豁免撤销**：macOS 菜单（`app_menu.rs`）原豁免理由「与 Tauri Menu API 深度绑定」不成立——Tauri Menu API 全平台可用，仅 `PredefinedMenuItem` 角色语义为 macOS 专属，恰是平台适配器最佳适用场景，已于 2026-08 迁入 `platform/menu/` 作为正例。
+
+### 应用级通知核心域（`notification/`）—— 业务无关核心 + 业务投影
+
+通知是**跨业务的旁路设施**（不是 agent 专属），其域边界由护栏 `check_notification_core_direction`
+强制：核心域（`notification/{types,policy,center,dispatch}.rs`）**禁止 import 任何业务域**
+（`agent` / `git` / `terminal` / …，含 `app` 组合根）。判据与护栏 selftest 见 `tools/guards/checks/`。
+
+**分层（依赖方向单向，无环）**：
+
+```text
+业务域投影 ──→ notification 核心域 ──→ platform::system_notify
+（agent/chat/notify.rs、   （types/policy/center/   （macOS UN 后端 +
+ agent/hooks/ingest/       dispatch：纯函数裁决）   插件跨平台回退）
+ report.rs）
+```
+
+**核心域零业务分支（红线 15 哲学：差异落数据，不落代码）** —— 业务身份只作为**数据**进入核心域：
+- `SourceRef{domain, instance_id, origin_label, group_label}` —— 来源身份（`domain`/`origin_label`
+  只作文案数据，核心域不对它做 `if domain == "agent"` 之类判断）；
+- `event_key` —— 事件语义键（业务域自己维护与前端事件清单的同步）；
+- `topic` → `subtitle` —— 会话主题（信号内容，非来源标识；截断由核心域统一负责）。
+
+**新业务域接入通知 = 只在自己域内写投影 + 调核心门面，核心域零改动**。可扩展性钉子
+`policy.rs::unknown_future_domain_flows_through_core`（一个非 agent 的 "git" 信号走同一裁决管线
+得到正确草稿）钉死这条契约；接入方（agent 两个信号源）落地后核心域 diff 仍为零即自证。
+
+**两个设置开关的分工**（勿合并）：`NotificationSettings.cli_hooks`（核心域）= **主开关**
+「用户是否同意装 hook」；`agentHookSources`（agent 域 config）= **逐 CLI 覆盖**。
+业务身份（CLI 名字）必须归业务域 —— 写进核心域会让核心域出现 CLI 分支。
 
 ---
 
@@ -478,6 +506,37 @@ pnpm tauri dev         # 完整开发环境（前端 + 后端）
 Neeko 是常驻前台的应用，故 `platform/system_notify/macos.rs` 的 `NotificationDelegate` 不可删；
 回归守卫在 `macos.rs` 的 `tests` 模块（断言呈现掩码非空且含 `Banner`、委托确实实现该选择器）。
 诊断命令：`log show --last 5m --predicate 'process == "usernoted"' --style compact | grep -i neeko`。
+
+**系统通知授权按 bundleIdentifier 归集、按代码签名身份判真伪**（2026-10-16 实测，故障形态 =
+「昨天还好今天没通知」）：`UNUserNotificationCenter` 报 `UNErrorDomain Code=1 (not allowed)`
+时，整条投递链（坐标发现 → ingest → token → envelope → policy → dispatch → UN）**全部正确**，
+断点只在身份不被信任。两个必须记住的机制：
+
+1. **adhoc 签名不写证书，身份随内容派生** —— 同一个 `.app` 被重装 / 覆盖后身份即变，授权随之失效。
+   要让「同一个应用」在多次构建、dev/生产两种形态下共享同一份授权，必须有**一个稳定的身份**。
+   最小充分条件是 `.app` + `Info.plist(CFBundleIdentifier)` + 有效 codesign + `lsregister` 注册，
+   「有效」从不要求 Developer ID —— 一张自签名代码签名证书即可（免费，无需 Apple Developer 账号）。
+2. **重装会抹掉签名** —— 覆盖 `/Applications/Neeko.app` 会连带删掉 `_CodeSignature`，故每次重装或
+   `tauri build` 产出新 app 后必须重签：
+   `NEEKO_CODESIGN_IDENTITY="<钥匙串里的身份名>" scripts/macos-sign.sh <app路径>`。
+   走 `pnpm release` 时 `release.mjs` 已自动带上这步。
+
+**重签后必须重启进程**：只重签不够 —— 运行中的进程仍持旧签名（`_CodeSignature` 变了但已加载的身份
+没变），继续 `not granted`；重启后立刻恢复。实测 4/4 `UN accepted` 且跨两次重启仍有效，
+**不需要** `sudo tccutil reset`（该命令本身也在受限环境跑不通）。
+
+**身份缺失或漂移时不得静默降级**：`scripts/macos-sign.sh` 未设 `NEEKO_CODESIGN_IDENTITY` 时
+`exit 1`（不静默 adhoc）、身份名拼错时列出现有身份供比对；`macos-dev-bundle.sh` 只有 adhoc 可用时
+打 warn。**签名不写进 `tauri.conf.json`**：`bundle.macOS.signingIdentity` 只接受字面字符串、
+不支持环境变量展开，写死会让所有没建这张证书的机器（含 CI runner 与新克隆开发机）在
+`tauri build` 直接失败。
+
+**已知可观测性缺口（未实施）**：签名丢失时没有任何机制提醒，故障形态仍是静默的 ——
+日志里只有一行 `UNErrorDomain error 1`。建议的启动自检：进程启动时若发现自己是 adhoc
+（`codesign -dv` 无 `Authority`），往 `neeko.log` 打一条明确 warn，把静默复发变成可发现的。
+诊断取证（四步，全部可复现）：手工 POST 合法上报 → 得 204 + 看日志；`grep -a "UN accepted"
+~/.neeko/neeko.log*` 对比历史最后成功时间；`codesign -dv <app>` 看 `Signature` / `TeamIdentifier`；
+`lsregister -dump | grep com.neeko.desktop` 看同 bundle id 的身份竞争者（重装多次会累积多份）。
 
 ### 质量门禁脚本
 
