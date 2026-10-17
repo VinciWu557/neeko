@@ -17,7 +17,10 @@
 //! 契约：
 //! - 每次 Neeko 启动写自己的实例文件（随机端口 + 每次启动随机 token），不触碰其他实例的文件；
 //! - 私有权限 + 原子替换（platform::private_file，读者不见半截文件）；
-//! - **退出时不删除** —— 删除会制造「重启窗口期回调失败」；死坐标由上报端 fail-open 跳过。
+//! - **退出时不删除** —— 删除会制造「重启窗口期回调失败」；死坐标由上报端 fail-open 跳过；
+//! - **启动时回收死坐标**（见 [`prune_stale_endpoints`]）—— 「退出不删」若不配回收，
+//!   文件会随启动次数**无界累积**（实测 2026-10-16：27 个文件里只有 1 个端口在监听），
+//!   而每个 `*.env` 都含一份 token，上报端每次还要 `readdir` 全目录逐个 POST。
 
 use std::path::{Path, PathBuf};
 
@@ -33,7 +36,7 @@ pub const ENDPOINTS_DIR_NAME: &str = "endpoints";
 /// 旧单文件坐标文件名（v5 退役，启动时清理一次）。
 const LEGACY_ENDPOINT_FILE: &str = "endpoint.env";
 
-/// 一次发布的坐标。由 [`super::server::spawn`] 构造并落盘（生命周期 = 一次进程）。
+/// 一次发布的坐标。由 [`crate::agent::hooks::ingest::server::spawn`] 构造并落盘（生命周期 = 一次进程）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EndpointPublication {
     /// 本实例标识（进程启动时生成的随机 uuid，仅内存持有，用作文件名）。
@@ -99,6 +102,90 @@ pub fn remove_legacy_endpoint(neeko_dir: &Path) -> std::io::Result<()> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }
+}
+
+/// 启动时回收**死坐标**：端口不再监听（且不是本实例）的 `*.env` 删除。
+///
+/// # 为什么必须有（第一性原理）
+///
+/// 「退出时不删坐标」的理由是「删除会制造重启窗口期回调失败」—— 这条理由只对**活实例**
+/// 成立。已退出的实例不会复活，其坐标文件是纯负债：
+///
+/// 1. **凭据累积**：每个 `.env` 含一份 `NEEKO_AGENT_HOOK_TOKEN`，落在磁盘上的副本数
+///    等于历史启动次数；
+/// 2. **上报成本线性增长**：`neeko-report.mjs` 每次上报 `readdirSync` 整个目录并逐个
+///    `readFileSync` + POST，绝大多数请求打向早已关闭的端口。
+///
+/// 判据取「端口是否还有进程监听」而非 mtime：mtime 会把「长期运行但恰好很久没重启」的
+/// 活实例误删（那是真事故），而端口探活是坐标**语义本身**的判据 —— 坐标的用途就是被连。
+///
+/// `keep` = 本实例的 instance_id（自己的文件永不删，即使端口尚未就绪）。
+///
+/// 返回被删除的个数（失败逐个记 warning，不阻断启动：通知是旁路）。
+#[must_use]
+pub fn prune_stale_endpoints(neeko_dir: &Path, keep: &str) -> usize {
+    let dir = EndpointPublication::endpoints_dir(neeko_dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0; // 目录不存在 = 从未发布过坐标
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(instance_id) = name.strip_suffix(".env") else {
+            continue; // 只认 `*.env`，其他文件不属于本契约
+        };
+        if instance_id == keep {
+            continue; // 自己的坐标
+        }
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue; // 读不到就跳过（可能是并发写入中）
+        };
+        let Some(port) = parse_port(&content) else {
+            // 无法解析（半截文件 / 手工改坏）→ 同样视为死坐标，删掉更干净；
+            // 但保守起见只在**确实不是活端口**时删，故解析失败也删（它不可用）。
+            if std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+            continue;
+        };
+        if port_is_listening(port) {
+            continue; // 活实例：保留
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => removed += 1,
+            Err(err) => log::warn!(
+                "[agent-hooks] prune stale endpoint {} failed: {err}",
+                path.display()
+            ),
+        }
+    }
+    if removed > 0 {
+        log::info!("[agent-hooks] pruned {removed} stale endpoint coord(s)");
+    }
+    removed
+}
+
+/// 从坐标文件内容里取出端口。
+fn parse_port(content: &str) -> Option<u16> {
+    content.lines().find_map(|line| {
+        line.strip_prefix(ENV_KEY_PORT)
+            .and_then(|rest| rest.strip_prefix('='))
+            .and_then(|value| value.trim().parse().ok())
+    })
+}
+
+/// 该端口是否有进程在 loopback 上监听（`TcpStream::connect` 成功即算）。
+///
+/// 不用 `lsof`/`netstat`：那需要 spawn 外部进程（红线 1 的统一执行接口约束 + 平台差异），
+/// 而一次 connect 是**同一语义**的最轻判据，且天然跨平台。
+fn port_is_listening(port: u16) -> bool {
+    use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+    let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
+    // 超时给得很短：本机 loopback 要么立刻成功，要么立刻 EHOSTUNREACH/ECONNREFUSED。
+    TcpStream::connect_timeout(&addr.into(), std::time::Duration::from_millis(80)).is_ok()
 }
 
 // ── TDD：多实例共存 / 权限 / 旧文件迁移（夹具一律 tempdir 推导，红线 13）──────────
@@ -216,6 +303,68 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600, "endpoint file must be owner-only");
+    }
+
+    /// 死坐标回收：端口无人监听 → 删除；本实例（`keep`）→ 永不删。
+    ///
+    /// 这是「退出不删坐标」的配套：不删的理由只对活实例成立，死实例的坐标是纯负债
+    /// （token 副本 + 上报端 readdir/POST 成本）。
+    #[test]
+    fn prunes_dead_endpoints_but_keeps_own_and_listening_ones() {
+        let neeko = tempfile::tempdir().expect("tempdir");
+        let neeko_dir = neeko.path().join(".neeko");
+
+        // 一个真实监听端口（模拟活实例）：bind 到 :0 后取实得端口，坐标里写它。
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let live_port = listener.local_addr().expect("addr").port();
+
+        let dead = publication(&neeko_dir, "dead", 1, "t-dead");
+        let live = publication(&neeko_dir, "live", live_port, "t-live");
+        let mine = publication(&neeko_dir, "mine", 1, "t-mine");
+        dead.publish().expect("dead");
+        live.publish().expect("live");
+        mine.publish().expect("mine");
+
+        let removed = prune_stale_endpoints(&neeko_dir, "mine");
+        assert_eq!(removed, 1, "只应删掉死的那个");
+        assert!(!dead.path.exists(), "死坐标必须删");
+        assert!(live.path.exists(), "活坐标必须保留（端口在监听）");
+        assert!(mine.path.exists(), "本实例坐标永不删（即使端口 1 未监听）");
+    }
+
+    /// 解析失败（半截 / 手工改坏）的坐标也清掉 —— 它不可能被正确使用。
+    #[test]
+    fn prunes_unparseable_endpoint_files() {
+        let neeko = tempfile::tempdir().expect("tempdir");
+        let neeko_dir = neeko.path().join(".neeko");
+        let dir = EndpointPublication::endpoints_dir(&neeko_dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let broken = dir.join("broken.env");
+        std::fs::write(&broken, "garbage without port\n").expect("seed");
+
+        assert_eq!(prune_stale_endpoints(&neeko_dir, "mine"), 1);
+        assert!(!broken.exists());
+    }
+
+    /// 不存在目录 → 0，不 panic（首次启动路径）。
+    #[test]
+    fn prune_is_total_on_missing_dir() {
+        let neeko = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            prune_stale_endpoints(&neeko.path().join(".neeko"), "mine"),
+            0
+        );
+    }
+
+    /// `parse_port` 只认 `NEEKO_AGENT_HOOK_PORT=` 行。
+    #[test]
+    fn parse_port_reads_only_the_port_key() {
+        assert_eq!(
+            parse_port("NEEKO_AGENT_HOOK_PORT=53124\nNEEKO_AGENT_HOOK_TOKEN=x\n"),
+            Some(53124)
+        );
+        assert_eq!(parse_port("NEEKO_AGENT_HOOK_TOKEN=x\n"), None);
+        assert_eq!(parse_port("NEEKO_AGENT_HOOK_PORT=not-a-number\n"), None);
     }
 
     /// Unix：坐标目录 0700（文件名本身也是泄漏面）。

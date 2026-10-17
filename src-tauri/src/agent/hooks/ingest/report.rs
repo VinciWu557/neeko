@@ -7,7 +7,7 @@
 use serde::Deserialize;
 
 use crate::agent::chat::notify::event_keys;
-use crate::agent::hooks::attribution::Attribution;
+use crate::agent::hooks::ingest::attribution::Attribution;
 use crate::notification::{NotificationClass, NotificationSignal, SourceRef};
 
 /// ingest server 解析鉴权后的规范化上报（字段白名单；serde 默认忽略未知字段）。
@@ -29,7 +29,7 @@ pub struct HookEnvelope {
     pub title: Option<String>,
     /// 环境提示（Neeko 自有 PTY 注入 env 的回传），缺省视为全 None。
     #[serde(default)]
-    pub hints: crate::agent::hooks::attribution::EnvHints,
+    pub hints: crate::agent::hooks::ingest::attribution::EnvHints,
 }
 
 impl HookEnvelope {
@@ -59,11 +59,22 @@ fn classify(event: &str) -> Option<(NotificationClass, &'static str, &'static st
             event_keys::INPUT_REQUESTED,
             "Agent 等待输入",
         )),
+        // 2026-10-16 补：Claude 兼容面的 `StopFailure`（以及 Codex 将来的等价事件）
+        // 投影到会话异常。此前缺此 arm → 该类上报被 fail-open 静默吞掉（通知缺失）。
+        event_keys::SESSION_FAILED => Some((
+            NotificationClass::Failed,
+            event_keys::SESSION_FAILED,
+            "会话异常",
+        )),
         _ => None,
     }
 }
 
-/// 把 hook 上报投影为核心域信号。`source` 为路由段白名单（"pi" / "opencode"）。
+/// 把 hook 上报投影为核心域信号。
+///
+/// `source` 是路由段（`/hook/{source}`）—— 白名单**不在此处**，由受管事实表
+/// [`crate::agent::hooks::targets::HOOK_TARGETS`] 派生（`server::hook_source` 只认表里的行）。
+/// 故新增一个 CLI 无需改本函数。
 #[must_use]
 pub fn project(
     source: &str,
@@ -150,6 +161,8 @@ mod tests {
                 event_keys::INPUT_REQUESTED,
                 NotificationClass::ActionRequired,
             ),
+            // 2026-10-16 补：会话异常（Claude 兼容面的 StopFailure）。
+            (event_keys::SESSION_FAILED, NotificationClass::Failed),
         ] {
             let sig = project("opencode", &envelope(event), &attribution()).expect("mapped");
             assert_eq!(sig.class, class);
@@ -164,6 +177,16 @@ mod tests {
     #[test]
     fn unknown_event_is_ignored() {
         assert!(project("pi", &envelope("session.idle"), &attribution()).is_none());
+    }
+
+    /// 会话异常事件的标签与类别（R5.2）：`session_failed` → Failed 类 + 「会话异常」文案。
+    #[test]
+    fn session_failed_maps_to_failed_class_with_label() {
+        let (class, key, label) =
+            classify(event_keys::SESSION_FAILED).expect("session_failed must be mapped");
+        assert_eq!(class, NotificationClass::Failed);
+        assert_eq!(key, event_keys::SESSION_FAILED);
+        assert_eq!(label, "会话异常");
     }
 
     /// R7.5：上报的 title 成为信号 topic（模板侧已判定优先级，服务端只做透传+过滤）。

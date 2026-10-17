@@ -18,10 +18,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::common::runtime::AppRuntime;
 
-use super::attribution::{attribute, ProjectRef};
-use super::endpoint::{self, EndpointPublication};
-use super::notify::{project, HookEnvelope};
-use super::targets::HOOK_TARGETS;
+use crate::agent::hooks::ingest::attribution::{attribute, ProjectRef};
+use crate::agent::hooks::ingest::endpoint::{self, EndpointPublication};
+use crate::agent::hooks::ingest::report::{project, HookEnvelope};
+use crate::agent::hooks::targets::HOOK_TARGETS;
 use crate::AppStateWrapper;
 
 /// token 校验请求头（上报模板与本文件是同一契约的两端）。
@@ -137,10 +137,24 @@ fn hook_source(head: &[u8]) -> Option<&'static str> {
     }
     let path = parts.next()?;
     let source = path.strip_prefix("/hook/")?;
-    HOOK_TARGETS
-        .iter()
-        .find(|target| target.source == source)
-        .map(|target| target.source)
+    match HOOK_TARGETS.iter().find(|target| target.source == source) {
+        Some(target) => Some(target.source),
+        None => {
+            // **可观测性缺口修补（2026-10-16 实测事故）**：此前未知 source 静默返回 204，
+            // 与「载荷畸形」共用同一个 fail-open 出口 → 用户看到的 HTTP 状态**无法区分**
+            // 两者。实测形态：运行中的进程是**加新 CLI 之前编译的**（`HOOK_TARGETS` 是
+            // 编译期常量，路由白名单由它派生），于是新 CLI 的上报全被静默丢弃、无任何日志，
+            // 表现为「刚装上有通知、之后一直没通知」。
+            //
+            // 记 warn 让「路由未注册」可自证；仍返回 204（fail-open 契约不变 —— 未知 source
+            // 不该让 CLI 侧出错）。
+            log::warn!(
+                "[agent-hooks] unknown source {source:?} (not in HOOK_TARGETS); \
+                 the running binary may predate that CLI line — rebuild/restart Neeko"
+            );
+            None
+        }
+    }
 }
 
 /// 启动摄入服务：绑定 → 发布 endpoint → accept 循环（经 `AppRuntime` 的阻塞池，
@@ -173,6 +187,10 @@ pub fn spawn(
         uuid::Uuid::new_v4().to_string(),
     );
     publication.publish()?;
+    // 回收历史死坐标（见 `endpoint::prune_stale_endpoints` 的"为什么必须有"）。
+    // 必须在**自己 publish 之后**：`keep` 指向本实例，避免把自己的文件删掉。
+    // 失败不影响启动（通知是旁路）。
+    let _ = endpoint::prune_stale_endpoints(&neeko_dir, &publication.instance_id);
     let token = publication.token.clone();
     log::info!(
         "[agent-hooks] ingest listening on 127.0.0.1:{port} (instance {}, endpoint: {})",
@@ -438,6 +456,38 @@ mod tests {
             )),
             IngestOutcome::Accepted
         );
+    }
+
+    /// **未知 source 与已注册 source 的唯一可辨差异是「是否投递」**（HTTP 都是 204）。
+    ///
+    /// 这条不变量是实测事故（2026-10-16）的产物：运行中的二进制早于某个 CLI 被加入
+    /// `HOOK_TARGETS`（编译期常量 → 路由白名单由它派生），该 CLI 的上报被静默丢弃且
+    /// **无任何日志**，表现为「刚装上有通知、之后一直没通知」。
+    /// 修补是加 warn；本用例钉住「两者都 fail-open 204」这半（行为契约不变），
+    /// 日志那半由代码审查保证（断言日志不适合单测）。
+    #[test]
+    fn unknown_source_is_accepted_but_not_delivered() {
+        // 已注册（pi 在 HOOK_TARGETS 中）→ 投递。
+        let mut delivered = false;
+        let out = ingest(&request("pi", Some(TOKEN), &valid_body()), TOKEN, |_, _| {
+            delivered = true;
+        });
+        assert_eq!(out, IngestOutcome::Accepted);
+        assert!(delivered, "已注册 source 必须投递");
+
+        // 未注册 → 同样 204（fail-open），但**不投递**。
+        let mut delivered_unknown = false;
+        let out = ingest(
+            &request("not-a-registered-cli", Some(TOKEN), &valid_body()),
+            TOKEN,
+            |_, _| delivered_unknown = true,
+        );
+        assert_eq!(
+            out,
+            IngestOutcome::Accepted,
+            "未知 source 仍须 fail-open 204"
+        );
+        assert!(!delivered_unknown, "未知 source 不得投递");
     }
 
     /// 在途名额：占满后拒绝且**不泄漏计数**（拒绝路径必须归还 fetch_add），释放后可再占。

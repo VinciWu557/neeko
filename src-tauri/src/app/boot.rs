@@ -104,17 +104,18 @@ fn on_setup(app: &tauri::App) {
         }
     }
 
-    // 配置**只读一次**：LSP 设置与 agent 迁移消费同一份快照，避免两次读盘之间
-    // 配置变化导致两处看到不同版本（`None` = 读盘失败，只降级设置应用）。
-    let config = best_effort("load config", state.storage_manager.load_config());
+    // 配置**只读一次**：LSP 设置、agent 迁移与 CLI hook 覆盖表**三者共享同一份快照** ——
+    // 两次读盘之间配置可能变化，会让同一次启动的不同域看到不同版本（`None` = 读盘失败，
+    // 各消费方只降级自己那部分）。`as_mut` 借出而非移出，使快照在本函数尾部仍可用。
+    let mut config = best_effort("load config", state.storage_manager.load_config());
     crate::lsp::boot::attach(&state.lsp_manager, app.handle().clone(), config.as_ref());
 
-    if let Some(mut config) = config {
-        let agents = crate::agent::boot::load_custom_agents(&mut config, &state.agent_manager);
+    if let Some(config) = config.as_mut() {
+        let agents = crate::agent::boot::load_custom_agents(config, &state.agent_manager);
         if agents.migrated {
             best_effort(
                 "persist migrated config",
-                state.storage_manager.save_config(&config),
+                state.storage_manager.save_config(config),
             );
         }
     }
@@ -123,10 +124,15 @@ fn on_setup(app: &tauri::App) {
 
     // 外部 Agent CLI hook（源 B，design §2.5）：本域启动只暴露一个入口，与四域对称。
     // 旁路能力 —— 域内自记日志，失败只降级 CLI hook 通知，绝不阻断启动。
+    //
+    // 逐 CLI 覆盖表（`agentHookSources`）取自**上面那份快照**（agent 域自有键，不经核心域，
+    // 见 agent/hooks/install/config/settings.rs）。读盘失败时传 `Null` = 「无覆盖项」→ 各 CLI 跟随主开关，
+    // 与「成功但无该键」的退化行为一致；失败本身已由 `best_effort` 记 warn。
     crate::agent::hooks::boot::boot(
         app.handle().clone(),
         state.storage_manager.get_config_dir().to_path_buf(),
         state.notification.settings_snapshot().cli_hooks,
+        config.as_ref().unwrap_or(&serde_json::Value::Null),
         state.runtime.clone(),
     );
 }

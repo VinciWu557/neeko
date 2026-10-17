@@ -1,39 +1,39 @@
-//! 外部 Agent CLI hook 摄入（源 B，design.md §2.5，Phase B）。
+//! 外部 Agent CLI hook 接入（源 B，design.md §2.5，Phase B）。
 //!
 //! 依赖方向与源 A 一致：本模块属 agent 业务域，向应用级 `crate::notification` 门面投喂信号；
 //! 通知核心域对 hook 的存在零感知。
 //!
-//! 组成（每单元单一职责）：
-//! - `boot`：本域唯一启动入口（发布坐标 + 开机收敛）
-//! - `targets`：受管 CLI 事实表（source / 目录 / 文件名 / 模板的唯一来源）
-//! - `endpoint`：`~/.neeko/agent-hooks/endpoints/<instance>.env` 多实例坐标发布（跨 Neeko 重启存活，R6.1/R6.8）
-//! - `attribution`：归属降级链纯函数（env → cwd 反查 → basename 兜底，D8）
-//! - `notify`：hook 上报 → `NotificationSignal` 投影（与源 A 同 event_key 命名空间，R6.6）
-//! - `server`：loopback HTTP ingest（127.0.0.1 随机端口 + token + fail-open，R6.2/R6.3）
-//! - `writers`：用户级 hook 文件的安装/卸载/状态（客人义务，R6.5）
+//! # 为什么按「方向」分两个子域
+//!
+//! 本域有两个方向相反、**失败策略互斥**的半边：
+//!
+//! | 子域 | 做什么 | 失败时 |
+//! | --- | --- | --- |
+//! | [`ingest`] | 接收 CLI 上报（HTTP + 坐标系 + 投影） | **fail-open**：静默放手，绝不拖累 agent |
+//! | [`install`] | 把 shim 投放进用户配置面 | **fail-safe**：拒绝执行，绝不破坏用户数据 |
+//!
+//! 这两条策略无法共存于一个模块（一个函数不能既「失败就放手」又「失败就拒绝」），
+//! 所以它们必须是两个目录 —— 否则改 `server` 的人会把 fail-open 的宽容带进 `install`，
+//! 而「装了但没通知」这类事故正是那么来的。实测两簇互不 import。
+//!
+//! # 其余组成
+//!
+//! - [`boot`]：本域唯一启动入口（发布坐标 + 开机收敛）
+//! - [`commands`]：薄命令（apply/status）
+//! - [`targets`]：事实与契约（唯一事实表 + 形态词汇表 + 目录解析）
+//! - [`templates`]：模板的 `include_str!` 门面（多源共用同一份 shim 的可见事实）
 
-/// 归属降级链（纯函数，D8）。
-pub mod attribution;
-/// 域启动入口（与 session/agent/library/lsp 四域对称）。
 pub mod boot;
-/// CLI hook 薄命令（apply/status；agent 域归属，见文件头）。
 pub mod commands;
-/// endpoint 文件坐标发布（R6.1）。
-pub mod endpoint;
-/// hook 上报 envelope 契约 + 通知信号投影。
-pub mod notify;
-/// loopback HTTP ingest server（fail-open，绝不阻塞 agent）。
-pub mod server;
-/// 受管 CLI 事实表（新增 CLI 只加一行数据）。
+pub mod ingest;
+pub mod install;
 pub mod targets;
-/// pi / opencode hook 文件的安装/卸载/状态（R6.5）。
-pub mod writers;
+pub mod templates;
 
-pub use attribution::{attribute, Attribution, EnvHints, ProjectRef};
-pub use endpoint::EndpointPublication;
-pub use notify::{project, HookEnvelope};
-pub use targets::HOOK_TARGETS;
-pub use writers::{
-    install_all, reconcile_action, status_all, uninstall_all, HookApplyOutcome, HookApplyStatus,
-    HookInstallStatus, ReconcileAction,
-};
+// ── 域门面 ──────────────────────────────────────────────────────────────────
+//
+// 只导出**本域之外**真正消费的入口。唯一的外部调用方（`app/boot.rs`）本就写全路径
+// `crate::agent::hooks::boot::boot`，故这里**刻意不 re-export 任何符号**。
+//
+// 一个没人 import 的门面只是把内部实现暴露成公共 API（封装为零、约束为零），
+// 却让「哪些是域边界」不可读。新增对外入口时再在这里显式声明，并同时确认有真实调用方。
