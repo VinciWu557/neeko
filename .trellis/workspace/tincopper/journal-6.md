@@ -1940,3 +1940,49 @@ detach/stop/agent 切换三处重置。
 ### Status
 
 [OK] **Completed**
+
+
+## Session 308: 10-17 收尾：cordis 版本范围错配（只在干净安装下现形）
+<!-- trellis-session: v=2 fp=94912a0e26eac16f -->
+
+**Date**: 2026-10-17
+**Task**: 10-17 收尾：cordis 版本范围错配（只在干净安装下现形）
+**Branch**: `dsh-neeko`
+
+### Summary
+
+Session summary was not supplied.
+
+### Main Changes
+
+收尾阶段又抓到一个只在**干净安装**下才现形的真实缺陷，值得单独记 —— 因为它证明「本机全绿」
+本身是假绿的另一种形态。
+
+**现象**：`pnpm run prepublishOnly` 前几次全绿；某次重跑突然 20+ 红：
+`Module '"@deepseek-ai/cordis"' has no exported member 'Volatile'` +
+`schemastery` 两个版本的定义冲突（TS6200）。
+
+**根因**：我的 `package.json` 把 `@deepseek-ai/cordis` 写成 `^4.0.0`，解析到 **4.0.1**；
+而 dsh 0.2.0-rc.2 的各包（如 `dsh-agent-default-model`）声明的是 `~4.0.4`。4.0.1 没有
+`Volatile` 导出，于是新版 dsh 类型引用了它 → 编译失败。同时两代 schemastery 共存导致 TS6200。
+
+**为什么一开始是绿的**：`node_modules` 里残留着上一次解析的结果（4.0.1 恰好够用/或被旧版
+类型掩盖）。**改 lockfile 后重装才暴露**。这正是本任务主题的同一类：契约不一致被环境缓存掩盖。
+
+**修法**：`@deepseek-ai/cordis` peer + dev 都改 `~4.0.4`（对齐 dsh 0.2.0-rc.2 自己的声明）。
+验证：`rm -rf node_modules && pnpm install` 后 `tsc` 干净、68 测试全绿、`prepublishOnly` 全绿
+→ 证明不是靠缓存，而是可复现。
+
+**教训（已入 spec 同节）**：**依赖升级后必须从干净 `node_modules` 复验一次**。
+增量安装会保留旧解析，让「版本范围写错」看起来是通过的。
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff9863c3` | fix(dsh-neeko): pin cordis to ~4.0.4 for the 0.2.x type surface |
+
+### Status
+
+[OK] **Completed**

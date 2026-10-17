@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 307
+- **Total Sessions**: 308
 - **Last Active**: 2026-10-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1942 | Active |
+| `journal-6.md` | ~1988 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 308 | 2026-10-17 | 10-17 收尾：cordis 版本范围错配（只在干净安装下现形） | `ff9863c3` | `dsh-neeko` |
 | 307 | 2026-10-17 | 10-17-dsh-neeko-bridge-fix: dsh 0.2.x 契约迁移（四条根因 + 两次复核抓假绿） | `e272e3a7`, `fb059ebf` | `dsh-neeko` |
 | 306 | 2026-10-17 | 10-16-notify-claude-compat / 10-16-notify-codex：完成度核验、AC 回填、spec 内联与归档 | `41cf223e`, `4f6de2b5` | `main` |
 | 305 | 2026-10-17 | 10-12-agent-notify: 完成度核验、Phase C/AC 文档回填、spec 沉淀与归档 | `944dafb25d16f76eada07fcb11b2cec552f0117b`, `d4bdc046536a9b7bedf90ab5089ea9ec14899bcd` | `main` |

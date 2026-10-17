@@ -89,6 +89,11 @@
    devDep。用 npm `latest`（`^0.0.1-rc.1`）会报 `has no exported member`；必须写 `0.2.0-rc.2`。
 4. **API 换代先查权威类型定义，不猜。** 权威源是上游包的 `lib/types/*.d.ts`
    （如 `SessionEventMap`、`AssistantStreamFrame`），不是旧代码、不是文档摘要。
+5. **依赖升级后必须从干净 `node_modules` 复验一次。** 增量安装会保留旧解析结果，
+   让「版本范围写错」看起来是通过的。实测：`@deepseek-ai/cordis: ^4.0.0` 解析到 4.0.1，
+   而 dsh 0.2.0-rc.2 各包声明 `~4.0.4`（4.0.1 缺 `Volatile` 导出）—— 本机一直绿，
+   `rm -rf node_modules && pnpm install` 后才暴露。
+   判据：`rm -rf node_modules && pnpm install && tsc` 必须与增量安装同结果。
 
 ### 测试形态要求
 
