@@ -268,6 +268,7 @@ pub struct AppStateWrapper {
 | `skill/` | `commands.rs` | Skill 操作（~20 个命令） |
 | `mcp/` | `commands.rs` | MCP 操作（~25 个命令）：server CRUD、tag group CRUD、project bindings、deployment targets、registry search/fetch、test connection、slash resource resolve |
 | `lsp/` | `commands.rs` | 6 个 LSP 命令：request/notification/open/change/close document + session list |
+| `server/` | 无（**基础设施层，不开 Tauri 命令**） | 进程内 HTTP 网关引擎：`engine.rs`（bind/分层/挂载路由组/优雅停机）、`gate.rs`（统一鉴权门）、`group.rs`（`RouteGroup` + `FailurePolicy`）。**零业务分支、零 `tauri::`**（护栏 `check_server_no_business_dep`）；业务路由组由组合根注入（如 `agent/hooks/ingest/handlers.rs::route_group`）。新增客户端形态 = 加一个路由组 + 一行注册，引擎与门零改动 |
 
 ### 新代码应该放在哪里
 
@@ -279,6 +280,8 @@ pub struct AppStateWrapper {
 | Git 操作（纯逻辑） | `git/local.rs`、`git/wsl.rs` 或 `git/remote.rs` |
 | SSH 认证 | `utils/command/ssh_auth.rs`（统一 `authenticate()` 和 `connect_and_authenticate()`） |
 | LSP 操作 | `lsp/manager.rs`（LspManager + LspSession）、`lsp/commands.rs`（Tauri 命令） |
+| 新 HTTP 客户端形态（路由组） | 业务域内建 `route_group()`（返回 `crate::server::RouteGroup`，声明自己的 `FailurePolicy`），在组合根注册；**不改 `server/`** |
+| HTTP 引擎/鉴权能力 | `server/`（引擎与门属进程级基础设施，业务域不得持有） |
 | 主题操作 | `theme/opencode.rs` 或 `theme/pi.rs`（共享工具在 `theme/common.rs`） |
 | 工具函数 | `utils/<name>.rs` |
 | 错误类型扩展 | `core/error.rs` |

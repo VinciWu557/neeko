@@ -784,3 +784,151 @@ match read_settings(&path) {
     None => return Skipped,
 }
 ```
+
+---
+
+## 场景：ingest 传输层已迁到进程内 HTTP 网关（`crate::server`）
+
+> 任务源：`10-17-cs-http-gateway`（2026-10-17）。**wire 契约逐字节不变**，变的是谁在做 HTTP。
+
+### 1. Scope / Trigger
+
+- **Trigger**：C/S 化——进程内常驻一个 HTTP 服务端，后续任何客户端形态（本机 CLI / Web / 其他端）
+  经同一套「鉴权门 → 路由组 → 内核」接入，不再各自造服务与鉴权。hooks ingest 是这套架构的
+  **第一个落脚点**，不是它的定义域。
+- **Scope**：`src-tauri/src/server/`（引擎 + 门 + 路由组契约）、
+  `agent/hooks/ingest/`（8 文件，按「一次请求经过的顺序」+ 正交关注点分层：
+  `handlers` 路由组 / `validation` 准入校验 / `event` 事件契约 / `notify` 通知投影 /
+  `dispatch` 投递链 / `attribution` 归属 / `endpoint` 坐标）、
+  `agent/hooks/boot.rs`（bind → 建门 → 建组 → serve 接线）。
+  **文件命名判据**：文件名必须回答「它做什么」，而不是「它属于哪个抽象层」——
+  「kernel」是 OS 术语、「contract」是抽象分类词，两者都不描述行为，故不用作文件名。
+
+### 2. Signatures
+
+```rust
+// server/mod.rs —— 基础设施层（零业务、零 tauri）
+pub use engine::{serve, ServerConfig, ServerHandle};
+pub use gate::{AuthGate, CredentialExt, HeaderToken};
+pub use group::{FailurePolicy, RouteGroup};
+
+pub fn serve(runtime: &AppRuntime, config: ServerConfig,
+             gate: Arc<AuthGate>, groups: Vec<RouteGroup>) -> std::io::Result<ServerHandle>;
+
+// agent/hooks/ingest/validation.rs —— 准入边界：白名单 → JSON → 会话身份（纯函数、无 IO）
+pub const TOKEN_HEADER: &str;                                  // wire 契约常量（模板锚点测试消费）
+pub fn validate(source: &str, body: &[u8], sink: impl FnMut(&str, HookEvent));
+
+// agent/hooks/ingest/event.rs     —— HookEvent：上报事件契约（公共数据资产）
+// agent/hooks/ingest/handlers.rs  —— handler + RouteGroup 声明 + 投递隔离
+pub fn route_group(app: AppHandle, runtime: Arc<AppRuntime>) -> RouteGroup;      // handlers.rs 生产入口
+pub fn route_group_with(deliver: impl Fn(&str, HookEvent) + Send + Sync + 'static) -> RouteGroup; // 测试缝
+
+// agent/hooks/ingest/dispatch.rs  —— 投递链（唯一有副作用；经 AppRuntime::spawn_blocking）
+pub fn via_blocking_pool(app: AppHandle, runtime: Arc<AppRuntime>)
+    -> impl Fn(&str, HookEvent) + Send + Sync + 'static;
+```
+
+### 3. Contracts
+
+- **分层位置是契约**（不是风格）：必须被失败策略改写的三层由引擎装在**组内、归一化层内侧**——
+  tower 中间件只能改写**来自内层**的响应，装到全局外层则 `panic→500` / `timeout→408` /
+  `body→413` 不经过组内归一化，fail-open 组会向 CLI 漏出 5xx（违背 B1）。
+  洋葱序（外→内）：`access_log → gate(403) → concurrency(503) → [normalize → catch-panic →
+  timeout(408) → body-limit(413) → routes]`。
+- **`axum` 的 `.layer()` 后加者在外**（`docs/routing/layer.md`：middleware executes bottom to top）
+  —— 写反即静默失效。
+- **门在并发限制之外**：未鉴权请求在门处即 403、**不占并发槽位**；403 同时在组归一化之外，
+  不被 fail-open 改写（错 token 必须见 403）。
+- **并发上限自写 semaphore 中间件**：tower-http **没有**并发限制层（实测 0.6.8），
+  `tower::limit::ConcurrencyLimitLayer` 是 `poll_ready` 排队语义（会堆积到超时），
+  与「超限立即拒绝」相反。
+- **`TimeoutLayer::new` 自 0.6.7 起 deprecated 且默认 408**：必须用
+  `TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, …)`（`-D warnings` 会拦旧 API）。
+- **投递必须隔离（红线 3）**：`deliver_notification`（`dispatch.rs`）同步持
+  `project_manager` / `notification.policy` 两把 std `Mutex`；handler 跑在 Tauri 共享 runtime
+  worker 上，必须经 `AppRuntime::spawn_blocking` fire-and-forget 投递（生产闭包 =
+  `dispatch::via_blocking_pool`）。204 不依赖投递结果，响应不再含锁等待。
+- **token 校验唯一位置是门**：准入层（`validation`）不再持有 token、不做比较（`ct_eq` 调用点 = 1，AC7）。
+- **访问日志用自写 `log` 中间件**：`tower_http::TraceLayer` 发 `tracing` 事件，本仓日志是
+  `log` crate、无 subscriber → 生产静默 no-op。
+
+### 4. Validation & Error Matrix
+
+| 输入 | 产出 |
+|---|---|
+| 合法 token + 已注册 source + 合法 JSON | 204，投递 1 次 |
+| token 不符 / 缺失 | 403（门产出，不经归一化） |
+| 未知 source | 204 + `log::warn`，不投递 |
+| 非法 JSON / 空 session_id / 缺必填 | 204，不投递 |
+| body > 64KB | 引擎 413 → 组内归一 → 204 |
+| 请求超时 | 408 → 组内归一 → 204 |
+| handler panic | 500 → 组内归一 → 204 |
+| 并发超上限 | 503（组外，shim 忽略 status） |
+| **未知路径 / 方法不符** | **404 / 405 原样透出，不被归一化** |
+| 裸非 HTTP 字节 / 超长头 | 400 / 431（**已记录偏差**：真实 shim 只发 fetch 生成的合法 HTTP） |
+
+**归一化的范围是契约，不是「所有 4xx/5xx」**（2026-10-17 复审修正）：只覆盖三个**框架级异常**
+（`catch-panic` 的 500 / `timeout` 的 408 / `body-limit` 的 413）。路由层自产的 404 / 405 必须透出 ——
+「请求没打对」不是「我们失败了」，吞掉它会让客户端打错地址与内部 panic 在 wire 上不可区分，
+且与「门在归一化之外、错 token 必须见 403」自相矛盾。
+
+判据与层产出码共用 `engine::framework_status` 常量（**单一事实源**）：若两处各写字面量，
+改超时码会静默打破归一化 —— 层产 504 而判据只认 408 → fail-open 组漏出 5xx 且无测试变红。
+
+### 5. Tests Required
+
+- `server::gate::tests`：凭证提取 / 恒定时间匹配 / OR 语义 / 空列表恒拒 /
+  **任意畸形头零 panic**（门在组内 catch-panic 之外，panic 无人兜底）。
+- `server::engine::tests`：bind loopback / 403 不被归一化 / panic、timeout、body 超限三态各验
+  FailOpen 与 FailClosed / 并发 503 / **未鉴权不占槽位** / `stop()` 收敛（**必须经独立 OS 线程**：
+  `block_on_shutdown` 在 runtime 线程内 panic）/
+  **404 与 405 不被归一化**（`routing_errors_are_not_normalized_by_failure_policy`）/
+  **归一化判据与层产出码同源**（`framework_exception_codes_are_recognized_by_the_policy`）。
+
+  **历史教训（2026-10-17 复审）**：曾有三条 panic/timeout/未鉴权用例用 `request()`（默认 POST）
+  打 `get()` 路由 → 恒 405。旧归一化判据是「所有 4xx/5xx」，405 被吞成 204，**三条用例因此假绿** ——
+  panic 路径根本没被执行过。收窄判据后它们立刻转红，暴露了这个持续整个开发周期的覆盖空洞。
+  教训有两条：① 用例必须断言「真的打到了目标」（`panic_path_really_reaches_the_handler` 即为此而加）；
+  ② 归一化范围越宽，越容易把测试失误转成假绿。
+- `tests/unit/http_gateway_test.rs`：真引擎 + 真 socket + `route_group_with` 注入 sink，
+  **状态码 + 投递记录双断言**（AC2）。集成测试是独立 crate、无 `tauri::test` feature，
+  构造不出 `AppHandle` —— 不得为此给 tauri 加 `test` feature。
+- **真机端到端**（2026-10-17 已确认）：真实 CLI POST → 204 → 系统通知送达；
+  日志 `[http] POST /hook/pi -> 204 (182µs)` 同时证明 204 不含锁等待（H4）。
+
+### 6. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// ❌ 三层装在全局外层：panic/超时/413 不经过组内归一化，fail-open 组漏出 5xx
+Router::new().merge(mount_all(groups)).layer(CatchPanicLayer::default())
+    .layer(TimeoutLayer::new(d)).layer(ConcurrencyLimitLayer::new(16));
+
+// ❌ handler 里同步投递：std Mutex 占住共享 runtime worker，前端 IPC 一起停摆
+//   （`deliver_notification` 是 dispatch.rs 的 private 实现，只允许出现在 spawn_blocking 闭包内）
+validate(&source, &body, |s, e| deliver_notification(&app, s, e));
+
+// ❌ 为了测试投递给 tauri 开 test feature（污染生产依赖面）
+```
+
+#### Correct
+
+```rust
+// ✅ 组内：normalize 在最外，三层在它内侧
+group.router
+    .layer(RequestBodyLimitLayer::new(max_bytes))
+    .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, timeout))
+    .layer(CatchPanicLayer::custom(panic_response))
+    .layer(FailurePolicyLayer::new(name, policy));
+
+// ✅ handler 只调注入的闭包；生产闭包走阻塞池
+route_group_with(move |source, envelope| {
+    let source = source.to_owned();
+    runtime.spawn_blocking(move || deliver_notification(&app, &source, envelope));
+})
+
+// ✅ 测试缝注入记录型 sink，走真引擎真 socket
+route_group_with(move |s, e| recorded.lock().unwrap().push((s.to_owned(), e)));
+```

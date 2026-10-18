@@ -383,6 +383,35 @@ use state::*;
 
 （原 AGENTS.md 审查红线 7，2026-09-25 迁入本文件；规则索引仍保留在 `src-tauri/AGENTS.md`。）
 
+### 6. 用「宽判据兜底层」掩盖未触达目标的测试
+
+**形状**：某层用一个范围判据（`is_client_error() || is_server_error()`、`Err(_) => ok`、
+`_ => default`）把一整类结果归一化，测试于是断言那个归一化后的值 —— 输入错了也照样绿。
+
+**2026-10-17 实例**（`server/engine.rs` 归一化层，事故全过程已记入
+`.trellis/spec/backend/agent-hooks-domain.md`「Tests Required」段）：
+
+```rust
+let router = Router::new().route("/boom", get(boom_handler));  // GET 路由
+let (status, _) = request(port, "/boom", Some(TOKEN)).await;     // ← 默认发 POST
+assert_eq!(status, 204);   // 405 被归一化成 204 → 通过，但 panic 路径从未执行
+```
+
+四条用例（panic×2 / timeout / 门拒绝）用 POST 打 GET 路由，恒 405，被归一化吞成 204，
+**整个开发周期一直假绿**。收窄判据后它们立刻转红，暴露 AC4 里两条承重路径实际无覆盖。
+
+两条判据：
+
+1. **测试必须自证「打到了目标」**。断言目标行为的同时，反证一条**必然不同**的输入
+   （上面的 `panic_path_really_reaches_the_handler`：GET→204 且 POST→405）。
+   若找不到这样的反证输入，说明该用例与另一路径不可区分 —— 它测的是实现细节而非契约。
+2. **归一化/兜底的范围必须是显式枚举，不是范围匹配**。范围越宽，能吸纳的错误输入越多。
+   「所有 4xx/5xx」听起来周全，实则为一切失误准备了出口。
+
+> 与非禁止项「设计合理的兜底」的界线：兜底本身不是问题（fail-open、`unwrap_or_default` 都合法）。
+> 问题只在于**兜底判据的范围宽到足以吸纳测试的自身失误**，且没有任何一条测试能区分
+> 「兜底正确工作」与「输入根本没走到目标」。
+
 ---
 
 ## 必需模式
