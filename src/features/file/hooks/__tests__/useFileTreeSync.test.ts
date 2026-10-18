@@ -1,7 +1,9 @@
 import { listen } from '@tauri-apps/api/event';
-import { renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { readDirTree } from '@/features/file/api/fileApi';
+import { useFileStore } from '@/features/file/store';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
 
 import { useFileTreeSync, type UseFileTreeSyncOptions } from '../useFileTreeSync';
@@ -81,5 +83,63 @@ describe('useFileTreeSync — file-tree-changed 订阅注销竞态', () => {
     expect(raceUnlisten).toHaveBeenCalledTimes(2);
     // 契约 2：重试成功 → 不触发用户可见 toast（reportFrontendError）
     expect(reportMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('useFileTreeSync — 首次加载三端同源（不再按 Local / WSL-Remote 分流）', () => {
+  const readDirTreeMock = vi.mocked(readDirTree);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useFileStore.getState().reset();
+    readDirTreeMock.mockResolvedValue({ nodes: [], truncated: false });
+    // clearAllMocks 会清掉上一个 describe 里 listen 的 mockReturnValue → 重新给出
+    // 一个可注销的 unlisten，否则清理阶段 `unlistenPromise.then` 会读到 undefined。
+    listenMock.mockReturnValue(Promise.resolve(vi.fn(() => Promise.resolve())));
+  });
+
+  const renderSync = (overrides: Partial<UseFileTreeSyncOptions> = {}) =>
+    renderHook((p: UseFileTreeSyncOptions) => useFileTreeSync(p), {
+      initialProps: makeOptions(overrides),
+    });
+
+  it('Local：首次加载直接写 store，不经 context 的 onLoadFileTree', async () => {
+    const onLoadFileTree = vi.fn();
+    renderSync({ onLoadFileTree });
+
+    await waitFor(() => {
+      expect(useFileStore.getState().owner).toBe('p1:/tmp/proj');
+    });
+    // 首次加载统一走 store.loadDir：context 通道不再承担加载职责
+    expect(onLoadFileTree).not.toHaveBeenCalled();
+    expect(readDirTreeMock).toHaveBeenCalled();
+  });
+
+  it('WSL/Remote：同一路径写 store（与 Local 无分支差异）', async () => {
+    const onLoadFileTree = vi.fn();
+    renderSync({
+      onLoadFileTree,
+      project: { id: 'p1', type: 'Wsl' } as UseFileTreeSyncOptions['project'],
+    });
+
+    await waitFor(() => {
+      expect(useFileStore.getState().owner).toBe('p1:/tmp/proj');
+    });
+    expect(onLoadFileTree).not.toHaveBeenCalled();
+    expect(readDirTreeMock).toHaveBeenCalled();
+  });
+
+  it('手动刷新：三端一致地走 store.refreshTree（不再分流到 onFileRefresh）', async () => {
+    const onFileRefresh = vi.fn();
+    const { result } = renderSync({ onFileRefresh });
+    await waitFor(() => expect(useFileStore.getState().owner).toBe('p1:/tmp/proj'));
+    readDirTreeMock.mockClear();
+
+    await act(async () => {
+      result.current.handleRefresh();
+    });
+
+    expect(onFileRefresh).not.toHaveBeenCalled();
+    expect(readDirTreeMock).toHaveBeenCalled();
   });
 });

@@ -3,7 +3,7 @@ import React, { useState, useCallback, useRef, useEffect, startTransition } from
 
 import DirectoryPickerDialog from '@/features/action-menu/components/DirectoryPickerDialog';
 import { readDirTree, saveNewFile } from '@/features/file/api/fileApi';
-import { useFileStore } from '@/features/file/store';
+import { fileTreeOwner, useFileStore } from '@/features/file/store';
 // eslint-disable-next-line import/no-restricted-paths -- Save As 后需显式刷新该Workspace的 git status（git feature 未把该入口纳入门面）
 import { refreshWorkspaceStatus } from '@/features/git/utils/gitStatus';
 import { useProjectStore } from '@/shared/store/projectStore';
@@ -91,7 +91,7 @@ const SaveFileDialog: React.FC = () => {
     if (!request || !activeProject) return;
     try {
       const rootPath = activeCheckoutPath ?? activeProject.path;
-      const owner = `${request.projectId}:${rootPath}`;
+      const owner = fileTreeOwner(request.projectId, rootPath);
       const loader = () => readDirTree(activeWorkspaceSession(request.projectId), null);
       await useFileStore.getState().loadDir(owner, '', loader, {
         force: true,

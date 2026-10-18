@@ -1,8 +1,8 @@
 import { listen } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { readDirTree } from '@/features/file/api/fileApi';
-import { useFileStore } from '@/features/file/store';
+import { fileTreeOwner, useFileStore } from '@/features/file/store';
 import { FILE_TREE_CHANGED_EVENT } from '@/shared/events';
 import { activeWorkspaceSession, activeWorkspaceKeyOf } from '@/shared/store/workspaceStore';
 import type { ProjectView, FileTreeChangedEvent } from '@/shared/types';
@@ -17,32 +17,31 @@ export interface UseFileTreeSyncOptions {
   fileRootPath: string | null;
   /** 面板在 dock 中是否激活（激活时才发起首次加载） */
   isActive: boolean;
-  onLoadFileTree: (pid: ProjectId, rootPath: string) => void;
-  onFileRefresh: () => void;
-  onExpandDir: (dirPath: string) => Promise<void>;
 }
 
 /**
- * 文件树同步编排（Local 与 WSL/Remote 走同一后端命令，仅刷新路径不同）。
+ * 文件树同步编排（Local / WSL / Remote 完全同一条路径）。
  *
- * 内聚目录加载 / file-tree-changed 事件刷新 / 手动刷新 / 懒加载展开，
- * 使 FilesPanelWrapper 保持薄适配、可独立测试。
+ * 内聚目录加载 / file-tree-changed 事件刷新 / 手动刷新，使 FilesPanelWrapper
+ * 保持薄适配、可独立测试。
  *
- * - 目录加载器：统一走 `readDirTree`（后端按 `ExecTarget` 路由三端），注入 store
- *   （store 不感知命令差异）；
- * - 加载 effect：面板激活切换 / fileRootPath 变化 / WSL-Remote 首次加载时触发，
- *   通过 prev refs 避免冗余加载；
- * - 事件监听：仅本地项目响应 file-tree-changed（WSL/Remote 不经过本地 notify
- *   watcher），静默全树刷新（不切换 loading 态）。
+ * **加载与刷新的唯一写入面是 `useFileStore`** —— 不再按项目类型分流：
+ * 历史上 Local 经 `onLoadFileTree`（context → `useFileView.loadFileTree`）而
+ * WSL/Remote 直接 `store.loadDir/refreshTree`，两条路各自维护“何时加载 / 是否强制”，
+ * 任何一边改语义（如 force 的含义）就会只有一类项目生效。地址（owner）与读取
+ * 命令（`readDirTree` 按 `ExecTarget` 路由）本来就三端同源，分流没有存在理由。
+ *
+ * - 加载器：统一走 `readDirTree`，注入 store（store 不感知命令差异）；
+ * - 首次加载 effect：面板激活 / 切项目 / 切 worktree 时触发，prev refs 防冗余；
+ * - 刷新：统一走 `store.refreshTree`（重载根 + 已展开目录）；
+ * - 事件监听：仅本地项目响应 file-tree-changed（WSL/Remote 不经过本地 watcher），
+ *   静默定向重载命中桶。
  */
 export function useFileTreeSync({
   project,
   activeProjectId,
   fileRootPath,
   isActive,
-  onLoadFileTree,
-  onFileRefresh,
-  onExpandDir,
 }: UseFileTreeSyncOptions) {
   const makeLoader = useCallback(
     (pid: ProjectId, dirPath: string) => () =>
@@ -57,11 +56,13 @@ export function useFileTreeSync({
     [],
   );
 
-  // Track previous values to avoid redundant file tree loads.
-  // This effect should only fire when:
-  //   1. Panel transitions from inactive → active (isActive flips to true)
-  //   2. fileRootPath changes within the SAME project (e.g., worktree switch)
-  //   3. WSL/Remote project needs initial tree load
+  /**
+   * 树所属的**项目身份单点**：Local 取 `activeProjectId`（本地项目可能尚未进入
+   * 统一项目表），WSL/Remote 取 `project.id`。此前这一判断在 5 处各自书写，
+   * 任何一处改规则就会出现「树按 A 项目寻址、事件按 B 项目过滤」的错配。
+   */
+  const treeProjectId = project ? (project.type === 'Local' ? activeProjectId : project.id) : null;
+
   const prevProjectIdRef = useRef<string | null>(null);
   const prevIsActiveRef = useRef(false);
   const prevFileRootPathRef = useRef<string | null>(null);
@@ -72,31 +73,26 @@ export function useFileTreeSync({
       return;
     }
 
-    const projectId = project.type === 'Local' ? activeProjectId : project.id;
+    const projectId = treeProjectId;
     const justBecameActive = !prevIsActiveRef.current && isActive;
     const sameProject = prevProjectIdRef.current === projectId;
     const fileRootPathChanged = fileRootPath !== prevFileRootPathRef.current;
 
-    // For local projects: load when panel just became active, when switching
-    // to a different project (e.g., from WSL/Remote back to local), or when
-    // fileRootPath actually changed within the same project (e.g., worktree switch).
-    // Skip when only the project object reference changed (e.g., git-changed re-fetch)
-    // but the project ID and fileRootPath are the same.
-    if (project.type === 'Local' && activeProjectId) {
-      if (justBecameActive || !sameProject || (sameProject && fileRootPathChanged)) {
-        onLoadFileTree(activeProjectId, fileRootPath);
+    // 首次加载 / 切项目 / 切 worktree：三端同一条 `store.loadDir`。
+    // 幂等由 store 保证（同一 owner 已 loaded 即跳过；owner 跳变则缓存与
+    // 展开态一起作废后重载）。仅当 projectId 与 fileRootPath 都未变（如 git 刷新
+    // 引起的对象新引用）时才跳过，避开冗余读取。
+    if (treeProjectId) {
+      if (justBecameActive || !sameProject || fileRootPathChanged) {
+        const owner = fileTreeOwner(treeProjectId, fileRootPath);
+        void useFileStore.getState().loadDir(owner, '', makeLoader(treeProjectId, ''));
       }
-    } else if (project.type !== 'Local') {
-      // WSL/Remote: always load since there's no handleSelectProjectWithClear for them
-      const owner = `${project.id}:${fileRootPath}`;
-      const loader = makeLoader(project.id, '');
-      void useFileStore.getState().loadDir(owner, '', loader);
     }
 
     prevProjectIdRef.current = projectId ?? null;
     prevIsActiveRef.current = isActive;
     prevFileRootPathRef.current = fileRootPath;
-  }, [isActive, project, activeProjectId, fileRootPath, onLoadFileTree, makeLoader]);
+  }, [isActive, project, treeProjectId, fileRootPath, makeLoader]);
 
   // 监听后端 file-tree-changed 事件（文件新增/删除/重命名），静默刷新目录树
   // 静默刷新：不切换 loading 态，旧树保持展示直到新数据到达，避免闪烁
@@ -115,7 +111,7 @@ export function useFileTreeSync({
       if (!fileRootPath) return;
       // 静默刷新：后端携带受影响目录集合时定向重载命中桶（S2-2，成本 O(变更)）；
       // dirs 为空 = 变更范围未知（watcher overflow），退回全量兜底。
-      const owner = `${activeProjectId}:${fileRootPath}`;
+      const owner = fileTreeOwner(activeProjectId, fileRootPath);
       void useFileStore
         .getState()
         .refreshTree(owner, (dirPath) => makeLoader(activeProjectId, dirPath), {
@@ -128,31 +124,38 @@ export function useFileTreeSync({
     };
   }, [activeProjectId, project, fileRootPath, makeLoader]);
 
-  // WSL/Remote: 通过 store.refreshTree 强制全树重载（失败保留旧内容 + error 态，不置空）。
-  // Local: delegate to onFileRefresh (context → useFileView.loadFileTree, force 全树刷新)。
+  // 手动刷新：三端一致走 store.refreshTree（重载根 + 已展开目录，失败保留旧内容
+  // + error 态，不置空）。不再按项目类型分流到 context。
   const handleRefresh = useCallback(() => {
-    if (project && project.type !== 'Local' && fileRootPath) {
-      const owner = `${project.id}:${fileRootPath}`;
-      void useFileStore.getState().refreshTree(owner, (dirPath) => makeLoader(project.id, dirPath));
-    } else {
-      onFileRefresh();
-    }
-  }, [project, fileRootPath, onFileRefresh, makeLoader]);
+    if (!treeProjectId || !fileRootPath) return;
+    const owner = fileTreeOwner(treeProjectId, fileRootPath);
+    void useFileStore
+      .getState()
+      .refreshTree(owner, (dirPath) => makeLoader(treeProjectId, dirPath));
+  }, [treeProjectId, fileRootPath, makeLoader]);
 
-  // 懒加载子目录：WSL/Remote 通过 store.loadDir（幂等），Local 通过 context（useFileView.expandSubTree）
-  const handleExpandDir = useCallback(
-    async (dirPath: string) => {
-      if (project && project.type !== 'Local' && fileRootPath) {
-        const owner = `${project.id}:${fileRootPath}`;
-        const loader = makeLoader(project.id, dirPath);
-        await useFileStore.getState().loadDir(owner, dirPath, loader);
-      } else {
-        // Local：委托给 context（→ useFileView.expandSubTree）
-        await onExpandDir(dirPath);
-      }
-    },
-    [project, fileRootPath, onExpandDir, makeLoader],
+  // 本面板视图的**单一寻址面**：项目身份（`treeProjectId`）、owner 与目录 loader
+  // 同源（同一 project/root 解析），供上层（useDirExpansion / FilesPanel / Wrapper）
+  // 直接使用 —— 调用方不再各自拼 owner、不再各自写「Local 取 activeProjectId」
+  // 的项目身份判断，也不分 Local / WSL / Remote 各拿一个 loader。
+  const treeOwner = useMemo(
+    () => (treeProjectId && fileRootPath ? fileTreeOwner(treeProjectId, fileRootPath) : null),
+    [treeProjectId, fileRootPath],
   );
 
-  return { handleRefresh, handleExpandDir };
+  const makeDirLoader = useCallback(
+    (dirPath: string) =>
+      treeProjectId
+        ? makeLoader(treeProjectId, dirPath)
+        : () =>
+            Promise.reject(
+              new Error(
+                `cannot load directory "${dirPath}": no active project ` +
+                  `(project=${project?.id ?? 'null'}, root=${fileRootPath ?? 'null'})`,
+              ),
+            ),
+    [treeProjectId, makeLoader, project, fileRootPath],
+  );
+
+  return { handleRefresh, treeOwner, treeProjectId, makeDirLoader };
 }

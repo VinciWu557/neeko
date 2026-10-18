@@ -41,15 +41,12 @@ export interface AppShellData {
   handleSaveProjectSettings: ProjectActionsContextValue['onSaveProjectSettings'];
   // file actions
   handleFileSelect: FileActionsContextValue['onFileSelect'];
-  handleFileRefresh: FileActionsContextValue['onFileRefresh'];
   fileView: {
     closeTab: FileActionsContextValue['onFileCloseTab'];
     activateTab: FileActionsContextValue['onFileActivateTab'];
     saveFile: FileActionsContextValue['onFileSave'];
     saveTabById: FileActionsContextValue['onFileSaveTab'];
     updateTabContent: FileActionsContextValue['onFileContentChange'];
-    loadFileTree: FileActionsContextValue['onLoadFileTree'];
-    expandSubTree: FileActionsContextValue['onExpandDir'];
   };
   // wsl
   wslEntries: ConnectionProjectContextValue['wslEntries'];
@@ -131,7 +128,6 @@ export function buildAppShellValues(data: AppShellData) {
     handleDragEnd,
     handleSaveProjectSettings,
     handleFileSelect,
-    handleFileRefresh,
     fileView,
     wslEntries,
     wslOpenSessions,
@@ -204,14 +200,11 @@ export function buildAppShellValues(data: AppShellData) {
   };
   const fileActionsValue: FileActionsContextValue = {
     onFileSelect: handleFileSelect,
-    onFileRefresh: handleFileRefresh,
     onFileCloseTab: fileView.closeTab,
     onFileActivateTab: fileView.activateTab,
     onFileSave: fileView.saveFile,
     onFileSaveTab: fileView.saveTabById,
     onFileContentChange: fileView.updateTabContent,
-    onLoadFileTree: fileView.loadFileTree,
-    onExpandDir: fileView.expandSubTree,
   };
   const connectionProjectValue: ConnectionProjectContextValue = {
     // WSL fields

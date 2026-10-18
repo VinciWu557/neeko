@@ -23,7 +23,6 @@ import { CLOSE_TAB_EVENT } from '@/shared/events';
 import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { getActiveCheckoutPath } from '@/shared/store/workspaceStore';
 import { safeUnlisten } from '@/shared/utils/safeUnlisten';
 
 import type { ToolbarFooterProps } from '../components/ToolbarFooter';
@@ -193,16 +192,6 @@ export function useAppShellData(): UseAppShellDataResult {
     },
     [fileView],
   );
-  const handleFileRefresh = useCallback(() => {
-    const projectId = useProjectStore.getState().activeProjectId ?? null;
-    if (!projectId) return;
-    const rootPath =
-      getActiveCheckoutPath() ?? useProjectStore.getState().activeProject?.path ?? undefined;
-    // force = true: manual refresh must bypass the "already loaded" idempotency
-    // check, otherwise a loaded tree would never re-fetch (the root cause of
-    // "refresh button does nothing after file changes").
-    fileView.loadFileTree(projectId, rootPath, true);
-  }, [fileView]);
   const handleWslDiffBack = useCallback(() => {
     wslActionsWrap.setWslDiffState?.(null);
   }, [wslActionsWrap]);
@@ -335,7 +324,6 @@ export function useAppShellData(): UseAppShellDataResult {
     handleDragEnd,
     handleSaveProjectSettings: agentActionsWrap.handleSaveProjectSettings,
     handleFileSelect,
-    handleFileRefresh,
     fileView,
     wslEntries,
     wslOpenSessions,

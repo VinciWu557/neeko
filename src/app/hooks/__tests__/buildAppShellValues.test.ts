@@ -11,8 +11,6 @@ function makeData(): AppShellData {
     saveFile: vi.fn(),
     saveTabById: vi.fn(),
     updateTabContent: vi.fn(),
-    loadFileTree: vi.fn(),
-    expandSubTree: vi.fn(),
   };
   return {
     config: {
@@ -43,7 +41,6 @@ function makeData(): AppShellData {
     handleDragEnd: fn,
     handleSaveProjectSettings: fn,
     handleFileSelect: fn,
-    handleFileRefresh: fn,
     fileView,
     wslEntries: [],
     wslOpenSessions: [],
@@ -125,14 +122,13 @@ describe('buildAppShellValues', () => {
     const { fileActionsValue } = buildAppShellValues(data);
 
     expect(fileActionsValue.onFileSelect).toBe(data.handleFileSelect);
-    expect(fileActionsValue.onFileRefresh).toBe(data.handleFileRefresh);
     expect(fileActionsValue.onFileCloseTab).toBe(data.fileView.closeTab);
     expect(fileActionsValue.onFileActivateTab).toBe(data.fileView.activateTab);
     expect(fileActionsValue.onFileSave).toBe(data.fileView.saveFile);
     expect(fileActionsValue.onFileSaveTab).toBe(data.fileView.saveTabById);
     expect(fileActionsValue.onFileContentChange).toBe(data.fileView.updateTabContent);
-    expect(fileActionsValue.onLoadFileTree).toBe(data.fileView.loadFileTree);
-    expect(fileActionsValue.onExpandDir).toBe(data.fileView.expandSubTree);
+    // 文件树的加载/刷新/展开均不再经 context 转发：owner + loader 由
+    // useFileTreeSync 直接从 store 与 fileApi 构造并供给 FilesPanel。
   });
 
   it('should_forward_wsl_and_remote_connection_fields', () => {

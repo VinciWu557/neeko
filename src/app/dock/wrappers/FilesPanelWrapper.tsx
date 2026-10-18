@@ -10,7 +10,6 @@ import {
   renamePath,
   revealInFileManager,
 } from '@/features/file/api/fileApi';
-import { useFileStore } from '@/features/file/store';
 import { refreshWorkspaceStatus } from '@/features/git/utils/gitStatus';
 import { useActiveProject } from '@/features/project';
 import { useAppContext } from '@/shared/contexts';
@@ -28,12 +27,11 @@ import { canonicalFsPath } from '@/shared/utils/fileRef';
 /** 空忽略列表常量：保证引用稳定，避免下游 effect/callback 依赖抖动 */
 
 const FilesPanelWrapper: React.FC = React.memo(() => {
-  const { onFileSelect, onFileRefresh, onLoadFileTree, onExpandDir } = useFileActionsContext();
+  const { onFileSelect } = useFileActionsContext();
   const { project, worktreePath } = useActiveProject();
   const { config, showToast } = useAppContext();
   const projectName = project?.name ?? null;
   const fileRootPath = worktreePath ?? project?.path ?? null;
-  const activeFilePath = useFileStore((s) => s.activeFilePath);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeWorkspaceKey = useActiveWorkspaceKey(project?.id ?? null);
   const projectPath = fileRootPath;
@@ -47,9 +45,6 @@ const FilesPanelWrapper: React.FC = React.memo(() => {
   const tabKey = project ? activeWorkspaceKey : null;
   const { canLocateFile, filePath: locateTargetPath } = useLocateFileInTree(tabKey, fileRootPath);
 
-  // Compute projectId for use by child components (drag-and-drop, etc.)
-  const projectId = project ? (project.type === 'Local' ? activeProjectId : project.id) : null;
-
   // 面板在 dock 中激活（任一 zone 激活且展开）才发起首次加载
   const isActive = useDockStore((s) => {
     for (const zone of Object.values(s.zones)) {
@@ -59,14 +54,13 @@ const FilesPanelWrapper: React.FC = React.memo(() => {
   });
 
   // 目录加载 / file-tree-changed 事件刷新 / 手动刷新 / 懒加载展开（feature hook）
-  const { handleRefresh, handleExpandDir } = useFileTreeSync({
+  // treeProjectId 同时是本面板的项目身份（拖拽 / CRUD 寻址）与树的寻求地址 ——
+  // 「Local 取 activeProjectId、其余取 project.id」只在这里派生一次。
+  const { handleRefresh, treeOwner, treeProjectId, makeDirLoader } = useFileTreeSync({
     project,
     activeProjectId,
     fileRootPath,
     isActive,
-    onLoadFileTree,
-    onFileRefresh,
-    onExpandDir,
   });
 
   // 在 Browser Panel 中打开 HTML 文件（仅本地项目）
@@ -110,18 +104,18 @@ const FilesPanelWrapper: React.FC = React.memo(() => {
   // 错误向上抛给 FilesPanel 处理（弹通知），成功后静默刷新目录树
   const handleCreate = useCallback(
     async (dirPath: string, name: string, kind: 'file' | 'dir') => {
-      if (!projectId) return;
+      if (!treeProjectId) return;
       const relPath = dirPath ? `${dirPath}/${name}` : name;
       if (kind === 'file') {
-        await createNewFile(activeWorkspaceSession(projectId), relPath);
+        await createNewFile(activeWorkspaceSession(treeProjectId), relPath);
       } else {
-        await createDirectory(activeWorkspaceSession(projectId), relPath);
+        await createDirectory(activeWorkspaceSession(treeProjectId), relPath);
       }
       handleRefresh();
       // 显式刷新**该单元**的 status，使新文件立即着色（Untracked）
       if (workspaceKey) void refreshWorkspaceStatus(workspaceKey);
     },
-    [projectId, handleRefresh, workspaceKey],
+    [treeProjectId, handleRefresh, workspaceKey],
   );
 
   const handleCreateFile = useCallback(
@@ -136,33 +130,34 @@ const FilesPanelWrapper: React.FC = React.memo(() => {
 
   const handleDeletePath = useCallback(
     async (path: string) => {
-      if (!projectId) return;
-      await deletePath(activeWorkspaceSession(projectId), path);
+      if (!treeProjectId) return;
+      await deletePath(activeWorkspaceSession(treeProjectId), path);
       handleRefresh();
       if (workspaceKey) void refreshWorkspaceStatus(workspaceKey);
     },
-    [projectId, handleRefresh, workspaceKey],
+    [treeProjectId, handleRefresh, workspaceKey],
   );
 
   const handleRenamePath = useCallback(
     async (path: string, newName: string) => {
-      if (!projectId) return;
-      await renamePath(activeWorkspaceSession(projectId), path, newName);
+      if (!treeProjectId) return;
+      await renamePath(activeWorkspaceSession(treeProjectId), path, newName);
       handleRefresh();
       if (workspaceKey) void refreshWorkspaceStatus(workspaceKey);
     },
-    [projectId, handleRefresh, workspaceKey],
+    [treeProjectId, handleRefresh, workspaceKey],
   );
 
   return (
     <FilesPanel
       projectName={projectName}
       projectPath={projectPath}
-      projectId={projectId}
-      activeFilePath={activeFilePath}
+      projectId={treeProjectId}
+      activeFilePath={locateTargetPath}
       onSelectFile={onFileSelect}
       onRefresh={handleRefresh}
-      onExpandDir={handleExpandDir}
+      owner={treeOwner}
+      makeDirLoader={makeDirLoader}
       projectType={project?.type ?? null}
       onOpenInBrowser={handleOpenInBrowser}
       onOpenInSystemBrowser={handleOpenInSystemBrowser}

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import ContextMenu from '@/shared/components/ContextMenu';
 import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
-import type { FileChange } from '@/shared/types';
+import type { DirTreeResult, FileChange } from '@/shared/types';
 import { buildFileTreeView, flattenFileTreeView } from '@/shared/utils/fileTree';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
@@ -27,8 +27,13 @@ interface FilesPanelProps {
   activeFilePath: string | null;
   onSelectFile: (filePath: string) => void;
   onRefresh: () => void;
-  /** 懒加载：按需加载超过初始深度的子目录 */
-  onExpandDir: (dirPath: string) => Promise<void>;
+  /**
+   * 数据归属 `${projectId}:${rootPath}`（[`fileTreeOwner`] 铸造）。
+   * 展开态与目录缓存同存于此坐标系，切项目/worktree 时一起作废。
+   */
+  owner: string | null;
+  /** 目录加载器（store.loadDir 的 loader 入参）：读取深度等语义由上层决定 */
+  makeDirLoader: (dirPath: string) => () => Promise<DirTreeResult>;
   /** 项目类型 */
   projectType?: 'Local' | 'Wsl' | 'Remote' | null;
   /** 在 Browser Dock Panel 中打开 HTML 文件 */
@@ -62,7 +67,8 @@ function FilesPanel({
   activeFilePath,
   onSelectFile,
   onRefresh,
-  onExpandDir,
+  owner,
+  makeDirLoader,
   projectType,
   onOpenInBrowser,
   onOpenInSystemBrowser,
@@ -90,10 +96,11 @@ function FilesPanel({
   const readDirCb = useCallback((dirPath: string) => dirsRef.current[dirPath] ?? [], []);
   const state = useFilePanelState({
     projectPath,
+    owner,
     activeFilePath,
     onSelectFile,
     onRefresh,
-    onExpandDir,
+    makeDirLoader,
     readDir: readDirCb,
     projectType,
     onOpenInBrowser,
@@ -239,7 +246,7 @@ function FilesPanel({
         projectId={projectId}
         onSelectFile={onSelectFile}
         onToggleDir={state.handleToggleDir}
-        onRetryDir={onExpandDir}
+        onRetryDir={state.expandDir}
         onRefresh={onRefresh}
         onContextMenu={state.handleContextMenu}
         onSelectNode={state.handleSelectNode}
