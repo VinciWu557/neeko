@@ -13,18 +13,9 @@ import React, { useEffect, useRef } from 'react';
 import { useAppContext } from '@/shared/contexts/AppContext';
 import { useBrowserStore } from '@/shared/store/browserStore';
 import { useDockStore } from '@/shared/store/dockStore';
-import {
-  applyRenderer,
-  buildTerminalTheme,
-  safeDisposeTerminal,
-  TERMINAL_SCROLLBACK,
-} from '@/shared/utils/terminal';
+import { observeContainerSize } from '@/shared/utils/containerObserver';
+import { applyRenderer, buildTerminalOptions, safeDisposeTerminal } from '@/shared/utils/terminal';
 import { setupTerminalInput, type TerminalInputController } from '@/shared/utils/terminalInput';
-import {
-  buildMonoStack,
-  resolveTerminalLineHeight,
-  TERMINAL_FONT_WEIGHT,
-} from '@/shared/utils/typography';
 
 import { writeTaskInput } from '../taskRunner';
 import type { TaskRun } from '../types';
@@ -54,20 +45,17 @@ function TaskConsoleOutput({ run, active }: Props) {
     const el = containerRef.current;
     if (!el) return;
 
-    const term = new Terminal({
-      convertEol: true,
-      disableStdin: readOnly,
-      cursorBlink: false,
-      cursorStyle: 'underline',
-      fontSize: config.terminalFontSize ?? 14,
-      fontWeight: TERMINAL_FONT_WEIGHT,
-      // 行高 flat 1.0（与 TerminalViewBase/terminalFactory 一致，见 typography）
-      lineHeight: resolveTerminalLineHeight(config.terminalFontSize ?? 14),
-      fontFamily: buildMonoStack(config.monoFontFamily ?? config.fontFamily ?? ''),
-      theme: buildTerminalTheme(),
-      scrollback: TERMINAL_SCROLLBACK,
-      allowProposedApi: true,
-    });
+    const term = new Terminal(
+      buildTerminalOptions({
+        terminalFontSize: config.terminalFontSize,
+        monoFontFamily: config.monoFontFamily,
+        fontFamily: config.fontFamily,
+        cursorBlink: false,
+        cursorStyle: 'underline',
+        disableStdin: readOnly,
+        convertEol: true,
+      }),
+    );
     const fit = new FitAddon();
     term.loadAddon(fit);
 
@@ -98,38 +86,27 @@ function TaskConsoleOutput({ run, active }: Props) {
       term.scrollToBottom();
     }
 
-    // RO 断自激（对齐 TerminalViewBase 守卫模式）：xterm fit 会调整 canvas/
-    // 容器尺寸 → 若内容尺寸随之变化会再次触发 RO → 无条件 fit 形成反馈循环
-    // （WebKit 报 "ResizeObserver loop completed with undelivered notifications"
-    // + 布局风暴 + 内存上升，窗口 resize 时尤其明显）。contentRect 守卫
-    // （<1px 忽略）+ rAF 合帧，尺寸稳定后循环自然终止。
-    let lastW = -1;
-    let lastH = -1;
-    let rafId: number | null = null;
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      if (Math.abs(width - lastW) < 1 && Math.abs(height - lastH) < 1) return;
-      lastW = width;
-      lastH = height;
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
+    // RO 断自激：shared/utils/containerObserver 承担 contentRect 守卫 + rAF 合帧
+    //（fit 改写 canvas 尺寸又被 RO 观测到 → 无条件 fit 会形成反馈环）。此处只读输出
+    // 无 PTY 同步需求，故直接 fit 而不经 fitScheduler。
+    // try/catch 必须保留：FitAddon.proposeDimensions() 读 getComputedStyle(parentElement)，
+    // 元素已从文档摘下时抛错 —— 原实现在 rAF 回调内 swallow，迁移后语义不得退化
+    //（观察器仍存活，异常只该丢弃这一次 fit）。
+    const containerObserver = observeContainerSize({
+      onResize: () => {
         try {
           fit.fit();
         } catch {
-          /* ignore */
+          /* detach 竞态的 fit 失败无害 */
         }
-      });
+      },
     });
-    ro.observe(el);
+    containerObserver.observe(el);
 
     return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      containerObserver.disconnect();
       inputControllerRef.current?.dispose();
       inputControllerRef.current = null;
-      ro.disconnect();
       safeDisposeTerminal(term);
       termRef.current = null;
       fitRef.current = null;

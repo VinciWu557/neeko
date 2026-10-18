@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 
 import { useAppContext } from '@/shared/contexts/AppContext';
-import { buildMonoStack } from '@/shared/utils/typography';
+import { resolveTerminalType } from '@/shared/utils/terminal';
 
 import { useDebugStore } from '../store/debugStore';
 
@@ -12,12 +12,14 @@ function DebugConsolePane() {
 
   const consoleEndRef = useRef<HTMLDivElement>(null);
 
-  /** Same typeface + size as Task Console / xterm. */
+  /** Same typeface + size as Task Console / xterm (shared factory, see resolveTerminalType). */
   const terminalType = useMemo(
-    () => ({
-      fontSize: config.terminalFontSize ?? 14,
-      fontFamily: buildMonoStack(config.monoFontFamily ?? config.fontFamily ?? ''),
-    }),
+    () =>
+      resolveTerminalType({
+        terminalFontSize: config.terminalFontSize,
+        monoFontFamily: config.monoFontFamily,
+        fontFamily: config.fontFamily,
+      }),
     [config.terminalFontSize, config.monoFontFamily, config.fontFamily],
   );
 

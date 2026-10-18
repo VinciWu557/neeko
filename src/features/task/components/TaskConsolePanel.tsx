@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
 import { Square, Terminal, X } from '@/shared/components/icons';
 import { useAppContext } from '@/shared/contexts/AppContext';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { buildMonoStack } from '@/shared/utils/typography';
+import { resolveTerminalType } from '@/shared/utils/terminal';
 import { Island } from '@/ui/Island';
 
 import { useTaskStore } from '../store';
@@ -66,10 +66,12 @@ function TaskConsolePanel() {
     return s.projectId === currentProjectId;
   });
   const terminalType = useMemo(
-    () => ({
-      fontSize: config.terminalFontSize ?? 14,
-      fontFamily: buildMonoStack(config.monoFontFamily ?? config.fontFamily ?? ''),
-    }),
+    () =>
+      resolveTerminalType({
+        terminalFontSize: config.terminalFontSize,
+        monoFontFamily: config.monoFontFamily,
+        fontFamily: config.fontFamily,
+      }),
     [config.terminalFontSize, config.monoFontFamily, config.fontFamily],
   );
 
