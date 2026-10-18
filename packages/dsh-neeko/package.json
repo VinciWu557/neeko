@@ -34,11 +34,7 @@
     }
   },
   "files": [
-    "lib/index.js",
-    "lib/startup.js",
-    "lib/protocol.js",
-    "lib/tui/**/*.js",
-    "lib/**/*.d.ts",
+    "lib",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
