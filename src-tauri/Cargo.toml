@@ -57,6 +57,14 @@ open = { version = "5", features = ["shellexecute-on-windows"] }
 lsp-server = "0.8.0"
 lsp-types = "0.97.0"
 crossbeam-channel = "0.5.15"
+# --- HTTP gateway (src/server)：进程内 C/S 服务端（任务 10-17-cs-http-gateway）---
+# 版本均锁定为 Cargo.lock 既有版本；axum 为净新增（task design §9）。
+# `tower` 只取 Layer/Service trait（不开 limit：并发上限自写 semaphore 中间件，
+# tower::limit 的 poll_ready 是排队语义，与「超限立即拒绝」相反）。
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["catch-panic", "timeout", "limit"] }
+subtle = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

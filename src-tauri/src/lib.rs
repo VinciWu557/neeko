@@ -58,6 +58,11 @@ pub mod platform;
 pub mod project;
 /// Search domain (content full-text search across local / WSL / SSH).
 pub mod search;
+/// 进程内 HTTP 服务端（C/S 架构的 L1 网关引擎）。
+///
+/// 基础设施层：引擎与门**不 import 任何业务域、不 import tauri**
+/// （护栏 `check_server_no_business_dep`），业务路由组由组合根组装注入。
+pub mod server;
 /// Session persistence (save / load workspace state).
 pub mod session;
 /// Application settings management.
