@@ -34,6 +34,8 @@ export type CommandAction =
   | { readonly kind: 'clear' }
   | { readonly kind: 'exit' }
   | { readonly kind: 'model-picker' }
+  | /** Apply a model id after validating it against the catalogue. */
+    { readonly kind: 'select-model'; readonly id: string }
   | { readonly kind: 'theme-picker' }
   | { readonly kind: 'apply-theme'; readonly name: string }
   | { readonly kind: 'host'; readonly line: string; readonly name: string }
@@ -93,6 +95,8 @@ export class CommandController {
         return { kind: 'exit' }
       case 'pick-model':
         return { kind: 'model-picker' }
+      case 'use-model':
+        return { kind: 'select-model', id: outcome.id }
       case 'pick-theme':
         return { kind: 'theme-picker' }
       case 'use-theme':

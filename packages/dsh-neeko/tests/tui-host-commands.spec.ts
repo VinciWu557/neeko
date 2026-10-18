@@ -1,18 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
-  collectHostCommands, collectSkills, toExecuteLine,
+  collectHostCommands, collectSkills, executeHostCommand, toExecuteLine,
 } from '../src/tui/host-commands.ts'
 import { buildCommands } from '../src/tui/commands.ts'
 
 /**
- * The three host-integration bugs this suite pins, all observed in a live TUI:
+ * The host-integration bugs this suite pins, all observed in a live TUI:
  *
  * 1. `skills.list()` without `cwd` returns **0** skills in a repo that has 21 —
  *    DSH then reads only the global layer.
- * 2. The catalogue must be read **before** `TuiApp` is constructed, because the
- *    `/` provider snapshots it (asserted indirectly here through `buildCommands`).
+ * 2. The skill catalogue must be read **before** `TuiApp` is constructed (it is
+ *    an async, startup snapshot in the menu — host commands are live through
+ *    `LiveSlashProvider`).
  * 3. `commands.execute()` needs the **leading slash**; stripping it makes every
  *    host command resolve to `undefined`.
+ * 4. The `execute` shape lives HERE, next to `toExecuteLine`, so the registry
+ *    contract has one home instead of an inline cast in `runner.ts`.
  */
 
 describe('collectHostCommands', () => {
@@ -90,6 +93,32 @@ describe('toExecuteLine', () => {
   it('preserves arguments verbatim', () => {
     expect(toExecuteLine('/theme light')).toBe('/theme light')
     expect(toExecuteLine('/goal  edit  x')).toBe('/goal  edit  x')
+  })
+})
+
+describe('executeHostCommand', () => {
+  it('normalises the line, passes the agent and returns the settled result', async () => {
+    const execute = vi.fn(async () => ({ result: { kind: 'success' as const, text: 'ok' } }))
+    const result = await executeHostCommand({ execute }, 'agent-x', 'compact')
+    expect(execute).toHaveBeenCalledWith('agent-x', '/compact', [], expect.any(AbortSignal))
+    expect(result).toEqual({ kind: 'success', text: 'ok' })
+  })
+
+  it('returns undefined for an unmounted registry or an unresolved line', async () => {
+    expect(await executeHostCommand(undefined, 'agent', '/x')).toBeUndefined()
+    expect(await executeHostCommand({ execute: async () => undefined }, 'agent', '/x')).toBeUndefined()
+  })
+
+  it('omits an absent text instead of inventing one', async () => {
+    const registry = { execute: async () => ({ result: { kind: 'error' as const } }) }
+    expect(await executeHostCommand(registry, 'agent', '/x')).toEqual({ kind: 'error' })
+  })
+
+  it('lets a registry throw escape to the caller (the controller maps it)', async () => {
+    // runOnHost() in CommandController is the boundary that turns this into an
+    // error notice; swallowing it here would hide real failures.
+    const registry = { execute: async () => { throw new Error('boom') } }
+    await expect(executeHostCommand(registry, 'agent', '/x')).rejects.toThrow('boom')
   })
 })
 

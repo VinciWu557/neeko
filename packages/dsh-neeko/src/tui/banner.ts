@@ -67,7 +67,7 @@ export interface Banner {
 export function logoLines(mode: TerminalColorMode): readonly string[] {
   const fg = (color: ReturnType<typeof rgbColor>): string => foregroundAnsi(color, mode)
   const width = WORDMARK[0].length
-  return WORDMARK.map((row, rowIndex) => {
+  return WORDMARK.map((row) => {
     let out = ''
     let current: string | undefined
     for (let col = 0; col < row.length; col += 1) {
@@ -84,7 +84,6 @@ export function logoLines(mode: TerminalColorMode): readonly string[] {
       out += ch
     }
     if (current !== undefined) out += RESET
-    void rowIndex
     return out
   })
 }

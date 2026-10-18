@@ -1,5 +1,6 @@
 /**
- * Host surface adapters: read DSH's command registry and skill catalogue.
+ * Host surface adapters: read DSH's command registry (list + execute) and
+ * skill catalogue.
  *
  * These were inline in `runner.ts` until three bugs proved they need tests:
  *
@@ -44,6 +45,26 @@ export interface CommandRegistryLike {
 /** The slice of DSH's `skills` service this module needs. */
 export interface SkillRegistryLike {
   list(options?: { cwd?: string }): Promise<readonly { name: string; description: string }[]>
+}
+
+/** What `commands.execute()` reports for one line. */
+export interface HostExecutionResult {
+  readonly kind: 'success' | 'error'
+  readonly text?: string
+}
+
+/** The slice of DSH's `commands` service needed to *run* a line. */
+export interface CommandExecuteRegistryLike {
+  /**
+   * Run a complete slash line. The registry parses the line itself and maps
+   * errors into `result.kind` — it returns `undefined` when nothing resolved.
+   */
+  execute(
+    agent: unknown,
+    line: string,
+    attachments: readonly unknown[],
+    signal: AbortSignal,
+  ): Promise<{ readonly result: HostExecutionResult } | undefined>
 }
 
 /**
@@ -102,4 +123,31 @@ export async function collectSkills(
 export function toExecuteLine(line: string): string {
   const trimmed = line.trim()
   return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+/**
+ * Run one slash line against the host registry.
+ *
+ * Lives beside {@linkcode toExecuteLine} so the two halves of the contract —
+ * "normalise the line" and "the registry parses it, keep the slash" — are owned
+ * by one module, together with the registry shape.
+ *
+ * @param registry - the host command registry, or `undefined` when unmounted.
+ * @param agent - the live agent the registry is scoped to.
+ * @param line - the raw editor submission.
+ * @returns the settled result, or `undefined` when nothing matched.
+ */
+export async function executeHostCommand(
+  registry: CommandExecuteRegistryLike | undefined,
+  agent: unknown,
+  line: string,
+): Promise<HostExecutionResult | undefined> {
+  if (registry === undefined) return undefined
+  // The signal exists because the registry requires one; there is no
+  // cancellation surface for a TUI command yet, so it lives for this call.
+  const signal = new AbortController().signal
+  const execution = await registry.execute(agent, toExecuteLine(line), [], signal)
+  if (execution === undefined) return undefined
+  const { kind, text } = execution.result
+  return { kind, ...(text === undefined ? {} : { text }) }
 }
