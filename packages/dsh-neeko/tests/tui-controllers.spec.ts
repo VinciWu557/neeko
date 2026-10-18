@@ -271,3 +271,23 @@ describe('CommandController', () => {
     expect(await c.runOnHost('/x')).toEqual({ ok: false, text: 'command failed: boom' })
   })
 })
+
+describe('CommandController — catalogue retry contract', () => {
+  it('a read during the adapter-settling window is retried, not cached empty', async () => {
+    // Measured against the real runtime: `llm.listModels()` throws
+    // "no adapter registered for provider …" until a different fiber registers
+    // it (~200ms after boot), while the TUI warms the catalogue at construction.
+    // Caching that miss made /model permanently empty — the reported symptom.
+    let attempt = 0
+    const controller = new CommandController({
+      loadModels: async () => {
+        attempt += 1
+        if (attempt === 1) throw new Error('no adapter registered for provider "magpie"')
+        return [{ id: 'group/auto-a', name: 'A', provider: 'magpie' }]
+      },
+    })
+    await expect(controller.ensureModels()).resolves.toEqual([])
+    await expect(controller.ensureModels()).resolves.toHaveLength(1)
+    expect(controller.modelCatalogue).toHaveLength(1)
+  })
+})

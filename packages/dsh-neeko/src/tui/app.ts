@@ -177,6 +177,8 @@ export class TuiApp {
   private visibleFrom = 0
   /** The bound transcript, kept so `/clear` can measure the watermark. */
   private transcript: TranscriptState | undefined
+  /** In-flight catalogue reload, so per-keystroke reads share one request. */
+  private modelReload: Promise<void> | undefined
 
   constructor(private readonly options: TuiAppOptions) {
     this.tui = new TuiMainScreen(options.terminal ?? new ProcessTerminal())
@@ -319,23 +321,58 @@ export class TuiApp {
   }
 
   /**
-   * `/model` with no argument.
+   * `/model` with no argument: list what can be selected.
    *
-   * The picker itself is the editor's own argument completion — pi-tui renders
-   * matches under the input row, inside its border. Seeding the text
-   * programmatically cannot reproduce that (`setText` cancels completions), so
-   * this only loads the catalogue and tells the user what to type.
+   * The catalogue is retried here because it is warmed at construction, when the
+   * provider adapter is often not registered yet (measured: the read fails at t0
+   * and succeeds at t200). Reporting "no models" for a transient condition was
+   * indistinguishable from "this TUI has no model support", so an empty result
+   * is retried once before it is reported.
+   *
+   * Selection itself goes through the editor's inline argument completion —
+   * pi-tui renders matches inside the editor's frame, and seeding text
+   * programmatically cannot reproduce that (`setText` cancels completions).
    */
   private async showModelHint(): Promise<void> {
+    // `ensureModels` does not cache an empty result, so this call is already the
+    // retry: the warm-up at construction is the attempt that fails while the
+    // provider adapter is still registering.
     const models = await this.commands.ensureModels()
     if (models.length === 0) {
-      this.addNotice('no models available for this provider', 'error')
+      this.addNotice('models are not available from this provider yet', 'error')
       return
     }
+    const current = this.options.getSelection()
+    const rows = models.map((model) => {
+      const active = model.id === current.model ? '✓ ' : '  '
+      return `${active}${model.provider}/${model.id}`
+    })
     this.addNotice(
-      `type /model <name> to pick from ${models.length} models (↑/↓ then enter)`,
+      [`Models (${models.length}) — ${current.provider}/${current.model}`, ...rows,
+        '', 'type /model <name> and press tab to filter'].join('\n'),
       'dim',
     )
+  }
+
+  /**
+   * Retry the catalogue load in the background.
+   *
+   * The provider adapter that backs `llm.listModels()` is registered by another
+   * fiber than this runner, so an early read throws `no adapter registered for
+   * provider …` (measured: fails at t0, returns the real list at t200). The
+   * completion path is synchronous and can only serve what is cached, so every
+   * empty read schedules one reload here; the next keystroke finds the list.
+   *
+   * Concurrent calls collapse onto one in-flight load — the completion handler
+   * runs on every keystroke, and firing a request per key would be wasteful
+   * exactly while the adapter is still settling.
+   */
+  private async reloadModels(): Promise<void> {
+    this.modelReload ??= this.commands.ensureModels().then((models) => {
+      this.modelReload = undefined
+      if (models.length > 0) this.requestRender()
+    })
+    await this.modelReload
   }
 
   /**
@@ -573,13 +610,22 @@ export class TuiApp {
       () => buildCommands({
         listHostCommands: () => [...(this.options.listHostCommands?.() ?? [])],
         listSkills: () => [...(this.options.listSkills?.() ?? [])],
-        listModels: () => this.commands.modelCatalogue.map((model) => ({
-          value: model.id,
-          label: model.id,
-          description: model.provider,
-          provider: model.provider,
-          id: model.id,
-        })),
+        listModels: () => {
+          // The catalogue is warmed at construction, but the provider adapter is
+          // registered by ANOTHER fiber: a read at that moment fails with "no
+          // adapter registered for provider …" (measured: fails at t0, returns
+          // 36 models at t200). A completion request is synchronous, so it can
+          // only report what is cached — kick off a reload when the cache is
+          // still empty, and the next keystroke sees the real list.
+          if (this.commands.modelCatalogue.length === 0) void this.reloadModels()
+          return this.commands.modelCatalogue.map((model) => ({
+            value: model.id,
+            label: model.id,
+            description: model.provider,
+            provider: model.provider,
+            id: model.id,
+          }))
+        },
         listThemes: () => this.themes.catalogue.map((choice) => choice.name),
       }),
     ))

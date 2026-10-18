@@ -363,3 +363,62 @@ describe('/model switch failures are visible', () => {
     expect(switched).toEqual(['new'])
   })
 })
+
+describe('bare /model lists the catalogue', () => {
+  function makeWithModels(load: () => Promise<{ id: string; name: string; provider: string }[]>): {
+    submit: (text: string) => Promise<void>
+    notices: () => string
+  } {
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'test', model: 'm1' }),
+      cwd: '/tmp/test',
+      getSessionId: () => 'session-test',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0.0.0-test',
+      statusFacts: () => ({ cwd: '/tmp/test' }),
+      modelPicker: async () => ({ models: await load(), current: 'test/m1' }),
+      selectModel: () => {},
+      terminal: new FakeTerminal(),
+    })
+    return {
+      submit: (text) => (app as unknown as { submit(t: string): Promise<void> }).submit.call(app, text),
+      notices: () => (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
+        .notices.children.map((child) => child.render(200).join('')).join('\n'),
+    }
+  }
+
+  it('prints every model and marks the current one', async () => {
+    const { submit, notices } = makeWithModels(async () => [
+      { id: 'group/auto-a', name: 'A', provider: 'magpie' },
+      { id: 'group/auto-b', name: 'B', provider: 'magpie' },
+    ])
+    await submit('/model')
+    const text = notices()
+    expect(text).toContain('group/auto-a')
+    expect(text).toContain('group/auto-b')
+    expect(text).toContain('Models (2)')
+    // The active route is marked so the list answers "which one am I on".
+    expect(text).toContain('test/m1')
+  })
+
+  it('retries a transiently empty catalogue instead of reporting no models', async () => {
+    // Measured against the real runtime: llm.listModels() throws
+    // "no adapter registered for provider …" until another fiber registers it
+    // (~200ms), while the app warms the catalogue at construction.
+    let calls = 0
+    const { submit, notices } = makeWithModels(async () => {
+      calls += 1
+      return calls === 1 ? [] : [{ id: 'group/late', name: 'Late', provider: 'magpie' }]
+    })
+    await submit('/model')
+    expect(notices()).toContain('group/late')
+    expect(calls).toBeGreaterThan(1)
+  })
+
+  it('only reports a hard absence after a retry also comes back empty', async () => {
+    const { submit, notices } = makeWithModels(async () => [])
+    await submit('/model')
+    expect(notices()).toContain('models are not available')
+  })
+})

@@ -289,6 +289,43 @@ host 级事实（`cmdlineArgs` / `profileContext` / `appExit`），任何 row pr
 - [ ] 真机复验：`/model ` 候选非空 → 选中 → 下一轮请求确实走新模型
       （观察 `[model changed: …]` 通知行，DSH 在路由变化时会写一条 durable notice）。
 
+## Step 15：`/model` 不列模型（真机实测根因）
+
+> 用户第二次反馈「还是不行，执行 /model 不会列出模型列表」。
+> 上一轮的修复（空缓存 / inject）方向对但**没打中根因** —— 本轮用真实 dsh 实测定位。
+
+**实测方法与证据**（不再靠推断）：往 profile 注入探针插件，直接打印 `llm` 的行为：
+
+```
+PROBE warmup(t0)  ERR=no adapter registered for provider "magpie"   ← TUI 构造期预热
+PROBE user(/model) OK  n=36 first=group/auto-step-5-preview          ← 300ms 后
+PROBE magpie      = [group/auto-step-5-preview, ... 共 36 个，id 全含 "/"]
+```
+
+- [x] **根因：provider adapter 的注册晚于我们的构造期预热**
+      `llm-pi-ai` 是另一个 fiber，它的 provider 注册在 boot 后约 200ms 完成；
+      而 `TuiApp` 构造期就 `void ensureModels()`。那一刻 `llm.listModels('magpie')`
+      抛 `no adapter registered for provider "magpie"`，被 `catch` 吞成空目录。
+      上一轮改成「不缓存空」只解决了**后续能重试**，但构造期那一次失败留下的
+      `modelCatalogue === []` 在补全路径上是**同步读取**，永远不会自己重来。
+      修：
+      1. `listModels()` 补全源在目录为空时调度一次 `reloadModels()`（去重，一次只飞一个请求），
+         到达后 `requestRender()` → 下一次按键就能看到真实列表；
+      2. 裸 `/model` 直接**列出全部模型**（标 `✓` 当前项 + 头部显示当前 route），
+         不再只说「type /model <name>」—— 这正是用户期望的行为。
+      3. 删掉 `showModelHint` 里多余的 `reloadModels()` 调用：`ensureModels` 本身
+         已不缓存空，那次调用就是重试，再加一层是死代码（变异验证证实不可见）。
+- [x] 顺手修：`ensureModels` 的注释与实现对齐（空/失败都不缓存，只有非空才 settled）。
+- [x] 测试（+4）：裸 `/model` 列出全部模型并标当前项、瞬时空目录会重试、
+      重试后仍空才报 hard absence、`CommandController` 的 adapter-settling 窗口重试契约。
+- [x] `prepublishOnly` 全绿：**356 测试** / `tsc`×2 / build / publint。
+- [ ] 真机复验（建议）：`/model` 应直接列出 36 个模型；`/model group` + Tab 应过滤并插入
+      完整 id（实测插入行 = `/model group/auto-deepseek-v4-1-flash`，正确）。
+
+**方法教训**：前两轮我在 `packages/**` 里反复推演，都没找到根因；注入一个探针插件到
+真实 profile 打印运行时事实，一次就定位了。**组合根的行为差异必须实测，不能从类型和
+代码推断** —— 这类「另一个 fiber 比我晚就绪」的时序问题在单测里完全不可见。
+
 ## Step 10：收尾（开发内，无真机）
 
 - [x] **契约自查（AC9）**：`grep -rn "session.events\|registerProvider\|assistant/chunk" src/tui/`
