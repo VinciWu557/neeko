@@ -113,9 +113,12 @@ describe('fitScheduler', () => {
     sched.dispose();
   });
 
-  it('cols/rows 未变不调用 resize（收敛去重）', async () => {
+  // 契约改写（根因不变式）：去重判据是「上次已同步给 PTY 的尺寸」，不是「fit 是否
+  // 改变本地网格」。新调度器的 lastCols=-1，首次 fit 即使收敛也必须同步一次 ——
+  // 这正是 tab 切回已 fit 过的终端时必须补发 resize 的那一步（旧实现在此早退 → 格式混乱）。
+  it('新调度器首次 fit：即使尺寸未变也同步一次（tab 切回归径）', async () => {
     const h = makeEntry(80, 24, 'sid');
-    // fit 不改变尺寸
+    // fit 不改变尺寸（切回已 fit 过的终端就是这种情况）
     h.entry.fitAddon.fit = vi.fn(() => {});
     const resize = vi.fn(() => Promise.resolve());
     const sched = createFitScheduler({ getEntry: () => h.entry, resize });
@@ -123,12 +126,18 @@ describe('fitScheduler', () => {
     sched.scheduleFit();
     flushRaf();
     await Promise.resolve();
-    // converged => no resize
-    expect(resize).not.toHaveBeenCalled();
+    expect(resize).toHaveBeenCalledTimes(1);
+    expect(resize).toHaveBeenCalledWith('sid', 80, 24);
 
-    // trailing 兜底也不应发
+    // 同一调度器内再次触发：尺寸已同步过 → 去重生效，不再重发
+    sched.scheduleFit();
+    flushRaf();
+    await Promise.resolve();
+    expect(resize).toHaveBeenCalledTimes(1);
+
+    // trailing 兜底同样不重发
     await vi.advanceTimersByTimeAsync(120);
-    expect(resize).not.toHaveBeenCalled();
+    expect(resize).toHaveBeenCalledTimes(1);
 
     sched.dispose();
   });
@@ -184,29 +193,111 @@ describe('fitScheduler', () => {
 
     // session 就绪
     (h.entry as unknown as { sessionId: string | null }).sessionId = 'sid';
-    // 再次触发（session-ready 源）
-    // fit 此时收敛，但有 pending，需重试
+    // 再次触发（session-ready 源）：fit 此时已收敛，但有 pending 失败待重试。
+    // 判据要求：pending 非空时必须重发（不能因尺寸未变而跳过）。
     h.entry.fitAddon.fit = vi.fn(() => {});
     sched.scheduleFit();
     flushRaf();
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(0);
-    // 由于当前 fit 未变但有 pending，doFit 会因 pending 触发一次？我们的实现会在 converged 时仍检查 pending
-    // 但 colsAfter 此时仍是 95, converged true 但 pending 存在，会进入 resize? 需验证
-    // 当前实现 converged && pending===null 才 return，所以 converged + pending 存在会继续走到 resize 去重检查
-    // 但去重会判断 lastCols vs pending，pending 存在则不跳过，最终会 resize 用当前 colsAfter (95)
-    // 这里 colsAfter 仍是 95，因为我们未改 fit，但 pending 已是 95，所以会触发重试
-    // 但我们的 doFit 在 converged 情况下 pending 存在会继续，而后 lastCols 未命中，会走到 !sessionId? No sessionId exists now, so will call resize
-    // However our test sets fit to no-op, colsAfter stays 95, so resize should be called with 95,28
-    // Let's assert pending cleared after success
-    // 由于时序，resize 可能需要一次额外 trailing/RAF
-    // 如果 resize 未被调用，说明我们需要在 converged + pending 情况下强制用 pending 尺寸重试
-    // 这里放宽断言：至少最终 pending 被清理或 resize 被调用
-    // 先推进 trailing 也可能触发
+    // 推进 trailing 兑底（可能多一次调度）
     await vi.advanceTimersByTimeAsync(120);
     await Promise.resolve();
-    // After trailing, resize should have been attempted
+    // 失败后的 pending 必须得到重试（pending 优先级高于去重）
     expect(resize).toHaveBeenCalled();
+
     sched.dispose();
+  });
+
+  // 根因回归锁定（不变量 1）：实例级归属，新调度器不得继承上一个终端的去重基线。
+  // 组件级归属（旧 TerminalViewBase 手抄版）把 lastCols/rows 存在 useRef 上，
+  // 跨 cacheKey 存活 → tab B 的首次同步被吞 → PTY 收不到 → 格式混乱。
+  //
+  // 配套的不变量 2（在途不重发）见上方「在途 resize 未回执」用例 —— 两者正交，
+  // 只满足其一都会出 bug。
+  it('去重状态按终端归属：复用的 entry 被新调度器接管后不继承旧调度器的去重基线', async () => {
+    const h = makeEntry(80, 24, 'sid');
+    h.entry.fitAddon.fit = vi.fn(() => h.setColsRows(100, 30));
+    const resize = vi.fn(() => Promise.resolve());
+
+    // 第一个调度器（旧 tab）把 100x30 同步到 PTY
+    const schedA = createFitScheduler({ getEntry: () => h.entry, resize });
+    schedA.scheduleFit();
+    flushRaf();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(resize).toHaveBeenCalledTimes(1);
+    expect(resize).toHaveBeenCalledWith('sid', 100, 30);
+    schedA.dispose();
+
+    // tab 切换：cleanup 销毁旧调度器，attach 为新 tab 新建调度器
+    const schedB = createFitScheduler({ getEntry: () => h.entry, resize });
+    // 新调度器的 fit 收敛（尺寸未变），但去重基线必须为空 → 必须重新同步
+    h.entry.fitAddon.fit = vi.fn(() => {});
+    schedB.scheduleFit();
+    flushRaf();
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // 若去重状态按组件归属（跨调度器共享），这里会被早退闸吃掉 → resize 停在 1 次
+    expect(resize).toHaveBeenCalledTimes(2);
+    expect(resize).toHaveBeenLastCalledWith('sid', 100, 30);
+
+    schedB.dispose();
+  });
+
+  // 回归锁定：删除 `converged` 早退闸后，必须在**在途 resize 未回执**时仍去重。
+  //
+  // scheduleFit 同时挂 RAF 与 120ms trailing 两个 doFit。RAF 那次发出 resize 后
+  // lastCols 尚未更新（promise 未 resolve），trailing 那次若只比 lastCols 会再次
+  // 发出同一个 resize —— 重复 resize 事件正是 e9af28e4 专门修复的格式混乱来源。
+  it('在途 resize 未回执时，trailing 那一次不得重复发送同一尺寸', async () => {
+    const h = makeEntry(80, 24, 'sid');
+    // fit 第一次把网格改到 100x30，之后收敛
+    let fitted = false;
+    h.entry.fitAddon.fit = vi.fn(() => {
+      if (!fitted) {
+        fitted = true;
+        h.setColsRows(100, 30);
+      }
+    });
+    // resize 永不 resolve —— 模拟慢 IPC（真实场景：跨 WSL/SSH 的 resize_terminal）
+    const resize = vi.fn(() => new Promise<void>(() => {}));
+    const sched = createFitScheduler({ getEntry: () => h.entry, resize });
+
+    sched.scheduleFit();
+    // RAF 那次：发出 resize(100,30)
+    flushRaf();
+    await Promise.resolve();
+    expect(resize).toHaveBeenCalledTimes(1);
+
+    // trailing 那次：fit 已收敛（仍 100x30），但前一个 resize 还在途
+    await vi.advanceTimersByTimeAsync(120);
+    // 不得重复发送同一尺寸
+    expect(resize).toHaveBeenCalledTimes(1);
+
+    sched.dispose();
+  });
+
+  it('旧调度器 dispose 后其去重状态不再影响新调度器', async () => {
+    const h = makeEntry(80, 24, 'sid');
+    const resize = vi.fn(() => Promise.resolve());
+    const schedA = createFitScheduler({ getEntry: () => h.entry, resize });
+    schedA.scheduleFit();
+    flushRaf();
+    await Promise.resolve();
+    schedA.dispose();
+
+    // 新调度器：无边角案例共享，从零开始
+    const schedB = createFitScheduler({ getEntry: () => h.entry, resize });
+    expect(schedB._getState()).toEqual({
+      lastCols: -1,
+      lastRows: -1,
+      inFlightCols: null,
+      inFlightRows: null,
+      pendingCols: null,
+      pendingRows: null,
+    });
+    schedB.dispose();
   });
 });

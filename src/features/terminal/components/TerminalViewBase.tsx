@@ -4,15 +4,15 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/xterm';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
+import { observeContainerSize } from '@/shared/utils/containerObserver';
 import { createDrainTransportScheduler } from '@/shared/utils/drainLoop';
 import { safeUnlisten } from '@/shared/utils/safeUnlisten';
 import {
   applyRenderer,
-  buildTerminalTheme,
+  buildTerminalOptions,
   healWebglRenderer,
   resumeWebglRenderer,
   suspendWebglRenderer,
-  TERMINAL_SCROLLBACK,
 } from '@/shared/utils/terminal';
 import { terminalClosedEvent, terminalInputEvent } from '@/shared/utils/terminalEvents';
 import { setupTerminalInput } from '@/shared/utils/terminalInput';
@@ -20,12 +20,12 @@ import {
   buildMonoStack,
   ensureTerminalFontsReady,
   resolveTerminalLineHeight,
-  TERMINAL_FONT_WEIGHT,
 } from '@/shared/utils/typography';
 
 import { getAgent } from '../../agent/api/agentApi';
 import { drainTerminal, drainTerminalWait } from '../api/terminalApi';
 import type { TerminalStrategy, CacheEntry } from '../strategies/types';
+import { createFitScheduler, type FitScheduler } from '../utils/fitScheduler';
 
 import { refreshTerminalEntry } from './terminalCache';
 
@@ -63,7 +63,7 @@ export default React.memo(function TerminalViewBase({
   agentCommandOverride,
   onStatusChange,
 }: TerminalViewBaseProps) {
-  const { cacheKey, cache, fontSize, fontFamily: fontFamilyProp } = strategy;
+  const { cacheKey, fontSize, fontFamily: fontFamilyProp } = strategy;
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const currentKeyRef = useRef<string | null>(null);
@@ -73,12 +73,10 @@ export default React.memo(function TerminalViewBase({
   const [rebuildCount, setRebuildCount] = useState(0);
   const [ready, setReady] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const fitRafRef = useRef<number | null>(null);
-  const fitTrailingRef = useRef<number | undefined>(undefined);
-  const lastFitColsRef = useRef<number>(-1);
-  const lastFitRowsRef = useRef<number>(-1);
-  const pendingFitColsRef = useRef<number | null>(null);
-  const pendingFitRowsRef = useRef<number | null>(null);
+  // 调度器句柄：**按 effect 实例归属**（每 cacheKey 一份），绝不挂组件级 ref。
+  // 挂组件级会让去重基线跨 tab 存活——上一个 tab 的 lastFit 尺寸被新 tab 继承，
+  // 新 tab 的首次 PTY 同步被早退闸吃掉（格式混乱的根因，见 fitScheduler.ts 不变式）。
+  const schedulerRef = useRef<FitScheduler | null>(null);
   // 哨兵定时器句柄：提升到组件作用域，effect cleanup 必须清除 —— 否则卸载/
   // 重建后僵尸定时器仍会在废弃闭包上触发 rebuildTerminal（重建风暴源头之一）。
   const stallTimerRef = useRef<number | undefined>(undefined);
@@ -86,63 +84,10 @@ export default React.memo(function TerminalViewBase({
   // 局部变量冷却会被重置导致风暴）。
   const lastRebuildAtRef = useRef(0);
 
-  const doFit = useCallback(() => {
-    const key = currentKeyRef.current;
-    if (!key) return;
-    const c = strategyRef.current.cache.get(key);
-    if (!c) return;
-    const colsBefore = c.term.cols;
-    const rowsBefore = c.term.rows;
-    try {
-      c.fitAddon.fit();
-    } catch {
-      return;
-    }
-    const colsAfter = c.term.cols;
-    const rowsAfter = c.term.rows;
-    const converged = colsAfter === colsBefore && rowsAfter === rowsBefore;
-    // 收敛且无待重试 → 无需 resize
-    if (converged && pendingFitColsRef.current === null) return;
-    // 去重：与上次成功 resize 相同且无待重试 → 跳过
-    if (
-      colsAfter === lastFitColsRef.current &&
-      rowsAfter === lastFitRowsRef.current &&
-      pendingFitColsRef.current === null
-    )
-      return;
-    if (!c.sessionId) {
-      pendingFitColsRef.current = colsAfter;
-      pendingFitRowsRef.current = rowsAfter;
-      return;
-    }
-    const targetCols = colsAfter;
-    const targetRows = rowsAfter;
-    strategyRef.current.resize(c.sessionId, targetCols, targetRows).then(
-      () => {
-        lastFitColsRef.current = targetCols;
-        lastFitRowsRef.current = targetRows;
-        pendingFitColsRef.current = null;
-        pendingFitRowsRef.current = null;
-      },
-      () => {
-        pendingFitColsRef.current = targetCols;
-        pendingFitRowsRef.current = targetRows;
-      },
-    );
-  }, []);
-
+  /** 统一 resize 入口：由 fitScheduler 承担 RAF 合帧 / trailing / 去重 / pending 重试。 */
   const scheduleFit = useCallback(() => {
-    if (fitTrailingRef.current !== undefined) window.clearTimeout(fitTrailingRef.current);
-    fitTrailingRef.current = window.setTimeout(() => {
-      fitTrailingRef.current = undefined;
-      doFit();
-    }, 120);
-    if (fitRafRef.current !== null) return;
-    fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = null;
-      doFit();
-    });
-  }, [doFit]);
+    schedulerRef.current?.scheduleFit();
+  }, []);
 
   const handleScrollToBottom = useCallback(() => {
     const term = currentTermRef.current;
@@ -151,15 +96,6 @@ export default React.memo(function TerminalViewBase({
     term.focus();
   }, []);
 
-  // Sync font changes to existing instance — unified via scheduleFit (trigger source 1)
-  useEffect(() => {
-    const c = strategyRef.current.cache.get(cacheKey);
-    if (!c) return;
-    c.term.options.fontSize = strategyRef.current.fontSize;
-    c.term.options.fontFamily = buildMonoStack(strategyRef.current.fontFamily);
-    c.term.options.lineHeight = resolveTerminalLineHeight(strategyRef.current.fontSize);
-    scheduleFit();
-  }, [fontSize, fontFamilyProp, cacheKey, cache, scheduleFit]);
   useEffect(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
@@ -180,6 +116,18 @@ export default React.memo(function TerminalViewBase({
 
     currentKeyRef.current = cacheKey;
     setReady(false);
+
+    // 每个 cacheKey 一份调度器实例：去重基线随实例生死而重置 —— 切 tab 必然
+    // 新建（从零收敛，不可能继承上一个终端的同步历史）。这是「去重状态按
+    // 终端归属」这一不变式的落地处。
+    schedulerRef.current = createFitScheduler({
+      getEntry: () => {
+        const key = currentKeyRef.current;
+        if (!key) return null;
+        return strategyRef.current.cache.get(key) ?? null;
+      },
+      resize: (sessionId, cols, rows) => strategyRef.current.resize(sessionId, cols, rows),
+    });
 
     rebuildCallbacks.set(cacheKey, () => {
       if (currentKeyRef.current === cacheKey) setRebuildCount((c) => c + 1);
@@ -244,18 +192,12 @@ export default React.memo(function TerminalViewBase({
       element.style.width = '100%';
       element.style.height = '100%';
 
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: fontSizeVal,
-        fontWeight: TERMINAL_FONT_WEIGHT,
-        fontFamily: buildMonoStack(fontFamilyVal),
-        lineHeight: resolveTerminalLineHeight(fontSizeVal),
-        theme: buildTerminalTheme(),
-        scrollback: TERMINAL_SCROLLBACK,
-        // 无 overviewRuler：xterm 6.1-beta 已移除该选项（改走 scrollbar.width，
-        // 缺省即不启用 ruler，等价于旧 overviewRuler: { width: 0 }）。
-        allowProposedApi: true,
-      });
+      const term = new Terminal(
+        buildTerminalOptions({
+          terminalFontSize: fontSizeVal,
+          monoFontFamily: fontFamilyVal,
+        }),
+      );
       const fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
       const unicode11 = new Unicode11Addon();
@@ -438,42 +380,42 @@ export default React.memo(function TerminalViewBase({
       })();
     }
 
-    // ── ResizeObserver 断自激改造 ─────────────────────────────────────
-    // 原实现：RO 回调无条件 fit()。wrapper 的子元素（xterm canvas）尺寸
-    // 变化同样会触发 RO，而 fit() 又改写 canvas 尺寸 → 尺寸反馈环 →
-    // WebKit 每帧 full layout/paint 风暴（Jetsam 实锤：WebContent 超
-    // 2GB soft limit 被处决导致白屏）。统一入口 scheduleFit：
-    //   - contentRect 守卫：wrapper 自身尺寸未变（子元素噪声）→ 不调度
-    //   - scheduleFit 内：RAF 合帧 + 120ms trailing 兜底 + 收敛去重 + 失败 pending 重试
-    // 四触发源（RO/attach/字体/session-ready）均经此入口。
-    let lastContentW = -1;
-    let lastContentH = -1;
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      // wrapper 自身尺寸变化不足 1px（多为子元素噪声）→ 直接忽略，断反馈环
-      if (Math.abs(width - lastContentW) < 1 && Math.abs(height - lastContentH) < 1) return;
-      lastContentW = width;
-      lastContentH = height;
-      // RO 触发源（4）：统一经 scheduleFit
+    // 字体同步（触发源 1）。**必须声明在主 effect 之后** —— scheduleFit 只是
+    // schedulerRef.current?.scheduleFit()，而 schedulerRef 由上面的主 effect 创建。
+    // React 按声明顺序执行 effect；若本 effect 在前，cacheKey 变化时主 effect 尚未
+    // 跑完（新 scheduler 未建），scheduleFit 会打到 null → 字体变更的 resize 静默丢失。
+    const syncFont = () => {
+      const c = strategyRef.current.cache.get(cacheKey);
+      if (!c) return;
+      c.term.options.fontSize = strategyRef.current.fontSize;
+      c.term.options.fontFamily = buildMonoStack(strategyRef.current.fontFamily);
+      c.term.options.lineHeight = resolveTerminalLineHeight(strategyRef.current.fontSize);
       scheduleFit();
-    });
-    ro.observe(wrapper);
+    };
+    syncFont();
+
+    // ── ResizeObserver 断自激改造 ─────────────────────────────────────
+    // 共享 guarded 形态见 shared/utils/containerObserver（原先是本文件手抄的
+    // contentRect + rAF 副本，与 TaskConsoleOutput 各一份）：fit() 改写 canvas
+    // 尺寸又被 RO 观测到 → 无条件 fit 形成反馈环（WebKit 布局风暴 + Jetsam 实锤）。
+    // 统一入口 scheduleFit：
+    //   - contentRect 守卫（<1px 忽略）由 containerObserver 承担
+    //   - scheduleFit 内：RAF 合帧 + 120ms trailing 兜底 + 已同步去重 + 失败 pending 重试
+    // 四触发源（RO/attach/字体/session-ready）均经此入口。
+    const containerObserver = observeContainerSize({ onResize: () => scheduleFit() });
+    containerObserver.observe(wrapper);
 
     return () => {
       cancelled = true;
-      if (fitRafRef.current !== null) cancelAnimationFrame(fitRafRef.current);
-      if (fitTrailingRef.current !== undefined) window.clearTimeout(fitTrailingRef.current);
-      fitRafRef.current = null;
-      fitTrailingRef.current = undefined;
+      schedulerRef.current?.dispose();
+      schedulerRef.current = null;
+      containerObserver.disconnect();
       // 哨兵卫生：清除未决的 stall 定时器，防止僵尸定时器在废弃闭包上触发
       // rebuildTerminal（重建风暴源头之一，任务 design.md §8.1 放大器 B）。
       if (stallTimerRef.current !== undefined) {
         window.clearTimeout(stallTimerRef.current);
         stallTimerRef.current = undefined;
       }
-      ro.disconnect();
       // WebGL 挂起（tab 切走 / 组件卸载 = orca pane-hide）：dispose addon
       // 释放 GPU 上下文配额（Chromium ~8~16 上限，超限静默逐出最旧 context）。
       // 多 tab 终端累积正是 context-loss 的系统性源头 —— suspend 是「防」而非
@@ -505,6 +447,9 @@ export default React.memo(function TerminalViewBase({
     agentCommandOverride,
     onStatusChange,
     scheduleFit,
+    // 字体属性：syncFont 在 effect 体内同步执行，须作为依赖（原本是独立 effect 的依赖）
+    fontSize,
+    fontFamilyProp,
     // Strategy values (via strategyRef to avoid unnecessary re-runs)
   ]);
 
