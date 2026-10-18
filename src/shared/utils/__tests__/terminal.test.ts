@@ -1,6 +1,19 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 
-import { buildFontFamily, buildTerminalTheme, DEFAULT_FONT_FAMILY } from '../../utils/terminal';
+import {
+  buildFontFamily,
+  buildTerminalOptions,
+  buildTerminalTheme,
+  DEFAULT_FONT_FAMILY,
+  resolveTerminalType,
+  TERMINAL_FONT_SIZE_FALLBACK,
+  TERMINAL_SCROLLBACK,
+} from '../../utils/terminal';
+import {
+  buildMonoStack,
+  resolveTerminalLineHeight,
+  TERMINAL_FONT_WEIGHT,
+} from '../../utils/typography';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -82,5 +95,89 @@ describe('buildTerminalTheme', () => {
     const style = document.documentElement.style;
     expect(style.getPropertyValue('--terminal-bg')).toBe('#101010');
     expect(style.getPropertyValue('--terminal-fg')).not.toBe('');
+  });
+});
+
+describe('buildTerminalOptions / resolveTerminalType', () => {
+  function stubCssVarsEmpty() {
+    vi.stubGlobal(
+      'getComputedStyle',
+      vi.fn(() => ({
+        getPropertyValue: () => '',
+      })),
+    );
+  }
+
+  it('fontSize 未配置时回退到 TERMINAL_FONT_SIZE_FALLBACK（不再散落 ?? 14 字面量）', () => {
+    stubCssVarsEmpty();
+    const o = buildTerminalOptions({ terminalFontSize: null });
+    expect(o.fontSize).toBe(TERMINAL_FONT_SIZE_FALLBACK);
+  });
+
+  it('fontSize 已配置时透传', () => {
+    stubCssVarsEmpty();
+    expect(buildTerminalOptions({ terminalFontSize: 16 }).fontSize).toBe(16);
+  });
+
+  it('lineHeight 由 resolveTerminalLineHeight(fontSize) 派生，与字体族同源', () => {
+    stubCssVarsEmpty();
+    const o = buildTerminalOptions({ terminalFontSize: 16 });
+    expect(o.lineHeight).toBe(resolveTerminalLineHeight(16));
+    expect(o.fontFamily).toBe(buildMonoStack(''));
+  });
+
+  it('mono 覆盖优先于通用 fontFamily', () => {
+    stubCssVarsEmpty();
+    const o = buildTerminalOptions({
+      terminalFontSize: 14,
+      monoFontFamily: 'JetBrains Mono',
+      fontFamily: 'Some Other',
+    });
+    expect(o.fontFamily).toBe(buildMonoStack('JetBrains Mono'));
+  });
+
+  it('基线字段恒定：scrollback / fontWeight / allowProposedApi / theme', () => {
+    stubCssVarsEmpty();
+    const o = buildTerminalOptions({ terminalFontSize: 14 });
+    expect(o.scrollback).toBe(TERMINAL_SCROLLBACK);
+    expect(o.fontWeight).toBe(TERMINAL_FONT_WEIGHT);
+    expect(o.allowProposedApi).toBe(true);
+    // theme 走 buildTerminalTheme()（CSS 变量缺失时各字段为 undefined，但对象恒存在）
+    expect(typeof o.theme).toBe('object');
+    expect(o.theme).not.toBeNull();
+  });
+
+  it('默认开光标闪烁、不带 cursorStyle；只读视图显式关闭', () => {
+    stubCssVarsEmpty();
+    const interactive = buildTerminalOptions({ terminalFontSize: 14 });
+    expect(interactive.cursorBlink).toBe(true);
+    expect(interactive.cursorStyle).toBeUndefined();
+
+    const readOnly = buildTerminalOptions({
+      terminalFontSize: 14,
+      cursorBlink: false,
+      cursorStyle: 'underline',
+      disableStdin: true,
+      convertEol: true,
+    });
+    expect(readOnly.cursorBlink).toBe(false);
+    expect(readOnly.cursorStyle).toBe('underline');
+    expect(readOnly.disableStdin).toBe(true);
+    expect(readOnly.convertEol).toBe(true);
+  });
+
+  it('未显式传 disableStdin / convertEol 时不写入字段（保持 xterm 默认）', () => {
+    stubCssVarsEmpty();
+    const o = buildTerminalOptions({ terminalFontSize: 14 });
+    expect('disableStdin' in o).toBe(false);
+    expect('convertEol' in o).toBe(false);
+  });
+});
+
+describe('resolveTerminalType', () => {
+  it('返回 fontSize + fontFamily 组合，fallback 与 buildTerminalOptions 一致', () => {
+    const t = resolveTerminalType({ terminalFontSize: null, fontFamily: 'Fira Code' });
+    expect(t.fontSize).toBe(TERMINAL_FONT_SIZE_FALLBACK);
+    expect(t.fontFamily).toBe(buildMonoStack('Fira Code'));
   });
 });

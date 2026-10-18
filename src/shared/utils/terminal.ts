@@ -1,11 +1,96 @@
-import type { Terminal, ITheme } from '@xterm/xterm';
+import type { Terminal, ITheme, ITerminalOptions } from '@xterm/xterm';
 
 import { reportFrontendError } from './errorReporting';
 import { isDarkTheme } from './theme';
+import { buildMonoStack, resolveTerminalLineHeight, TERMINAL_FONT_WEIGHT } from './typography';
 import { planWebglRecovery, shouldHealWebgl, type WebglRecoveryState } from './webglRecovery';
 
 /** xterm scrollback 行数预算：控制 WebContent 常驻 DOM/内存上限（原 10000）。 */
 export const TERMINAL_SCROLLBACK = 5000;
+
+/** 未配置 terminal 字号时的兜底值（旧代码里散落 `?? 14` 字面量，收敛为单一常量）。 */
+export const TERMINAL_FONT_SIZE_FALLBACK = 14;
+
+export interface TerminalTypeOptions {
+  /** 用户设置的终端字号（未设置时走 TERMINAL_FONT_SIZE_FALLBACK）。 */
+  terminalFontSize: number | null | undefined;
+  /** mono 字体族覆盖（未设置时走通用 fontFamily，再未设置走内置默认栈）。 */
+  monoFontFamily?: string | null;
+  /** 通用字体族（monoFontFamily 的回退）。 */
+  fontFamily?: string | null;
+}
+
+/**
+ * 终端字体族解析：mono 覆盖 → 通用 → 内置默认栈。
+ *
+ * 单一事实源：此前 5+ 处各写一遍
+ * `config.monoFontFamily ?? config.fontFamily ?? ''`，其中 `''` 让
+ * `buildMonoStack('')` 走默认栈 —— 语义隐藏在空串里，且无法单点修正。
+ */
+export function resolveTerminalFontFamily(options: TerminalTypeOptions): string {
+  return buildMonoStack(options.monoFontFamily ?? options.fontFamily ?? '');
+}
+
+/** 终端字号：未配置/非法时回退到 TERMINAL_FONT_SIZE_FALLBACK。 */
+export function resolveTerminalFontSizeFromConfig(fontSize: number | null | undefined): number {
+  return fontSize ?? TERMINAL_FONT_SIZE_FALLBACK;
+}
+
+/**
+ * 终端字体族 + 字号的组合（供 CM6 / 虚拟终端等只需要 typography 的场景复用）。
+ *
+ * 三处（TaskConsolePanel / DebugConsolePane / 其它面板）曾各自
+ * `useMemo(() => ({ fontSize, fontFamily }), deps)` 且注释逐字相同。
+ */
+export function resolveTerminalType(options: TerminalTypeOptions): {
+  fontSize: number;
+  fontFamily: string;
+} {
+  return {
+    fontSize: resolveTerminalFontSizeFromConfig(options.terminalFontSize),
+    fontFamily: resolveTerminalFontFamily(options),
+  };
+}
+
+export interface BuildTerminalOptionsParams extends TerminalTypeOptions {
+  /** 光标是否闪烁。 */
+  cursorBlink?: boolean;
+  /** 光标样式（只读控制台用 underline，交互终端默认 block）。 */
+  cursorStyle?: 'block' | 'underline' | 'bar';
+  /** 是否禁用 stdin（只读输出视图）。 */
+  disableStdin?: boolean;
+  /** 是否启用 LF→CRLF 转换（只读输出视图）。 */
+  convertEol?: boolean;
+}
+
+/**
+ * 构造 xterm `ITerminalOptions` 的共享基线：字体 / 行高 / 主题 / scrollback / addon API。
+ *
+ * **DRY 落点**：先前 TerminalViewBase 与 TaskConsoleOutput 各持一份 8 行
+ * 几乎相同的 options 字面量，改一行要记得改两处（注释里甚至写着
+ * 「与 TerminalViewBase/terminalFactory 一致」这种靠记忆维持的同步）。
+ * 差异项（cursorBlink / cursorStyle / disableStdin / convertEol）由参数暴露。
+ *
+ * **不带 overviewRuler**：xterm 6.1-beta 已移除该选项（改走 scrollbar.width，
+ * 缺省即不启用 ruler，等价于旧 `overviewRuler: { width: 0 }`）。不要因为想要
+ * 「无 ruler 的干净视图」把它加回来 —— 那是一个已废弃的 API。
+ */
+export function buildTerminalOptions(params: BuildTerminalOptionsParams): ITerminalOptions {
+  const fontSize = resolveTerminalFontSizeFromConfig(params.terminalFontSize);
+  return {
+    cursorBlink: params.cursorBlink ?? true,
+    ...(params.cursorStyle ? { cursorStyle: params.cursorStyle } : {}),
+    fontSize,
+    fontWeight: TERMINAL_FONT_WEIGHT,
+    fontFamily: resolveTerminalFontFamily(params),
+    lineHeight: resolveTerminalLineHeight(fontSize),
+    theme: buildTerminalTheme(),
+    scrollback: TERMINAL_SCROLLBACK,
+    allowProposedApi: true,
+    ...(params.disableStdin !== undefined ? { disableStdin: params.disableStdin } : {}),
+    ...(params.convertEol !== undefined ? { convertEol: params.convertEol } : {}),
+  };
+}
 /**
  * 渲染器恢复链打点名（红线 5：Event 名常量化，禁止双端/多处各自硬编码）。
  * 测试断言一律引用此处常量，禁止字面量重复。
