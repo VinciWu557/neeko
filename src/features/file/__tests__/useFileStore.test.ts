@@ -4,15 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useFileStore } from '@/features/file/store';
 import type { DirTreeResult, FileNode } from '@/shared/types';
 import { deferred } from '@/testing/async';
+import { createDirNode as dirNode, createFileNode as fileNode } from '@/testing/factories';
 
 const OWNER = 'p1:/proj';
 
-function dirNode(name: string, path: string, children: FileNode[] = []): FileNode {
-  return { name, path, is_dir: true, children };
-}
-function fileNode(name: string, path: string): FileNode {
-  return { name, path, is_dir: false, children: [] };
-}
 /** 目录读取结果包装：既有用例默认不截断，truncated 断言单独传入。 */
 function dirResult(nodes: FileNode[], truncated = false): DirTreeResult {
   return { nodes, truncated };
@@ -454,5 +449,116 @@ describe('useFileStore 扁平目录缓存', () => {
       .getState()
       .loadDir('p2:/proj2', '', () => Promise.resolve(dirResult([fileNode('x.ts', 'x.ts')])));
     expect(useFileStore.getState().truncatedDirs).toEqual({ '': false });
+  });
+});
+
+describe('useFileStore 展开态（展开态与目录缓存同槽、同生命周期）', () => {
+  it('toggleDir 展开：展开态与内容就绪一次建立', async () => {
+    await useFileStore
+      .getState()
+      .loadDir(OWNER, '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+
+    const loader = vi.fn().mockResolvedValue(dirResult([fileNode('a.ts', 'src/a.ts')]));
+
+    await useFileStore.getState().toggleDir(OWNER, 'src', loader);
+
+    const s = useFileStore.getState();
+    expect(s.expandedDirs.has('src')).toBe(true);
+    expect(s.loadStates['src']).toBe('loaded');
+    expect(s.dirs['src']).toEqual([fileNode('a.ts', 'src/a.ts')]);
+    expect(loader).toHaveBeenCalledOnce();
+  });
+
+  it('toggleDir 收起：展开态移除但缓存保留（再展开零请求）', async () => {
+    await useFileStore
+      .getState()
+      .loadDir(OWNER, '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+    const loader = vi.fn().mockResolvedValue(dirResult([fileNode('a.ts', 'src/a.ts')]));
+    await useFileStore.getState().toggleDir(OWNER, 'src', loader);
+
+    const secondLoader = vi.fn().mockResolvedValue(dirResult([]));
+    await useFileStore.getState().toggleDir(OWNER, 'src', secondLoader);
+
+    const s = useFileStore.getState();
+    expect(s.expandedDirs.has('src')).toBe(false);
+    // 缓存保留：折叠不丢数据，再展开命中缓存不发请求
+    expect(s.dirs['src']).toEqual([fileNode('a.ts', 'src/a.ts')]);
+    expect(s.loadStates['src']).toBe('loaded');
+    expect(secondLoader).not.toHaveBeenCalled();
+  });
+
+  it('切换 owner：展开态随缓存一起丢弃（不残留上一项目的展开路径）', async () => {
+    await useFileStore
+      .getState()
+      .loadDir(OWNER, '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+    await useFileStore
+      .getState()
+      .toggleDir(OWNER, 'src', () => Promise.resolve(dirResult([fileNode('a.ts', 'src/a.ts')])));
+    expect(useFileStore.getState().expandedDirs.has('src')).toBe(true);
+
+    // 切到另一项目：owner 跳变
+    await useFileStore
+      .getState()
+      .loadDir('p2:/proj2', '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+
+    const s = useFileStore.getState();
+    // 核心：展开态不得跨项目存活 —— 否则新项目里该路径「已展开但无缓存」
+    expect(s.expandedDirs.size).toBe(0);
+    expect(s.dirs['src']).toBeUndefined();
+  });
+
+  it('collapseAll 清空展开态但保留缓存（不牺牲再展开的零请求）', async () => {
+    await useFileStore
+      .getState()
+      .loadDir(OWNER, '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+    await useFileStore
+      .getState()
+      .toggleDir(OWNER, 'src', () => Promise.resolve(dirResult([fileNode('a.ts', 'src/a.ts')])));
+
+    useFileStore.getState().collapseAll();
+
+    const s = useFileStore.getState();
+    expect(s.expandedDirs.size).toBe(0);
+    expect(s.dirs['src']).toEqual([fileNode('a.ts', 'src/a.ts')]);
+  });
+
+  it('单级加载失败：目录保持展开并标 error（红灯可重试，不静默丢展开态）', async () => {
+    await useFileStore
+      .getState()
+      .toggleDir(OWNER, 'src', () => Promise.reject(new Error('disk busy')));
+
+    const s = useFileStore.getState();
+    expect(s.expandedDirs.has('src')).toBe(true);
+    expect(s.loadStates['src']).toBe('error');
+  });
+});
+
+describe('useFileStore expandDir vs toggleDir：确保展开 ≠ 翻转', () => {
+  it('expandDir 对已展开目录不收起（幂等确保展开）', async () => {
+    await useFileStore
+      .getState()
+      .loadDir(OWNER, '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+    await useFileStore
+      .getState()
+      .expandDir(OWNER, 'src', () => Promise.resolve(dirResult([fileNode('a.ts', 'src/a.ts')])));
+    expect(useFileStore.getState().expandedDirs.has('src')).toBe(true);
+
+    // 再次 expandDir（模拟重复定位 / 联动）：必须是「确保展开」而非收起
+    await useFileStore
+      .getState()
+      .expandDir(OWNER, 'src', () => Promise.resolve(dirResult([fileNode('a.ts', 'src/a.ts')])));
+    expect(useFileStore.getState().expandedDirs.has('src')).toBe(true);
+  });
+
+  it('toggleDir 才是翻转：已展开 → 收起', async () => {
+    await useFileStore
+      .getState()
+      .loadDir(OWNER, '', () => Promise.resolve(dirResult([dirNode('src', 'src')])));
+    await useFileStore
+      .getState()
+      .expandDir(OWNER, 'src', () => Promise.resolve(dirResult([fileNode('a.ts', 'src/a.ts')])));
+
+    await useFileStore.getState().toggleDir(OWNER, 'src', () => Promise.resolve(dirResult([])));
+    expect(useFileStore.getState().expandedDirs.has('src')).toBe(false);
   });
 });

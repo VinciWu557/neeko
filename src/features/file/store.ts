@@ -3,11 +3,25 @@ import { create } from 'zustand';
 import type { DirLoadState, DirTreeResult, FileNode } from '@/shared/types';
 
 /** 目录缓存 key：项目内相对路径，'' 表示项目根目录 */
-export type DirPath = string;
-/** 文件树数据归属：`${projectId}:${rootPath}`，用于切换项目/root 时丢弃过期响应 */
-export type FileTreeOwner = string;
+type DirPath = string;
+/** 文件树数据归属：由 [`fileTreeOwner`] 唯一铸造，用于切换项目/root 时丢弃过期响应 */
+type FileTreeOwner = string;
 
-export interface LoadDirOptions {
+/**
+ * 文件树数据归属的**唯一铸造点**。
+ *
+ * 展开态、目录缓存、加载状态机、在途序号全部存在这个坐标系下 —— 因此它必须
+ * 只有一个派生点。历史上本函数体的等价拼接在 5 处（useFileTreeSync ×3、
+ * useFileView ×2）各自手写，任何一处改分隔符或加分量，就会让「同一棵树的展开态」
+ * 出现两种 key，表现为切项目/切 worktree 后展开态与缓存错位（「展开但空白」）。
+ *
+ * `rootPath` 为工作树根（worktree）或项目根；不作归一（归一属路径身份，红线 12）。
+ */
+export function fileTreeOwner(projectId: string, rootPath: string): FileTreeOwner {
+  return `${projectId}:${rootPath}`;
+}
+
+interface LoadDirOptions {
   /** 强制重新加载：跳过「已 loaded 幂等跳过」；用于初始加载与手动/后台刷新 */
   force?: boolean;
   /** 后台静默加载：已有内容时不切换 loading 态（避免刷新闪烁），失败保留旧内容并标记 error */
@@ -28,7 +42,21 @@ interface FileStoreState {
   truncatedDirs: Record<DirPath, boolean>;
   /** 各目录请求序号：响应回来时序号不匹配即过期，丢弃防乱序覆盖 */
   requests: Record<DirPath, number>;
-  activeFilePath: string | null;
+  /**
+   * 已展开目录集合。
+   *
+   * **与 `dirs` / `loadStates` 同槽、同 owner 生命周期** —— 这是本 store 的关键不变量：
+   * 展开态与目录内容必须共享坐标系（`(owner, dirPath)`）与生命周期。
+   *
+   * 历史教训：展开态曾是面板组件 `useState`（仅 `dirPath` 坐标），而目录缓存按
+   * `owner` 隔离。两套坐标系在切换项目 / worktree 时不同步 —— 缓存被惰性清空、
+   * 展开态跨项目存活，于是新项目里该路径「chevron 已展开、子项一片空白、无 spinner
+   * 无红灯」，用户必须再点一次（先收起再展开）才读到内容。
+   *
+   * 折叠**不丢缓存**（再展开零请求）；`collapseAll` 同理。展开态只在 owner 跳变、
+   * 显式 `reset()` 时随缓存一起作废。
+   */
+  expandedDirs: Set<DirPath>;
   /**
    * 加载（或重载）某个目录的内容。目录数据独立缓存、独立生命周期：
    * - 加载成功写入 dirs[dirPath]，标记 loaded
@@ -59,6 +87,30 @@ interface FileStoreState {
   ) => Promise<void>;
   /** 切换项目/root 时清空全部缓存与归属 */
   reset: () => void;
+  /**
+   * **确保展开**（幂等）：已展开则只保证内容就绪，已展开且已加载则完全无操作。
+   * 不翻转展开态 —— 这是「定位 / 联动 / 新建」等**声明式**场景的唯一正确语义。
+   *
+   * 展开：先把路径写入 `expandedDirs`，再 `await loadDir` —— 两步同一次调用，
+   * 中间不存在「展开但无数据」窗口。加载失败**不上抛**（store 已置 error，行尾
+   * 红灯可重试），目录保持展开，由用户决定重试还是折叠。
+   */
+  expandDir: (
+    owner: FileTreeOwner,
+    dirPath: DirPath,
+    loader: () => Promise<DirTreeResult>,
+  ) => Promise<void>;
+  /**
+   * 点击目录行：**翻转**展开态（已展开 → 收起且不动缓存；未展开 → 走 `expandDir`）。
+   * 仅用于用户点击/快捷键等**命令式**翻转场景。
+   */
+  toggleDir: (
+    owner: FileTreeOwner,
+    dirPath: DirPath,
+    loader: () => Promise<DirTreeResult>,
+  ) => Promise<void>;
+  /** 折叠全部：清空展开态但保留缓存（不牺牲再展开的零请求） */
+  collapseAll: () => void;
 }
 
 /** 目录缓存只存一级条目：清空 children，避免「嵌套树」与「扁平缓存」两套语义并存 */
@@ -103,13 +155,30 @@ function flattenNestedDirs(nodes: FileNode[]): Record<string, FileNode[]> {
   return out;
 }
 
+/**
+ * owner 跳变时的清空补丁（缓存 + 展开态 + 在途序号一起作废）。
+ *
+ * **共用**于 `loadDir` 与 `expandDir`（`toggleDir` 的展开分支也走 `expandDir`）：
+ * 展开态与目录缓存必须同槽丢弃，否则两个入口各写一份就必然漂移
+ * （这正是旧实现「切项目后展开态残留」的产地）。
+ */
+function ownerSwitchPatch() {
+  return {
+    dirs: {} as Record<DirPath, FileNode[]>,
+    loadStates: {} as Record<DirPath, DirLoadState>,
+    truncatedDirs: {} as Record<DirPath, boolean>,
+    requests: {} as Record<DirPath, number>,
+    expandedDirs: new Set<DirPath>(),
+  };
+}
+
 export const useFileStore = create<FileStoreState>((set, get) => ({
   owner: null,
   dirs: {},
   loadStates: {},
   truncatedDirs: {},
   requests: {},
-  activeFilePath: null,
+  expandedDirs: new Set<DirPath>(),
 
   async loadDir(owner, dirPath, loader, opts) {
     const state = get();
@@ -119,11 +188,14 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
     // 加载中重复调用不跳过：token 递增，最后一次为准（防乱序见 requests 校验）
     const current = state.loadStates[dirPath];
     if (!ownerChanged && !force && !silent && current === 'loaded') return;
-    // 切换 owner：丢弃全部旧缓存与在途请求（旧响应会因 owner/token 校验被忽略）
-    const prevDirs = ownerChanged ? {} : state.dirs;
-    const prevLoadStates = ownerChanged ? {} : state.loadStates;
-    const prevTruncatedDirs = ownerChanged ? {} : state.truncatedDirs;
-    const prevRequests = ownerChanged ? {} : state.requests;
+    // 切换 owner：丢弃全部旧缓存、在途请求与展开态（旧响应会因 owner/token 校验被忽略）。
+    // 展开态必须在同一补丁里作废 —— 否则新项目里旧路径「已展开但无缓存」。
+    const switchPatch = ownerChanged ? ownerSwitchPatch() : null;
+    const prevDirs = switchPatch?.dirs ?? state.dirs;
+    const prevLoadStates = switchPatch?.loadStates ?? state.loadStates;
+    const prevTruncatedDirs = switchPatch?.truncatedDirs ?? state.truncatedDirs;
+    const prevRequests = switchPatch?.requests ?? state.requests;
+    const prevExpandedDirs = switchPatch?.expandedDirs ?? state.expandedDirs;
     const token = (prevRequests[dirPath] ?? 0) + 1;
     // silent 且已有内容：后台更新，不切换 loading 态；否则进入 loading（含首次）
     const keepSilent = silent && !ownerChanged && prevLoadStates[dirPath] !== undefined;
@@ -134,6 +206,7 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
       loadStates: keepSilent ? prevLoadStates : { ...prevLoadStates, [dirPath]: 'loading' },
       truncatedDirs: prevTruncatedDirs,
       requests: { ...prevRequests, [dirPath]: token },
+      expandedDirs: prevExpandedDirs,
     });
 
     try {
@@ -200,6 +273,36 @@ export const useFileStore = create<FileStoreState>((set, get) => ({
       loadStates: {},
       truncatedDirs: {},
       requests: {},
-      activeFilePath: null,
+      expandedDirs: new Set<DirPath>(),
     }),
+
+  async expandDir(owner, dirPath, loader) {
+    const state = get();
+    // owner 跳变：先按切换清空（展开态与缓存同槽作废），再在空基底上展开。
+    // 不先做这一步的话，下方 loadDir 会检测到 ownerChanged 再把刚设的展开态冲掉。
+    const base = state.owner === owner ? state : null;
+    if (!base) set({ owner, ...ownerSwitchPatch() });
+
+    const currentExpanded = base ? base.expandedDirs : new Set<DirPath>();
+    // 幂等：已展开 → 只补内容就绪（loadDir 自身对 loaded/loading 跳过）
+    if (!currentExpanded.has(dirPath)) {
+      set({ expandedDirs: new Set(currentExpanded).add(dirPath) });
+    }
+    await get().loadDir(owner, dirPath, loader);
+  },
+
+  async toggleDir(owner, dirPath, loader) {
+    const state = get();
+    // 收起：只移除展开态，缓存保留（再展开命中缓存，零请求）
+    if (state.owner === owner && state.expandedDirs.has(dirPath)) {
+      const next = new Set(state.expandedDirs);
+      next.delete(dirPath);
+      set({ expandedDirs: next });
+      return;
+    }
+    // 展开：与 expandDir 完全同一语义（单一实现，不另写一份）
+    await get().expandDir(owner, dirPath, loader);
+  },
+
+  collapseAll: () => set({ expandedDirs: new Set<DirPath>() }),
 }));
