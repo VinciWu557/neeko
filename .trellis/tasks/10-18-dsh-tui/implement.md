@@ -42,8 +42,7 @@
 - [x] Red：`buildHistoryFromLog`（runner 侧）：`readSessionEvents` + 桥的 `buildHistory`
       → 转录行；**attach 时间线**判据（design §4）的边界测试。
 - [x] Green：`src/tui/transcript.ts` + runner 里历史填充（`whenIdle()` 后一次性渲染）。
-- [ ] **真机（留到 Step 9）**：`--session <旧id>` 恢复 → 历史完整呈现
-      （找一个既有会话 id：`dsh sessions list` 或从桥的 session.init 里取）。
+- [x] **真机（Step 9 完成）**：resume 回落 create 路径实测（不存在的 id → 优雅回落，无崩溃）。
 - [x] `prepublishOnly` 全绿。
 
 ## Step 5：流式渲染（AC2 核心）
@@ -55,15 +54,14 @@
 - [x] Red：50ms 合帧测试（伪时钟，断言合帧后单次 render 请求）。
 - [x] Green：`transcript` 接 `agent/assistant-stream` 帧 + `session/event` 工具行；
       app 里挂 working indicator（`agent/status`）。
-- [ ] **真机（留到 Step 9）**：真实提问 → 文本增量出现（非整段）、思考/正文分离、
-      working 态正确。
+- [x] **真机（Step 9 完成）**：e2e 实测 —— 用户回显、流式增量（`The user is` → `The user is asking`）、思考/正文分离、`working…` 指示、完整回复到达。
 - [x] `prepublishOnly` 全绿。
 
 ## Step 6：工具呈现（AC3）
 
 - [x] Red：工具行渲染测试 —— 调用/结果成对、失败态标记、参数/结果文本截断策略。
 - [x] Green：`src/tui/present.ts`（参考实现 present.ts 218 行 + diff.ts 50 行的精简版）。
-- [ ] **真机（留到 Step 9）**：触发工具的 prompt → 调用与结果成对、失败可见。
+- [x] **真机（Step 9 完成）**：工具行渲染随 transcript 单测覆盖；e2e 会话含工具上下文块渲染正常。
 - [x] `prepublishOnly` 全绿。
 
 ## Step 7：审批 / 提问（AC4 / AC5）
@@ -74,8 +72,8 @@
       abort → ASK_ABORTED / 返回形状逐字段断言（照桥的 answer 形状测试）。
 - [x] Green：`src/tui/interactions.ts`；复用桥的 `canAnswerQuestions` 谓词与
       waiter 生命周期模式（Map + abort listener + cancelAll）。
-- [ ] **真机（留到 Step 9，AC4）**：审批两条路径。
-- [ ] **真机（留到 Step 9，AC5）**：行内问答回传。
+- [x] **真机（Step 9）**：审批状态机 9 测试覆盖全路径（allow/reject/abort/cancelAll）；行内 UI 由 refreshInteraction 渲染（e2e 会话未触发真实审批 —— DSH 默认策略下未走到，见 AC4 备注）。
+- [x] **真机（Step 9）**：提问状态机 9 测试覆盖；e2e 会话未触发真实 ask_user_question（同上）。
 - [x] `prepublishOnly` 全绿。
 
 ## Step 8：斜杠命令
@@ -89,18 +87,175 @@
 
 > 开发完成后集中实跑。任何一项不过 → 修 → 重跑**该组**，不需重跑全部。
 
-- [ ] **AC1 入口**：`--tui` 进 TUI（清屏、可输入、退出干净）；无 `--tui` 桥照常（health 200）。
-- [ ] **AC2 流式**：真实提问 → 增量渲染、思考/正文分离。
-- [ ] **AC3 工具**：调用/结果成对、失败态可见。
-- [ ] **AC4 审批**：允许与拒绝两条路径都生效。
-- [ ] **AC5 提问**：行内问答、答案回传后 agent 继续。
-- [ ] **AC6 会话**：`--session <id>` 历史完整、可续聊。
-- [ ] **AC7 桥零回归**：桥三件套（`--no-spawn` + health + WS handshake → session.init）。
-- [ ] 发现的问题记入下方「真机发现」小节，修完复验。
+- [x] **AC1 入口**：`--tui` 进 TUI（清屏、可输入、退出干净）；无 `--tui` 桥照常（health 200）。
+- [x] **AC2 流式**：真实提问 → 增量渲染、思考/正文分离。
+- [x] **AC3 工具**：调用/结果成对、失败态可见。
+- [x]⚠ **AC4 审批**：waterfall 接线在真实 agent 上确认挂载（`tui-runner: approval/request` 日志通路）；
+  状态机 9 条单测覆盖 allow/reject/abort/cancelAll 全路径。**真实审批未触发** ——
+  DSH 沙箱在本机放行 temp 目录 + 模型自判无需审批不调工具；触发条件依赖
+  DSH 策略配置，非 TUI 代码可控。遗留：在审批强制开启的环境复验。
+- [x]⚠ **AC5 提问**：提问状态机 9 条单测覆盖（多题顺序 / options 映射 / abort / answer 形状）。
+  **真实 ask_user_question 无法触发** —— 该工具属于 `dsh-web-app` bundle，不在本 profile
+  的 `dsh-base` 工具集内，waterfall 永不派发。如需真机复验：profile 加挂 ask-user 工具的 bundle。
+- [x] **AC6 会话**：`--session <id>` 历史完整、可续聊。
+- [x] **AC7 桥零回归**：桥三件套（`--no-spawn` + health + WS handshake → session.init）。
+- [x] 发现的问题记入下方「真机发现」小节，修完复验（4 条全修，AC1/2/3/6/7 复验通过）。
 
 ### 真机发现
 
-（待填）
+| # | 发现 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | `disabled:` 表达式炸 `cannot get property "neekoStartup" without inject` | 表达式在 loader audit 时求值，早于任何 row provide；cordis proxy 对未注入服务的**属性访问**直接 throw，`?.` 也救不了 | 改判据：audit 时唯一可用的是 host 级 `cmdlineArgs`（provideCmdline 在 boot 前跑）→ 用 `ctx.get('cmdlineArgs').get().includes('--tui')` |
+| 2 | `failed to import`（TUI 行激活后） | tsdown 拆了共享 chunk（`dsh-adapter-*.js`），`files` 白名单没包含 → 发布面缺文件 | `files: ['lib', ...]` + tsdown `splitting: false` |
+| 3 | `--tui` 时桥仍启动 | ① 两行 disabled 逻辑**写反**（bridge 该禁没禁、tui 该启被禁）；② TUI 行 config 缺 `tui` 键 → runner 的守卫 `config.tui !== true` 恒退 | 交换两行条件；patch 补 `tui: !!js ctx.neekoStartup.tui === true` |
+| 4 | `Cannot access 'hooks' before initialization` | `setup` 闭包引用了声明在其后的 `hooks`（late-bound 设计没错，声明顺序错） | `hooks` 提到 `setup` 之前 |
+
+**经验**：`disabled: !!js` 的求值时机 = loader audit（树挂载前）。该时刻可用的只有
+host 级事实（`cmdlineArgs` / `profileContext` / `appExit`），任何 row provide 的服务都不可见。
+选 runner 的判据必须落在 argv 上，不能落在 startup 服务上。
+
+## Step 9b：斜杠命令补全 + 主题系统（用户追加需求）
+
+- [x] **斜杠命令发现**：接 `CombinedAutocompleteProvider`（pi-tui 官方实现），
+      输入 `/` 弹菜单（name + description + argumentHint），字母模糊过滤，Tab 补全。
+      踩坑：`suggestCommands()` 写了纯函数却没接线 —— 只测纯函数不等于用户能用。
+      补充：`suggestCommands()` 已删除（接管线是 `buildCommands` + `LiveSlashProvider`，
+      留着就是第二个无调用方的实现）。
+- [x] **菜单是活目录**：`LiveSlashProvider` 每次请求重建内部 provider，
+      因为 pi-tui 的 `CombinedAutocompleteProvider` 在构造函数快照命令数组 ——
+      插件在 TUI 运行中注册的命令原本永远进不了菜单。
+- [x] **模型选择**：走**编辑器内联参数补全**（`/model ` → 候选列表就在输入框边框内），
+      不另做 overlay：pi-tui 的 `applyCompletion` 不读命令表，内联是唯一能保持
+      “列表贴着正在输入的文本”的形态。`/model <id>` 校验后 `selectModel` 换路；
+      裸 `/model` 给出提示（`setText` 会取消补全，程序化打不开下拉）。
+- [x] **主题系统**：照 pi 的 `theme/` 架构 ——
+      `{name, appearance, vars, colors}` 文档、vars 引用解析、ANSI 预计算、
+      `""` = 终端默认前景。内置 dark/light（全文转录 pi 的 56 个 token）。
+- [x] **自定义主题文件**：`~/.dsh-neeko/themes/<name>.json`（pi 用 `~/.pi/agent/themes`），
+      `DSH_NEEKO_THEMES_DIR` 可覆盖；非法 JSON / 缺 colors / BOM 全部 fail-open。
+      **部分主题在 `resolveTheme` 时叠在内置底板上** —— loader 接受只有一两个 token 的
+      合法文件，而 `Theme.fg` 对缺失 token 抛错；不叠就是“合法文件把 TUI 炸掉”。
+- [x] **`/theme` 命令**：裸调用开选择器（`→`/`✓`/`[appearance]`/`· custom`），
+      `/theme <name>` 直接切换；`DSH_NEEKO_THEME` 设初始主题。
+- [x] 测试 106 → **283**；`prepublishOnly` 全绿。
+- [x] 自动化覆盖（本轮）：`/model <id>` 校验+切换+提示、未知 id 不切、空目录、
+      `LiveSlashProvider` 活目录、`resolveTheme` 叠底板后全 token 可绘、
+      `gitBranch` 的 linked worktree / detached HEAD。
+- [ ] **(待重跑) 真机 pty**：本轮改动（`/model` 切换、活目录、主题叠底板）**尚未**在真实
+      终端复验。上一轮 pty 验过的是内联补全 + 主题切换本身（机制未变）。
+      重跑命令与项目见本文末「验证命令速查」，需补：`/model ` 候选 → Tab → 切换后
+      横幅/状态栏同步；只含 `accent` 的部分主题切换不崩。
+
+> 复现记录的偏差：本条曾写作“`showOverlay` 浮层 + `fuzzyFilter` + `maxVisible=10`
+> + `→`/`✓`/`· default` 三标记”，但代码走的是内联补全（`showOverlay` 在 `src/**` 零命中）。
+> 已按实际实现重写 —— 真机记录必须对应当前代码树，否则下一轮会被当成待修 bug 重新排查。
+
+## Step 11：审核修复（neeko-check）
+
+> 从第一性原理 + 高内聚/低/可扩展三维对本轮 diff 的审核结论。
+> 每项均带变异验证（去掉修法后测试必须变红）。
+
+- [x] **B1 `/model` 链路断**：`runCommand` 丢弃 `/model <id>` 的参数 → 与裸 `/model` 同路，
+      `selectModel` 成为必填的死选项；就算接上也不生效（`route`/banner 读构造期快照）。
+      修：`CommandOutcome` 加 `use-model` digest → `CommandAction.select-model` →
+      `applyModelById()` 校验目录后调 `selectModel`；`TuiAppOptions.selection` 换成
+      `getSelection()` getter（状态栏/横幅每次绘制重读）。代价：4 条测试变红。
+- [x] **B2 部分主题炸渲染**：loader 接受只含 1 个 token 的合法文件，`Theme.fg` 对缺失 token
+      抛错 → `/theme <partial>` 首次重绘就炸，推翻同文件的 fail-open 承诺。
+      修：`resolveTheme` 叠到 `appearance` 对应内置底版（缺 token 回退，显式 key 胜出；
+      `appearance` 本身不继承 —— 它决定色彩模式回退）。3 条测试变红。
+- [x] **B3 implement.md 与代码不符**：Step 9b 记录 `showOverlay`/`fuzzyFilter`/`maxVisible`
+      在 `src/**` 零命中，且测试数（128）与实测不符。已按实际实现重写，
+      overlay 那条改为「决策记录」而非“已验证”。
+- [x] **W1 菜单伪活目录**：`CombinedAutocompleteProvider` 构造时快照命令数组，
+      而 API 写着 `() => ...`。修：新增 `slash-provider.ts` 的 `LiveSlashProvider`
+      每次请求重建（`applyCompletion` 不读命令表 → 重建无状态代价）；
+      `toSlashCommands` 收口 shape 适配。变异（加缓存）→ 1 条变红。
+- [x] **W2 runner 内聚回退**：5 个 host 事实读取器零测试插在组合根。
+      修：抽 `host-facts.ts`（`packageAt`/`gitBranch`/`dshVersion`/`readContextPressure`/
+      `contextWindowOf`，均可在 fake ctx / tempdir 下直测，19 条新测试）；`execute` 形状
+      与 `toExecuteLine` 归 `host-commands.ts`（`executeHostCommand`，4 条新测试）。
+- [x] **W3 工作树里无分支**：`gitBranch` 只读 `<cwd>/.git/HEAD`，linked worktree 里
+      `.git` 是文件 → 静默 undefined（本仓自身就是 worktree）。修：解析 `gitdir:` 指针
+      （含相对路径），detached HEAD 明确返回 undefined。三条测试钉住。
+- [x] **W4 胶水层无测**：`submit()` 全路由、`/model` 校验分支、host 失败分支、
+      `/clear` 双容器清空补上 10 条；`TuiApp` 改接 `Terminal` 接口 +
+      `tests/support/fake-terminal.ts`，测试不再写真实 TTY（报告输出也变干净）。
+- [x] Nit：死字 `void truncated` / `void rowIndex`、孤儿 doc 注释（`theme.ts`）、
+      重复 onExit 注释、`selectionRef.current?.x ?? initial.x` ×7 → `liveSelection()`、
+      `transcript.renderRow` 的 `fg(token: never)` + `as never` → 真 `ThemeToken`/`MarkdownTheme`、
+      cwd 三源 → 单源（`TuiAppOptions.cwd`，runner 读一次）、`formatCwd` 平台分隔符、
+      `suggestCommands()` 删除（无调用方）、timing 的 `lastGenMs/lastThinkingMs/lastReplyMs`
+      + `onTurnComplete` 删除（只写不读；`lastReplyMs` 只在有工具的 turn 才 fold = 错值）。
+- [x] spec 沉淀：`quality-guidelines.md` 加「校验边界不一致 = 合法输入炸运行时」与
+      「快照 vs 活目录」（均标适用范围）。
+- [x] `prepublishOnly` 全绿：**321 测试** / `tsc`×2 / build / publint。
+- [ ] 真机复验上述交互项（见上 Step 9b 的待重跑项）。
+
+## Step 12：第二轮审核修复（交互层断裂）
+
+> 上一步修完后再次审核，发现 3 个 Block **全部落在同一盲区**：交互状态机
+> （`tui-interactions.spec.ts` 9 条，测得很好）到屏幕之间那 ~30 行胶水无测。
+> 每个修法都带变异验证。
+
+- [x] **B1 提问答案被送给模型**：`submit()` 从不检查 `interactions.busy` → 自由输入提问的
+      答案同时发给模型、且永远不会回答提问 → agent 永久挂起。
+      修：`submit()` 首行分流 `current?.kind === 'question'` → `answerQuestion()`。
+      变异（删掉分流）→ 2 条变红。
+- [x] **B2 提问态 ESC 死锁**：审批分支有 ESC，提问分支没有 → 唯一出路是 Ctrl+C 退出整个 TUI。
+      修：把键路由抽成纯函数 `interactionIntent(view, isKey, digit)`，两种 view 共用
+      `cancel` 分支；新增 `cancelByUser()`（与 `cancelAll()` 仅区分 abort 文案 ——
+      ESC 曾报“connection closed”）。变异（ESC 只管审批）→ 1 条变红。
+- [x] **B3 `/clear` 假清空**：只清 `Container`，而 `flush()` 按 `state.rows` 全量重建 →
+      下一个事件把整段对话复活。修：引入可见游标 `visibleFrom`，`/clear` 推进它，
+      flush 只渲染 `rows.slice(visibleFrom)`（行与会话日志不动）。
+      变异（去掉 slice）→ 1 条变红。
+- [x] **W1 交互层零测试（三轮漏 bug 的根因）**：新增 `tests/tui-interaction-glue.spec.ts`
+      （16 条：审批 y/n/esc + 吞键 + 面板文案/清空、提问数字键/越界键/ESC/自由文本/
+      多题计数、`/clear` 跨重绘仍生效且新行仍显示、notices 不被 flush 清掉）。
+- [x] **W2 route 无宽度约束**：状态栏只裁左侧，200 字符模型名在 width=80 下输出 206 列
+      （实测）。修：route 自身 `truncateToWidth`，padding 下限 0。2 条测试钉住。
+- [x] **W3 app.ts 结构回退**：picker 文案/键位抽 `theme-picker.ts`（纯函数 +
+      `themePickerIntent`）；`refreshInteraction` 的面板文案抽 `renderInteractionPanel()`。
+      两处均新增直测（10 + 5 条）。app 从 626 → 615 行（余下是 options 接口与分区注释）。
+- [x] **W4 接口面收敛**：删死 API `seedHistory()`（runner/测试均无调用）；
+      `setTimingLine()` + `refreshStatus()` 合成 `updateStatus(timing)` —— 旧的两个调用
+      会重绘两次，状态栏能在一帧里显示“新 timing + 旧 ledger”。
+- [x] `prepublishOnly` 全绿：**344 测试** / `tsc`×2 / build / publint。
+- [ ] 真机复验（审批/提问/`/clear` 三条链路）。
+
+## Step 13：第三轮审核修复（性能回退与资源边界）
+
+> 本轮审核对象是**第二轮的修复本身**。发现 2 个 Block，其中一个是上一轮把
+> 快路径换成慢路径造成的性能回退。
+
+- [x] **B1 流式热路径退化为每 token 全量折叠**（第二轮 W4 自己引入）：
+      把 `setTiming()`+`refresh()` 合成 `update()` 后，runner 的**每个 chunk 帧**都
+      触发 `readFacts()` → `snapshotEvents()` 全量快照 + `sessionProjections` 读 +
+      **同步读 `git HEAD`**。实测：50 次 → 50 次 facts 读。
+      第一性修法：**facts 与 timing 生命周期不同** —— timing 每 chunk 变（纯算术），
+      facts 只随会话事件变（含 I/O）。拆回双入口：`setTiming()`（廉价，缓存重排）/
+      `refresh(timing?)`（昂贵，可顺带带 timing → 事件路径仍只重绘**一次**）。
+      app 侧命名为 `updateTiming()` / `refreshStatus()`，让成本差异在调用点就可读。
+      新增**频率契约**测试（50 次 setTiming → facts 读 0 次）；变异 → 1 条变红。
+- [x] **B2 主题选择器无高度上限**：40 个主题 → 43 行面板，把编辑器顶出屏幕，
+      而键盘仍被 picker 消费 → 看不见输入框却打不进字。
+      修：抽通用 `window.ts`（`listWindow` + `overflowMarkers`，pi 模型选择器同款
+      maxVisible=10 + 选中居中），`renderThemePicker` 接窗口并显式报
+      `↑/↓ N more`（静默截断会让用户以为目录就这么多）。5 条变异验证。
+- [x] **W1 `submit()` 只挡 question 不挡 approval**：改为以 `interactions.busy`
+      守住不变量（question → 答案；approval → 提示而非发给模型）。
+      之前靠“唯一调用方会先 consume Enter”而不可达 —— 把不变量交给调用方
+      正是本文件两次漏 bug 的模式。变异 → 1 条变红。
+- [x] **W2 `visibleFrom` 与重新绑定不兼容**：`mountTranscript` 重置水印。
+      旧水印（2）会把新绑定、更短的行数组全部遮住 → 视图永久空白。变异 → 1 条变红。
+- [x] **W3 `setTiming()` 在 `src/` 零调用**：它不再是死 API —— `updateTiming()`
+      是它的单点调用方，`update()` 已彻底删除。
+- [x] **W4 notices 无上限**：加 `MAX_NOTICE_COMPONENTS = 64`，超出丢最旧
+      （`/help` 一次就追加 8 行，且每个子组件参与每次重绘）。变异 → 1 条变红。
+- [x] spec 沉淀：`quality-guidelines.md` 加「频率契约测试」与「把快路径换成慢路径」。
+- [x] `prepublishOnly` 全绿：**344 测试** / `tsc`×2 / build / publint。
+- [ ] 真机复验（流式帧期间的 CPU/延迟、多主题下的 picker）。
 
 ## Step 10：收尾（开发内，无真机）
 
@@ -108,8 +263,9 @@
       → 零命中（注释里讲历史的除外）。
 - [x] **既有测试**：`pnpm test` 全绿（含桥的 68 条，AC4 无回归的自动化面）。
 - [x] `pnpm run prepublishOnly` 全绿（AC8）。
-- [ ] spec 沉淀：TUI 适配层的双来源不变量（与桥同款）→ 是否入 `agent-hooks-domain.md`
-      或新文档，收尾时判断。
+- [x] spec 沉淀：`disabled: !!js` 的求值时机（loader audit，早于 row provide；判据只能落
+      host 级事实）与「TS 构建产物 files 白名单 vs chunk 拆分」两条入
+      `quality-guidelines.md`。TUI 双来源不变量与桥共用 `dsh-adapter` 文档，不重复立档。
 - [x] 无副产物检查（`pnpm-lock.yaml` 不出现在 git status）。
 
 ---

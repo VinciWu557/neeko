@@ -111,11 +111,114 @@
 - 监听器实现**不要用 `as never` 之类的 cast** 绕过真实签名。能结构化满足真实 `Context`
   的接口才让「用错 API」成为编译错误，而不是运行时崩溃。
 
+### 拆控制器时，必须同时测“接缝”（controller ↔ 输入 ↔ 视图）
+
+> 2026-10 `dsh-neeko` TUI 事故的类：**两轮审核、三个 Block 全部落在同一条缝上**。
+
+把一个胖类拆成纯控制器后，控制器本身很容易测得很漂亮（状态机 9 条全绿），
+而**连接它们的那 30 行胶水**（键位路由、提交分流、重绘时机）零覆盖 ——
+缺陷全在那里。实测漏网过的三例：
+
+1. 待处理的自由输入提问：`submit()` 不检查交互态 → 答案被发给模型，提问永不回答；
+2. 同一个交互态下 ESC：审批分支有、提问分支没有 → 唯一出路是退出整个 TUI；
+3. `/clear` 只清视图容器，而 flush 按数据数组全量重建 → 下一个事件把整段对话复活。
+
+- 正解：每次抽控制器，**同时**补一条“从真实输入到控制器→再回到视图”的胶水测试
+  （本仓 `tests/tui-interaction-glue.spec.ts`：真键盘字节 + 真提交 + 真容器断言）。
+- 判据：把胶水行删掉，测试必须变红（上面三条都做了变异验证）。
+- 推论：**“纯函数覆盖率 100%”不能作为拆分完成的标志**，它只说明控制器没 bug，
+  不说明用户能用。同构教训已在 `implement.md` 写过一次（`suggestCommands()` 写了
+  纯函数却没接线）—— 重复出现说明需要机制而非记忆。
+
+### 异步测试不要 await 一个“等输入才会 settle”的 promise
+
+写胶水测试时，`await openApproval()` 再按键是**死锁**（promise 只在路由按键后 settle），
+症状是 5s 超时而不是断言失败 —— 很容易被误读为“实现坏了”。
+正解：得到 promise 引用就按键，最后才 `await expect(p)`；审批/提问/abort 三类都同理。
+
+### 频率契约测试：断言“调了几次”，不只是“算得对”
+
+> 2026-10 `dsh-neeko` TUI 事故的类：**性能回退对值断言完全隐身**。
+
+一个方法把 `readFacts()` → 全量日志快照 + 投影读 + 同步文件读。单元测试全绿（值都对），
+但它被调用在**每个流式 chunk** 上（≈每 token 一次）。实测：50 次调用 → 50 次全量折叠。
+
+- 正解：对热路径上的“昂贵依赖”写**调用次数**断言： 
+  `for (50次) status.setTiming(...)` → `expect(readFacts).toHaveBeenCalledTimes(0)`。
+- 这类测试不需要性能测量、不 flaky，且直接钉住“谁被允许在热路径上做重活”。
+- 同理适用于：每个事件重绘（`requestRender` 次数）、每个 chunk 的日志 fold、
+  每个按键的磁盘读。选一个能计数上的注入点（本仓的 `readFacts`）即可。
+
+### 把快路径换成慢路径（合并入口时最常翻的车）
+
+合并两个方法看起来很干净（“少一个 API，少一帧半更新”），但如果两者的**依赖成本**
+不同，合并就是性能回退：
+
+- 真实案例：`setTiming()`（纯内存，每 chunk 调）+ `refresh()`（全量 fold，每事件调）
+  → 合成 `update()`（每次都重读）→ 流式热路径从零 I/O 变成每 token 全量 I/O。
+- 判据：合并前先问“两个方法被调用的**频率**是否相同”，不同就不能合。
+- 正解：保留两个入口，但让昂贵那个**可选地**带上廉价参数
+  （`refresh(timing?)`）—— 既消掉双重重绘，又不把快路径变慢。
+- 命名上把成本写进去（`updateTiming` / `refreshStatus`），误用在 code review 时就刺眼。
+
 ### 双来源不变量（流式 + 落盘）
 
 0.2.x 把实时流与持久日志拆成两个来源。**落盘日志不得被当作 delta 源**：
 若两边都发，每个 token 双发；若只依赖日志，助手文本全丢。
 落盘侧只贡献工具生命周期，实时侧只贡献文本/推理增量。
+
+### cordis patch 的 `disabled: !!js` 求值时机
+
+条件行表达式在 **loader audit** 阶段求值 —— 早于任何 patch row 的 `apply` / `provide`。
+该时刻可用的只有 **host 级事实**（`cmdlineArgs` / `profileContext` / `appExit`，
+由 `provideCmdline` 在 boot 前写入）；任何 row 提供的服务都不可见，
+且 cordis proxy 对未注入服务的属性访问**直接 throw**（`?.` 也救不了，拦截在 proxy trap）。
+
+- 正解：判据落 host 级事实，如 `ctx.get('cmdlineArgs').get().includes('--tui')`；
+  需要 row 内 config 时用 `?? 兜底` 形式（config 求值在 inject 之后，两者时机不同）。
+- 反例：`ctx.neekoStartup.tui`（属性访问 throw）→ `ctx.neekoStartup?.tui`
+  （同样 throw，`?.` 不绕过 proxy trap）→ `ctx.get('neekoStartup')?.tui`
+  （服务未 provide，get 返回 undefined）。
+- 复杂表达式用 IIFE 单行包裹；**多行会破坏 YAML 解析**（`!!js` 标量内不能换行），
+  且 JS 字符串里的 `\n` 也会破坏 YAML —— 需要调试输出时用逗号拼接多段。
+
+### 校验边界不一致 = 合法输入炸运行时（配置/主题/插件目录）
+
+> 适用范围：`packages/**`（Node 库侧）。同类形态在 Rust 侧对应「schema 宽松 + 消费处 unwrap」。
+
+**任何「loader 宽松、consumer 严格」的组合都是定时炸弹**：校验器（JSON schema /
+`coerce*` / 配置解析）允许缺字段而渲染/执行路径把缺字段当编程错误 throw，则一个
+**通过校验的合法输入**能把整个 UI 打死。`dsh-neeko` 的主题 loader 就是这样：
+接受只含 `accent` 的主题文件，而 `Theme.fg()` 对缺失 token 抛错 —— 用户合法文件
+→ 首次 repaint 抛异常。
+
+- 正解：在**解析出口**把稀疏输入叠到完整底版（`{...base, ...input}` 逐 key），
+  让「缺失」在校验层就被填满；消费处保留编程错误断言（那是内部约定）。
+- 反例：消费处逐点上 `?? 默认`，或在 `fg` 里静默回落 —— 前者漏一个 token 就炸，
+  后者把真正的编程错误也吞了。
+- 判据：为「最小合法输入」写一条「全字段可消费不抛」的测试（本仓
+  `overlays a partial document … every token resolves`）；它必须能在「取消叠底板」
+  的变异下变红。
+
+### 快照 vs 活目录（宿主注入的可变目录）
+
+第三方组件把「传入数组」快照进构造函数时，**惰性 getter 只是幻觉**：
+
+```ts
+// API 看起来是活的 …
+listHostCommands: () => readRegistry()
+// … 但 buildCommands() 在构造时立即求值成数组，之后再也不读
+```
+
+插件在宿主运行中注册的命令因此永远进不了菜单，且**没有任何报错**。
+
+- 正解：把目录读取放在**每次请求的边界**（本仓 `LiveSlashProvider` 每次
+  `getSuggestions` 重建内部 provider；pi-tui 的 `applyCompletion` 不读命令表，
+  所以重建无状态代价）。
+- 反例：为「性能」缓存内部 provider —— 这就是 bug 本身。
+- 判据：测试写「先取一次菜单 → 改目录 → 再取」，变异（加缓存）必须变红。
+- 例外：确实异步且昂贵的目录（本仓 skills 需 `await`）允许启动快照，
+  但必须在类型/注释上把 snapshot 语义写清楚，不能让调用方以为是活的。
 
 ---
 
@@ -789,3 +892,15 @@ pnpm tauri build       # 生产环境构建，包含打包
 （留 1.75pt，与前端全局地板同理）—— 只防回退，不是目标值。整仓数字被 `theme/*`、多数
 `*/commands.rs`（薄命令层，需 Tauri 运行时）拉低，所以**不要**用它衡量单个模块的质量。
 新增未测试代码把地板打穿时，正解是补测试，而不是下调地板。
+
+### 构建产物的 files 白名单与 chunk 拆分
+
+bundler（tsdown/rolldown）会把多入口共享的模块拆成 hash 命名的 chunk
+（如 `dsh-adapter-YLehbx72.js`）。若 `package.json` 的 `files` 是**逐文件白名单**，
+chunk 不在其中 → 包安装后 `import` 直接炸（`Cannot find module`），且只在
+**消费方加载时**暴露。二选一：
+
+- `files` 收整个目录（`"lib"`）—— 简单，但可能带入非预期产物；
+- bundler 关 chunk 拆分（`splitting: false`）—— 发布面扁平可预测，多入口小包推荐。
+
+判据：发包前 `npm pack --dry-run` 检查产物完整性；或消费方真机 import 一次。
