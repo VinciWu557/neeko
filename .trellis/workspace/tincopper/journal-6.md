@@ -1855,3 +1855,28 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 310: C/S HTTP gateway: hooks ingest migration + review fixes
+<!-- trellis-session: v=2 fp=c66096664232f259 -->
+
+**Date**: 2026-10-18
+**Task**: C/S HTTP gateway: hooks ingest migration + review fixes
+**Branch**: `main`
+
+### Summary
+
+Migrated agent-hooks ingest from hand-rolled TcpListener HTTP to a new generic gateway engine (src/server: gate/group/engine), unified auth gate with a single constant-time comparison, per-route-group failure policy that genuinely carries weight, and graceful shutdown wired into the cleanup table. Delivery isolated via spawn_blocking (real smoke test: 204 in 182us). Two review rounds surfaced and fixed: doc-link rot and log level, plus a substantive defect where the normalize predicate swallowed all 4xx/5xx -- which had been masking four tests that never reached their target. That lesson is recorded as quality-guidelines forbidden pattern 6. Task archived after AC1-AC12 verification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b10a7d1c` | feat(server): add in-process HTTP gateway engine for C/S architecture |
+| `0c8ebd21` | refactor(hooks): migrate agent-hooks ingest to the HTTP gateway engine |
+| `87bf4650` | docs(spec): record the HTTP gateway topology and its test pitfalls |
+| `e1876ec8` | chore(task): record cs-http-gateway planning and implementation artifacts |
+
+### Status
+
+[OK] **Completed**

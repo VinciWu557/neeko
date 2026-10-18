@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 306
-- **Last Active**: 2026-10-17
+- **Total Sessions**: 310
+- **Last Active**: 2026-10-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1857 | Active |
+| `journal-6.md` | ~1882 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 310 | 2026-10-18 | C/S HTTP gateway: hooks ingest migration + review fixes | `b10a7d1c`, `0c8ebd21`, `87bf4650`, `e1876ec8` | `main` |
 | 306 | 2026-10-17 | 10-16-notify-claude-compat / 10-16-notify-codex：完成度核验、AC 回填、spec 内联与归档 | `41cf223e`, `4f6de2b5` | `main` |
 | 305 | 2026-10-17 | 10-12-agent-notify: 完成度核验、Phase C/AC 文档回填、spec 沉淀与归档 | `944dafb25d16f76eada07fcb11b2cec552f0117b`, `d4bdc046536a9b7bedf90ab5089ea9ec14899bcd` | `main` |
 | 304 | 2026-10-16 | 10-16-notify-codex: A 方案（审批通知）—— 多面模型 + trust_probe 精确化 + 三态缺失区分（两个新真 bug） | - | `main` |
