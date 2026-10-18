@@ -106,17 +106,28 @@ export class CommandController {
 
   /**
    * Load the model catalogue once; later calls reuse the result.
-   * @returns the catalogue (possibly empty on failure).
+   *
+   * An **empty** result is not cached: the first load can legitimately return
+   * nothing (the provider registry may not be populated yet at construction
+   * time, and the app warms the catalogue eagerly), and caching that would lock
+   * `/model` out for the rest of the session — the failure looks like "model
+   * switching stopped working" with no error anywhere. A failed load retries for
+   * the same reason; only a non-empty catalogue is treated as settled.
+   *
+   * @returns the catalogue (possibly empty).
    */
   async ensureModels(): Promise<readonly ModelChoice[]> {
     if (this.modelsLoaded) return this.models
     try {
-      this.models = await this.options.loadModels()
+      const loaded = await this.options.loadModels()
+      if (loaded.length > 0) {
+        this.models = loaded
+        this.modelsLoaded = true
+      }
     } catch {
       // Fail open: `/model` reports "no models" and the rest of the TUI works.
-      this.models = []
+      // Not cached, so a later attempt can still succeed.
     }
-    this.modelsLoaded = true
     return this.models
   }
 

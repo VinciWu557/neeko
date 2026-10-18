@@ -218,6 +218,39 @@ describe('CommandController', () => {
     expect(c.modelCatalogue).toEqual([])
   })
 
+  it('retries after an EMPTY result instead of caching the miss', async () => {
+    // Regression: caching an empty first load locked `/model` out for the whole
+    // session, which read as "model switching stopped working" with no error.
+    // The app warms this catalogue in its constructor, where the provider
+    // registry may legitimately not be populated yet.
+    let calls = 0
+    const c = new CommandController({
+      loadModels: async () => {
+        calls += 1
+        return calls === 1 ? [] : [{ id: 'm1', name: 'M', provider: 'p' }]
+      },
+    })
+    expect(await c.ensureModels()).toEqual([])
+    expect(await c.ensureModels()).toHaveLength(1)
+    expect(calls).toBe(2)
+    // …and once filled, it is cached again.
+    await c.ensureModels()
+    expect(calls).toBe(2)
+  })
+
+  it('retries after a FAILED load instead of caching the failure', async () => {
+    let attempts = 0
+    const c = new CommandController({
+      loadModels: async () => {
+        attempts += 1
+        if (attempts === 1) throw new Error('registry not ready')
+        return [{ id: 'm1', name: 'M', provider: 'p' }]
+      },
+    })
+    await expect(c.ensureModels()).resolves.toEqual([])
+    expect(await c.ensureModels()).toHaveLength(1)
+  })
+
   it('reports host success text', async () => {
     const c = make(async () => ({ kind: 'success', text: 'Compacted.' }))
     expect(await c.runOnHost('/compact')).toEqual({ ok: true, text: 'Compacted.' })

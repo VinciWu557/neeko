@@ -257,6 +257,38 @@ host 级事实（`cmdlineArgs` / `profileContext` / `appExit`），任何 row pr
 - [x] `prepublishOnly` 全绿：**344 测试** / `tsc`×2 / build / publint。
 - [ ] 真机复验（流式帧期间的 CPU/延迟、多主题下的 picker）。
 
+## Step 14：模型切换失效修复（用户反馈）
+
+> 用户报告「model 切换失效，前面是没有问题的」。定位到 3 个各自独立的缺陷，
+> 全部是我在前几轮引入或未接线的，都有变异验证。
+
+- [x] **B1 `reasoningEffort` 被带过模型边界**（Step 11 接线时引入）：
+      `selectModel` 写成 `{ ...route, model: id }`，把旧模型的 `reasoningEffort`
+      一起带进新模型。DSH 契约（`installModelSelection` 的 `agent/request`）是：
+      effort **absent = 用该模型的 provider 默认**，present = **原样应用**。
+      所以旧档位被强加到不支持它的新模型上 → 请求失败或静默降级 → 表现为“切换没生效”。
+      修：抽 `model-switch.ts` 的 `switchedSelection()`（只留 provider + 新 model）。
+      变异（恢复 `...route`）→ 2 条变红。
+- [x] **B2 空目录被永久缓存**（构造期预热引入）：`ensureModels` 一旦设
+      `modelsLoaded = true` 就永不重试。而 app 在**构造期**就 `void ensureModels()`
+      预热——那一刻 provider 注册表可能尚未就绪，返回空即被锁死整个会话。
+      `llm.listModels()` 失败也同理。修：**只缓存非空结果**，失败/空都可重试。
+      变异（恢复永久缓存）→ 1 条变红。
+- [x] **B3 `selectModel` 抛错时完全静默**：`submit()` 的 promise 直接 reject，
+      界面无任何提示 → 用户看到“按回车什么都没发生”。
+      修：`applyModelById` 包 try/catch，失败转 error notice 且不谎报成功。
+      变异 → 1 条变红。
+- [x] **W1 `llm` 未声明依赖**：runner 用 `ctx.get('llm')` 作为模型列表唯一来源，
+      但 `inject` 只声明了 `agentDefaultModel` / `agents` → cordis 不会等 `llm`
+      就绪，boot 期可能拿到 `undefined` → 目录为空。修：`inject` 加 `llm`
+      （`skills`/`commands` 保持可选，缺了只是菜单少几项）。
+- [x] 测试：新增 `tests/tui-model-switch.spec.ts`（4 条）+
+      `tui-controllers.spec.ts` 加「空/失败后重试」（2 条）+
+      `tui-interaction-glue.spec.ts` 加「切换失败可见 / 成功仍确认」（2 条）。
+- [x] `prepublishOnly` 全绿：**352 测试** / `tsc`×2 / build / publint。
+- [ ] 真机复验：`/model ` 候选非空 → 选中 → 下一轮请求确实走新模型
+      （观察 `[model changed: …]` 通知行，DSH 在路由变化时会写一条 durable notice）。
+
 ## Step 10：收尾（开发内，无真机）
 
 - [x] **契约自查（AC9）**：`grep -rn "session.events\|registerProvider\|assistant/chunk" src/tui/`

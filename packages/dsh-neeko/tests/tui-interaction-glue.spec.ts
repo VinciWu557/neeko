@@ -309,3 +309,57 @@ describe('notices are bounded', () => {
     expect(view.notices.children.length).toBeGreaterThan(0)
   })
 })
+
+describe('/model switch failures are visible', () => {
+  it('reports a failure instead of rejecting silently', async () => {
+    // Regression: an uncaught throw from the host-owned selectModel rejected the
+    // submission with no notice, so pressing enter appeared to do nothing.
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'test', model: 'old' }),
+      cwd: '/tmp/test',
+      getSessionId: () => 'session-test',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0.0.0-test',
+      statusFacts: () => ({ cwd: '/tmp/test' }),
+      modelPicker: async () => ({
+        models: [{ id: 'new', name: 'New', provider: 'test' }],
+        current: 'test/old',
+      }),
+      selectModel: () => { throw new Error('save failed') },
+      terminal: new FakeTerminal(),
+    })
+    const submit = (text: string): Promise<void> =>
+      (app as unknown as { submit(t: string): Promise<void> }).submit.call(app, text)
+    const rendered = (): string =>
+      (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
+        .notices.children.map((child) => child.render(200).join('')).join('\n')
+
+    await expect(submit('/model new')).resolves.toBeUndefined()
+    expect(rendered()).toContain('model switch failed')
+    expect(rendered()).not.toContain('model →')
+  })
+
+  it('still confirms a successful switch', async () => {
+    const switched: string[] = []
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'test', model: 'old' }),
+      cwd: '/tmp/test',
+      getSessionId: () => 'session-test',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0.0.0-test',
+      statusFacts: () => ({ cwd: '/tmp/test' }),
+      modelPicker: async () => ({
+        models: [{ id: 'new', name: 'New', provider: 'test' }],
+        current: 'test/old',
+      }),
+      selectModel: (id) => { switched.push(id) },
+      terminal: new FakeTerminal(),
+    })
+    const submit = (text: string): Promise<void> =>
+      (app as unknown as { submit(t: string): Promise<void> }).submit.call(app, text)
+    await submit('/model new')
+    expect(switched).toEqual(['new'])
+  })
+})

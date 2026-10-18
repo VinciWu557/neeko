@@ -21,6 +21,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { planSession } from './session-plan.ts'
+import { switchedSelection } from './model-switch.ts'
 import { collectHostCommands, collectSkills, executeHostCommand } from './host-commands.ts'
 import type { CommandExecuteRegistryLike, CommandRegistryLike, SkillRegistryLike } from './host-commands.ts'
 import { contextWindowOf, dshVersion, gitBranch, readContextPressure } from './host-facts.ts'
@@ -37,8 +38,16 @@ import { TuiApp } from './app.ts'
 /** Stable Cordis plugin name — must match the `neeko-tui` patch row. */
 export const name = 'tui'
 
-/** Services required before the runner can start. */
-export const inject = ['agentDefaultModel', 'agents']
+/**
+ * Services required before the runner can start.
+ *
+ * `llm` is declared because the model catalogue — and therefore any model
+ * switch — reads it. Without the declaration cordis does not wait for that
+ * fiber, so `ctx.get('llm')` can resolve to `undefined` while the runner boots
+ * and the catalogue silently comes back empty. `skills` / `commands` stay
+ * optional: the TUI works without them (the menu just offers fewer entries).
+ */
+export const inject = ['agentDefaultModel', 'agents', 'llm']
 
 /** Runner-facing configuration (resolved from the startup service). */
 export interface TuiConfig {
@@ -288,8 +297,9 @@ export function apply(ctx: Context, config: TuiConfig): void {
         },
         selectModel: (id: string) => {
           const route = liveSelection()
-          // Only the model changes hands; reasoning effort belongs to the route.
-          selectionRef.current = { ...route, model: id }
+          // Only `provider` survives a model change; see `switchedSelection`
+          // for why carrying `reasoningEffort` over makes the switch silent.
+          selectionRef.current = switchedSelection(route, id)
           void defaultModel.saveSelection({ provider: route.provider, model: id }).catch(() => {})
         },
         onExit: () => {

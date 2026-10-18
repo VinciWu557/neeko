@@ -359,7 +359,18 @@ export class TuiApp {
       )
       return
     }
-    this.options.selectModel(match.id)
+    // `selectModel` is host-owned and can fail (persisting the selection). An
+    // uncaught throw here rejected the whole submission with no visible effect,
+    // so pressing enter looked like it did nothing at all.
+    try {
+      this.options.selectModel(match.id)
+    } catch (error: unknown) {
+      this.addNotice(
+        `model switch failed: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      )
+      return
+    }
     // The banner bakes colors + the route into strings; a switch repaints it.
     this.repaintChrome()
     this.addNotice(`model → ${match.provider}/${match.id}`, 'muted')
