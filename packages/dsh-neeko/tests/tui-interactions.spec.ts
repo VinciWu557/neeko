@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { InteractionManager } from '../src/tui/interactions.ts'
+import { InteractionManager, interactionIntent, renderInteractionPanel } from '../src/tui/interactions.ts'
 import type { ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 
@@ -103,5 +103,85 @@ describe('InteractionManager — questions', () => {
   it('answerQuestion is a no-op when idle (no phantom answers)', () => {
     const m = new InteractionManager()
     expect(() => m.answerQuestion('stray')).not.toThrow()
+  })
+})
+
+describe('renderInteractionPanel', () => {
+  it('is empty when idle', () => {
+    expect(renderInteractionPanel(undefined)).toBe('')
+  })
+
+  it('shows the tool, the reason and every key hint for an approval', () => {
+    const text = renderInteractionPanel({ kind: 'approval', toolName: 'bash', reason: 'needs write' })
+    expect(text).toContain('approve bash')
+    expect(text).toContain('needs write')
+    expect(text).toContain('[y] allow')
+    expect(text).toContain('[n] reject')
+    expect(text).toContain('[esc] cancel')
+  })
+
+  it('omits the em dash when the approval carries no reason', () => {
+    const text = renderInteractionPanel({ kind: 'approval', toolName: 'bash', reason: undefined })
+    expect(text).toContain('approve bash\n')
+    expect(text).not.toContain('—')
+  })
+
+  it('numbers the options 1-based and shows the counter', () => {
+    const text = renderInteractionPanel({
+      kind: 'question', index: 2, total: 3, question: 'Which?',
+      options: [{ id: '0', label: 'Alpha' }, { id: '1', label: 'Beta' }],
+    })
+    expect(text).toContain('(2/3)')
+    expect(text).toContain('Which?')
+    expect(text).toContain('1. Alpha')
+    expect(text).toContain('2. Beta')
+  })
+
+  it('tells the user to type when a question has no options', () => {
+    const text = renderInteractionPanel({ kind: 'question', index: 1, total: 1, question: 'Name?', options: [] })
+    expect(text).toContain('type your answer, enter to submit')
+  })
+})
+
+describe('interactionIntent', () => {
+  const never = (): boolean => false
+  const only = (name: string) => (candidate: string): boolean => candidate === name
+
+  it('passes every key through when nothing is pending', () => {
+    expect(interactionIntent(undefined, only('y'), 1)).toEqual({ kind: 'pass-through' })
+  })
+
+  it('cancels on escape for BOTH kinds (the discrepancy that stranded questions)', () => {
+    const approval = { kind: 'approval', toolName: 't', reason: undefined } as const
+    const question = { kind: 'question', index: 1, total: 1, question: 'q', options: [] } as const
+    expect(interactionIntent(approval, only('escape'), undefined)).toEqual({ kind: 'cancel' })
+    expect(interactionIntent(question, only('escape'), undefined)).toEqual({ kind: 'cancel' })
+  })
+
+  it('maps y/n on an approval and swallows everything else', () => {
+    const approval = { kind: 'approval', toolName: 't', reason: undefined } as const
+    expect(interactionIntent(approval, only('y'), undefined)).toEqual({ kind: 'allow-approval' })
+    expect(interactionIntent(approval, only('n'), undefined)).toEqual({ kind: 'reject-approval' })
+    expect(interactionIntent(approval, never, undefined)).toEqual({ kind: 'ignore' })
+  })
+
+  it('maps a valid digit to that option', () => {
+    const view = {
+      kind: 'question', index: 1, total: 1, question: 'q',
+      options: [{ id: '0', label: 'A' }, { id: '1', label: 'B' }],
+    } as const
+    expect(interactionIntent(view, never, 2)).toEqual({ kind: 'answer-option', label: 'B' })
+  })
+
+  it('swallows an out-of-range digit instead of answering with undefined', () => {
+    const view = {
+      kind: 'question', index: 1, total: 1, question: 'q', options: [{ id: '0', label: 'A' }],
+    } as const
+    expect(interactionIntent(view, never, 9)).toEqual({ kind: 'ignore' })
+  })
+
+  it('lets a free-text question fall through to the editor', () => {
+    const view = { kind: 'question', index: 1, total: 1, question: 'q', options: [] } as const
+    expect(interactionIntent(view, never, undefined)).toEqual({ kind: 'pass-through' })
   })
 })

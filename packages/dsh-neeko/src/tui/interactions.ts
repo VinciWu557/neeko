@@ -48,6 +48,8 @@ interface PendingInteraction {
 export class InteractionManager {
   private pending: PendingInteraction | undefined
   private view: InteractionView | undefined
+  /** Invoked whenever {@linkcode current} changes (set/cleared). */
+  onChange: (() => void) | undefined
 
   private settleApproval: ((outcome: ApprovalOutcome) => void) | undefined
   private settleQuestion: { resolve: (item: AskUserQuestionAnswerItem) => void; reject: (error: Error) => void } | undefined
@@ -77,6 +79,7 @@ export class InteractionManager {
       this.pending = { ...(request.signal === undefined ? {} : { signal: request.signal }), onAbort }
       this.settleApproval = resolve
       this.view = { kind: 'approval', toolName: request.toolName, reason: request.reason }
+      this.onChange?.()
     })
   }
 
@@ -97,6 +100,7 @@ export class InteractionManager {
     this.view = undefined
     const resolve = this.settleApproval
     this.settleApproval = undefined
+    this.onChange?.()
     resolve(outcome)
   }
 
@@ -145,6 +149,7 @@ export class InteractionManager {
         question: question.question,
         options: question.options?.map((option, index) => ({ id: String(index), label: option.label })) ?? [],
       }
+      this.onChange?.()
     })
   }
 
@@ -170,12 +175,112 @@ export class InteractionManager {
     this.settleQuestion = undefined
     if (result instanceof Error) settle.reject(result)
     else settle.resolve(result)
+    this.onChange?.()
   }
 
-  /** Settle every pending interaction (teardown / exit). */
+  /**
+   * Settle every pending interaction (teardown / exit).
+   *
+   * Distinct from {@linkcode cancelByUser} only in the aborted-question
+   * message: a teardown is not something the user did, and conflating the two
+   * made an ESC press report "connection closed".
+   */
   cancelAll(): void {
+    this.settleAll('dsh-neeko: connection closed before the user answered')
+  }
+
+  /**
+   * Settle whatever is pending because the user dismissed it (ESC).
+   *
+   * Approval → `'cancelled'`; question → `ASK_ABORTED`. Both are the same
+   * waterfall-legal outcomes as an aborted signal, so the agent unblocks
+   * instead of waiting for an answer that is no longer coming.
+   */
+  cancelByUser(): void {
+    this.settleAll('dsh-neeko: question cancelled by the user')
+  }
+
+  private settleAll(questionAbortMessage: string): void {
     this.finishApproval('cancelled')
-    this.finishQuestion(new UserQuestionError('dsh-neeko: connection closed before the user answered', 'ASK_ABORTED'))
+    this.finishQuestion(new UserQuestionError(questionAbortMessage, 'ASK_ABORTED'))
     this.questionQueue = []
   }
+}
+
+/**
+ * What the UI must do with one keystroke while an interaction is pending.
+ *
+ * The split is deliberate: deciding *what* a key means is a pure function of
+ * (view, key), and only the app performs the effects. That is what makes the
+ * routing testable without a terminal — and what previously let two branches
+ * go missing (a pending question answered by sending the text to the model,
+ * and ESC doing nothing on a question while it cancelled an approval).
+ */
+export type InteractionIntent =
+  /** Resolve the approval with `allowed-once`. */
+  | { readonly kind: 'allow-approval' }
+  /** Resolve the approval with `rejected`. */
+  | { readonly kind: 'reject-approval' }
+  /** Abort whatever is pending (ESC): approval → `cancelled`, question → `ASK_ABORTED`. */
+  | { readonly kind: 'cancel' }
+  /** Answer the pending question with an option label. */
+  | { readonly kind: 'answer-option'; readonly label: string }
+  /** Swallow the key: an interaction owns the keyboard but this key does nothing. */
+  | { readonly kind: 'ignore' }
+  /** Not an interaction key — let the editor (or another mode) handle it. */
+  | { readonly kind: 'pass-through' }
+
+/**
+ * Render the inline interaction panel.
+ *
+ * Pure so the wording and the branch structure are assertable without a screen
+ * — the three defects found in this layer (wrong destination for a submitted
+ * answer, missing ESC, a stale panel) were all invisible to the state-machine
+ * tests.
+ *
+ * @param view - the pending view, or `undefined` when idle.
+ * @returns the panel text; `''` when nothing is pending.
+ */
+export function renderInteractionPanel(view: InteractionView | undefined): string {
+  if (view === undefined) return ''
+  if (view.kind === 'approval') {
+    const reason = view.reason === undefined ? '' : ` — ${view.reason}`
+    return `⚠ approve ${view.toolName}${reason}\n[y] allow   [n] reject   [esc] cancel`
+  }
+  const optionLines = view.options.length === 0
+    ? '(type your answer, enter to submit)'
+    : view.options.map((option) => `  ${Number(option.id) + 1}. ${option.label}`).join('\n')
+  return `? (${view.index}/${view.total}) ${view.question}\n${optionLines}`
+}
+
+/**
+ * Map one keystroke to an {@linkcode InteractionIntent}.
+ *
+ * @param view - the pending view, or `undefined` when idle.
+ * @param isKey - predicate: does this key data match a named key?
+ * @param digits - `1`-`9` extracted from the input, or `undefined`.
+ * @returns the intent; `pass-through` when no interaction is pending.
+ */
+export function interactionIntent(
+  view: InteractionView | undefined,
+  isKey: (name: 'escape' | 'y' | 'n') => boolean,
+  digit: number | undefined,
+): InteractionIntent {
+  if (view === undefined) return { kind: 'pass-through' }
+  if (isKey('escape')) return { kind: 'cancel' }
+  if (view.kind === 'approval') {
+    if (isKey('y')) return { kind: 'allow-approval' }
+    if (isKey('n')) return { kind: 'reject-approval' }
+    // An approval must not leak typing into the editor.
+    return { kind: 'ignore' }
+  }
+  if (digit !== undefined) {
+    const option = view.options[digit - 1]
+    if (option !== undefined) return { kind: 'answer-option', label: option.label }
+    return { kind: 'ignore' }
+  }
+  // A free-text question consumes Enter through the editor: `undefined` here
+  // means "not an interaction key", and the app routes the submission to
+  // `answerQuestion` instead of the model.
+  return { kind: 'pass-through' }
 }

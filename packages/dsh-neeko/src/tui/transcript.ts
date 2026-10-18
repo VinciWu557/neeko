@@ -222,8 +222,11 @@ function textFromBlocks(content: readonly ContentBlock[]): string {
 
 import { Text } from '@earendil-works/pi-tui'
 import { Markdown } from '@earendil-works/pi-tui'
+import type { MarkdownTheme } from '@earendil-works/pi-tui'
+import type { ThemeToken } from './theme.ts'
 
-const markdownTheme = {
+/** Colorless fallback used when the caller supplies no theme (tests). */
+const PLAIN_MARKDOWN_THEME: MarkdownTheme = {
   heading: (text: string) => text,
   link: (text: string) => text,
   linkUrl: (text: string) => text,
@@ -243,26 +246,37 @@ const markdownTheme = {
 /**
  * Render one transcript row as a pi-tui component.
  *
- * Plain (colorless) styling for the MVP; a palette is R3 scope.
- *
  * @param row - the transcript row.
+ * @param theme - token painter; absent means plain text (tests).
+ * @param markdownTheme - Markdown styling; defaults to the colorless theme.
  * @returns the component to mount in the messages container.
  */
-export function renderRow(row: TranscriptRow): Text | Markdown {
+export function renderRow(
+  row: TranscriptRow,
+  theme?: { fg(token: ThemeToken, text: string): string },
+  markdownTheme: MarkdownTheme = PLAIN_MARKDOWN_THEME,
+): Text | Markdown {
+  const paint = theme === undefined
+    ? (_token: ThemeToken, text: string): string => text
+    : (token: ThemeToken, text: string): string => theme.fg(token, text)
   switch (row.kind) {
     case 'user':
-      return new Text(`❯ ${row.content}`)
+      return new Text(`${paint('accent', '❯')} ${paint('userMessageText', row.content)}`)
     case 'assistant': {
       const parts: string[] = []
-      if (row.thinking !== '') parts.push(row.thinking)
+      if (row.thinking !== '') parts.push(paint('thinkingText', row.thinking))
       if (row.text !== '') parts.push(row.text)
       if (parts.length === 0) parts.push(row.done ? '(no content)' : '…')
       return new Markdown(parts.join('\n\n'), 1, 0, markdownTheme)
     }
     case 'tool': {
-      const statusMark = row.status === 'running' ? '⟳' : row.status === 'failed' ? '✗' : '✓'
-      const detail = row.result === undefined ? '' : `\n  ${row.result}`
-      return new Text(`${statusMark} ${row.name} ${JSON.stringify(row.args)}${detail}`)
+      const [mark, token] = row.status === 'running'
+        ? ['⟳', 'muted'] as const
+        : row.status === 'failed'
+          ? ['✗', 'error'] as const
+          : ['✓', 'success'] as const
+      const detail = row.result === undefined ? '' : paint('dim', `\n  ${row.result}`)
+      return new Text(`${paint(token, mark)} ${paint('text', row.name)} ${paint('muted', JSON.stringify(row.args))}${detail}`)
     }
   }
 }
