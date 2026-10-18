@@ -78,7 +78,7 @@ vi.mock('@/features/file/components/FileTreeRow', async () => {
 
 import FilesPanel from '@/features/file/components/FilesPanel';
 import { useFileStore } from '@/features/file/store';
-import type { FileChange, FileNode } from '@/shared/types';
+import type { DirTreeResult, FileChange, FileNode } from '@/shared/types';
 import { createAppProviderWrapper } from '@/testing/AppProviderTestUtils';
 
 const render = (ui: Parameters<typeof renderRTL>[0]) =>
@@ -96,16 +96,22 @@ const tree: FileNode[] = [
   { name: 'b.ts', path: 'b.ts', is_dir: false, children: [] },
 ];
 
-function seedDirs(nodes: FileNode[]) {
+/**
+ * 注入目录缓存。`keepExpansion`：模拟「桶重载」（同 owner 下只换内容），
+ * 此时展开态必须保留 —— reset() 默认会把它清掉，那会变成「切项目」语义。
+ */
+function seedDirs(nodes: FileNode[], { keepExpansion = false } = {}) {
   const dirs: Record<string, FileNode[]> = {
     '': nodes.map((n) => ({ ...n, children: [] })),
     src: [{ name: 'a.ts', path: 'src/a.ts', is_dir: false, children: [] }],
   };
+  const prevExpanded = keepExpansion ? useFileStore.getState().expandedDirs : new Set<string>();
   useFileStore.getState().reset();
   useFileStore.setState({
     owner: OWNER,
     dirs,
     loadStates: Object.fromEntries(Object.keys(dirs).map((k) => [k, 'loaded' as const])),
+    expandedDirs: prevExpanded,
   });
 }
 
@@ -123,7 +129,12 @@ const baseProps = {
   activeFilePath: null as string | null,
   onSelectFile: vi.fn(),
   onRefresh: vi.fn(),
-  onExpandDir: vi.fn().mockResolvedValue(undefined),
+  owner: OWNER,
+  makeDirLoader: (dirPath: string) => () =>
+    Promise.resolve<DirTreeResult>({
+      nodes: useFileStore.getState().dirs[dirPath] ?? [],
+      truncated: false,
+    }),
   projectType: 'Local' as const,
   onCreateFile: vi.fn().mockResolvedValue(undefined),
 };
@@ -204,7 +215,7 @@ describe('未受影响行不重渲染（S4 扁平行 render count 兜底）', ()
     harness.counts.clear();
 
     act(() => {
-      seedDirs(tree);
+      seedDirs(tree, { keepExpansion: true });
     });
 
     expect(totalRenders()).toBe(0);

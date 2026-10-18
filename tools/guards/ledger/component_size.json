@@ -17,7 +17,7 @@
     "src/features/conversation/components/ConversationPanel.tsx": 365,
     "src/features/conversation/components/ConversationViewer.tsx": 566,
     "src/features/editor/hooks/useLspNavigation.ts": 342,
-    "src/features/file/hooks/useFilePanelState.ts": 503,
+    "src/features/file/hooks/useFilePanelState.ts": 233,
     "src/features/git/components/BranchSwitcherPanel.tsx": 436,
     "src/features/git/components/CommitDialog.tsx": 326,
     "src/features/git/components/PullRequestsPanel.tsx": 886,

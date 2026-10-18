@@ -11,7 +11,7 @@ vi.mock('@/features/file/hooks/useFileDrop', () => ({
 import { setDragFile } from '@/features/file/hooks/useFileDrop';
 import { useFileStore } from '@/features/file/store';
 import { disposeDragGhost } from '@/features/file/utils/dragGhost';
-import type { FileChange, FileNode } from '@/shared/types';
+import type { DirTreeResult, FileChange, FileNode } from '@/shared/types';
 import { createAppProviderWrapper } from '@/testing/AppProviderTestUtils';
 
 // ── VirtualList 测试替身（文件级 mock）───────────────────────────────────────
@@ -120,7 +120,13 @@ const baseProps = {
   activeFilePath: null,
   onSelectFile: vi.fn(),
   onRefresh: vi.fn(),
-  onExpandDir: vi.fn().mockResolvedValue(undefined),
+  owner: OWNER,
+  // 默认 loader：动态从注入的 fab 读（各用例覆写 state 前先 seedDirs）
+  makeDirLoader: (dirPath: string) => () =>
+    Promise.resolve<DirTreeResult>({
+      nodes: useFileStore.getState().dirs[dirPath] ?? [],
+      truncated: false,
+    }),
   projectType: 'Local' as const,
 };
 
@@ -527,24 +533,22 @@ describe('FilesPanel 文件管理', () => {
       loadStates: { '': 'loaded', src: 'loaded' },
     });
 
-    // onExpandDir 模拟 store.loadDir 的幂等语义：已加载目录跳过，缺失目录填充一级条目
-    const onExpandDir = vi.fn(async (dirPath: string) => {
-      const s = useFileStore.getState();
-      if (s.dirs[dirPath]) return;
-      useFileStore.setState({
-        dirs: {
-          ...s.dirs,
-          [dirPath]: [{ name: 'foo.ts', path: `${dirPath}/foo.ts`, is_dir: false, children: [] }],
-        },
-        loadStates: { ...s.loadStates, [dirPath]: 'loaded' },
-      });
-    });
+    // makeDirLoader 记录被请求的目录并返回一级条目（store.loadDir 幂等由 store 自身保证）
+    const requested: string[] = [];
+    const makeDirLoader = (dirPath: string) => {
+      requested.push(dirPath);
+      return () =>
+        Promise.resolve<DirTreeResult>({
+          nodes: [{ name: 'foo.ts', path: `${dirPath}/foo.ts`, is_dir: false, children: [] }],
+          truncated: false,
+        });
+    };
 
     try {
       render(
         <FilesPanel
           {...baseProps}
-          onExpandDir={onExpandDir}
+          makeDirLoader={makeDirLoader}
           locateTargetPath="src/deep/foo.ts"
           canLocateFile
           autoLocateFileOnTabSwitch={false}
@@ -554,8 +558,8 @@ describe('FilesPanel 文件管理', () => {
       fireEvent.click(screen.getByTitle('Locate current file'));
 
       // 未加载祖先目录被触发懒加载（从浅到深）
-      await waitFor(() => expect(onExpandDir).toHaveBeenCalledWith('src'));
-      expect(onExpandDir).toHaveBeenCalledWith('src/deep');
+      await waitFor(() => expect(requested).toContain('src'));
+      expect(requested).toContain('src/deep');
 
       // 加载完成后目标行出现并被选中（修复前只展开 expandedDirs、无内容 → 永不选中）
       await waitFor(() => {
@@ -923,25 +927,23 @@ describe('locate scroll via explicit locateSignal channel', () => {
       },
       loadStates: { '': 'loaded', src: 'loaded' },
     });
-    // onExpandDir 模拟 store.loadDir 幂等语义：缺失目录填充一级条目
-    const onExpandDir = vi.fn(async (dirPath: string) => {
-      const s = useFileStore.getState();
-      if (s.dirs[dirPath]) return;
-      useFileStore.setState({
-        dirs: {
-          ...s.dirs,
-          [dirPath]: [{ name: 'foo.ts', path: `${dirPath}/foo.ts`, is_dir: false, children: [] }],
-        },
-        loadStates: { ...s.loadStates, [dirPath]: 'loaded' },
-      });
-    });
+    // makeDirLoader 记录被请求的目录并返回一级条目
+    const requested: string[] = [];
+    const makeDirLoader = (dirPath: string) => {
+      requested.push(dirPath);
+      return () =>
+        Promise.resolve<DirTreeResult>({
+          nodes: [{ name: 'foo.ts', path: `${dirPath}/foo.ts`, is_dir: false, children: [] }],
+          truncated: false,
+        });
+    };
     // foo.ts 组装后 idx=2，落在覆写窗口 [0,2) 之外 → 必须补滚才可见
     virtualState.rangeOverride = [0, 2];
 
     render(
       <FilesPanel
         {...baseProps}
-        onExpandDir={onExpandDir}
+        makeDirLoader={makeDirLoader}
         locateTargetPath="src/deep/foo.ts"
         canLocateFile
         autoLocateFileOnTabSwitch={false}
@@ -949,7 +951,7 @@ describe('locate scroll via explicit locateSignal channel', () => {
     );
 
     fireEvent.click(screen.getByTitle('Locate current file'));
-    await waitFor(() => expect(onExpandDir).toHaveBeenCalledWith('src/deep'));
+    await waitFor(() => expect(requested).toContain('src/deep'));
 
     // 行未组装期间 seq 不消费：rows 到位后自动补滚到目标行
     await waitFor(() => {
