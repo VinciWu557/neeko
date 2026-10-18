@@ -1,33 +1,25 @@
 import { homeDir } from '@tauri-apps/api/path';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ContextMenuItem } from '@/shared/components/ContextMenu';
-import {
-  Globe,
-  FolderOpen,
-  FileText,
-  FilePlus,
-  FolderPlus,
-  Trash2,
-  Pencil,
-  Copy,
-  ClipboardCopy,
-  ExternalLink,
-} from '@/shared/components/icons';
 import { useCopyToClipboard } from '@/shared/hooks/useCopyToClipboard';
 import { useNotificationStore } from '@/shared/store/notificationStore';
-import type { FileNode } from '@/shared/types';
-import { canonicalFsPath } from '@/shared/utils/fileRef';
+import type { FileNode, DirTreeResult } from '@/shared/types';
 
-import { displayHomePath, getParentPath, getParentPaths } from '../utils/fileTreeUtils';
-import { isJavaSourceRoot, isUnderJavaSourceRoot } from '../utils/javaPackageTree';
+import { displayHomePath, getParentPath } from '../utils/fileTreeUtils';
+
+import { useDirExpansion } from './useDirExpansion';
+import { useFileContextMenu } from './useFileContextMenu';
+import { useFileInlineEdit } from './useFileInlineEdit';
 
 export interface UseFilePanelStateParams {
   projectPath?: string | null;
+  /** 数据归属 `${projectId}:${rootPath}`（展开态与目录缓存的共同坐标系） */
+  owner: string | null;
   activeFilePath: string | null;
   onSelectFile: (filePath: string) => void;
   onRefresh: () => void;
-  onExpandDir: (dirPath: string) => Promise<void>;
+  /** 目录加载器（store.loadDir 的 loader 入参）：读取深度等语义由上层决定 */
+  makeDirLoader: (dirPath: string) => () => Promise<DirTreeResult>;
   /** 目录缓存读取探针（FilesPanel 注入 useFileStore.dirs）：包链自动展开/收起用它
    *  判断「单子目录链」；缺省返回空（测试/无目录上下文时包链 walk 为 no-op）。 */
   readDir?: (dirPath: string) => FileNode[];
@@ -48,10 +40,11 @@ export interface UseFilePanelStateParams {
 export function useFilePanelState(params: UseFilePanelStateParams) {
   const {
     projectPath,
+    owner,
     activeFilePath,
     onSelectFile,
     onRefresh,
-    onExpandDir,
+    makeDirLoader,
     readDir = () => [],
     projectType,
     onOpenInBrowser,
@@ -63,15 +56,10 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
     onRenamePath,
   } = params;
 
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
-  const prevActiveFilePathRef = useRef<string | null>(null);
-  // expandedDirs 镜像 ref：让 handleToggleDir 的 useCallback 依赖不含 expandedDirs
-  // （身份稳定）——S3 memo 比较器按回调身份比较，toggle 身份抖动会使整树重渲染。
-  // 提交后读取（点击发生在 commit 之后），语义与闭包读取一致。
-  const expandedDirsRef = useRef<Set<string>>(expandedDirs);
-  useEffect(() => {
-    expandedDirsRef.current = expandedDirs;
-  }, [expandedDirs]);
+  // 目录展开态（存于 store，按 owner 分槽）+ 展开命令编排（含包视图链 / 联动）
+  const { expandedDirs, expandDir, expandPathParents, handleToggleDir, collapseAll, canCollapse } =
+    useDirExpansion({ owner, makeLoader: makeDirLoader, readDir });
+
   // 用户 home 目录（用于路径展示时替换为 ~）
   const [homeDirPath, setHomeDirPath] = useState('');
   const copyToClipboard = useCopyToClipboard();
@@ -102,9 +90,6 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
     position: { x: number; y: number };
     node: FileNode;
   } | null>(null);
-  // 新建文件/目录内联输入状态
-  const [creating, setCreating] = useState<{ dirPath: string; kind: 'file' | 'dir' } | null>(null);
-  const [creatingValue, setCreatingValue] = useState('');
   // 当前选中节点（用于 Delete 按钮）
   const [selectedNode, setSelectedNode] = useState<{ path: string; isDir: boolean } | null>(null);
   // 显式定位信号：locateFile 每次调用递增（定位按钮与自动定位共用入口）。
@@ -113,101 +98,16 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
   const [locateSignal, setLocateSignal] = useState(0);
   // 待确认删除的节点（弹出确认对话框）
   const [confirmDelete, setConfirmDelete] = useState<{ path: string; isDir: boolean } | null>(null);
-  // 重命名状态（path + 当前名）
-  const [renaming, setRenaming] = useState<{ path: string; isDir: boolean; name: string } | null>(
-    null,
-  );
 
   // 刷新：展开状态保留（内容刷新由 store.loadDir 幂等处理）
   const handleRefresh = useCallback(() => {
     onRefresh();
   }, [onRefresh]);
 
-  // 展开目标文件的所有父目录（定位/打开文件共用）。返回是否有新增展开。
-  const expandPathParents = useCallback((filePath: string): boolean => {
-    const parentPaths = getParentPaths(filePath);
-    let hasNew = false;
-    setExpandedDirs((prev) => {
-      const next = new Set(prev);
-      for (const p of parentPaths) {
-        if (!next.has(p)) {
-          next.add(p);
-          hasNew = true;
-        }
-      }
-      return hasNew ? next : prev;
-    });
-    return hasNew;
-  }, []);
-
-  // Auto-expand parent directories when activeFilePath changes
-  useEffect(() => {
-    if (activeFilePath && activeFilePath !== prevActiveFilePathRef.current) {
-      expandPathParents(activeFilePath);
-      prevActiveFilePathRef.current = activeFilePath;
-    }
-  }, [activeFilePath, expandPathParents]);
-
-  const handleToggleDir = useCallback(
-    async (path: string) => {
-      // 经 ref 读取当前展开态（回调身份稳定）；mutation 走函数式 setState
-      const wasExpanded = expandedDirsRef.current.has(path);
-      if (wasExpanded) {
-        // 收起：连同整条包链（单子目录链）一次收起——用户点一下折叠整个包视图。
-        setExpandedDirs((prev) => {
-          const next = new Set(prev);
-          next.delete(path);
-          let cur = path;
-          let hops = 0;
-          while (hops++ < 64) {
-            const parent = getParentPath(cur);
-            if (!parent || parent === cur) break;
-            if (!(isUnderJavaSourceRoot(parent) || isJavaSourceRoot(parent))) break;
-            const entries = readDir(parent);
-            const dirsOnly = entries.filter((n) => n.is_dir);
-            if (dirsOnly.length !== 1 || dirsOnly[0].path !== cur) break;
-            next.delete(parent);
-            cur = parent;
-          }
-          return next;
-        });
-        return;
-      }
-
-      // 展开：先展开（内容由扁平缓存 + loadStates 驱动），再触发懒加载。
-      // store.loadDir 幂等：已 loaded/loading 跳过，idle/error 发起请求；
-      // 失败由 store 置 error 态（红点提示，可重试），不再由面板折叠目录。
-      setExpandedDirs((prev) => new Set(prev).add(path));
-      await onExpandDir(path);
-      // 包视图链：源根或其下目录只含一个子目录时自动逐级展开到底
-      //（视觉压行 + 数据就绪两条腿；上限 64 级防病态深链）。
-      let cur = path;
-      let hops = 0;
-      while (hops++ < 64 && (isUnderJavaSourceRoot(cur) || isJavaSourceRoot(cur))) {
-        const entries = readDir(cur);
-        const dirsOnly = entries.filter((n) => n.is_dir);
-        if (dirsOnly.length !== 1) break;
-        const next = dirsOnly[0].path;
-        setExpandedDirs((prev) => {
-          if (prev.has(next)) return prev;
-          return new Set(prev).add(next);
-        });
-        await onExpandDir(next);
-        cur = next;
-      }
-    },
-    [onExpandDir, readDir],
-  );
-
   // 右键菜单处理
   const handleContextMenu = useCallback((position: { x: number; y: number }, node: FileNode) => {
     setSelectedNode({ path: node.path, isDir: node.is_dir });
     setContextMenu({ position, node });
-  }, []);
-
-  // 折叠全部：一键收起所有已展开目录
-  const collapseAll = useCallback(() => {
-    setExpandedDirs(new Set());
   }, []);
 
   const closeContextMenu = useCallback(() => {
@@ -225,29 +125,18 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
 
   // 定位：复用「点击选中」逻辑（selectedNode → selectedPath → isSelected 高亮），
   // 额外展开父目录。与手动点击文件的选中路径完全一致，不另起一套高亮。
-  // 文件树为「初始有限深度（DEFAULT_TREE_DEPTH=3）+ 按目录懒加载」，深于初始
-  // 深度的目标文件其祖先目录可能从未 loadDir —— 只改 expandedDirs 会让目标行
-  // 缺失（不高亮、不滚动，点击看似无反应）。逐级 onExpandDir（store.loadDir
-  // 幂等：已加载跳过）补齐内容；加载完成后 rows 变化触发 FileTreeList 滚动
-  // effect（idx<0 时不消费 seq、不记 prev）自动重跑滚到目标行。
+  // 文件树为「初始有限深度（DEFAULT_TREE_DEPTH）+ 按目录懒加载」，深于初始
+  // 深度的目标文件其祖先目录可能从未 loadDir —— 展开与加载必须同步（expandPathParents
+  // 逐级 expandDir）；加载完成后 rows 变化触发 FileTreeList 滚动 effect（idx<0 时
+  // 不消费 seq、不记 prev）自动重跑滚到目标行。
   const locateFile = useCallback(
     async (path: string) => {
       // 显式定位请求：递增信号（无论目标是否已选中，未消费信号即驱动滚动）
       setLocateSignal((s) => s + 1);
       handleSelectNode(path, false);
-      expandPathParents(path);
-      const parentPaths = getParentPaths(path);
-      // 单目录加载失败不中断整链定位：目录已展开，失败由 store error 态呈现
-      // （红点可重试），定位本身是尽力而为 —— 已就绪的选中/展开不因单级失败回退。
-      for (const p of parentPaths) {
-        try {
-          await onExpandDir(p);
-        } catch {
-          // 目录加载失败已由 store 标记 error；继续加载剩余祖先路径。
-        }
-      }
+      await expandPathParents(path);
     },
-    [handleSelectNode, expandPathParents, onExpandDir],
+    [handleSelectNode, expandPathParents],
   );
 
   // 关闭删除确认对话框（不执行删除）
@@ -261,43 +150,18 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
     return selectedNode.isDir ? selectedNode.path : getParentPath(selectedNode.path);
   }, [selectedNode]);
 
-  // 开始新建：在指定目录（'' 为根）内联输入名称
-  const startCreating = useCallback((dirPath: string, kind: 'file' | 'dir') => {
-    setCreating({ dirPath, kind });
-    setCreatingValue('');
-    // 在目录内新建时自动展开该目录，让内联输入行可见
-    if (dirPath) {
-      setExpandedDirs((prev) => new Set(prev).add(dirPath));
-    }
-  }, []);
+  // 内联编辑（新建 / 重命名）状态机：输入态、校验、失败提示都在子 hook 内
+  const inlineEdit = useFileInlineEdit({
+    onCreateFile,
+    onCreateDirectory,
+    onRenamePath,
+    // 重命名成功后同步选中节点到新路径（若停留旧路径，Delete/新建目标会指向已不存在的节点）。
+    // 直接复用 handleSelectNode（签名一致）——不包内联箭头，保持回调身份稳定。
+    onRenamed: handleSelectNode,
+    expandDir,
+  });
 
-  const submitCreating = useCallback(async () => {
-    if (!creating) return;
-    const name = creatingValue.trim();
-    if (!name) return;
-    const { dirPath, kind } = creating;
-    setCreating(null);
-    setCreatingValue('');
-    try {
-      if (kind === 'file') {
-        await onCreateFile?.(dirPath, name);
-      } else {
-        await onCreateDirectory?.(dirPath, name);
-      }
-    } catch (e) {
-      useNotificationStore.getState().addNotification({
-        type: 'error',
-        title: kind === 'file' ? 'New File' : 'New Folder',
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }, [creating, creatingValue, onCreateFile, onCreateDirectory]);
-
-  const cancelCreating = useCallback(() => {
-    setCreating(null);
-    setCreatingValue('');
-  }, []);
-
+  // 删除（确认对话框已由调用方收口）：失败弹通知，成功后清选中
   const handleDelete = useCallback(
     async (path: string, isDir: boolean) => {
       try {
@@ -314,154 +178,27 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
     [onDeletePath],
   );
 
-  const handleRenamingChange = useCallback((value: string) => {
-    setRenaming((prev) => (prev ? { ...prev, name: value } : prev));
-  }, []);
-
-  const submitRenaming = useCallback(async () => {
-    if (!renaming) return;
-    const name = renaming.name.trim();
-    const { path, isDir } = renaming;
-    const oldName = path.split('/').pop() ?? path;
-    // 名字为空或未变化：直接退出编辑
-    if (!name || name === oldName) {
-      setRenaming(null);
-      return;
-    }
-    setRenaming(null);
-    try {
-      await onRenamePath?.(path, name);
-      // 重命名成功后选中节点更新为新路径
-      const parent = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-      setSelectedNode({ path: parent ? `${parent}/${name}` : name, isDir });
-    } catch (e) {
-      useNotificationStore.getState().addNotification({
-        type: 'error',
-        title: 'Rename',
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  }, [renaming, onRenamePath]);
-
-  const cancelRenaming = useCallback(() => {
-    setRenaming(null);
-  }, []);
-
-  // 构建上下文菜单项
-  const buildContextMenuItems = useCallback(
-    (node: FileNode): ContextMenuItem[] => {
-      const items: ContextMenuItem[] = [];
-      const isHtmlFile = !node.is_dir && /\.(html|htm)$/i.test(node.name);
-
-      if (!node.is_dir) {
-        items.push({
-          label: 'Open in Editor',
-          icon: FileText,
-          action: () => onSelectFile(node.path),
-        });
-      }
-
-      if (isHtmlFile && projectType === 'Local') {
-        if (onOpenInBrowser) {
-          items.push({
-            label: 'Open in App Browser',
-            icon: Globe,
-            action: () => onOpenInBrowser(node.path),
-          });
-        }
-        if (onOpenInSystemBrowser) {
-          items.push({
-            label: 'Open in System Browser',
-            icon: ExternalLink,
-            action: () => onOpenInSystemBrowser(node.path),
-          });
-        }
-      }
-
-      items.push({ separator: true });
-
-      items.push({
-        label: 'Copy Path',
-        icon: Copy,
-        action: () => {
-          const absPath = projectPath ? canonicalFsPath(projectPath, node.path) : node.path;
-          void copyToClipboard(absPath, 'path');
-        },
-      });
-
-      if (projectPath) {
-        items.push({
-          label: 'Copy Relative Path',
-          icon: ClipboardCopy,
-          // node.path 已经是相对于项目根的相对路径，直接复制
-          action: () => {
-            void copyToClipboard(node.path, 'path');
-          },
-        });
-      }
-
-      if (projectType === 'Local' && onRevealInExplorer) {
-        items.push({ separator: true });
-        items.push({
-          label: 'Reveal in File Manager',
-          icon: FolderOpen,
-          action: () => onRevealInExplorer(node.path),
-        });
-      }
-
-      // 文件/目录创建与删除（右键方式）
-      if (onCreateFile || onCreateDirectory) {
-        items.push({ separator: true });
-        const targetDir = node.is_dir ? node.path : getParentPath(node.path);
-        if (onCreateFile) {
-          items.push({
-            label: 'New File',
-            icon: FilePlus,
-            action: () => startCreating(targetDir, 'file'),
-          });
-        }
-        if (onCreateDirectory) {
-          items.push({
-            label: 'New Folder',
-            icon: FolderPlus,
-            action: () => startCreating(targetDir, 'dir'),
-          });
-        }
-      }
-      if (onRenamePath) {
-        items.push({ separator: true });
-        items.push({
-          label: 'Rename',
-          icon: Pencil,
-          action: () => setRenaming({ path: node.path, isDir: node.is_dir, name: node.name }),
-        });
-      }
-      if (onDeletePath) {
-        items.push({ separator: true });
-        items.push({
-          label: 'Delete',
-          icon: Trash2,
-          action: () => setConfirmDelete({ path: node.path, isDir: node.is_dir }),
-        });
-      }
-
-      return items;
-    },
-    [
-      projectType,
-      projectPath,
-      onSelectFile,
-      onOpenInBrowser,
-      onOpenInSystemBrowser,
-      onRevealInExplorer,
-      onCreateFile,
-      onCreateDirectory,
-      onDeletePath,
-      onRenamePath,
-      startCreating,
-      copyToClipboard,
-    ],
+  // 右键菜单项构造（按节点种类 + 项目能力 + 可用回调决定），独立子 hook
+  const startDeleteConfirm = useCallback(
+    (target: { path: string; isDir: boolean }) => setConfirmDelete(target),
+    [],
   );
+  const buildContextMenuItems = useFileContextMenu({
+    projectPath,
+    projectType,
+    onSelectFile,
+    onOpenInBrowser,
+    onOpenInSystemBrowser,
+    onRevealInExplorer,
+    onCreateFile,
+    onCreateDirectory,
+    onDeletePath,
+    onRenamePath,
+    startCreating: inlineEdit.startCreating,
+    startRenaming: inlineEdit.startRenaming,
+    startDeleteConfirm,
+    copyToClipboard,
+  });
 
   // 当前打开的文件名（用于头部展示）
   const activeFileName = activeFilePath
@@ -472,15 +209,12 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
     expandedDirs,
     displayPath,
     contextMenu,
-    creating,
-    creatingValue,
-    setCreatingValue,
     selectedNode,
     confirmDelete,
-    renaming,
     activeFileName,
     handleRefresh,
     handleToggleDir,
+    expandDir,
     handleContextMenu,
     collapseAll,
     closeContextMenu,
@@ -489,15 +223,11 @@ export function useFilePanelState(params: UseFilePanelStateParams) {
     locateFile,
     locateSignal,
     getCreationDir,
-    startCreating,
-    submitCreating,
-    cancelCreating,
     handleDelete,
     closeDeleteConfirm,
-    handleRenamingChange,
-    submitRenaming,
-    cancelRenaming,
     buildContextMenuItems,
-    canCollapse: expandedDirs.size > 0,
+    canCollapse,
+    // 内联编辑整组透传（输入态 + 提交/取消动作）
+    ...inlineEdit,
   };
 }
