@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/10-17-cs-http-gateway/design.md", "reason": "审查是否守住设计裁决：§3.3 洋葱序（组内 BodyLimit→Timeout→CatchPanic→normalize；全局 merge→并发限制（自写 semaphore）→gate→access_log，装错则 §2.2 承重路径落空）、§2.2 策略真承重（panic 500/超时 408/body 413→策略映射可测；并发 503 与门 403 在组外不被改写）、§3.4 投递经 spawn_blocking 隔离（H4/红线 3，handler 无同步锁路径）、§4.4 鉴权门唯一校验点、§6 对照表无未解释偏差"}
+{"file": ".trellis/tasks/10-17-cs-http-gateway/prd.md", "reason": "逐条核对 AC1-AC12，特别是 AC7 鉴权唯一性与 AC10 零触点"}
+{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "核对 wire 契约：坐标文件形状/权限、/hook/{source}、token 头、fail-open 语义是否逐项保持"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对红线 9（mod.rs 极薄）、红线 10（无 #[cfg] 平铺）、无 unwrap/expect"}
+{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "核对常驻任务经 AppRuntime、无裸 tokio::spawn、cleanup 线程等待收尾的语义正确"}
+{"file": ".trellis/spec/security/allowlist.md", "reason": "核对只绑 loopback、未扩大 capabilities、token 比较恒定时间"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核对纯函数覆盖率、夹具 tempdir 派生、断言确定性（无非确定事件断言）"}

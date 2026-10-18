@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-17-cs-http-gateway/design.md", "reason": "本任务设计单源：三层归属（引擎/鉴权门/路由组）、FailurePolicy 承重点、wire 等价性对照表 §6、护栏判据 §8"}
+{"file": ".trellis/tasks/10-17-cs-http-gateway/prd.md", "reason": "需求单源：A1-A8 架构侧 + H1-H3 落脚点侧 + AC1-AC12"}
+{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "本域跨层契约：endpoints 坐标文件形状/权限、上报端 fan-out、路由白名单派生，wire 契约不得改动"}
+{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "常驻任务与阻塞 I/O 的落点：AppRuntime Scheme C、spawn_blocking 语义、cleanup 线程不得 block_on"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "红线 9/10 判据：mod.rs 极薄、平台差异集中化；新增 server/ 层不得平铺 #[cfg]"}
+{"file": ".trellis/spec/security/allowlist.md", "reason": "红线 8：只绑 127.0.0.1、capabilities 不得放开、路径不得扩大暴露面"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "测试口径：纯函数 100% 覆盖、tempdir 夹具（红线 13）、HTTP 集成测试的 socket 用法"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "红线 6 与 IPC 边界：命令层与基础设施层职责切分参照"}
