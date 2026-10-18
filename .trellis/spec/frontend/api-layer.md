@@ -569,3 +569,23 @@ useEffect(() => {
 - pane 关闭后 active pane 正确回退
 - 缓存前缀清理会删除同项目同 tab 的所有 pane 会话
 - `save_session` 不再发送 `side_terminal_width`
+
+### fit / resize 去重的两条正交不变量（2026-09 根因修复）
+
+终端 resize 的唯一入口是 `features/terminal/utils/fitScheduler.ts::createFitScheduler`，
+判定状态**必须按终端实例归属**（调度器实例随 cacheKey 新建/销毁），**不得挂在 React
+组件的 `useRef` 上跨 tab 存活**。完整契约与事故复盘见该文件顶部 JSDoc，这里只留判据：
+
+| # | 不变量 | 违反后果 |
+|---|--------|----------|
+| 1 | 新调度器基线为空 → 首次 `fit()` 必同步 PTY | 切回已 fit 过的 tab 时不发 `resize_terminal`，PTY 停在旧网格，agent/vim 按旧宽度重绘 = 「格式混乱，拖一下 panel 才恢复」 |
+| 2 | 尺寸命中「已回执 (`lastCols`/`lastRows`)」**或「在途 (`inFlightCols`/`inFlightRows`)」→ 不得重发 | `scheduleFit` 的 RAF 与 120ms trailing 两个 `doFit` 会重复投递同一 resize（慢 IPC 下高频），即 `e9af28e4` 修掉又复发的格式混乱 |
+
+**两条正交，只满足其一都会出 bug。** 特别提醒：不要把「`fit()` 是否改变了本地网格」
+（`converged`）当作去重判据 —— 它同时错在两处：作为「无需同步 PTY」的理由是
+语义错误（不变量 1），而直接删除又会丢掉它在途去重的作用（不变量 2）。
+
+回归锁定：`features/terminal/utils/__tests__/fitScheduler.test.ts`（"在途 resize 未回执" /
+"去重状态按终端归属" 两个用例）与
+`features/terminal/components/__tests__/TerminalViewBase.fitScheduler.test.tsx`
+（必须用 `rerender` 同一组件实例，两次 `render()` 是两个实例、反而绕开该 bug）。
