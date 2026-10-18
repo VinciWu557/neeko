@@ -2,7 +2,9 @@ import type { StackFrameDto } from '@/features/runner/types';
 import type {
   Project,
   AgentConfig,
+  DirTreeResult,
   FileChange,
+  FileNode,
   ManagedSkillDto,
   TagGroup,
   DiscoveredSkillDto,
@@ -108,4 +110,25 @@ export function createStackFrame(
   overrides: Partial<StackFrameDto> & Pick<StackFrameDto, 'id' | 'name'>,
 ): StackFrameDto {
   return { line: 1, column: 1, sourcePath: null, ...overrides };
+}
+
+/**
+ * 目录节点夹具（文件树测试共用）。
+ *
+ * 文件树的目录/文件节点在多个测试文件里各有手写版本（`dirNode` / `fileNode`），
+ * 形态必须与后端 `FileNode` 一致（`children` 恒存在，目录才可递归）。收敛到此处
+ * 避免每处各写一份后与契约漂移。
+ */
+export function createDirNode(name: string, path: string, children: FileNode[] = []): FileNode {
+  return { name, path, is_dir: true, children };
+}
+
+/** 文件节点夹具（`children` 恒为空数组，与后端契约一致）。 */
+export function createFileNode(name: string, path: string): FileNode {
+  return { name, path, is_dir: false, children: [] };
+}
+
+/** 目录读取结果夹具：默认不截断，`truncated` 用例单独传入。 */
+export function createDirTreeResult(nodes: FileNode[], truncated = false): DirTreeResult {
+  return { nodes, truncated };
 }

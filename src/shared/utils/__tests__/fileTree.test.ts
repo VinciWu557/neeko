@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
 
-import type { FileNode, Tab, FileTabData } from '@/shared/types';
+import type { Tab, FileTabData } from '@/shared/types';
 import {
   buildFileTreeView,
   getTabDisplayName,
@@ -11,17 +11,11 @@ import {
   isSvgFile,
 } from '@/shared/utils/fileTree';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
+import { createDirNode as dirNode, createFileNode as fileNode } from '@/testing/factories';
 
 /** 测试身份源：项目 id → WorkspaceSession（主仓形态）。 */
 function mkSession(projectId: string) {
   return WorkspaceSession.of(projectId, null);
-}
-
-function dirNode(name: string, path: string, children: FileNode[] = []): FileNode {
-  return { name, path, is_dir: true, children };
-}
-function fileNode(name: string, path: string): FileNode {
-  return { name, path, is_dir: false, children: [] };
 }
 
 describe('buildFileTreeView 扁平缓存 → 嵌套视图', () => {
