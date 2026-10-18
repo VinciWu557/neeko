@@ -7,7 +7,7 @@
 //! 使得「改 writers 的落盘逻辑」要读 177 行模板断言才能找到相关用例 —— 归属错位
 //! 的直接代价是读者的检索成本。
 //!
-//! 断言一律引用**常量本身**（`endpoint::ENDPOINTS_DIR_NAME` / `server::TOKEN_HEADER` …）
+//! 断言一律引用**常量本身**（`endpoint::ENDPOINTS_DIR_NAME` / `validation::TOKEN_HEADER` …）
 //! 而非复写字面量：任一侧改名，测试立刻红。
 
 use crate::agent::hooks::targets::{InstallShape, HOOK_TARGETS};
@@ -16,7 +16,8 @@ use crate::agent::hooks::targets::{InstallShape, HOOK_TARGETS};
 /// （防手改丢关键行为）。断言引用**常量本身** —— 任一侧改名，测试立刻红。
 #[test]
 fn embedded_templates_keep_contract_anchors() {
-    use crate::agent::hooks::ingest::{endpoint, server};
+    use crate::agent::hooks::ingest::endpoint;
+    use crate::agent::hooks::ingest::validation;
     for target in HOOK_TARGETS {
         // Structured 行共用 shim 模板，其锚点由下方 `report_shim_keeps_contract_anchors`
         // 单独钉死（避免同一断言重复两次）。
@@ -34,7 +35,7 @@ fn embedded_templates_keep_contract_anchors() {
             "Promise.allSettled",
             endpoint::ENV_KEY_PORT,
             endpoint::ENV_KEY_TOKEN,
-            server::TOKEN_HEADER,
+            validation::TOKEN_HEADER,
             "127.0.0.1",
         ] {
             assert!(
@@ -110,7 +111,8 @@ fn embedded_templates_keep_contract_anchors() {
 /// 反证：若有人把「原生事件名 → event_key」的 if/switch 写回 shim，本用例必红。
 #[test]
 fn report_shim_keeps_contract_anchors_and_knows_no_native_events() {
-    use crate::agent::hooks::ingest::{endpoint, server};
+    use crate::agent::hooks::ingest::endpoint;
+    use crate::agent::hooks::ingest::validation;
     let shim = crate::agent::hooks::templates::REPORT_SHIM;
     for anchor in [
         endpoint::ENDPOINTS_DIR_NAME,
@@ -118,7 +120,7 @@ fn report_shim_keeps_contract_anchors_and_knows_no_native_events() {
         "Promise.allSettled",
         endpoint::ENV_KEY_PORT,
         endpoint::ENV_KEY_TOKEN,
-        server::TOKEN_HEADER,
+        validation::TOKEN_HEADER,
         "127.0.0.1",
         "process.exit(0)",
         // argv 契约：source 与 event_key 从命令行取。

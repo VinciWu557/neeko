@@ -10,6 +10,8 @@ mod acp_test;
 mod agent_test;
 #[path = "unit/git_test.rs"]
 mod git_test;
+#[path = "unit/http_gateway_test.rs"]
+mod http_gateway_test;
 #[path = "unit/project_test.rs"]
 mod project_test;
 #[path = "unit/state_test.rs"]

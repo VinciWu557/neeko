@@ -34,8 +34,6 @@ pub struct Attribution {
     pub instance_id: String,
     /// 分组展示名（项目名或 basename 兜底），进通知标题。
     pub group_label: String,
-    /// 归属到的项目（basename 兜底时为 None）→ 前端尽力回流用（D9）。
-    pub project_id: Option<String>,
 }
 
 /// 归属降级链（纯函数）。无任何 IO / 时钟依赖，100% 可单测。
@@ -56,7 +54,6 @@ pub fn attribute(
         return Attribution {
             instance_id: sid.clone(),
             group_label: name,
-            project_id: Some(pid.clone()),
         };
     }
 
@@ -78,7 +75,6 @@ pub fn attribute(
             return Attribution {
                 instance_id: format!("cli:{agent_session_id}"),
                 group_label: project.project_name.clone(),
-                project_id: Some(project.project_id.clone()),
             };
         }
         // 3) basename 兜底（仍通知，group 用目录名）。
@@ -90,7 +86,6 @@ pub fn attribute(
         return Attribution {
             instance_id: format!("cli:{agent_session_id}"),
             group_label: base,
-            project_id: None,
         };
     }
 
@@ -98,7 +93,6 @@ pub fn attribute(
     Attribution {
         instance_id: format!("cli:{agent_session_id}"),
         group_label: "终端会话".into(),
-        project_id: None,
     }
 }
 
@@ -144,7 +138,6 @@ mod tests {
         let a = attribute("agent-xyz", Some(&p1), &hints, &projects);
         assert_eq!(a.instance_id, "s42");
         assert_eq!(a.group_label, "neeko");
-        assert_eq!(a.project_id.as_deref(), Some("p1"));
     }
 
     /// env 提示了未知 project_id → 不 panic，group 落通用名。
@@ -172,7 +165,6 @@ mod tests {
         let a = attribute("agent-1", Some(&cwd), &EnvHints::default(), &projects);
         assert_eq!(a.instance_id, "cli:agent-1");
         assert_eq!(a.group_label, "neeko");
-        assert_eq!(a.project_id.as_deref(), Some("p1"));
     }
 
     /// worktree 单元根命中优先于项目主根（最长前缀胜出）。
@@ -183,7 +175,6 @@ mod tests {
         let cwd = Path::new(&p2_wt).join("src").to_string_lossy().into_owned();
         let a = attribute("agent-2", Some(&cwd), &EnvHints::default(), &projects);
         assert_eq!(a.group_label, "orca-study");
-        assert_eq!(a.project_id.as_deref(), Some("p2"));
     }
 
     /// 降级链第 3 级：无匹配项目 → basename 兜底，仍产生归属（D8 不丢事件）。
@@ -198,7 +189,6 @@ mod tests {
             .into_owned();
         let a = attribute("agent-3", Some(&cwd), &EnvHints::default(), &projects);
         assert_eq!(a.group_label, "scratch-project");
-        assert_eq!(a.project_id, None);
         assert_eq!(a.instance_id, "cli:agent-3");
     }
 

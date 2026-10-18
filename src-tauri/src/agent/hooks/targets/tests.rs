@@ -403,7 +403,8 @@ fn omp_variant_omits_ui_prompt_and_keeps_other_legs() {
 /// 主题上报 / 永不非零退出）。
 #[test]
 fn omp_template_keeps_shared_contract_anchors() {
-    use crate::agent::hooks::ingest::{endpoint, server};
+    use crate::agent::hooks::ingest::endpoint;
+    use crate::agent::hooks::ingest::validation;
     let omp = HOOK_TARGETS
         .iter()
         .find(|t| t.source == "omp")
@@ -414,7 +415,7 @@ fn omp_template_keeps_shared_contract_anchors() {
         "Promise.allSettled",
         endpoint::ENV_KEY_PORT,
         endpoint::ENV_KEY_TOKEN,
-        server::TOKEN_HEADER,
+        validation::TOKEN_HEADER,
         "127.0.0.1",
         "title:",
     ] {

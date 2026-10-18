@@ -128,13 +128,16 @@ fn on_setup(app: &tauri::App) {
     // 逐 CLI 覆盖表（`agentHookSources`）取自**上面那份快照**（agent 域自有键，不经核心域，
     // 见 agent/hooks/install/config/settings.rs）。读盘失败时传 `Null` = 「无覆盖项」→ 各 CLI 跟随主开关，
     // 与「成功但无该键」的退化行为一致；失败本身已由 `best_effort` 记 warn。
-    crate::agent::hooks::boot::boot(
+    let http_handle = crate::agent::hooks::boot::boot(
         app.handle().clone(),
         state.storage_manager.get_config_dir().to_path_buf(),
         state.notification.settings_snapshot().cli_hooks,
         config.as_ref().unwrap_or(&serde_json::Value::Null),
         state.runtime.clone(),
     );
+    if let Some(handle) = http_handle {
+        state.set_http_server(handle);
+    }
 }
 
 /// 注入主窗口句柄：菜单/事件统一从 AppState 取，避免运行时查找依赖 Tauri 内部

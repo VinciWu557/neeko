@@ -59,6 +59,12 @@ pub struct AppStateWrapper {
     pub dap_manager: crate::dap::DapManager,
     /// Conversation scanning and management.
     pub conversation_manager: ConversationManager,
+    /// 进程内 HTTP 服务端句柄（setup 阶段由 agent-hooks boot 存入；关闭协议取走停机）。
+    ///
+    /// `Arc<Mutex<..>>` 是必需的：`shutdown_background_and_exit(&self)` 要构造 `move`
+    /// 清理闭包，只能靠 `Arc` 克隆跨线程 take（裸 `Mutex` 字段版编译不过）。
+    /// 组合根只存句柄 —— 不含任何 HTTP 逻辑（引擎在 `crate::server`）。
+    http_server: Arc<Mutex<Option<crate::server::ServerHandle>>>,
     /// 主窗口句柄（setup 阶段注入；菜单/事件统一从此取）。
     ///
     /// 避免运行时 `get_webview_window("main")` 查找——其内部 `is_webview_window`
@@ -87,6 +93,8 @@ impl AppStateWrapper {
         let remote_terminal_manager = self.terminal_router.remote().clone();
         let watcher_manager = self.watcher_manager.clone();
         let lsp_manager = self.lsp_manager.clone();
+        // HTTP 句柄用 Arc 克隆取走：清理闭包是 FnOnce + Send，不能借用 &self。
+        let http_server = Arc::clone(&self.http_server);
 
         let tasks: Vec<crate::common::shutdown::CleanupTask> = vec![
             (
@@ -105,8 +113,30 @@ impl AppStateWrapper {
                 "git-children",
                 Box::new(crate::common::executor::kill_all_live),
             ),
+            // HTTP 引擎：发 graceful shutdown 并等待在途请求收敛（有界 ≤200ms）。
+            // 运行在独立的 `shutdown-http` OS 线程 → `block_on_shutdown` 契约成立。
+            (
+                "http",
+                Box::new(move || {
+                    let handle = http_server
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .take();
+                    if let Some(mut handle) = handle {
+                        handle.stop();
+                    }
+                }),
+            ),
         ];
         crate::common::shutdown::run_cleanup_and_exit(tasks);
+    }
+
+    /// 存入 HTTP 服务端句柄（setup 阶段由 agent-hooks boot 成功后调用一次）。
+    pub fn set_http_server(&self, handle: crate::server::ServerHandle) {
+        *self
+            .http_server
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(handle);
     }
 
     /// 注入主窗口句柄（setup 阶段调用一次；菜单事件等从此取，见 [`Self::main_window`]）。
@@ -379,6 +409,7 @@ impl AppStateWrapper {
                 crate::conversation::adapters::all_adapters(),
             ),
             notification: Arc::clone(&notification),
+            http_server: Arc::new(Mutex::new(None)),
             main_window: RwLock::new(None),
         }
     }

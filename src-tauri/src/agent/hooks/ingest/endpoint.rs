@@ -36,7 +36,7 @@ pub const ENDPOINTS_DIR_NAME: &str = "endpoints";
 /// 旧单文件坐标文件名（v5 退役，启动时清理一次）。
 const LEGACY_ENDPOINT_FILE: &str = "endpoint.env";
 
-/// 一次发布的坐标。由 [`crate::agent::hooks::ingest::server::spawn`] 构造并落盘（生命周期 = 一次进程）。
+/// 一次发布的坐标。由 [`crate::agent::hooks::boot`] 构造并落盘（生命周期 = 一次进程）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EndpointPublication {
     /// 本实例标识（进程启动时生成的随机 uuid，仅内存持有，用作文件名）。
