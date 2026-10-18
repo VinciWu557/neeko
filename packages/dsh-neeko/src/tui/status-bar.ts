@@ -86,14 +86,21 @@ export function formatTokens(count: number): string {
 
 /**
  * Replace the home directory with `~`, as parents do.
+ *
+ * Separators are normalised before comparing so the abbreviation also works on
+ * Windows (`C:\\Users\\me` → `~\\work`) and for mixed-separator input.
+ *
  * @param cwd - absolute working directory.
  * @param home - home directory (injected for tests).
  * @returns the display form.
  */
 export function formatCwd(cwd: string, home: string = homedir()): string {
-  if (home !== '' && (cwd === home || cwd.startsWith(`${home}/`))) {
-    return `~${cwd.slice(home.length)}`
-  }
+  if (home === '') return cwd
+  const normalize = (path: string): string => path.replace(/[\\/]+/gu, '/')
+  const normalizedHome = normalize(home)
+  const normalizedCwd = normalize(cwd)
+  if (normalizedCwd === normalizedHome) return '~'
+  if (normalizedCwd.startsWith(`${normalizedHome}/`)) return `~${cwd.slice(home.length)}`
   return cwd
 }
 
@@ -280,12 +287,18 @@ export function renderStatusBar(
   const gap = 2
   const statsWidth = visibleWidth(statsWithTiming)
   const contextWidth = visibleWidth(contextText)
-  const routeWidth = visibleWidth(route)
+  // The route is bounded too: a long `provider/model` id used to overflow the
+  // whole line (measured: 206 columns at width 80) because only the LEFT side
+  // was ever truncated. The route stays flush right but cannot exceed the bar.
+  const fullRouteWidth = visibleWidth(route)
+  const shownRoute = fullRouteWidth > width
+    ? truncateToWidth(route, Math.max(1, width), '…')
+    : route
+  const routeWidth = visibleWidth(shownRoute)
   const leftWidth = statsWidth + (statsWithTiming === '' || contextText === '' ? 0 : 1) + contextWidth
 
   let showStats = statsWithTiming !== ''
   let shownContext = contextText
-  let truncated = false
 
   if (leftWidth + gap + routeWidth > width) {
     const room = Math.max(0, width - gap - routeWidth)
@@ -296,12 +309,10 @@ export function renderStatusBar(
       // Counters are historical; the context figure is the live signal.
       showStats = false
       shownContext = contextWidth <= room ? contextText : truncateToWidth(contextText, room, '…')
-      truncated = shownContext !== contextText
     } else {
       const contextRoom = room - statsWidth - (statsWithTiming === '' ? 0 : 1)
       if (contextWidth > contextRoom) {
         shownContext = contextRoom > 1 ? truncateToWidth(contextText, contextRoom, '…') : ''
-        truncated = true
       }
     }
   }
@@ -309,15 +320,17 @@ export function renderStatusBar(
   const shownStats = showStats ? statsWithTiming : ''
   const plainLeft = [shownStats, shownContext].filter((part) => part !== '').join(' ')
   const plainLeftWidth = visibleWidth(plainLeft)
-  const padding = ' '.repeat(Math.max(gap, width - plainLeftWidth - routeWidth))
-  void truncated
+  // Flush right: the gap IS the remaining room, so padding to it is what makes
+  // the route sit on the right edge. Clamped at 0 so an over-full line (route
+  // truncated to the full width) never emits trailing columns.
+  const padding = ' '.repeat(Math.max(0, width - plainLeftWidth - routeWidth))
 
   const paintedStats = shownStats === '' ? '' : paint('muted', shownStats)
   const paintedContext = shownContext === ''
     ? ''
     : severity === undefined ? paint('muted', shownContext) : paint(severity, shownContext)
   const leftText = [paintedStats, paintedContext].filter((part) => part !== '').join(' ')
-  const second = `${leftText}${padding}${paint('muted', route)}`
+  const second = `${leftText}${padding}${paint('muted', shownRoute)}`
 
   return [paint('dim', context), second]
 }

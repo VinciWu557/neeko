@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   activeMs, emptyTiming, formatDuration, onChunk, onGenerationEnd, onGenerationStart,
-  onToolEnd, onToolStart, onTurnComplete, onUserMessage, spanMs, timingLine,
+  onToolEnd, onToolStart, onUserMessage, spanMs, timingLine,
 } from '../src/tui/timing.ts'
 
 /**
@@ -45,26 +45,18 @@ describe('generation timing', () => {
     onChunk(s, 1_600, 'text')
     onGenerationEnd(s, 4_500)
     expect(s.genMs).toBe(3_000)
-    expect(s.lastGenMs).toBe(3_000)
   })
 
-  it('estimates thinking as the prefix before the first visible text', () => {
+  it('re-anchors thinking at each attempt start (no carry-over)', () => {
     const s = emptyTiming()
-    onUserMessage(s, 0)
     onGenerationStart(s, 1_000)
-    onChunk(s, 1_000 + 800, 'reasoning')
-    onChunk(s, 1_000 + 2_000, 'text')
+    onChunk(s, 1_800, 'reasoning')
     onGenerationEnd(s, 5_000)
-    // Latest reasoning delta at 1800 → 800ms of thinking.
-    expect(s.lastThinkingMs).toBe(800)
-  })
-
-  it('reports no thinking when nothing reasoned', () => {
-    const s = emptyTiming()
-    onGenerationStart(s, 0)
-    onChunk(s, 100, 'text')
-    onGenerationEnd(s, 1_000)
-    expect(s.lastThinkingMs).toBeUndefined()
+    // A new attempt must not inherit the previous attempt's reasoning stamp,
+    // or its `think≈` figure would be measured from the wrong origin.
+    onGenerationStart(s, 9_000)
+    expect(s.thinkingAt).toBeUndefined()
+    expect(s.firstTextAt).toBeUndefined()
   })
 
   it('ignores chunks and ends arriving without a start', () => {
@@ -129,7 +121,6 @@ describe('span vs active', () => {
     // Long idle: user reads for 10s.
     onToolStart(s, 13_000)
     onToolEnd(s, 14_000) // 1s tool
-    onTurnComplete(s, 0, 14_000)
 
     expect(activeMs(s, 14_000)).toBe(3_000) // 2s gen + 1s tool
     expect(spanMs(s, 14_000)).toBe(14_000)
@@ -161,7 +152,6 @@ describe('timingLine', () => {
     onUserMessage(s, 0)
     onGenerationStart(s, 1_000)
     onGenerationEnd(s, 4_000)
-    onTurnComplete(s, 0, 4_000)
     expect(timingLine(s, 4_000)).toBe('⏱ 4.0s · active 3.0s · 1 turn')
   })
 

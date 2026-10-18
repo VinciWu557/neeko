@@ -15,6 +15,23 @@
  * 2. **Width is the only render input.** Layout decisions (right-aligned route,
  *    left-side truncation) depend on the viewport, never on stale state.
  *
+ * ## Why there are two update paths, and why they differ in cost
+ *
+ * The two things the bar shows have different lifetimes:
+ *
+ * - **Timing** changes on every streaming chunk. Recomputing it is pure
+ *   arithmetic over an in-memory struct.
+ * - **Facts** change only when the session changes (new event / new turn /
+ *   model switch). Recomputing them means a full `snapshotEvents()` of the
+ *   durable log, a `sessionProjections` read, and a synchronous `git HEAD`
+ *   read.
+ *
+ * Collapsing both into one "always re-read facts" method made the streaming hot
+ * path do that whole expensive fold **once per token**. So: {@linkcode setTiming}
+ * is the cheap path (cache re-layout only), {@linkcode refresh} is the expensive
+ * one, and it accepts the timing so a session event can update both in **one**
+ * repaint instead of two half-updated frames.
+ *
  * @module dsh-neeko/tui/status-controller
  */
 
@@ -68,10 +85,14 @@ export class StatusController {
   /**
    * Re-read the live facts and rebuild the lines.
    *
-   * Call this when session state *changed* (new event, new turn, model switch),
-   * not from `render()`.
+   * The **expensive** path: call it when session state actually changed (a new
+   * event, a new turn, a model switch), never from the streaming path.
+   *
+   * @param timing - optional timing segment to apply in the SAME repaint, so a
+   *   change to both cannot render one frame of new-timing/old-ledger.
    */
-  refresh(): void {
+  refresh(timing?: string): void {
+    if (timing !== undefined) this.timing = timing
     this.facts = {
       ...this.options.readFacts(),
       ...this.options.route(),
@@ -81,7 +102,11 @@ export class StatusController {
   }
 
   /**
-   * Update the timing segment; no-op when unchanged (it ticks constantly).
+   * Update the timing segment only; no-op when unchanged.
+   *
+   * The **cheap** path: re-lays-out the cached facts without re-reading them,
+   * so it is safe to call on every streaming chunk.
+   *
    * @param text - the timing segment, or `''` to hide it.
    */
   setTiming(text: string): void {

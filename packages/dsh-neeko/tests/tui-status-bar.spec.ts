@@ -231,4 +231,21 @@ describe('renderStatusBar — layout', () => {
     const lines = renderStatusBar(wide, { width: 200, home: '/home/dev', paint })
     expect(lines[0]).toContain('~/work/dsh-neeko')
   })
+
+  it('never lets the route overflow the bar', () => {
+    // Regression: only the LEFT side was truncated, so a long provider/model id
+    // pushed the line past the viewport (measured: 206 columns at width 80),
+    // wrapping on screen.
+    const longRoute = facts({ provider: 'a-very-long-provider-name', model: 'x'.repeat(160) })
+    const lines = renderStatusBar(longRoute, { width: 80, home: '/home/dev', paint })
+    for (const line of lines) {
+      expect(plainLine(line).length).toBeLessThanOrEqual(80)
+    }
+    expect(lines[1]).toContain('…')
+  })
+
+  it('leaves a route that fits untouched', () => {
+    const lines = renderStatusBar(wide, { width: 200, home: '/home/dev', paint })
+    expect(plainLine(lines[1]!)).toContain('(magpie) group/auto-deepseek-v4-1-flash • high')
+  })
 })

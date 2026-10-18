@@ -49,12 +49,6 @@ export interface TimingState {
   activeTools: number
   /** Start of the current contiguous tool run, or `undefined`. */
   toolRunStart: number | undefined
-  /** Generation time of the most recently finished attempt. */
-  lastGenMs: number
-  /** Thinking estimate for the most recently finished attempt. */
-  lastThinkingMs: number | undefined
-  /** Wall-clock → the reply's first user message, for the last completed turn. */
-  lastReplyMs: number | undefined
 }
 
 /** A fresh timing state. */
@@ -70,9 +64,6 @@ export function emptyTiming(): TimingState {
     thinkingAt: undefined,
     activeTools: 0,
     toolRunStart: undefined,
-    lastGenMs: 0,
-    lastThinkingMs: undefined,
-    lastReplyMs: undefined,
   }
 }
 
@@ -81,7 +72,6 @@ export function onUserMessage(state: TimingState, now: number): void {
   if (state.spanFirst === undefined) state.spanFirst = now
   state.spanLast = now
   state.turns += 1
-  state.lastReplyMs = undefined
 }
 
 /** An attempt's `start` frame. */
@@ -98,37 +88,18 @@ export function onChunk(state: TimingState, now: number, kind: 'text' | 'reasoni
   else if (state.firstTextAt === undefined) state.firstTextAt = now
 }
 
-/** An attempt's `end` frame; folds the attempt into the totals. */
+/**
+ * An attempt's `end` frame; folds the attempt into the totals.
+ * @param state - timing state.
+ * @param now - the frame's wall clock.
+ */
 export function onGenerationEnd(state: TimingState, now: number): void {
   if (state.genStart === undefined) return
-  const elapsed = Math.max(0, now - state.genStart)
-  state.genMs += elapsed
-  state.lastGenMs = elapsed
-  // Thinking is the prefix before the first visible text; `thinkingAt` (an
-  // explicit reasoning delta) wins over the text anchor when present.
-  // Only an actual reasoning delta counts as thinking; the text anchor is a
-  // fallback for *where* thinking ended, never evidence that it happened.
-  const anchor = state.thinkingAt ?? state.firstTextAt
-  state.lastThinkingMs = state.thinkingAt === undefined || anchor === undefined
-    ? undefined
-    : Math.max(0, anchor - state.genStart)
+  state.genMs += Math.max(0, now - state.genStart)
   state.spanLast = Math.max(state.spanLast ?? now, now)
-  // Turn elapsed (`lastReplyMs`) is folded by `onTurnComplete`, which knows the
-  // user message's timestamp; an attempt end is not a turn end.
   state.genStart = undefined
   state.firstTextAt = undefined
   state.thinkingAt = undefined
-}
-
-/**
- * Fold the finished turn: the reply took from the user message to now.
- * @param state - timing state.
- * @param turnStart - the user message's timestamp for this turn.
- * @param now - completion timestamp.
- */
-export function onTurnComplete(state: TimingState, turnStart: number, now: number): void {
-  state.lastReplyMs = Math.max(0, now - turnStart)
-  state.spanLast = Math.max(state.spanLast ?? now, now)
 }
 
 /** A tool started; opens a run if this is the first active tool. */

@@ -132,6 +132,32 @@ describe('StatusController', () => {
     expect(seen).toHaveLength(1)
   })
 
+  it('setTiming never re-reads the facts (the streaming hot path)', () => {
+    // Frequency contract, not a value assertion: `setTiming` runs once per
+    // streaming chunk, and each facts read folds the whole durable log, reads
+    // session projections and touches `git HEAD`. A regression here is
+    // invisible to value assertions — only the call COUNT shows it.
+    const readFacts = vi.fn(() => ({ cwd: '/repo' }))
+    const status = make({ readFacts })
+    status.refresh()
+    const afterRefresh = readFacts.mock.calls.length
+    for (let i = 0; i < 50; i += 1) status.setTiming(`⏱ ${i}s`)
+    expect(readFacts.mock.calls.length).toBe(afterRefresh)
+  })
+
+  it('refresh accepts a timing segment and applies it in one repaint', () => {
+    // The event path needs both, but must not repaint twice (a half-updated
+    // frame showed new timing next to a stale ledger).
+    const readFacts = vi.fn(() => ({ cwd: '/repo' }))
+    const status = make({ readFacts })
+    const seen: number[] = []
+    status.onChange = () => seen.push(1)
+    status.refresh('⏱ 9s')
+    expect(seen).toHaveLength(1)
+    expect(readFacts).toHaveBeenCalledTimes(1)
+    expect(status.currentLines[1]).toContain('⏱ 9s')
+  })
+
   it('shows the timing segment ahead of the ledger', () => {
     const status = make()
     status.refresh()
@@ -157,6 +183,7 @@ describe('CommandController', () => {
     expect(c.classify('/clear')).toEqual({ kind: 'clear' })
     expect(c.classify('/exit')).toEqual({ kind: 'exit' })
     expect(c.classify('/model')).toEqual({ kind: 'model-picker' })
+    expect(c.classify('/model m1')).toEqual({ kind: 'select-model', id: 'm1' })
     expect(c.classify('/theme')).toEqual({ kind: 'theme-picker' })
     expect(c.classify('/theme light')).toEqual({ kind: 'apply-theme', name: 'light' })
   })
