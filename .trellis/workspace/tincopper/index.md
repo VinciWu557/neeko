@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 309
-- **Last Active**: 2026-10-17
+- **Total Sessions**: 311
+- **Last Active**: 2026-10-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~63 | Active |
+| `journal-7.md` | ~83 | Active |
 | `journal-6.md` | ~1988 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 311 | 2026-10-18 | dsh-neeko /model 面板：槽位替换 + 模糊搜索 | - | `dsh-neeko` |
 | 309 | 2026-10-17 | 10-17 收尾：子包自带 workspace 根导致类型双实例（改值三次才找到生成源） | `8c71d81a`, `811dfc3a` | `dsh-neeko` |
 | 308 | 2026-10-17 | 10-17 收尾：cordis 版本范围错配（只在干净安装下现形） | `ff9863c3` | `dsh-neeko` |
 | 307 | 2026-10-17 | 10-17-dsh-neeko-bridge-fix: dsh 0.2.x 契约迁移（四条根因 + 两次复核抓假绿） | `e272e3a7`, `fb059ebf` | `dsh-neeko` |

@@ -61,3 +61,23 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 311: dsh-neeko /model 面板：槽位替换 + 模糊搜索
+<!-- trellis-session: v=2 fp=16fa4fe382dc7114 -->
+
+**Date**: 2026-10-18
+**Task**: dsh-neeko /model 面板：槽位替换 + 模糊搜索
+**Branch**: `dsh-neeko`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
