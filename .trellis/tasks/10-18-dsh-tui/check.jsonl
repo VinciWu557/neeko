@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/10-18-dsh-tui/design.md", "reason": "§7 测试策略（反证导向）与 §8 红线合规（桥零回归 / 0.1.x API 禁用）"}
+{"file": ".trellis/tasks/10-18-dsh-tui/implement.md", "reason": "AC 对照表与每步真机验证项"}
+{"file": "packages/dsh-neeko/tests/agent-handlers.spec.ts", "reason": "测试纪律参照：变异可反证、capturingSource 模式"}
+{"file": "AGENTS.md", "reason": "packages/ 门禁豁免：验证入口 prepublishOnly；根仓零改动"}

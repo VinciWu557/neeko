@@ -48,6 +48,8 @@ export interface NeekoStartupValues {
   autoSpawn?: boolean
   /** Override the command used to launch Neeko. */
   spawnCommand?: string
+  /** Run the interactive terminal UI instead of the Neeko bridge. */
+  tui?: boolean
 }
 
 /** Flags as commander actually reports them. */
@@ -62,6 +64,8 @@ export interface StartupFlags {
    * `spawnCommand` (rejected by the Config schema, killing the whole row).
    */
   spawn?: string | false
+  /** `--tui`: run the interactive TUI instead of the bridge. */
+  tui?: boolean
 }
 
 /**
@@ -87,6 +91,7 @@ export function resolveStartupValues(flags: StartupFlags, positional?: string): 
     ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
     ...(flags.spawn === false ? { autoSpawn: false } : {}),
     ...(typeof flags.spawn === 'string' ? { spawnCommand: flags.spawn } : {}),
+    ...(flags.tui === true ? { tui: true } : {}),
   }
 }
 
@@ -101,6 +106,7 @@ function neekoCommand(): Command {
     .option('--session <id>', 'resume an existing persisted session')
     .option('--spawn <command>', 'override the command used to launch Neeko (e.g. "open -a Neeko")')
     .option('--no-spawn', 'do not spawn Neeko even in CLI mode')
+    .option('--tui', 'run the interactive terminal UI instead of the Neeko bridge')
     .argument('[mode]', "'daemon' runs the bridge in pure-wait mode (alias of --daemon)")
     .addHelpText('after', `
 Examples:

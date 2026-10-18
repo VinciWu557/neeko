@@ -103,3 +103,24 @@ describe('startup values satisfy the Config schema', () => {
     expect(() => Config({ spawnCommand: false } as unknown as Parameters<typeof Config>[0])).toThrow()
   })
 })
+
+describe('resolveStartupValues — tui flag', () => {
+  it('propagates --tui into the values', () => {
+    const values = resolveStartupValues({ tui: true })
+    expect(values.tui).toBe(true)
+  })
+
+  it('omits the tui key when the flag is absent (bridge mode unchanged)', () => {
+    // The bridge path must be byte-identical to before: no tui key at all,
+    // so cordis.patch.yml's `?? false` default and the bridge row are untouched.
+    const values = resolveStartupValues({})
+    expect(values).not.toHaveProperty('tui')
+  })
+
+  it('coexists with daemon and spawn flags', () => {
+    const values = resolveStartupValues({ tui: true, daemon: true, spawn: false })
+    expect(values.tui).toBe(true)
+    expect(values.daemon).toBe(true)
+    expect(values.autoSpawn).toBe(false)
+  })
+})
