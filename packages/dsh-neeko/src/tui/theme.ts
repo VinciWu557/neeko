@@ -23,7 +23,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { foregroundAnsi } from '@earendil-works/pi-tui'
 import { parseColor } from '@earendil-works/pi-tui'
-import type { Color, TerminalColorMode } from '@earendil-works/pi-tui'
+import type { Color, MarkdownTheme, TerminalColorMode } from '@earendil-works/pi-tui'
+import { BUILTIN_THEMES } from './theme-data.ts'
+import type { ThemeDocument } from './theme-data.ts'
+
+export { BUILTIN_THEMES }
+export type { ThemeDocument }
 
 /**
  * Every theme token pi defines (56), in pi's own order.
@@ -48,16 +53,6 @@ export const THEME_TOKENS = [
 
 /** A theme token name. */
 export type ThemeToken = (typeof THEME_TOKENS)[number]
-
-/** What a theme file looks like on disk (a subset of pi's schema). */
-export interface ThemeDocument {
-  readonly name: string
-  readonly appearance?: 'dark' | 'light'
-  /** Named colors referenced by `colors`. */
-  readonly vars?: Readonly<Record<string, string>>
-  /** Token → var name or literal color. */
-  readonly colors: Readonly<Partial<Record<ThemeToken, string>>>
-}
 
 /** A resolved theme: token → ANSI escape, plus styling helpers. */
 export class Theme {
@@ -121,162 +116,6 @@ function safeParse(value: string): Color | undefined {
 }
 
 /**
- * Built-in themes, transcribed from pi's `dark.json` / `light.json` (only the
- * tokens this TUI uses). Keeping the same palette means the two surfaces read
- * the same next to each other.
- */
-// Built-ins are **transcribed verbatim** from pi's `dark.json` / `light.json`
-// (all 56 tokens each). They are copied rather than read at runtime because pi's
-// package `exports` does not expose `dist/modes/interactive/theme/*.json`.
-// A comment marks the source so a refresh is a mechanical diff.
-export const BUILTIN_THEMES: readonly ThemeDocument[] = [
-  {
-    name: 'dark',
-    appearance: 'dark',
-    vars: {
-      text: 'okhsl(234 3% 89%)',
-      muted: 'okhsl(229 6% 67%)',
-      violet: 'okhsl(295 50% 67%)',
-      blue: 'okhsl(232 54% 67%)',
-      green: 'okhsl(159 59% 67%)',
-      red: 'okhsl(20 72% 67%)',
-      yellow: 'okhsl(83 88% 67%)',
-      blueBg: 'okhsl(233 41% 24%)',
-    },
-    colors: {
-      accent: 'violet',
-      border: 'okhsl(231 57% 65%)',
-      borderAccent: 'okhsl(295 53% 64%)',
-      borderMuted: 'okhsl(229 8% 53%)',
-      success: 'green',
-      error: 'red',
-      warning: 'yellow',
-      muted: 'muted',
-      dim: 'okhsl(229 8% 56%)',
-      text: 'text',
-      thinkingText: 'okhsl(226 7% 65%)',
-      selectedBg: 'blueBg',
-      scrollbarTrack: 'okhsl(237 7% 33%)',
-      scrollbarThumb: 'okhsl(232 7% 65%)',
-      searchMatchBg: 'okhsl(53 51% 24%)',
-      searchMatchText: 'muted',
-      userMessageBg: 'blueBg',
-      userMessageText: 'text',
-      customMessageBg: 'okhsl(295 42% 24%)',
-      customMessageText: 'muted',
-      customMessageLabel: 'violet',
-      toolPendingBg: 'okhsl(229 5% 24%)',
-      toolSuccessBg: 'okhsl(158 46% 25%)',
-      toolErrorBg: 'okhsl(19 54% 25%)',
-      toolTitle: 'text',
-      toolOutput: 'muted',
-      mdHeading: 'yellow',
-      mdLink: 'blue',
-      mdLinkUrl: 'muted',
-      mdCode: 'violet',
-      mdCodeBlock: 'green',
-      mdCodeBlockBorder: 'muted',
-      mdQuote: 'muted',
-      mdQuoteBorder: 'muted',
-      mdHr: 'muted',
-      mdListBullet: 'violet',
-      toolDiffAdded: 'green',
-      toolDiffRemoved: 'red',
-      toolDiffContext: 'muted',
-      syntaxComment: 'muted',
-      syntaxKeyword: 'blue',
-      syntaxFunction: 'yellow',
-      syntaxVariable: 'okhsl(202 58% 67%)',
-      syntaxString: 'okhsl(52 67% 67%)',
-      syntaxNumber: 'green',
-      syntaxType: 'violet',
-      syntaxOperator: 'muted',
-      syntaxPunctuation: 'muted',
-      thinkingOff: 'okhsl(229 8% 49%)',
-      thinkingMinimal: 'okhsl(232 20% 52%)',
-      thinkingLow: 'okhsl(232 45% 54%)',
-      thinkingMedium: 'okhsl(263 59% 56%)',
-      thinkingHigh: 'okhsl(295 73% 59%)',
-      thinkingXhigh: 'okhsl(337 81% 61%)',
-      thinkingMax: 'okhsl(20 99% 63%)',
-      bashMode: 'okhsl(159 64% 65%)',
-    },
-  },
-  {
-    name: 'light',
-    appearance: 'light',
-    vars: {
-      text: 'okhsl(225 5% 27%)',
-      muted: 'okhsl(229 8% 47%)',
-      violet: 'okhsl(295 60% 46%)',
-      blue: 'okhsl(231 68% 47%)',
-      green: 'okhsl(159 75% 46%)',
-      red: 'okhsl(20 91% 47%)',
-      yellow: 'okhsl(83 99% 47%)',
-      blueBg: 'okhsl(235 19% 91%)',
-    },
-    colors: {
-      accent: 'violet',
-      border: 'okhsl(231 67% 55%)',
-      borderAccent: 'okhsl(295 59% 55%)',
-      borderMuted: 'okhsl(235 7% 66%)',
-      success: 'green',
-      error: 'red',
-      warning: 'yellow',
-      muted: 'muted',
-      dim: 'okhsl(229 7% 59%)',
-      text: 'text',
-      thinkingText: 'okhsl(234 8% 55%)',
-      selectedBg: 'blueBg',
-      scrollbarTrack: 'okhsl(248 3% 90%)',
-      scrollbarThumb: 'okhsl(226 7% 65%)',
-      searchMatchBg: 'okhsl(56 22% 91%)',
-      searchMatchText: 'muted',
-      userMessageBg: 'blueBg',
-      userMessageText: 'text',
-      customMessageBg: 'okhsl(295 25% 91%)',
-      customMessageText: 'muted',
-      customMessageLabel: 'violet',
-      toolPendingBg: 'okhsl(248 3% 91%)',
-      toolSuccessBg: 'okhsl(156 21% 91%)',
-      toolErrorBg: 'okhsl(24 23% 91%)',
-      toolTitle: 'text',
-      toolOutput: 'muted',
-      mdHeading: 'yellow',
-      mdLink: 'blue',
-      mdLinkUrl: 'muted',
-      mdCode: 'violet',
-      mdCodeBlock: 'green',
-      mdCodeBlockBorder: 'muted',
-      mdQuote: 'muted',
-      mdQuoteBorder: 'muted',
-      mdHr: 'muted',
-      mdListBullet: 'violet',
-      toolDiffAdded: 'green',
-      toolDiffRemoved: 'red',
-      toolDiffContext: 'muted',
-      syntaxComment: 'muted',
-      syntaxKeyword: 'blue',
-      syntaxFunction: 'yellow',
-      syntaxVariable: 'okhsl(203 73% 46%)',
-      syntaxString: 'okhsl(52 84% 46%)',
-      syntaxNumber: 'green',
-      syntaxType: 'violet',
-      syntaxOperator: 'muted',
-      syntaxPunctuation: 'muted',
-      thinkingOff: 'okhsl(223 5% 80%)',
-      thinkingMinimal: 'okhsl(229 14% 78%)',
-      thinkingLow: 'okhsl(232 33% 76%)',
-      thinkingMedium: 'okhsl(264 48% 74%)',
-      thinkingHigh: 'okhsl(295 62% 72%)',
-      thinkingXhigh: 'okhsl(337 74% 70%)',
-      thinkingMax: 'okhsl(20 98% 68%)',
-      bashMode: 'okhsl(159 74% 55%)',
-    },
-  },
-]
-
-/**
  * Look up a built-in theme by name.
  * @param name - `dark` or `light`.
  * @returns the document, or `undefined` when unknown.
@@ -287,11 +126,47 @@ export function findBuiltin(name: string): ThemeDocument | undefined {
 
 /**
  * Resolve a theme document into a usable {@linkcode Theme}.
+ *
+ * ## Why this overlays a built-in
+ *
+ * Two contracts meet at this boundary:
+ * - the **loader** fails open and accepts a partial palette (a user file may
+ *   carry a single color — see `coerceThemeDocument`);
+ * - {@linkcode Theme.fg} treats a missing token as a programming error and throws.
+ *
+ * Left alone, a *valid* partial file would throw on the first repaint of any
+ * token it omits — a broken theme would break the TUI, which is exactly what
+ * the loader's fail-open exists to prevent. So the document is overlaid on the
+ * built-in of its appearance (`dark` when undeclared): every token resolves,
+ * missing rows fall back to the base palette, explicit rows win per key.
+ * Built-ins overlay onto themselves, making this a no-op for them.
+ *
+ * `appearance` is kept exactly as declared — it decides the terminal
+ * color-mode fallback, and inheriting the base's would silently switch an
+ * appearance-less theme to truecolor.
+ *
  * @param document - the theme to resolve.
  * @returns the resolved theme.
  */
 export function resolveTheme(document: ThemeDocument): Theme {
-  return new Theme(document.name, document)
+  return new Theme(document.name, overlayOn(document.appearance ?? 'dark', document))
+}
+
+/**
+ * Merge `top` over the named built-in (`top` wins per key).
+ * @param base - built-in theme name used as the fallback palette.
+ * @param top - the document whose explicit rows survive.
+ * @returns the merged document.
+ */
+function overlayOn(base: string, top: ThemeDocument): ThemeDocument {
+  const baseDoc = findBuiltin(base) ?? findBuiltin('dark')
+  if (baseDoc === undefined) return top
+  const merged: ThemeDocument = {
+    name: top.name,
+    vars: { ...baseDoc.vars, ...top.vars },
+    colors: { ...baseDoc.colors, ...top.colors },
+  }
+  return top.appearance === undefined ? merged : { ...merged, appearance: top.appearance }
 }
 
 
@@ -508,7 +383,7 @@ export function resolveThemeByName(name: string, userThemes: readonly UserTheme[
  * @param theme - the active theme.
  * @returns a Markdown theme for `Markdown` components.
  */
-export function markdownThemeOf(theme: Theme): Record<string, (text: string) => string> {
+export function markdownThemeOf(theme: Theme): MarkdownTheme {
   const paint = (token: ThemeToken, text: string): string =>
     theme.spec.colors[token] === undefined ? text : theme.fg(token, text)
   return {

@@ -47,10 +47,38 @@ describe('Theme resolution', () => {
     expect(() => theme.fg('accent', 'x')).not.toThrow()
   })
 
-  it('throws a named error for a token the theme does not define', () => {
-    // A missing token is a programming error, not a silent fallback.
-    const theme = resolveTheme({ name: 'sparse', colors: { accent: 'okhsl(0 0% 50%)' } })
+  it('throws a named error for a token a hand-built theme does not define', () => {
+    // The programming-error contract lives at the `Theme` boundary: sparse
+    // *documents* are normalised by `resolveTheme` (overlay, next cases), so
+    // only direct construction can produce a Theme with holes.
+    const theme = new Theme('sparse', { name: 'sparse', colors: { accent: 'okhsl(0 0% 50%)' } })
     expect(() => theme.fg('error', 'x')).toThrow(/no color for "error"/)
+  })
+
+  it('overlays a partial document on the dark base (every token resolves)', () => {
+    // A partial file is VALID input for the loader; painting it must not throw
+    // mid-repaint — missing rows fall back to the base palette.
+    const theme = resolveTheme({ name: 'sparse', colors: { accent: '#123456' } })
+    for (const token of THEME_TOKENS) {
+      expect(() => theme.fg(token, 'x'), token).not.toThrow()
+    }
+    const dark = resolveTheme(findBuiltin('dark')!)
+    expect(theme.ansiOf('error')).toBe(dark.ansiOf('error')) // inherited
+    expect(theme.ansiOf('accent')).not.toBe(dark.ansiOf('accent')) // explicit wins
+  })
+
+  it('overlays an appearance-light document on the light base', () => {
+    const theme = resolveTheme({ name: 'sparse', appearance: 'light', colors: { accent: '#123456' } })
+    const light = resolveTheme(findBuiltin('light')!)
+    expect(theme.ansiOf('error')).toBe(light.ansiOf('error'))
+    expect(theme.ansiOf('accent')).not.toBe(light.ansiOf('accent'))
+  })
+
+  it('does not inherit the base appearance (an undeclared one stays undeclared)', () => {
+    // Appearance decides the terminal color-mode fallback; leaking the base's
+    // `dark` would silently force truecolor on a theme that never asked.
+    const theme = resolveTheme({ name: 'plain', colors: { accent: '#123456' } })
+    expect(theme.spec.appearance).toBeUndefined()
   })
 
   it('wraps text in the token escape and resets afterwards', () => {
@@ -234,7 +262,16 @@ describe('pi theme compatibility', () => {
     const md = markdownThemeOf(theme)
     expect(md.heading?.('x')).toContain(theme.ansiOf('mdHeading'))
     expect(md.code?.('y')).toContain(theme.ansiOf('mdCode'))
-    // Undefined md tokens fall back to unstyled text.
+    // An omitted md token inherits the base palette (overlay), not bare text.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    expect(md.quote?.('z')).toContain(dark.ansiOf('mdQuote'))
+  })
+
+  it('leaves md tokens unstyled only for a hand-built sparse theme', () => {
+    // `resolveTheme` always overlays, so this shape exists only via `new Theme`
+    // — the guard keeps Markdown rendering safe there too.
+    const theme = new Theme('raw', { name: 'raw', colors: { mdHeading: 'okhsl(83 88% 67%)' } })
+    const md = markdownThemeOf(theme)
     expect(md.quote?.('z')).toBe('z')
   })
 })
