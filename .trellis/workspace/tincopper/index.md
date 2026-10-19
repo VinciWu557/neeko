@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 311
-- **Last Active**: 2026-10-18
+- **Total Sessions**: 312
+- **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~83 | Active |
+| `journal-7.md` | ~103 | Active |
 | `journal-6.md` | ~1988 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 312 | 2026-10-19 | dsh-neeko TUI：折叠/全屏/渲染性能与视觉对齐 pi | - | `dsh-neeko` |
 | 311 | 2026-10-18 | dsh-neeko /model 面板：槽位替换 + 模糊搜索 | - | `dsh-neeko` |
 | 309 | 2026-10-17 | 10-17 收尾：子包自带 workspace 根导致类型双实例（改值三次才找到生成源） | `8c71d81a`, `811dfc3a` | `dsh-neeko` |
 | 308 | 2026-10-17 | 10-17 收尾：cordis 版本范围错配（只在干净安装下现形） | `ff9863c3` | `dsh-neeko` |

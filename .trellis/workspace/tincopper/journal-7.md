@@ -81,3 +81,23 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 312: dsh-neeko TUI：折叠/全屏/渲染性能与视觉对齐 pi
+<!-- trellis-session: v=2 fp=fdaa1d903cbfc088 -->
+
+**Date**: 2026-10-19
+**Task**: dsh-neeko TUI：折叠/全屏/渲染性能与视觉对齐 pi
+**Branch**: `dsh-neeko`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
