@@ -14,8 +14,8 @@
 |------|------|------|
 | [目录结构](./directory-structure.md) | 模块组织与文件布局 | 已填写 |
 | [组件指南](./component-guidelines.md) | 组件模式、Props、组合方式 | 已填写 |
-| [Hook 指南](./hook-guidelines.md) | 自定义 Hooks、数据获取模式 | 已填写 |
-| [状态管理](./state-management.md) | 本地状态、全局状态、服务端状态 | 已填写 |
+| [Hook 指南](./hook-guidelines.md) | 自定义 Hooks、数据获取模式、文件树单一寻址面 | 已填写 |
+| [状态管理](./state-management.md) | 本地状态、全局状态、服务端状态；含「展开态与缓存同槽」「确保态 vs 翻转态」两类判定准则 | 已填写 |
 | [质量指南](./quality-guidelines.md) | 代码规范、禁止模式 | 已填写 |
 | [类型安全](./type-safety.md) | 类型模式、校验 | 已填写 |
 | [API 层](./api-layer.md) | Tauri IPC 调用、事件监听、适配器模式 | 已填写 |

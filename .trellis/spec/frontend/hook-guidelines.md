@@ -260,6 +260,45 @@ useAheadBehindSync(commands);
 
 ---
 
+## 文件树加载：单一寻址面（三端同源）
+
+**问题**：文件树的加载曾按项目类型分流 —— Local 走 `FileActionsContext` →
+`useFileView.loadFileTree`，WSL/Remote 直接调 `useFileStore`。两条路各自维护「何时加载 / 是否
+强制刷新」，任何一边改语义（比如 `force` 的含义）都只对一类项目生效。分流没有存在理由：地址
+（`fileTreeOwner`）与读取命令（`readDirTree` 按 `ExecTarget` 路由）本来就三端同源。
+
+**契约**：
+
+1. **唯一编排点是 `useFileTreeSync`**。它同时产出三个值，调用方不得自己再派生：
+   - `treeProjectId` —— 树所属项目身份。`project.type === 'Local' ? activeProjectId : project.id`
+     这一判断**全仓只允许出现一次**（拖拽、CRUD 寻址也复用它）。
+   - `treeOwner` —— `fileTreeOwner(treeProjectId, fileRootPath)`；`fileTreeOwner` 是 owner 的
+     **唯一铸造点**，禁止手拼 `` `${projectId}:${rootPath}` ``（改分隔符即寻址到另一棵树）。
+   - `makeDirLoader` —— 注入 `store.loadDir` 的 loader；深度语义（根预扫 `DEFAULT_TREE_DEPTH`、
+     非根单层 `1`）只在此处决定。
+2. **加载与刷新只写 store**：首次加载 / 切项目 / 切 worktree → `store.loadDir`；手动刷新与
+   `file-tree-changed` 定向刷新 → `store.refreshTree`。不再经 Context 转发（
+   `onLoadFileTree` / `onFileExpand` / `onFileRefresh` 已删除）。
+3. **事件监听仍只对 Local 生效**：WSL/Remote 没有本地 notify watcher，故
+   `file-tree-changed` 回调里保留 `project.type !== 'Local' → return`。这是**事实约束**
+   （谁产生事件），不是加载分流。
+4. **展开态与目录内容同槽**：见 [状态管理](./state-management.md)「场景：文件树展开态与目录
+   缓存同槽」。
+
+**禁止模式**：
+
+```ts
+// Bad：调用方自己拼 owner（第二铸造点，改分隔符即错树）
+const owner = `${projectId}:${rootPath}`;
+
+// Bad：自己写项目身份判断（与 useFileTreeSync 的 treeProjectId 漂移）
+const pid = project.type === 'Local' ? activeProjectId : project.id;
+
+// Bad：按项目类型分流加载路径（一方改语义只对一类项目生效）
+if (project.type === 'Local') onLoadFileTree(pid, root);
+else useFileStore.getState().loadDir(owner, '', loader);
+```
+
 ## 数据获取
 
 ### 所有数据通过 Tauri IPC 传输
@@ -402,7 +441,11 @@ const saveWorktreeState = useCallback((projectId: string, wtPath: string | null)
 | `useLocalProjects` | `features/project/hooks/` | 本地项目 CRUD 与状态 | 项目列表、CRUD 回调、Agent 管理 |
 | `useConnectionProjects` | `shared/hooks/` | WSL/Remote 统一入口 | 连接条目、CRUD 回调 |
 | `useWorkspaceState` | `features/project/hooks/` | 按项目追踪激活单元（worktree） | `activePath`、`activeBranch`、`opened` |
-| `useFileView` | `features/editor/hooks/` | 文件树与 tab 的动作/派生（状态在 store） | `loadFileTree`、`openFile`、`saveFile` |
+| `useFileView` | `features/editor/hooks/` | **仅** file tab 的动作（开/关/存/脏标记）。文件树加载已移交 `useFileTreeSync` | `openFile`、`saveFile`、`closeTab` |
+| `useFileTreeSync` | `features/file/hooks/` | 文件树**加载/刷新/事件**的唯一编排点；三端同源 | `handleRefresh`、`treeProjectId`、`treeOwner`、`makeDirLoader` |
+| `useDirExpansion` | `features/file/hooks/` | 目录展开命令层（含包链策略）；状态在 store | `expandedDirs`、`expandDir`、`expandPathParents`、`handleToggleDir` |
+| `useFileContextMenu` | `features/file/hooks/` | 文件树右键菜单项构造（按节点种类 + 项目能力） | `buildContextMenuItems` |
+| `useFileInlineEdit` | `features/file/hooks/` | 新建/重命名内联输入状态机（校验 + 失败提示） | `creating`、`startCreating`、`submitRenaming` … |
 | `useKeyboardShortcuts` | `shared/hooks/` | 全局键盘快捷键 | （仅副作用） |
 | `useDeltaBatcher` | `features/agent-chat/hooks/` | 流式增量 rAF 批处理 | `flush`、批处理后的 state |
 | `useDiagnosticQuickFix` | `features/lsp/hooks/` | 单条诊断 quickfix 状态机（展开才拉 codeAction） | 展开/应用动作 |

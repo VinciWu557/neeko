@@ -1578,6 +1578,132 @@ const ordered = selectOrderedTabs(useEditorStore.getState(), tabKey);
 
 ---
 
+## 场景：文件树展开态与目录缓存同槽（「展开即加载」不变量）2026-10-18
+
+### 1. Scope / Trigger
+
+- Trigger：文件树里点开一个目录，chevron 显示已展开、子项一片空白、无 spinner 也无错误红点；
+  必须再点一次（先收起再展开）内容才出来。
+- 第一性原理：**「目录已展开」与「目录内容已就绪」是同一事实的两个侧面**，必须共享坐标系
+  `(owner, dirPath)` 与生命周期。当时展开态是面板组件 `useState<Set<dirPath>>`（只有 `dirPath`
+  一个分量），目录缓存 `dirs` / `loadStates` 在 store 里按 `owner = fileTreeOwner(projectId, root)`
+  分槽。切项目 / 切 worktree 时 store 惰性丢弃缓存，组件态却跨项目存活 ⇒ 新树里该路径
+  「已展开但无缓存」。`store.reset()` 也救不了：唯一调用者 `clearFileView` 在生产里没有调用点。
+- 第二性原理：**「确保展开」与「翻转展开」是两个意图**。`locateFile`（定位到某文件）、
+  打开 tab 联动、在目录内新建，都要的是「确保展开（幂等）」；只有用户点行才是「翻转」。
+  旧实现把两者混为一个 `onExpandDir`，于是重复定位会把已展开的祖先**收起**。
+- Scope：`features/file/store.ts`（展开态所有者 + 两个原子动作）、
+  `features/file/hooks/useDirExpansion.ts`（展开命令层 + 包链策略）、
+  `features/file/hooks/useFilePanelState.ts`（`locateFile` / `startCreating` 的编排）。
+
+### 2. Signatures
+
+```ts
+// features/file/store.ts —— 展开态与目录缓存同槽（同一个 owner，同一个 reset）
+export function fileTreeOwner(projectId: string, rootPath: string): FileTreeOwner;  // owner 唯一铸造点
+
+interface FileStoreState {
+  owner: FileTreeOwner | null;
+  dirs: Record<DirPath, FileNode[]>;
+  loadStates: Record<DirPath, DirLoadState>;
+  expandedDirs: Set<DirPath>;            // ← 与 dirs 同槽，owner 跳变时一起作废
+
+  /** 确保展开（幂等）：已展开则只补内容就绪；不翻转 */
+  expandDir(owner: FileTreeOwner, dirPath: DirPath, loader: () => Promise<DirTreeResult>): Promise<void>;
+  /** 翻转展开态：仅用户点击；收起不动缓存（再展开零请求） */
+  toggleDir(owner: FileTreeOwner, dirPath: DirPath, loader: () => Promise<DirTreeResult>): Promise<void>;
+  collapseAll(): void;
+}
+
+// features/file/hooks/useDirExpansion.ts —— 展开命令层（含 Java 包链视图策略）
+interface UseDirExpansionParams {
+  owner: string | null;                                    // 无 owner = 无树，动作全部 no-op
+  makeLoader: (dirPath: string) => () => Promise<DirTreeResult>;
+  readDir?: (dirPath: string) => FileNode[];               // 包链判定探针
+}
+// 展开的 UI 层唯一入口；包链策略在此叠加，所有触发点共用
+export function useDirExpansion(params: UseDirExpansionParams): {
+  expandedDirs: Set<DirPath>;
+  expandDir(dirPath: string): Promise<void>;
+  expandPathParents(filePath: string): Promise<void>;
+  handleToggleDir(path: string): Promise<void>;
+  collapseAll(): void;
+};
+```
+
+### 3. Contracts
+
+1. **同槽不变量**：`expandedDirs` 与 `dirs` / `loadStates` 必须同处 `FileStoreState`、同一个 `owner`、
+   同一个 `reset()`。任何「展开态放组件态 + 内容放 store」的组合都是 bug 温床 —— 两个坐标系在
+   切项目 / 切 worktree 时必然不同步。`ownerSwitchPatch()` 是这条不变量的唯一落地点，
+   `loadDir` 与 `expandDir` 共用它，禁止各写一份。
+2. **展开即加载**：写入 `expandedDirs` 的同时必须让内容就绪（已 loaded 或在途）。因此展开态
+   **只能**经 `store.expandDir` / `store.toggleDir` 写入，禁止外部 `setState` 展开集合。
+   加载失败**不上抛**：store 置 `error`（行尾红点可重试），目录保持展开，由用户决定重试还是折叠。
+3. **确保展开 ≠ 翻转**：`expandDir` 幂等（已展开不收起），供 `locateFile` / tab 联动 /
+   `startCreating` 使用；`toggleDir` 才翻转，仅供行点击。二者不可互相替代。
+4. **包链策略在 UI 层单点**：Java「单子目录链压行」是视图策略（与目录数据无关），**不得**下沉进
+   通用 store；但所有祖先展开必须走同一个 `useDirExpansion.expandPathParents`，否则不同入口
+   会得到不同视图（历史缺陷：定位走包链、联动不走）。
+5. **祖先展开只有一个编排点**：`useDirExpansion` **不监听**激活文件。激活文件联动与定位按钮
+   同属「展开到某文件」，若两者各自触发展开，同一级目录会被请求两次（见 §6 与常见错误 13）。
+
+### 4. Validation & Error Matrix
+
+| 情况 | 期望行为 | 判据 |
+| --- | --- | --- |
+| 首次展开未加载的目录 | 展开态 + 内容就绪同时成立 | `expandedDirs.has(p)` 与 `loadStates[p]` 不为 `undefined` 同帧出现 |
+| 重复定位同一文件 | 祖先保持展开，不收起 | 连续两次 `locateFile` 后祖先集合不缩小 |
+| 单级目录加载失败 | 目录保持展开，标 `error`，行尾红点可重试 | `loadStates[p] === 'error'` 且 `expandedDirs.has(p)` |
+| 切项目 / 切 worktree | 展开态与缓存一起作废 | 新 owner 下 `expandedDirs.size === 0` 且旧 `dirs` 键不存在 |
+| 收起再展开同一目录 | 零请求（命中缓存） | loader 未被调用 |
+| 展开目标同时经两条链路触发 | 每级目录只请求一次 | loader 调用计数每级 = 1 |
+
+### 5. Good/Base/Bad Cases
+
+```ts
+// Good：展开态与内容同一次调用建立（唯一入口）
+await useFileStore.getState().expandDir(owner, 'src/deep', makeLoader('src/deep'));
+
+// Good：展开到某文件——逐级「确保展开」，包链策略由 expandDir 统一叠加
+for (const p of getParentPaths(filePath)) await expandDir(p);
+
+// Bad：只改展开态、不加载（旧 activeFilePath 联动的写法）
+setExpandedDirs((prev) => new Set(prev).add(path));   // ← 展开但空白
+
+// Bad：用翻转做「确保展开」——重复定位会把已展开的祖先收起
+await store.toggleDir(owner, parent, loader);
+
+// Bad：展开态留在组件态，与按 owner 分槽的缓存各活各的
+const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
+```
+
+### 6. Tests Required
+
+- `features/file/__tests__/useFileStore.test.ts` —— store 层不变量：展开即加载、收起留缓存、
+  owner 跳变丢弃展开态、`expandDir` 幂等 vs `toggleDir` 翻转、失败保留展开态。
+- `features/file/hooks/__tests__/UseFilePanelState.test.tsx` —— 编排层：`startCreating` 触发加载、
+  重复定位不收起祖先、包链策略在两条入口下结果一致（**目标文件必须落在包链中间**，
+  否则父链恰好覆盖包链，两条路径结果相同、测不出分歧）。
+- `features/file/components/__tests__/FilesPanelNoDoubleExpand.test.tsx` —— 每级目录恰好请求一次
+  （`loadDir` 的幂等只挡「已 loaded」，挡不住两次并发）。
+- `app/dock/wrappers/__tests__/FilesPanelWrapper.wiring.test.tsx` —— **生产接线级**：不 mock 面板，
+  走真实 Wrapper + 真实 store + 真实 tab 空间，断言 `is_active` 高亮、头部路径与深层祖先加载。
+  面板级测试直接注入 props 会绕过接线断链，全绿也掩盖缺陷。
+
+### 7. Wrong vs Correct
+
+| 症状 | 错误归因 | 正确归因 |
+| --- | --- | --- |
+| 「展开后空白，点两次才好」 | 当成渲染 / 虚拟滚动问题 | 展开态与缓存的坐标系不一致（本场景 §3.1） |
+| 「定位后目录反而折叠了」 | 当成展开态计算错 | 用翻转语义实现了「确保展开」（§3.3） |
+| 「每级目录请求两次」 | 当成 store 幂等失效 | 有两条链路各自展开同一目标（§3.5） |
+| 「切项目后还残留展开」 | 当成 `reset` 没调 | 展开态不在 store 的 owner 槽里（§3.1） |
+
+> 交叉引用：`fileTreeOwner` 作为 owner 唯一铸造点、及「三端加载/刷新同源」见
+> [Hook 指南](./hook-guidelines.md) 的文件树加载章节；路径身份判定（红线 12）不在此列 ——
+> `owner` 是缓存归属键，不承担「是否同一文件」的判定。
+
 ## 常见错误
 
 ### 1. 继续把跨域数据通过多层 Props 透传
@@ -1733,3 +1859,33 @@ return () => {
 - 不能（如「用户点了定义跳转」）→ 才是**用户意图**，走**目标状态模型**（`NavigateGoal` + `useNavigateGoal`：seq 取代、requestMeasure 就绪屏障、幂等兑现、随 tab 移除清理——2026-09-17 起已替代旧一次性单槽，完整契约见 [导航目标状态模型](./navigation-goal.md)）。
 
 **交叉引用**：代际守卫的完整契约、`locationSeq` 为何不可派生、跨 feature 落地许可（`isCurrent` 注入）见「场景：停点跟随（异步链代际守卫 + 跟随改为派生状态）」；交错用例的假绿防线见 `unit-test/frontend-testing.md` §9。
+
+### 13. 同一份数据放两个坐标系（组件态 + 按 owner 分槽的 store）
+
+**问题**：文件树展开态曾是组件 `useState<Set<dirPath>>`，而目录缓存按 `owner`（项目 + 工作树根）
+分槽。切项目 / 切 worktree 时 store 丢弃缓存、组件态跨项目存活，于是新树里出现「chevron 已展开、
+子项空白、无 spinner 无红灯」，用户必须再点一次。`store.reset()` 也无法兜底 —— 唯一调用者
+`clearFileView` 在生产里没有调用点（死路径）。
+
+**判定准则**：这份状态**是否与某份已按 key 分槽的数据描述同一事实**？
+- 是（展开态 ↔ 目录内容，两者的 key 都是 `(owner, dirPath)`）→ 必须放**同一个 store、同一个槽、
+  同一个 `reset`**，让「生命周期不同步」在结构上不可表示；
+- 否 → 才留在组件态。
+
+**推论**：跨项目存活的组件态只能装「与数据无关的纯 UI 偏好」（如是否显示某列）；一旦它的键需要
+和 store 的键对齐，就说明它本来就属于 store。完整契约见「场景：文件树展开态与目录缓存同槽」。
+
+### 14. 一个动作名承载两种意图（确保态 vs 翻转态）
+
+**问题**：文件树的 `onExpandDir` 同时被「用户点击行」（语义是翻转）与「定位到文件 / tab 联动 /
+新建文件」（语义是**确保展开**）使用。后者重复触发时会把已展开的祖先收起 —— 表现为「点定位按钮
+反而把目录折叠了」。
+
+**判定准则**：写状态前先问「调用方要的是**确保处于某态**还是**切换到另一态**？」
+- 确保（幂等，目标态 = 参数态）→ 独立命名（`expandDir` / `ensure*` / `activate`），对已是目标态
+  的输入必须 no-op；
+- 翻转（目标态 = 当前态取反）→ 独立命名（`toggleDir` / `toggle*`），且只允许绑定到**用户显式动作**。
+
+**禁止**：让命令式翻转函数兼任幂等确保 —— 二者的错误行为正好互补（前者收起不该收的，
+后者永不响应重复点击）。文件树侧的落地形态是 `store.expandDir`（确保）与 `store.toggleDir`
+（翻转），仅后者可在行点击里调用。
