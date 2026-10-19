@@ -225,8 +225,27 @@ export function normalizeLoadedConfig(loaded: unknown): LoadedAppConfig {
         ? saved.favoriteBranches
         : DEFAULT_CONFIG.favoriteBranches,
     translation:
-      saved.translation && typeof saved.translation === 'object' ? saved.translation : undefined,
+      saved.translation && typeof saved.translation === 'object'
+        ? {
+            ...saved.translation,
+            commentMode: normalizeCommentMode(saved.translation.commentMode),
+            commentAutoWarm:
+              typeof saved.translation.commentAutoWarm === 'boolean'
+                ? saved.translation.commentAutoWarm
+                : undefined,
+          }
+        : undefined,
   };
 
   return { config, theme, needsCustomThemeVars: !isBuiltinTheme(theme) };
+}
+
+/** 注释显示模式的合法取值（非法值丢弃，读到旧配置时不炸）。 */
+const COMMENT_MODES = ['below', 'inline', 'hover', 'off'] as const;
+
+/** 校验注释显示模式；非法 / 缺省 → `undefined`（由消费方兜底默认值）。 */
+function normalizeCommentMode(value: unknown): 'below' | 'inline' | 'hover' | 'off' | undefined {
+  return typeof value === 'string' && (COMMENT_MODES as readonly string[]).includes(value)
+    ? (value as 'below' | 'inline' | 'hover' | 'off')
+    : undefined;
 }

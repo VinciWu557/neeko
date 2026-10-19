@@ -123,5 +123,13 @@ export interface AppConfig {
     agentId?: string;
     modelId?: string;
     targetLanguage?: string;
+    /**
+     * 注释译文的默认显示模式（U1 定案：`below`）。
+     *
+     * `off` 表示装了能力但不默认显示 —— 写代码时用户会立刻想要这个。
+     */
+    commentMode?: 'below' | 'inline' | 'hover' | 'off';
+    /** 打开文件即预热注释翻译（默认关：首次冷启动有成本）。 */
+    commentAutoWarm?: boolean;
   };
 }

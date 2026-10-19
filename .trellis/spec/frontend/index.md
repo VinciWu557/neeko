@@ -23,6 +23,7 @@
 | [Git Graph](./git-graph.md) | Commit history DAG 渲染规范、布局算法、不变量 | 已填写 |
 | [StatusBar](./status-bar.md) | 状态栏 registry 机制、item 契约、互斥与 bridge 规范 | 已填写 |
 | [导航目标模型](./navigation-goal.md) | 用户意图跳转的 goal 状态、兑现器契约、三条不变量与生命周期 | 已填写 |
+| [注释翻译](./comment-translation.md) | 代码编辑器内注释/docstring 翻译：三层抽象、代码不翻铁律、内容寻址、StateField 投影、实测踩坑表 | 已填写 |
 
 ---
 
