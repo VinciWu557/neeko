@@ -1,8 +1,9 @@
-//! Unified database migrations for the library system.
+//! Library-owned schema migrations.
 //!
-//! Combines the old `skill` migrations (v0-v9) and `mcp` migrations (v9-v10)
-//! into a single linear chain. This eliminates the version conflict that
-//! occurred when both modules tried to manage `user_version` independently.
+//! These steps built the library tables (skills, MCP, prompts, tags). The
+//! *chain* that drives them lives in `common::db::migrations`, because
+//! `user_version` is a single value per database file — two domains cannot
+//! each own a chain. This file owns the SQL for versions 0..=11.
 //!
 //! Version history:
 //! - v0 -> v1: Initial schema (skills, targets, tags, tag_groups, settings).
@@ -18,48 +19,16 @@
 //! - v10 -> v11: agent_plugins 支持 Agent Chat 传输声明（自定义 provider 的 chat 能力）。
 //! - v11 -> v12: 移除 agent_plugins 表（provider 概念已精简为 AgentConfig）。
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use rusqlite::Connection;
 
-/// Current schema version. Bump this when adding a new migration.
-pub const LATEST_VERSION: u32 = 12;
-
-/// Run all pending migrations on the database.
-pub fn run_migrations(conn: &Connection) -> Result<()> {
-    let current: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-
-    if current > LATEST_VERSION {
-        bail!(
-            "Database schema version ({current}) is newer than this app supports ({LATEST_VERSION}). \
-             Please upgrade the application."
-        );
-    }
-
-    if current == LATEST_VERSION {
-        return Ok(());
-    }
-
-    for version in current..LATEST_VERSION {
-        conn.execute_batch("BEGIN EXCLUSIVE")?;
-        match migrate_step(conn, version) {
-            Ok(()) => {
-                conn.pragma_update(None, "user_version", version + 1)?;
-                conn.execute_batch("COMMIT")?;
-            }
-            Err(e) => {
-                let _ = conn.execute_batch("ROLLBACK");
-                return Err(e).with_context(|| {
-                    format!("migration from version {version} to {} failed", version + 1)
-                });
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Execute a single migration step: version N -> N+1.
-fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
+///
+/// The version *chain* lives in `common::db::migrations` because
+/// `user_version` is one integer per file. Each step's SQL belongs to the
+/// domain that owns the tables, so the chain dispatches here for versions
+/// 0..=11 and the bodies stay in this file.
+pub fn step(conn: &Connection, from_version: u32) -> Result<()> {
     match from_version {
         0 => migrate_v0_to_v1(conn),
         1 => migrate_v1_to_v2(conn),
@@ -384,76 +353,4 @@ fn migrate_v10_to_v11(conn: &Connection) -> Result<()> {
 fn migrate_v11_to_v12(conn: &Connection) -> Result<()> {
     conn.execute_batch("DROP TABLE IF EXISTS agent_plugins;")?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fresh_database_migrates_to_latest() {
-        let conn = Connection::open_in_memory().unwrap();
-        run_migrations(&conn).unwrap();
-
-        let version: u32 = conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, LATEST_VERSION);
-
-        let tables: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        for needed in [
-            "skills",
-            "skill_targets",
-            "skill_tags",
-            "tag_groups",
-            "tag_group_skills",
-            "tag_group_skill_tools",
-            "settings",
-            "project_tag_groups",
-            "skillssh_cache",
-            "prompts",
-            "actions",
-            "mcp_servers",
-            "mcp_tag_groups",
-            "mcp_tag_group_servers",
-            "mcp_tag_group_server_agents",
-            "project_mcp_tag_groups",
-            "mcp_server_targets",
-        ] {
-            assert!(
-                tables.contains(&needed.to_string()),
-                "missing table: {needed}"
-            );
-        }
-    }
-
-    #[test]
-    fn migration_is_idempotent() {
-        let conn = Connection::open_in_memory().unwrap();
-        run_migrations(&conn).unwrap();
-        run_migrations(&conn).unwrap();
-
-        let version: u32 = conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, LATEST_VERSION);
-    }
-
-    #[test]
-    fn newer_schema_rejected() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "user_version", LATEST_VERSION + 1)
-            .unwrap();
-
-        let err = run_migrations(&conn).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("newer than this app supports"));
-    }
 }

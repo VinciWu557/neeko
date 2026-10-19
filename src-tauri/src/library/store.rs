@@ -25,8 +25,8 @@ pub struct LibraryStore {
 impl LibraryStore {
     /// Open or create the library database at the given path.
     pub fn open(db_path: &Path) -> Result<Self> {
-        let conn = crate::common::db::open(db_path)?;
-        crate::library::migrations::run_migrations(&conn)?;
+        let mut conn = crate::common::db::open(db_path)?;
+        crate::common::db::run_migrations(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -34,8 +34,8 @@ impl LibraryStore {
 
     /// Open an in-memory library database (for testing).
     pub fn open_in_memory() -> Result<Self> {
-        let conn = crate::common::db::open_in_memory()?;
-        crate::library::migrations::run_migrations(&conn)?;
+        let mut conn = crate::common::db::open_in_memory()?;
+        crate::common::db::run_migrations(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })

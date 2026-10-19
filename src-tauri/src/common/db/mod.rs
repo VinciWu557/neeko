@@ -12,7 +12,6 @@ use std::path::Path;
 
 pub use migrations::{run_migrations, LATEST_VERSION};
 pub use pool::{open_memory_pool, open_pool, DbPool};
-
 /// Open a SQLite database at `db_path` with WAL journal mode and foreign keys enabled.
 pub fn open(db_path: &Path) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open(db_path)?;
