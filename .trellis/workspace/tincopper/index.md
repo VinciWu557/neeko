@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-6.md`
-- **Total Sessions**: 313
+- **Total Sessions**: 314
 - **Last Active**: 2026-10-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-6.md` | ~1902 | Active |
+| `journal-6.md` | ~1955 | Active |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -34,6 +34,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 314 | 2026-10-19 | 通用本地缓存：SQLite KV + 连接池 + 迁移链归一 | `dfc5850a`, `ee3a16d4`, `74ef8a5f`, `ab96ba9e`, `72161d6e`, `1b37a57d`, `656ac4f3`, `038b48e9`, `22ee1a29` | `main` |
 | 313 | 2026-10-19 | 代码编辑器注释翻译：三层抽象全链路实现 + 22 条 AC 达成 | - | `main` |
 | 310 | 2026-10-18 | C/S HTTP gateway: hooks ingest migration + review fixes | `b10a7d1c`, `0c8ebd21`, `87bf4650`, `e1876ec8` | `main` |
 | 306 | 2026-10-17 | 10-16-notify-claude-compat / 10-16-notify-codex：完成度核验、AC 回填、spec 内联与归档 | `41cf223e`, `4f6de2b5` | `main` |

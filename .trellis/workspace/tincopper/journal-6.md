@@ -1900,3 +1900,56 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 314: 通用本地缓存：SQLite KV + 连接池 + 迁移链归一
+<!-- trellis-session: v=2 fp=459b306491fb3a46 -->
+
+**Date**: 2026-10-19
+**Task**: 通用本地缓存：SQLite KV + 连接池 + 迁移链归一
+**Branch**: `main`
+
+### Summary
+
+把 neeko.db 从 library 域独占提升为共享持久化基础设施：迁移链归一（版本链唯一、SQL 归属分域）、r2d2 连接池替换 Mutex<Connection>（77 处）、cache_entries 通用 KV 表与前端 PersistentKeyValueStore，并把注释翻译接到持久化缓存。22/22 AC 达成。
+
+### Main Changes
+
+- common/db 拆为 mod/pool/migrations：DbPool = Pool<SqliteConnectionManager>，PRAGMA 全放 with_init（连接级，惰性建连接）
+- 迁移链归一：LATEST_VERSION + run_migrations 唯一在 common/db，按版本区间分派给 library(0..=11) / cache(12)，签名改 &mut 以用 Transaction
+- LibraryStore 换池：删 Mutex 字段让编译器指认全部 77 处，机械替换为 self.conn()?
+- cache_entries 表（WITHOUT ROWID）+ CacheStore（get_many/list_keys/put_many/delete_many/evict/clear）+ 6 个薄命令
+- shared/cache：PersistentKeyValueStore 只提交变更键；sqlitePort 用 list_keys 枚举后端而非回放本地 key 集合
+- 注释翻译接线：namespace comment-i18n，profile 版本只算一次供 Port 与 store 共用，非 Tauri 环境降级 MemoryCache
+- spec/backend/persistence-and-cache.md 新建（400 行）；修正 directory-structure.md 里已不存在的 core/db.rs
+- lint_fe 预算 180s→300s：冷缓存实测 94.6s，开发循环每轮改文件都会失效缓存
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dfc5850a` | refactor(db): split common/db into a module and add a connection pool |
+| `ee3a16d4` | refactor(db): move the migration chain to common/db |
+| `74ef8a5f` | refactor(library): back LibraryStore with the shared pool |
+| `ab96ba9e` | feat(cache): add a generic key-value cache over neeko.db |
+| `72161d6e` | feat(cache): add a SQLite port for the generic cache store |
+| `1b37a57d` | fix(cache): filter reads by version and enumerate keys from the backend |
+| `656ac4f3` | fix(cache): write only changed keys and read the backend on load |
+| `038b48e9` | feat(comment): back the translation cache with SQLite |
+| `22ee1a29` | chore(guards): raise the lint_fe budget to match its cold-cache cost |
+
+### Testing
+
+- [OK] pnpm check 31/31 全绿（含 lint_fe 300s 档）；cargo clippy --all-targets -D warnings 零 warning
+- [OK] cargo test 1904 通过 / 0 失败；vitest 5408 通过 / 588 文件
+- [OK] AC9 用 trace 数 BEGIN 而非 total_changes（实测后者单事务与逐条提交都报 3，无判别力）
+- [OK] 变异验证 12 项：去事务/逐条事务/evict 排序反转/删 busy_timeout/自建池/去 version 过滤/deleteMany 空操作/只读首块/漏传 namespace/不回查后端/set 不 flush/profile 破格式
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 文档翻译（features/editor/translation/）接入同一持久化层，PRD R5.3 留的接口位
+- agent_sessions.db 的私有 run_migrations 可纳入 common/db（本任务明确不动）
