@@ -48,6 +48,11 @@ pub struct AppStateWrapper {
     /// Shared skill store (tag groups, installed skills).
     /// Unified library store (skills, MCP, prompts, actions, tag groups).
     pub library_store: Arc<library::LibraryStore>,
+    /// Generic key-value cache over the same `neeko.db` pool.
+    ///
+    /// Shares the pool with `library_store` on purpose: one pool per database
+    /// file, so there is a single owner for the handle.
+    pub cache_store: Arc<crate::common::cache::CacheStore>,
     /// Language Server Protocol session manager.
     pub lsp_manager: Arc<crate::lsp::LspManager>,
     /// 应用级通知中心（业务无关裁决+投递；业务域单向依赖其门面，design.md T4/D6）。
@@ -402,6 +407,9 @@ impl AppStateWrapper {
             project_clone: Mutex::new(None),
             git_sync: crate::common::git::transport::GitSyncSlots::default(),
             watcher_manager,
+            cache_store: Arc::new(crate::common::cache::CacheStore::with_pool(
+                library_store.pool().clone(),
+            )),
             library_store,
             lsp_manager,
             dap_manager,

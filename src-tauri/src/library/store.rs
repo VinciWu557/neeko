@@ -60,6 +60,15 @@ impl LibraryStore {
         Ok(self.pool.get()?)
     }
 
+    /// The shared pool, so other domains can use the same connections.
+    ///
+    /// Every domain that touches `neeko.db` must take its pool from here (or
+    /// from the boot site that built it) — not open a second one.
+    #[must_use]
+    pub const fn pool(&self) -> &DbPool {
+        &self.pool
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // Skills CRUD
     // ═══════════════════════════════════════════════════════════════════════

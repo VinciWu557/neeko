@@ -135,6 +135,11 @@ macro_rules! neeko_invoke_handler {
             $crate::agent::commands::check_agents_installed,
             $crate::agent::commands::import_agent_icon,
             $crate::agent::commands::discover_opencode_models,
+            // ── Generic cache commands ───────────────────────────────────
+            $crate::common::cache::commands::cache_get_many,
+            $crate::common::cache::commands::cache_put_many,
+            $crate::common::cache::commands::cache_evict,
+            $crate::common::cache::commands::cache_clear,
             // ── MCP server commands ──────────────────────────────────────
             $crate::library::mcp::commands::list_mcp_servers,
             $crate::library::mcp::commands::get_mcp_server,

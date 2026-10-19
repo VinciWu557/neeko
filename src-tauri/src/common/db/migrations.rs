@@ -14,7 +14,7 @@ use rusqlite::{Connection, TransactionBehavior};
 
 /// Current schema version. Bump this in the same commit as the migration
 /// that creates the change.
-pub const LATEST_VERSION: u32 = 12;
+pub const LATEST_VERSION: u32 = 13;
 
 /// Run all pending migrations on the database.
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
@@ -49,6 +49,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
     match from_version {
         0..=11 => crate::library::migrations::step(conn, from_version),
+        12 => crate::common::cache::v12_to_v13(conn),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -164,5 +165,139 @@ mod atomicity_tests {
             )
             .unwrap();
         assert_eq!(has_table, 0, "a failed step must not leave a table behind");
+    }
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// A database written by the previous release (v12) must upgrade in
+    /// place, gain the cache table, and keep every existing row.
+    ///
+    /// This is the test that makes the migration chain move safe: the chain
+    /// was relocated between modules, so "did the library data survive" is
+    /// exactly the question a relocate can break.
+    #[test]
+    fn upgrades_v12_database_preserving_library_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("neeko.db");
+
+        // Build a v12 database by running the old chain to completion.
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            for version in 0..12u32 {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Exclusive)
+                    .unwrap();
+                crate::library::migrations::step(&tx, version).unwrap();
+                tx.pragma_update(None, "user_version", version + 1).unwrap();
+                tx.commit().unwrap();
+            }
+            let v: u32 = conn
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(v, 12, "fixture must be at v12 before the upgrade");
+
+            // Library data that must survive untouched.
+            conn.execute(
+                "INSERT INTO skills (id, name, description, source_type, central_path, status,
+                 created_at, updated_at) VALUES ('s1', 'Skill One', 'desc', 'local',
+                 '/central/s1', 'ready', 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO prompts (id, name, content, created_at, updated_at)
+                 VALUES ('p1', 'Prompt One', 'body', 1, 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO mcp_servers (id, name, command, created_at, updated_at)
+                 VALUES ('m1', 'MCP One', 'node', 1, 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let before = snapshot_library_rows(&path);
+
+        // Run the full chain: v12 -> v13.
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            run_migrations(&mut conn).unwrap();
+            let v: u32 = conn
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(v, LATEST_VERSION);
+            assert_eq!(v, 13);
+        }
+
+        let conn = Connection::open(&path).unwrap();
+        let has_cache: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='cache_entries'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(has_cache, 1, "cache_entries must exist after the upgrade");
+
+        assert_eq!(
+            snapshot_library_rows(&path),
+            before,
+            "library rows must be byte-identical after the upgrade"
+        );
+    }
+
+    fn snapshot_library_rows(path: &std::path::Path) -> Vec<String> {
+        let conn = Connection::open(path).unwrap();
+        let mut out = Vec::new();
+        for sql in [
+            "SELECT id || '|' || name || '|' || description FROM skills ORDER BY id",
+            "SELECT id || '|' || name || '|' || content FROM prompts ORDER BY id",
+            "SELECT id || '|' || name || '|' || command FROM mcp_servers ORDER BY id",
+        ] {
+            let mut stmt = conn.prepare(sql).unwrap();
+            let rows: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            out.extend(rows);
+        }
+        out
+    }
+
+    /// The upgraded database still works: a library write and a cache write
+    /// coexist, which proves the new step did not break the existing schema.
+    #[test]
+    fn upgraded_database_accepts_writes_to_both_domains() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO cache_entries (namespace, key, value, version, at)
+             VALUES ('test', 'k', 'v', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+"INSERT INTO skills (id, name, description, source_type, central_path, status,
+             created_at, updated_at) VALUES ('s9', 'S9', 'd', 'local', '/central/s9', 'ready', 1, 1)",
+            [],
+        )
+        .unwrap();
+
+        let cache_count: i64 = conn
+            .query_row("SELECT count(*) FROM cache_entries", [], |row| row.get(0))
+            .unwrap();
+        let skill_count: i64 = conn
+            .query_row("SELECT count(*) FROM skills", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!((cache_count, skill_count), (1, 1));
     }
 }
