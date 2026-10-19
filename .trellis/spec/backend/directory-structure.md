@@ -40,8 +40,16 @@ src-tauri/
     ├── core/                 # 核心基础设施
     │   ├── mod.rs
     │   ├── error.rs          # AppError —— 统一可序列化错误类型（Io、Git、Storage、Wsl、Unsupported 等）
-    │   ├── logger.rs         # 自定义文件日志
-    │   └── db.rs             # SQLite 连接管理（open/open_in_memory，WAL + foreign keys）
+    │   └── logger.rs         # 自定义文件日志
+    ├── common/               # 跨域共享基础设施（runtime / db / cache ...）
+    │   ├── db/               # `neeko.db` 连接池 + **唯一**迁移链（详见 persistence-and-cache.md）
+    │   │   ├── mod.rs        # open / open_in_memory / open_pool / open_memory_pool
+    │   │   ├── pool.rs       # DbPool = Pool<SqliteConnectionManager>，PRAGMA 在 with_init
+    │   │   └── migrations.rs # LATEST_VERSION + run_migrations 分派器（按版本区间委派到各域）
+    │   └── cache/            # 通用 KV 缓存（cache_entries），value 对后端不透明
+    │       ├── migrations.rs # v12_to_v13 建表（SQL 归 cache 域）
+    │       ├── store.rs      # CacheStore: get_many / list_keys / put_many / delete_many / evict / clear
+    │       └── commands.rs   # 薄命令（红线 6）+ namespace/载荷校验
     ├── agent/                # Agent 子系统（自包含）
     │   ├── mod.rs
     │   ├── commands.rs
@@ -286,6 +294,9 @@ pub struct AppStateWrapper {
 | 工具函数 | `utils/<name>.rs` |
 | 错误类型扩展 | `core/error.rs` |
 | 数据模型/类型 | 按领域放在 `<domain>/types.rs` 或 `<domain>/model.rs` |
+| 新的 `neeko.db` 表 | 建表 SQL 放**拥有该表的域**（如 `common/cache/migrations.rs`），版本链在 `common/db/migrations.rs` 加一行分派；两份必须同一次提交 —— 见 [persistence-and-cache.md](./persistence-and-cache.md) |
+| 新的 KV 缓存消费者 | 前端在 `src/shared/cache/` 用 `PersistentKeyValueStore<T>` + 一个 Port（namespace 归 Port）；后端不需改 schema，`value` 对后端不透明 |
+| 数据库访问 | 从共享 `DbPool` 取连接；**不要新开第二个池**（同文件两个池 = 两个所有者） |
 
 ---
 

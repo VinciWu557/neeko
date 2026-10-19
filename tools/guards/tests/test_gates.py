@@ -161,9 +161,13 @@ class GateLedgerTest(unittest.TestCase):
 
 EXPECTED_GATES = {
     # id: (argv, kind, stages, ci_job, platforms, budget_ms)
+    # 冷缓存实测 94.6s（eslint 95s + tsc 27s 串行，命中缓存仅 7.6s）。原来的 180s
+    # 只在缓存命中时够用；开发循环每轮改文件都会让 `.eslintcache` 失效，再叠加
+    # `pnpm check` 内部与 test_fe / test_rust 的并发争抢，实测撞上 180s 上限并按
+    # 「护栏失效」报错（等价于该门禁从 checks 里消失）。300s 与 test_fe 同档。
     "lint_fe": (
         ("pnpm", "lint:fe"), "lint", ("local", "commit", "ci"),
-        "frontend-check", ("linux", "macos", "windows"), 180_000,
+        "frontend-check", ("linux", "macos", "windows"), 300_000,
     ),
     # 提交档的 Rust 快检查（lib-only，暖缓存 ~10s）；全目标口径在 local/push/ci。
     "lint_rust": (

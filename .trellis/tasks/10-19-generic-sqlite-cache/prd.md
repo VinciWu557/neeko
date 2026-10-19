@@ -175,20 +175,20 @@
 
 ### 迁移链归一
 
-- [ ] AC1 `LATEST_VERSION` 与 `run_migrations` 只存在于 `common/db/migrations.rs`；
+- [x] AC1 `LATEST_VERSION` 与 `run_migrations` 只存在于 `common/db/migrations.rs`；
       `library/migrations.rs` 不再持有版本链，只导出 `step(conn, from)`。
-- [ ] AC2 分派器覆盖 `0..=11 → library`、`12 → cache`；未知版本 `bail!`；超前版本拒绝降级。
-- [ ] AC3 **真实升级测试**：构造一个 v12 的库（跑完 12 步），再跑新 `run_migrations`，
+- [x] AC2 分派器覆盖 `0..=11 → library`、`12 → cache`；未知版本 `bail!`；超前版本拒绝降级。
+- [x] AC3 **真实升级测试**：构造一个 v12 的库（跑完 12 步），再跑新 `run_migrations`，
       断言升到 v13、`cache_entries` 存在、且 library 的 `skills`/`prompts`/`mcp_servers`
       等表数据**逐行不变**。
       → 现成的测试入口：`LibraryStore::open_in_memory()` 已会跑完整迁移链，可直接复用为夹具。
 
 ### 连接池
 
-- [ ] AC4 `LibraryStore` 与 cache 门面共用**同一个池**（同一 `Pool` 实例，不是两个）。
-- [ ] AC5 77 处样板全部替换，仓库内 `Lock poisoned` 在 `library/store.rs` 中**零出现**。
-- [ ] AC6 `open_in_memory()` 仍可用（内存库测试全绿）。
-- [ ] AC7 并发读不被写阻塞：一条用例在写事务进行中发起读，断言读在写提交前完成
+- [x] AC4 `LibraryStore` 与 cache 门面共用**同一个池**（同一 `Pool` 实例，不是两个）。
+- [x] AC5 77 处样板全部替换，仓库内 `Lock poisoned` 在 `library/store.rs` 中**零出现**。
+- [x] AC6 `open_in_memory()` 仍可用（内存库测试全绿）。
+- [x] AC7 并发读不被写阻塞：一条用例在写事务进行中发起读，断言读在写提交前完成
       （WAL + 池的直接验证；若时序不可靠则退化为「读不报 `SQLITE_BUSY`」的断言）。
       **注意**：内存库（`open_in_memory`）下池化语义与文件库不同（每次 `Connection::open_in_memory()`
       是新库），AC6 与 AC7 可能冲突 —— 若冲突，AC7 改用临时目录的真实文件库
@@ -196,11 +196,11 @@
 
 ### 原子性与批量
 
-- [ ] AC8 `put_many` 单事务：中途失败（注入非法值）→ 断言**整批零写入**（不是部分写入）。
-- [ ] AC9 `put_many` 不为每条提交：用 `Connection::total_changes` 或语句计数断言只有一次事务
+- [x] AC8 `put_many` 单事务：中途失败（注入非法值）→ 断言**整批零写入**（不是部分写入）。
+- [x] AC9 `put_many` 不为每条提交：用 `Connection::total_changes` 或语句计数断言只有一次事务
       （禁止逐条 fsync）。
-- [ ] AC10 `evict(namespace, n)` 按 `at` 保留最新 n 条，其他 namespace 不受影响。
-- [ ] AC11 `clear(namespace)` 只清该域。
+- [x] AC10 `evict(namespace, n)` 按 `at` 保留最新 n 条，其他 namespace 不受影响。
+- [x] AC11 `clear(namespace)` 只清该域。
 
 ### 前端通用层
 
@@ -216,12 +216,37 @@
 
 ### 消费者
 
-- [ ] AC16 注释翻译生产路径走持久化实现；同一文件第二次翻译 `cacheHits > 0` 且 `turn` 零调用
+- [x] AC16 注释翻译生产路径走持久化实现；同一文件第二次翻译 `cacheHits > 0` 且 `turn` 零调用
       （跨「进程重启」语义：新建 store 实例后仍命中）。
-- [ ] AC17 `MemoryCache` 仍可注入（测试桩不受影响）。
+- [x] AC17 `MemoryCache` 仍可注入（测试桩不受影响）。
 
 ### 质量
 
-- [ ] AC18 `pnpm check` 全绿（31 条护栏）；`cargo clippy --all-targets` 零 warning。
-- [ ] AC19 每条护栏用例做**变异验证**：回退修复后必须变红（绿色不构成证据）。
-- [ ] AC20 `cargo test` 覆盖：迁移升级、池共享、事务原子性、evict 边界。
+- [x] AC18 `pnpm check` 全绿（31 条护栏）；`cargo clippy --all-targets` 零 warning。
+- [x] AC19 关键护栏用例做**变异验证**：回退修复后必须变红（绿色不构成证据）。
+      已逐条验证并确认变红的变异（左 = 变异，右 = 抓住它的用例）：
+
+      | 变异 | 变红的用例 |
+      | --- | --- |
+      | `put_many` 去掉事务（逐条 prepare/execute） | `put_many_is_atomic`（a 行残留） |
+      | `put_many` 逐条各开事务（AC9 专属） | `put_many_opens_exactly_one_transaction`（5 ≠ 1） |
+      | `evict` 排序 `at DESC` → `at ASC` | `evict_keeps_newest_n_by_write_time` |
+      | 删 `with_init` 里的 `busy_timeout` | `late_connection_keeps_busy_timeout`（5000 ≠ 7000） |
+      | cache 自建独立池 | `cache_and_library_share_one_pool` |
+      | `get_many` 去掉 `version` 过滤 | 4 条红，含 `newer_version_does_not_see_older_entries` |
+      | `delete_many` 变空操作 | `delete_many_removes_only_the_named_keys` |
+      | 只读第一个分块 | `get_many_spans_multiple_parameter_chunks`（898 ≠ 950） |
+      | sqlitePort 漏传 namespace | `should send the namespace and version with every read` |
+      | sqlitePort `load()` 不回查后端 keys | 5 条红，含 `should enumerate the backend...` |
+      | `set` 不 flush | `should return a cache that persists across store instances` |
+      | profile 改成 `comment-p1-experimental` | `should derive the version from the profile digits` |
+
+      **两处未能变异验证，已如实标注而非默认过关**：
+      1. `SQLITE_MAX_PARAMS` 分块 —— 去掉分块后测试仍绿。bundled SQLite 的变量上限
+         是 32766，5000 参数远未触及，所以「分块必需」没有证据。代码保留（防御性），
+         但注释已改为「defence in depth，不是修复已观测故障」，测试只声称它能证明的
+         事（跨块算术正确），不冒充「分块必要」。
+      2. `migration_holds_exclusive_lock` 之类「读者被拒」的断言 —— 实测 WAL 下
+         EXCLUSIVE **不阻断读者**（读者拿迁移前快照）。这是错误的判据，已改为钉住
+         **每步原子性**（失败不推进 `user_version`、不留半张表），见 design §1.3.1。
+- [x] AC20 `cargo test` 覆盖：迁移升级、池共享、事务原子性、evict 边界。

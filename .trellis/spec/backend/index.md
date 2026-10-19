@@ -20,6 +20,7 @@
 | [类型安全](./type-safety.md) | 结构体、枚举、serde、Rust-TS 类型同步 | 已填写 |
 | [错误处理](./error-handling.md) | anyhow、Result 模式、命令边界 | 已填写 |
 | [并发指南](./concurrency-guidelines.md) | 线程、Mutex、tokio、PTY/SSH I/O、watcher 生命周期所有权契约 | 已填写 |
+| [持久化与缓存](./persistence-and-cache.md) | `neeko.db` 连接池（r2d2 版本硬绑）、迁移链分派、通用 KV 缓存 `cache_entries`、前端 `PersistentKeyValueStore` / Port 契约与常见坑 | 已填写 |
 | [质量指南](./quality-guidelines.md) | 代码风格、命名、平台特定代码 | 已填写 |
 | [会话适配器](./conversation-adapter.md) | Agent 会话管理、适配器模式、Tauri 命令 | 已填写 |
 | [窗口生命周期](./window-lifecycle.md) | 窗口关闭、Cmd+W 快捷键、跨平台事件交互 | 已填写 |

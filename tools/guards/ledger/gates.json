@@ -7,7 +7,7 @@
       "kind": "lint",
       "stages": ["local", "commit", "ci"],
       "ci_job": "frontend-check",
-      "budget_ms": 180000,
+      "budget_ms": 300000,
       "scopes": [
         "src/*.ts", "src/*.tsx", "src/*.js", "src/*.jsx",
         "src/**/*.ts", "src/**/*.tsx", "src/**/*.js", "src/**/*.jsx",
