@@ -364,3 +364,232 @@ curl -s http://127.0.0.1:3197/neeko-health
 | Step 5 后 | 流式卡顿 | 50ms 合帧已有；仍卡则提前做 transcript 窗口化（原 R3 范围） |
 | Step 7 后 | 审批/提问 waterfall 在 TUI 下不触发 | 先查 `setup` 注册时序（对照桥），再查 `inject` |
 | 任意 | 发现必须动 `src-tauri/**` / `src/**` | **停止** —— 超出本任务边界，回用户 |
+
+## Step 16：`ctrl+o` 全局展开 / 折叠（用户需求）
+
+> 详细方案见 `ctrl-o-expand.md`。用户原话：「支持 ctrl + o 展开折叠输出，参考 pi-tui 的实现」。
+
+- [x] **现状**：`ctrl+o` 只切最新一行（`toggleFold()` → `toggleRow(newest)`）；
+      `RenderOptions.boundary` 在生产**零调用**（只有测试用），`expandedRows` 是唯一实际机制。
+- [x] **对齐 pi**：`app.tools.expand` = `ctrl+o` → `setToolsExpanded()`，遍历容器对每个
+      可展开子组件 `setExpanded()` —— **全局广播，不是光标**；点击才是单行翻转。
+- [x] **B1 状态收口**：新增 `src/tui/fold.ts` 的 `TranscriptFold`（`allExpanded` XOR
+      `WeakSet` 例外）。`toggleAll()` 翻全局位并**清空例外集** —— 广播语义就是覆盖，
+      不清的话「全折叠」会留下点开过的行，这个键就恢复不了统一状态。
+- [x] **B2 缓存必须失效**：`rowSignature()` 的展开项从 `expandedRows.has(row)` 换成
+      `fold.isExpanded(row)`。漏掉 = 按 `ctrl+o` 屏幕没反应（缓存命中旧组件），
+      比报错更难发现。变异（签名写死 `'0'`）→ 2 条变红。
+- [x] **W1 删 `boundary`**：与 fold 表达同一件事，且生产零调用 —— 留着就是第二个
+      可静默失效的开关。`isExpanded(row, {})` 现在返回 false（默认折叠），语义单一。
+- [x] **W2 折叠态报告隐藏量**（pi 的 `(N more lines, ctrl+o to expand)` 同构）：
+      `(+N lines, ctrl+o)`；文件读取不显示（路径已经说明读了什么），单行结果也不显示。
+- [x] **W3 模态面优先**：`ctrl+o` 在 model panel / theme picker 之后，且
+      `!interactions.busy` —— 挂起的审批/提问拥有键盘。
+- [x] **W4 提示同步**：banner 的按键行（`tab complete` → `ctrl+o expand`）与
+      `/help` 的 Keys 行。
+- [x] 测试：新增 `tests/tui-fold.spec.ts`（6 条真值表）+ glue 的 `ctrl+o` 6 条
+      （含缓存换新、模态让位）+ render-row 的折叠行数 3 条；全量迁移 `boundary` → `fold`。
+- [x] `prepublishOnly` 全绿：**512 测试** / `tsc`×2 / build / publint。
+- [x] **真机 pty 复验**：`ctrl+o` 一次 → `transcript: expanded`（工具卡正文出现），
+      再一次 → `transcript: collapsed`；一次按键恰好一条 notice；
+      fullscreen 模式下同样生效；banner 显示 `/ commands · ctrl+o expand · ctrl+c exit`。
+
+### Step 16b：提示堆积与不消失（用户反馈）
+
+- [x] **根因**：`addNotice()` 只会追加 —— 状态类提示（fold / model / theme /
+      fullscreen）与内容/错误类共用同一个入口。pi 分两类：`showStatus()` 维护
+      **唯一一行** `setText()` 就地更新（"to avoid log spam"），`showError/Warning`
+      才追加；且本仓完全没有到期机制。
+- [x] 修：新增 `TuiApp.showStatus()`（单行就地更新 + `statusNoticeMs` 到期，
+      默认 3s），状态类调用点全部迁移；错误与 `/help` 仍走 `addNotice()`
+      （到期会藏起失败原因）。
+- [x] `clearStatus()` 移除组件而不是清空（空 `Text` 仍占 notices 槽位，
+      会挤出真正的回显）；`stop()` 与 `clearTranscript()` 都走它。
+- [x] 测试 7 条（不堆积 / 只显示最新 / 到期 / 重排倒计时 / 错误不到期 /
+      新状态不遗留旧组件 / 停止清定时器）。变异 2 项：不复用槽位 → 3 红；
+      不排定时器 → 4 红。
+- [x] 真机 pty：4 次 `ctrl+o` 后切主题强制重绘，屏幕上无 `transcript:` 残留，
+      只剩 ` theme → light` 一行（单行槽位被复用，而非新追加）。
+- [x] `prepublishOnly` 全绿：**520 测试** / `tsc`×2 / build / publint。
+
+> **过程记录（避免复犯）**：本轮我曾把 `toggleFold` 改成「完全不写状态行」，
+> 前提是「pi 的 `setToolsExpanded()` 没有 showStatus」—— 查源码后确认**该前提错误**
+> （它末行就是 `showStatus("Tool output: …")`）。按错前提改代码会让测试反向迁移，
+> 那次 7 条红里 6 条是我自己造的。参考实现的行为必须读源码确认，不能凭印象。
+
+## Step 17：模型响应错误必须打印（用户需求）
+
+> 详见 `ctrl-o-expand.md` 的 Step 17。原话：「模型响应错误信息也需要进行提示打印，参考 pi-tui」。
+
+- [x] **根因**：`feedLogEvent` 无 `turn/end` 分支 → `default: break` 静默吞掉。
+      `dsh-agent-loop` 把模型失败写在 `turn/end.reason`（turn 的 `finally`），
+      重试成功的 turn 是 `completed` → 瞬态重试天然不刷屏。
+- [x] `turnEndFailure(reason)` 放 `dsh-adapter`（桥也用；放 TUI 会造成反向依赖）：
+      `error` → `Error: <msg> [CODE STATUS]`（`UNKNOWN` 码不打印）；空 message →
+      `Unknown error`；`aborted` → `Operation aborted (hook 原因)`；`max-tokens` →
+      pi 措辞；`completed`/未知 variant → `undefined`（`TurnEndReason` 是 merge-extensible，
+      必须 fail-open）。
+- [x] 新行类型 `kind: 'failure'`（不是 assistant 字段：请求可在任何 `start` 帧之前失败），
+      `✖` + `fg('error')`，多行 provider 消息逐行保留。
+- [x] `isExpanded` 对 failure 恒 true —— 折叠失败行等于把 bug 改回去。
+- [x] 失败收尾悬空工具卡（仍 `running` → `failed` + 文案），否则 spinner 转一整个会话。
+- [x] **恢复路径同步**：`HistoryItem` 加 `kind: 'failure'` variant，`buildHistory` 发它、
+      `restoreRows` 消费它。只修 live 的话 `--session` 恢复仍是一问一静默。
+- [x] 测试 +19（`turnEndFailure` 真值表 10 / live 路径 5 / restore 2 / adapter 2）。
+      变异 3 项全红：不处理 `turn/end` → 3 红；不收尾工具卡 → 1 红；失败行可折叠 → 1 红。
+- [x] 真机 pty（注入失效 key 强制失败）：屏幕出现
+      `✖ Error: 404: {...} [PI_AI_ERROR]`，多行完整、带错误码。
+- [x] `prepublishOnly` 全绿：**543 测试** / `tsc`×2 / build / publint。
+
+## Step 18：TUI 默认全屏（用户需求）
+
+> 详见 `ctrl-o-expand.md` 的 Step 18。原话：「tui 默认进入全屏模式」。
+
+- [x] pi 的默认本就是全屏（`settings-defaults.js:61` `tuiMode: "fullscreen"`），
+      本仓原是 opt-in —— 与参考相反。
+- [x] `initialFullscreen` → **`startOnMainScreen`**（语义反转，默认全屏；名字跟新默认走，
+      否则「不传＝全屏」反直觉）+ `--main-screen` / `DSH_NEEKO_MAIN_SCREEN=1` /
+      `TuiConfig.mainScreen` / patch 行透传。
+- [x] **顺带修掉真实缺陷**：真 pty 实测退出后写回文档只有 1426 字节（banner），
+      对话消失。根因在 pi-tui：`afterTerminalStop()` 调 `render(width)` →
+      `layoutRoot.render()`，而未经过 `renderLayoutFrame()` 测量的 `VStack` 只返回 1 行
+      （我们用的正是 `setLayoutRoot(VStack)`）。pi 自己也不走那条路
+      （`stop({ preserveScreen: mode === 'fullscreen' })`）。
+- [x] 修法：`dispose()` 改 `stop({ preserveScreen: true })`；`TuiApp.stop()` 里
+      `exitFullscreen()` → `renderNow(true)`（全量重绘，增量在退出时什么都不发）→ `stop()`。
+      写回文档 1426 → **2741 字节**。
+- [x] 顺带补上 `exitAfterFlush()`（`runner.ts`）：`process.stdout.write` 是异步的，
+      退出前必须等它排空（带 drain 等待 + 2s 超时 + EPIPE 容错），否则最后的文档
+      正是被截断的那一段。
+- [x] 测试 +9（默认/opt-out/退出后对话仍在 scrollback；`exitAfterFlush` 4 条）。
+      关键教训：旧测试只断言「出现过 `ESC[?1049l`」，所以缺陷一直是绿的 ——
+      新测试断言**退出后的输出里必须出现对话内容**。
+- [x] 真 pty 复验：default `altIn=true` / `--main-screen` `altIn=false`；
+      两种模式都 `altOut=true`；退出后对话在 scrollback。
+- [x] `prepublishOnly` 全绿：**552 测试**。
+
+### Step 19：退出乱码 `7u 62;22;52c 34;16t`（用户反馈）
+
+- [x] **根因**：不是随机字节，是**终端对能力查询的回复** ——
+      `ESC[>1u`+`ESC[?u` → `7u`（Kitty 协议）、`ESC[c` → `?62;22;52c`（DA1）、
+      `ESC[16t` → `?34;16t`（单元尺寸）。三者都由 `Terminal.start()` 发出，
+      而**每次** `TuiBase.start()` 都会调它。Step 18 的退出修复用了
+      `exitFullscreen()` → `tui.start()`，于是退出时又发一轮；进程随即结束，
+      回复到达时已无 stdin 监听器消费，tty 把它们当用户输入回显。
+- [x] 修法：退出路径**不重启渲染器**。`stop()` 改走 `resumeMainScreenQuietly()`
+      （仅离开 alt screen），并新增 `printFinalDocument()` 自己渲染 banner/messages/
+      notices/working/interaction/theme/editor/status 写终端（剥 `CURSOR_MARKER`）。
+- [x] 顺带修：`join('\r\n')` 在真 pty 上得到 26 个 `\r\r\n`（每行间空行）——
+      cooked mode 下 ONLCR 已替我们把 `\n` 翻成 `\r\n`，改成只写 `\n`。
+- [x] 单测只能钉住**因**（退出输出里不出现四条查询序列）+ `\r\r\n` 断言；
+      **果**（乱码）必须真 pty 验证，因为假终端不会回复能力查询。
+- [x] 真 pty（`pty.fork`）：退出后乱码 0 处、`\r\r\n` 0 个、对话保留 2616 字节；
+      `--main-screen` 模式退出瞬间 `\r\r\n` 也是 0。
+- [x] `prepublishOnly` 全绿：**554 测试**。
+
+### Step 20：行间距与思考/正文贴太紧（用户反馈）
+
+- [x] **输入行空隙过大**：`renderUser` 的 `new Text(...)` 漏传 padding，pi-tui 默认
+      `paddingY = 1` 会在上下各加一个空行 → 相邻两行 user 消息隔两个空行
+      （实测行高 3 行）。全文件唯一一处漏传的调用，其余 10 处都是 `, 0, 0`。
+      修：补 `, 0, 0`，行高回到 1。
+- [x] **思考与正文贴太紧**：`renderAssistant` 把思考行与 `Markdown` 直接相邻
+      `addChild`，折叠态思考带整行背景色时读起来像同一段。修：有思考时正文前加
+      `Spacer(1)`；**只在有思考时加**，普通回答保持一行紧贴。
+- [x] 单测 +3（user 行高 1 / 思考与正文恰好隔 1 空行 / 无思考不受影响）。
+- [x] 真 pty 复验（printed document）：`❯ hello` 紧邻上一行；
+      `🐳 …` → 空行 → `Hello! 👋`。
+- [x] `prepublishOnly` 全绿：**557 测试**。
+
+### Step 21：左侧留白对齐 pi 的 `outputPad`（用户需求）
+
+- [x] **pi 的做法**：`outputPad` 默认 1（schema 只允许 0|1），作为 `paddingX` 传给
+      **每一个** chat 组件；`paddingY` 由组件各自决定（assistant 正文显式 0，
+      user 消息 1）。即「水平统一、垂直按语义分开」。
+- [x] **我们的偏差**：只有 `Box(1,0,bg)` 的工具卡与思考带有一列，user 行 /
+      assistant 正文 / failure 都从第 0 列起 —— 卡片像浮着，正文像 shell 输出。
+- [x] 修法：`OUTPUT_PAD = 1`，规则「每条行恰好一列，由带背景的那一层提供」：
+      无背景 → 文本自己 `paddingX`；有背景 → `Box(OUTPUT_PAD, 0, bg)` 负责，
+      内部文本 `paddingX = 0`（否则缩两列，中途踩到过）。
+- [x] 单测 +7（5 类行各一 + 背景/无背景缩进一致 2）。后者是防双重内缩的变异点。
+- [x] 真 pty：`❯ hello` / `🐳 …` / `Hello! 👋` / `🖥️ Bash …` indent 全部 = 1。
+- [x] `prepublishOnly` 全绿：**564 测试**。
+
+### Step 22：退出打印会话恢复提示（用户需求）
+
+- [x] pi 的做法（`interactive-mode.js` `shutdown()`）：`formatResumeCommand()` →
+      `To resume this session: pi --session <id>`，仅在 TTY + 会话落盘时打印，
+      id 按需引号（`quoteIfNeeded`）。
+- [x] **不能直接照抄命令**：dsh 的 TUI 只能经 profile 进入，裸
+      `dsh --session <id>` 会启动默认 profile、不加载 `neeko-tui` 行 —— 那是一条
+      「恢复不了任何东西」的命令。提示改为完整调用
+      `dsh --profile neeko --tui --session <id>`。
+- [x] **持久化判据**：dsh 没有 `isPersisted()`（`SessionStore` 文档明说持久化由
+      agent 生命周期另行附加 writer），因此以「有 id 就打印」为准 —— 空 id 可判定，
+      且真机验证覆盖了该假设。
+- [x] 新增 `src/tui/resume-hint.ts`（纯函数 `resumeHint()`），接在
+      `printFinalDocument()` 最后一行（同一批输出，落在 conversation 下方的 scrollback）。
+- [x] **端到端真机验证**（不只是打印）：起 TUI 发 `say RESUME-MARKER please` →
+      退出拿到提示行 → **用该行命令原样重启 → 历史里的 RESUME-MARKER 出现**，
+      banner session id 一致。
+- [x] 单测 +7（`resumeHint` 4 + app 层 3：用 dsh 而非 pi、是最后一行、无 id 不打印）。
+- [x] `prepublishOnly` 全绿：**571 测试**。
+
+### Step 23：`/thinking` 思考等级命令（用户需求）
+
+- [x] pi 的形状：裸调用开选择器 / 带参数直接应用 / 未知等级报错并列出可用 /
+      已是该等级不重写 / 成功给状态提示。
+- [x] **等级来源不能自造**：dsh 由 `llm.resolveModelInfo(provider, model)` 给出
+      精确路由的 `reasoning.efforts`，`resolveCallConfig` 在任何 provider I/O 之前
+      拒绝不支持的显式 effort。写死 `low|medium|high` = 提供发不出去的选项，
+      所以 `thinking.ts` 是 adapter 答案的投影，零等级字面量。
+- [x] `withReasoningEffort()` 只改 effort（沿用 `model-switch.ts` 的纪律：effort
+      属于模型，跨模型携带会让新模型被钉在不支持的档位）；清除时**删 key** 而非
+      写 `undefined`（DSH 读 absent 为 provider 默认 + `exactOptionalPropertyTypes`）。
+- [x] 新增 `src/tui/thinking.ts`（纯函数）+ `commands`/`command-controller`/`app`/`runner`
+      四层接线。面板复用 `theme-picker` 的形态（纯渲染 + 纯键位意图），不用全高列表。
+- [x] **真机补充**：dsh 的 `reasoning.efforts` 不带 `defaultEffort`，新会话也无 effort
+      → 无行可标 `✓`，面板看起来像坏的。补 `(provider default — no level pinned)`。
+- [x] 变异 4 项全红（submit 未接 / picker 不接管键盘 / 光标不在当前项 / 已是该等级仍重写）。
+      **M3 首次 0 红**：夹具里当前项恰好等于首项，断言等于没写；换成非首项才变红。
+- [x] 单测 +28；真机 pty 验证面板与生效后的 `• high`。
+- [x] `prepublishOnly` 全绿：**599 测试**。
+
+### Step 24：全屏模式下选择面板不可见（用户反馈）
+
+- [x] **根因**：`mountFullscreen()` 收显式字段清单，只有 `TuiApp` 构造时逐个枚举的
+      面板才进布局；`themeText`/`thinkingText` 只挂到**主屏**子树。全屏时主屏已停止
+      → 键位正常（alt screen 转发输入，与挂载无关）但什么都不画。`/theme` 一直有同一 bug。
+- [x] 修法：`FullscreenOptions.aboveInput: Component` —— 「转录与输入之间的一切」作为
+      **一个容器**传入，主屏与全屏引用同一份；`printFinalDocument()` 也改读容器。
+      不选「把两个组件补进 mountFullscreen」：那是修症状，再新增面板还会重犯。
+- [x] 测试坑 ①：假终端不会自动重绘，`requestRender` 是合并+异步的，断言紧跟
+      `submit()` 会拿到空串（我据此误判成"没挂上"）。要 await 短定时器。
+- [x] 测试坑 ②：alt screen 内容退出即丢弃，最终文档只含主屏 —— 第一版脚本在退出后
+      找状态行，得到 `applied=false` 的假阴性。
+- [x] 变异：fullscreen 不传 `aboveInput`（还原旧布局）→ 2 条变红。
+- [x] 单测 +2；真机：全屏下两个面板可见、方向键+enter 生效（`• medium`）、
+      `--main-screen` 无回归。
+- [x] `prepublishOnly` 全绿：**601 测试**。
+
+### Step 25：neeko-check 审核修复（选择器骨架）
+
+- [x] **第一性原理**：选择器只有三件事 —— list+cursor（状态）/ key→intent（策略）/
+  带边框面板（呈现）。三个选择器各自复刻这三份且已漂移。
+- [x] 新增 `src/tui/picker.ts`：`pickerIntent` / `movedIndex` / `renderPanel` /
+      `runPickerKey`，被 `theme-controller` / `theme-picker` / `thinking` / `app` 四处消费。
+      `renderThinkingPicker` 60 → 17 行，`theme-picker.ts` 100 → 69 行。
+- [x] **行为统一为 clamp**：pi 的 thinking/theme 选择器都是 `SelectList`，其
+      `handleInput` 是 clamp；`ThemeController.movePicker` 的取模 wrap 是异类，且会
+      连带跳走渲染窗口。改 clamp，测试改为断言 clamp 并写明依据。
+- [x] **顺手修 1**：`renderThemePicker` 超窗时把 catalogue 全局 index 传给行渲染 →
+      `→` 标错行。改传 `window.cursorRow`。变异 → 2 红。
+- [x] **顺手修 2**：`LlmCatalogue.resolveModelInfo` 的手写窄化返回类型改为
+      `LlmModelReasoningInfo` —— 原本 dsh 侧 reshape 只会静默变 `undefined`。
+- [x] `ReasoningSupport` 改 `LlmModelReasoningInfo` 别名；编出来才发现 effort id 是
+      branded，测试夹具改用 `ReasoningEffortId()`（此前用裸字符串是撒谎）。
+- [x] 清理：`transcript.ts` 的多余转发导出、`getSelection` 内联匿名类型 → `ModelSelection`。
+      `printFinalDocument` 绕过渲染抽象**保留并记录理由**（退出路径不能 start）。
+- [x] 变异 4/4 变红（wrap / 去掉 ✓ / escape 优先级 / theme 又 wrap）。
+- [x] 单测 **608**（+5 骨架与执行器，+1 超窗光标回归）。
+- [x] 真机 pty：两面板全屏可见、边框统一 50 列。`prepublishOnly` 全绿。
