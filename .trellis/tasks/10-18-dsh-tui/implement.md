@@ -593,3 +593,71 @@ curl -s http://127.0.0.1:3197/neeko-health
 - [x] 变异 4/4 变红（wrap / 去掉 ✓ / escape 优先级 / theme 又 wrap）。
 - [x] 单测 **608**（+5 骨架与执行器，+1 超窗光标回归）。
 - [x] 真机 pty：两面板全屏可见、边框统一 50 列。`prepublishOnly` 全绿。
+
+### Step 26：`/resume` 会话恢复（用户需求）
+
+- [x] **先查 DSH 是否有支持的 API**：有。`ctx.sessionQuery.listSessions()` +
+      `readTitle(id)`，恢复走既有的 `agents.resume()`。因此**不需要方案 B**
+      （自己解 zstd / 解析 header = 重复实现 dsh 存储契约）。
+- [x] **真机根因**：初版把 419 次 `readTitle()` 和 `listSessions()` 放在同一个
+      `Promise.all` → 45 秒无反应。文件日志插桩证明 `query-ok n=419`（列表本身通），
+      独立测量证明扫 413 个文件只要 16ms（不是慢，是逐会话日志读取）。
+- [x] 被证伪的三个假设（记录以免重走）：inject 未声明 sessionQuery（加了无效，已撤销）/
+      锁竞争（`tryLockExclusive` 非阻塞）/ 目录大扫得慢（16ms）。
+- [x] 修法：`listSessions()` 廉价直出 → 面板先显示 → `sessionTitles(ids)` 异步补标题
+      → 合并重绘并**保留用户已移动的光标**；标题失败只降级（回落 id 前 8 位）。
+      另加 5s 超时，把「静默死键」变成屏幕上的明确错误。
+- [x] **真机延迟 45s → 0.13s。**
+- [x] 复用上轮 picker 骨架（`renderPanel` / `runPickerKey` / `movedIndex`），
+      `resume-list.ts` 只负责行文本。
+- [x] 顺手补 `assertNever()` 穷尽性守卫：`submit()` 的 switch 原本无 default，
+      新增 variant 不会编译失败、命令会静默无效。
+- [x] 单测 **634**；变异 4/4 变红。M4 首次 0 红（夹具当前会话在首行）—— 第二次踩
+      同一坑，已在文档写明「夹具必须让错误实现产生不同输出」。
+- [x] `prepublishOnly` 全绿。
+
+### Step 27：`/resume` 标题按页加载（用户反馈）
+
+- [x] **实测三种做法的差别**（437 会话）：全量 424 并发 **永不完成**（40s 仍 pending）/
+      固定头部窗口（前 20）**滚过去的行永远是 id** / **跟随可见窗口分页** = 正确解。
+      dsh 自己的 prepared-session 缓存默认 5，印证并发必须有界。
+- [x] `runner.sessionTitles`：有界并发 5/批；`readTitle(id).title`（返回完整
+      `SessionTitleSnapshot`，不是字符串）。
+- [x] `app.fillSessionTitles`：只请求 `listWindow(...)` 当前页；`sessionTitleCache`
+      按 id 缓存（滚回免费）；`sessionTitlesPending` 同页不重复请求；
+      `sessionTitlesGeneration` 让**过期页直接丢弃**。
+- [x] 面板本身窗口化（10 行 + `↑/↓ N more`），否则 437 行会把编辑区顶出屏幕。
+- [x] **我的错误**：诊断中把 `out[id] = title.title` 改成 `typeof title === 'string'`，
+      那是错的（原始代码一直对）。教训：诊断期间不要顺手"修正"未验证的可疑行。
+- [x] 真机文件日志：`R session-b02f6c69 -> "hello"` 等；**共请求 135 次（非 437）**；
+      滚到排名 44 屏幕确认出现 `hello`。前 10 名 `UNDEF` 是 pty 测试产生的空会话。
+- [x] 变异 4/4 变红。M3 首次 0 红（原断言用"已关闭"场景，两条路径都得空 panel），
+      改成"重开后有旧页到达"才锁住。
+- [x] 单测 **636**（分页 6 条）。`prepublishOnly` 全绿。
+
+### Step 28：`/resume` 预扫描标题再过滤（用户选择方案 B）
+
+- [x] **三个真因**：① profile 是旧构建（mtime 差 266 秒）→ 加 `scripts/sync-profiles.mjs`；
+      ② 用户贴的 10 个 id 全部 `title=None`/`titleInput.count=0`（我 pty 测试产生的空会话）；
+      ③ 预扫描窗口 60 太小（前 60 名零个有标题，第一个在 index 60）。
+- [x] **方案 B 靠批量 API 才可行**：逐条 `readTitle` 60 个 2 秒超时拿 0 个；
+      批量 `readTitleSnapshots` 60 个 320ms、150 个 908ms 拿 50 个。
+- [x] `runner.sessionTitles` 优先批量、失败回落逐条；`app.rescanTitles()` 预扫描
+      `RESUME_PRESCAN = 150` 且**不设超时**（它决定面板内容，部分扫描会假装过滤过）。
+- [x] 真机：首屏全是真实标题（`hello`/`You are analyzing the src/tui/`/`say RESUME-MARKER please`），
+      `hiding 403 session(s)` + `/resume all` 提示。**打开延迟 1.95s**。
+- [x] 误判纠正：曾以为 15 秒，实为 pty 脚本固定 sleep。测延迟要轮询目标字符串即返回。
+- [x] 单测 **642**；`prepublishOnly` 全绿。
+
+### Step 28b：审核自检（测试稳定性与新逻辑覆盖）
+
+- [x] **偶发 flake 修复**：`tui-resume-glue` 用 40–60ms 固定 `setTimeout` 等待异步补标题，
+      在负载高时不够（实测有一次全量跑失败、随后连跑 3 次全绿）。改成 `settle(predicate)`
+      轮询直到条件成立（上限 1s）。这是**假绿/假红**的共同来源：固定 sleep 只在空载机器上成立。
+- [x] **批量映射逻辑抽到纯函数**：`titlesFromObservations()` 放 `resume-list.ts`。
+      原先它内联在 runner 的闭包里，无法单测；而批量路径是唯一可负担的标题来源，
+      读错它的形状就是「标题全空」——必须可测。
+- [x] 变异 4 项全红：不预扫描（2）/ 批量映射错误（2）/ 不检查 `status`（1）；
+      其中「不检查 status」首次 0 红，补了「rejected 但带 value」的用例才锁住
+      （rejected 通常 value 为 undefined，会被后续判断顺带挡住，那不是契约）。
+- [x] 全量 **647** 测试，连跑 3 次稳定。

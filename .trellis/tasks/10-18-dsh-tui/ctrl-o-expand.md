@@ -690,6 +690,208 @@ aboveInput = Container[ notices, working, interactionText, themeText, thinkingTe
 - [x] 真机 pty：`/thinking` 与 `/theme` 面板在全屏下均可见，边框统一 50 列。
 - [x] `prepublishOnly` 全绿。
 
+## Step 26 — `/resume` 会话恢复（用户需求）
+
+用户原话：「支持会话恢复命令 resume，选择 resume 命令列表当前的会话列表，当选择某个会话时
+能进行恢复，参考 pi-tui 的实现」。
+
+### DSH 有哪些可用 API（先查，再造）
+
+| 入口 | 结论 |
+| --- | --- |
+| `ctx.sessionQuery.listSessions()` | ✅ 正确来源：newest-first 的 `SessionRecord[] = { header, live, persisted }` |
+| `ctx.sessionQuery.readTitle(id)` | ✅ 标题是**每个会话一次独立日志读取**，不在 `SessionRecord` 里 |
+| `ctx.sessionPersistence.list()` | 下层同源（`listSessions` 内部就是调它），不是替代方案 |
+| `dsh-api-session-controller.list()` | web 层封装，TUI 侧无此依赖 |
+| `agents.resume({ resumeSessionId })` | ✅ 恢复入口，runner 已在用 |
+
+**结论：支持**。不需要方案 B（自己解 zstd / 解析 header）——那会重复实现 dsh 的存储契约。
+
+### 真机根因：挂起的是标题，不是列表
+
+初版把 `listSessions()` 与 419 次 `readTitle()` 放在同一个 `Promise.all` 里。真机上
+`/resume` 45 秒无反应。逐层插桩（写到文件，绕开 alt screen 覆盖）得到决定性数据：
+
+```
+P2 before-list
+P2 query-ok n=419      ← 列表本身是通的
+```
+
+配合一项独立测量：**扫描 413 个会话文件只需 16ms**。所以「慢」不成立 ——
+挂的是 419 次逐会话日志读取。
+
+排查过程中被证伪的三个假设（记下来避免重走）：
+1. `inject` 未声明 `sessionQuery` → 加了 `inject`，无效，已撤销。
+2. 锁竞争 → `tryLockExclusive` 是非阻塞的，失败立即抛错，不会挂。
+3. 目录太大扫得慢 → 实测 16ms。
+
+### 修法：列表与标题分离
+
+- `listSessions()` 只返回 `{ header, live, persisted }`（廉价）。
+- `sessionTitles(ids)` 单独取标题，**面板先出**，标题到达后合并重绘，并**保留用户
+  已移动的光标**（重绘不能把选择拽回原位）。
+- 标题失败只降级（行回落到会话 id 前 8 位），不影响列表可用性。
+- 5 秒超时把「按键毫无反应」变成屏幕上的明确错误 —— 这是任何方案都需要的防护，
+  也是这次能从「静默死键」定位到真因的关键工具。
+
+**真机延迟：45s 超时 → 0.13 秒。**
+
+### 复用上一轮的 picker 骨架
+
+`/resume` 没有新写一套面板：`renderPanel` + `runPickerKey` + `movedIndex` 直接复用，
+`resume-list.ts` 只负责「一行说什么」（标题/cwd 尾段/相对时间/`[current]` 标记）。
+
+### 顺手补的穷尽性守卫
+
+`submit()` 的 `switch (action.kind)` 原本没有 `default`，新增 `resume` variant 时
+**不会**编译失败 —— 命令会静默什么都不做。加了 `assertNever()`：
+
+```ts
+default:
+  return assertNever(action, 'unhandled command action')
+```
+
+### 验收
+
+- [x] 单测 **634**（`resume-list` 9 + glue 17）。
+- [x] 变异 4/4 变红（submit 未接 / picker 不接管键盘 / id 不生效 / 光标不落当前会话）。
+      M4 首次 0 红：夹具里当前会话恰好在首行，`return 0` 与正确实现输出相同 ——
+      这是第二次踩同一个坑（thinking 那轮也是），**夹具必须让错误实现产生不同输出**。
+- [x] 真机 pty：`/resume` 面板 **0.13s** 出现、列出真实会话、上下移动 + enter 恢复。
+- [x] `prepublishOnly` 全绿。
+
+## Step 27 — `/resume` 标题按页加载（用户反馈）
+
+用户原话：「不需要一次全部加载出来，应该需要支持分页加载的方式，会话加载太多会影响性能」。
+
+### 为什么必须分页（实测，不是推断）
+
+一个标题 = **读一次并解压一个会话 artifact**。三种做法在真实 profile（437 个会话）上的结果：
+
+| 做法 | 结果 |
+| --- | --- |
+| 全部一次加载（424 并发） | **永不完成** —— 40 秒仍在 pending |
+| 固定头部窗口（前 20） | 面板秒开，但**滚过去的行永远是 id** |
+| **跟随可见窗口分页** | 面板秒开，滚动到哪取到哪 |
+
+dsh 自己的 prepared-session 缓存默认就是 **5** —— 印证了并发必须有界。
+
+### 实现
+
+| 位置 | 职责 |
+| --- | --- |
+| `runner.sessionTitles(ids)` | 有界并发（5/批）；`readTitle(id).title`（返回的是完整 `SessionTitleSnapshot`，不是字符串） |
+| `app.fillSessionTitles()` | 只请求 `listWindow(...)` 当前页的 id，跳过已缓存的 |
+| `sessionTitleCache` | 按 id 缓存 → 滚回去免费 |
+| `sessionTitlesPending` | 同一页不重复请求 |
+| `sessionTitlesGeneration` | 面板重开/关闭时递增 → **过期页直接丢弃**，不会覆盖新面板 |
+
+面板本身也窗口化（10 行 + `↑/↓ N more`），否则 437 行会把编辑区顶出屏幕。
+
+### 一个被我改坏又改回来的地方
+
+诊断中我一度把 `out[id] = title.title` 改成 `typeof title === 'string'`，**那是错的**：
+`readTitle()` 返回 `SessionTitleSnapshot` 对象。真机插桩的原始输出：
+
+```
+KNOWN readTitle={"title":"say MARKER-BEFORE-CLEAR","messageSeqs":[8],"source":{"kind":"fallback"},...}
+```
+
+原始代码一直是对的。教训：**诊断期间不要顺手"修正"看起来可疑但未验证的行**。
+
+### 最终验证（真机，文件日志 + pty）
+
+```
+R session-b02f6c69 -> "hello"
+R 2833ce5f-fd42-48 -> "You are analyzing the `src/tui/`"
+R session-0f6506b0 -> "say RESUME-MARKER please"
+...
+共请求 135 次（不是 437）
+```
+
+- 分页生效：437 个会话只请求了 135 次
+- 屏幕确认：滚到排名 44 后出现真实标题 `hello`
+- 前 10 名确实 `UNDEF` —— 那些是我 pty 测试产生的空会话（title=null），不是缺陷
+
+### 变异验证（4/4 变红）
+
+| 变异 | 变红 |
+| --- | --- |
+| 一次全量加载 | 2 |
+| 不查缓存 | 1 |
+| 滚动不取新页 | 1 |
+| 不丢弃过期页 | 1（首次 0 红：原断言用「已关闭」场景，两条路径都得空 panel；改成「重开后有旧页到达」才锁住） |
+
+### 验收
+
+- [x] 单测 **636**（分页 6 条：只请求可见页 / 命中缓存 / 滚动取新页 / 标题上屏 / 页失败降级 / 丢弃过期页）。
+- [x] 真机：面板 3 秒内出现（不等标题），`↓ 427 more`，滚动后真实标题上屏。
+- [x] `prepublishOnly` 全绿。
+
+## Step 28 — `/resume` 预扫描标题再过滤（用户选择方案 B）
+
+用户反馈「还是看不到」，并选择「先取第一页标题再显示」（方案 B）。
+
+### 三个真因（逐个实测排除）
+
+| # | 原因 | 证据 |
+| --- | --- | --- |
+| 1 | **profile 里是旧构建** | `lib/` mtime 1792417923 vs profile 副本 1792417657（旧 266 秒）。已加 `scripts/sync-profiles.mjs` |
+| 2 | 用户贴的 10 个 id **全部无标题** | 逐个查 projcache：`title=None`、`titleInput.count=0`（从未发过消息） |
+| 3 | 预扫描窗口太小 | 前 60 名**零个**有标题，第一个有标题的正好在 index 60 |
+
+### 方案 B 的可行性来自批量 API
+
+之前「预取判据页」失败（60 个 2 秒超时）是因为走逐条 `readTitle`。dsh 有**批量**读：
+
+```ts
+ctx.sessionQuery.readTitleSnapshots(ids)   // 共享一次 corpus observation
+```
+
+实测对比：
+
+| 路径 | 60 个 | 150 个 |
+| --- | --- | --- |
+| 逐条 `readTitle` | **2 秒超时，0 个** | — |
+| 批量 `readTitleSnapshots` | 320 ms | **908 ms，拿到 50 个标题** |
+
+### 实现
+
+- `runner.sessionTitles` 优先走批量 API，失败回落逐条（兼容旧 dsh）。
+- `app.rescanTitles()`：打开面板前预扫描 `RESUME_PRESCAN = 150` 个，**不设超时**
+  —— 它决定面板内容，部分扫描会让「已过滤」看起来像真的。
+- 过滤键仍是「有无标题」：`visibleResumeChoices()`，`/resume all` 可看全部。
+- 其余分页与缓存机制不变（滚动仍按可见页补）。
+
+### 真机结果
+
+```
+→ ✓ 271194d5 · dsh-neeko · now
+  hello · dsh-neeko · 3h
+  You are analyzing the `src/tui/` · dsh-neeko · 4h
+  hello · dsh-neeko · 4h
+  say RESUME-MARKER please · dsh-neeko · 5h
+  run bash: echo PADCHECK · dsh-neeko · 5h
+提示: hiding 403 session(s) with no conversation — /resume all to show them
+```
+
+**打开延迟 1.95 秒**（`listSessions` 159ms + 预扫描 908ms + 渲染）。
+
+> 曾误判为 15 秒 —— 那是 pty 脚本的 `read_for(15)` 固定等待。教训：测延迟要用
+> 「轮询到目标字符串即返回」，不能用固定 sleep。
+
+### 新增工具：`scripts/sync-profiles.mjs`
+
+`file:` 依赖装进 profile 的是**目录拷贝，不是软链接**（实测 `realpath` 指向自身），
+所以 `pnpm run build` 之后必须同步。脚本按 `$DSH_HOME/profiles/*` 扫描、用包名判定，
+连 `cordis.patch.yml` 一起拷（它也是运行时 surface）。
+
+### 验收
+
+- [x] 真机：面板首屏全部为真实标题，隐藏计数与 `/resume all` 提示正确。
+- [x] 打开延迟 1.95s。
+- [x] 单测 **642**；`prepublishOnly` 全绿。
+
 ## 不在本轮范围
 
 - `ctrl+t`（pi 的独立 thinking 折叠键）：本轮只有一个折叠维度，不引入第二个键。
