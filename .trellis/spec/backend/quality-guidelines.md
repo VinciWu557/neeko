@@ -222,6 +222,110 @@ listHostCommands: () => readRegistry()
 
 ---
 
+### 终端 UI：模态面板占「槽位」，不用浮层定位（pi-tui）
+
+给输入区做的替换面板（模型选择、会话切换……）**必须替换输入组件所在的槽位**，
+不要用 `showOverlay` 定位：
+
+```ts
+// 反例：anchor 相对整个终端算坐标，面板会飘到别处
+tui.showOverlay(panel, { anchor: 'bottom-center', width: '100%' })
+
+// 正解：放进 editor 原本的槽位（transcript 之后、status bar 之前）
+tui.removeChild(editor)
+tui.addChild(panel)
+```
+
+判据：面板渲染后 `tui.children` 里**不应同时存在** editor 与 panel，且
+status bar 仍是最后一个子节点。
+
+两个必踩的坑：
+
+- **`addChild` 是 `push`，不幂等。** 反复开关面板会把底部组件叠成多份；
+  追加前必须把「之后还要在末尾」的组件先摘掉再装回。
+- **`setFocus(panel 内部输入框)` 会废掉自己的按键分发。** pi-tui 把按键直接
+  路由给 focused component（`tui.js` 的 `focusedComponent.handleInput`），
+  外部 `addInputListener` 收不到 —— 表现为「过滤完全没反应」。面板要么自己
+  分发按键（不设焦点），要么把所有逻辑做成聚焦组件内部的行为。
+
+### 列表过滤用 `fuzzyFilter`，不要用 `SelectList.setFilter`
+
+`SelectList.setFilter` 是 `value.startsWith(query)` 的**前缀**匹配。模型 id 这类
+值（`group/auto-step-5-preview`）用前缀匹配几乎必然「搜不到」：
+
+```ts
+import { fuzzyFilter } from '@earendil-works/pi-tui'
+const matched = fuzzyFilter(rows, query, (item) => item.value)
+```
+
+`fuzzyFilter` 按字符顺序匹配并按分数排序（`step5` 命中中间的 `-step-5-`，
+`wbds` 命中 `workbuddy-ai/deepseek-…`）。`SelectList` 没有 `setItems`，把
+运行时的 `items` 换成 matched 集合后 `setFilter('')` 重置视图。
+
+另：`SelectList` 主列默认 clamp 到 **32 列**（`DEFAULT_PRIMARY_COLUMN_WIDTH`），
+会把 `workbuddy-ai/deepseek-v4.1-flash` 这类 33 字符的 id 截断且**不报错**。
+传 `layout.maxPrimaryColumnWidth` 放宽。
+
+---
+
+### 双渲染器：切换后所有重绘必须走「活跃渲染器」
+
+pi-tui 有两个渲染器，主屏保 scrollback 但**不捕获鼠标**，alt 屏有自己的视口/选中/复制。
+全屏切换后**主屏已 `stop()`**，任何写死 `this.tui.requestRender()` 的调用都落空：
+
+```ts
+// 反例：全屏下重绘请求打到已停止的主屏，只有 alt 屏因别的原因重绘时才连带刷新
+this.tui.requestRender()
+
+// 正解：单一访问器
+private get activeTui(): TUI { return this.fullscreen?.screen ?? this.tui }
+```
+
+判据：全屏下流式内容必须**逐帧增长**，不能「等答案结束才出现」。
+
+**更隐蔽的一层**：`Editor` 在构造函数里**存住**了传进去的 `tui`（用于
+`requestRender()` 和 `terminal.rows`），没有任何 setter 能替换。全屏后它仍向主屏
+发重绘 —— autocomplete 菜单会算出结果但**永不显示**（表现为「`/` 没反应」）。
+正解是传一个**代理**，把这两个成员转发给 `activeTui`。
+
+### `submit()` 必须先清空编辑器，再分发
+
+pi-tui 的 `isSlashMenuAllowed()` 要求 `cursorLine === 0`，`isAtStartOfMessage()` 还要求
+光标前为空。清理写在某个分支 `return` 之后 = 该分支永远不清：
+
+```ts
+// 反例：普通消息分支 return 在前，编辑器残留 "hello"
+if (action.kind === 'prompt') { onSubmit(text); return }
+editor.setText('')
+
+// 正解
+editor.setText('')
+if (action.kind === 'prompt') { onSubmit(text); return }
+```
+
+症状：**首次 `/` 出菜单，提交一次消息后再 `/` 不出，要再敲一个字符才行**。
+判据：测试写「提交普通消息 → 立刻打 `/` → 菜单打开」，变异（把清空移回分支后）必须变红。
+
+### 重绘成本：行缓存 + 不自调度
+
+两条独立的性能契约，缺一条就会「卡」：
+
+1. **行级缓存**。每次 flush 全量 `renderRow` + 重建容器，600 行约 30 ms，
+   且随会话线性增长。用「行对象身份 + 内容长度 + 展开态 + 主题 + spinner 帧」
+   做指纹，命中则复用组件（实测 900 行降到 1 ms）。
+2. **flush 不许自我调度**。`flush()` 末尾调 `this.requestRender()` 会重新排程
+   50 ms 定时器 → **空闲时也每 50 ms 全量重排一次，永不停止**。改成只调
+   `activeTui.requestRender()`。
+
+判据：测试写「空闲 300 ms 内终端输出字节数不变」，变异（恢复自调度）必须变红。
+
+### 折叠是默认态，`boundary: 0` 才是全展开
+
+`isExpanded(row, {})`（未传 boundary）必须返回 **false**。省略 boundary 表示
+「用默认」，不是「全展开」—— 把两者混同会让 app 层漏传参数时静默全展开。
+
+---
+
 ## 代码风格
 
 ### 注释风格 —— 中文为主
