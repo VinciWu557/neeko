@@ -49,8 +49,13 @@ export interface TuiCommand {
 export const TUI_COMMANDS: readonly TuiCommand[] = [
   { name: 'help', description: 'Show commands and key hints' },
   { name: 'clear', description: 'Clear the transcript view' },
-  { name: 'model', description: 'Choose the model for the next step', argumentHint: '<name>' },
+  // A picker, not an argument: `/model` opens an overlay (pi's shape), so there
+  // is no argument to complete and no hint to show.
+  // The catalogue opens inline in the editor frame (pi's shape): `/model ` shows
+  // candidates under the input row, positioned against the text being typed.
+  { name: 'model', description: 'Choose the model', argumentHint: '[model]' },
   { name: 'theme', description: 'Switch the color theme', argumentHint: '[dark|light]' },
+  { name: 'fullscreen', description: 'Toggle fullscreen (click to expand, own selection)' },
   { name: 'exit', description: 'Quit the terminal UI' },
 ]
 
@@ -67,6 +72,8 @@ export type CommandOutcome =
     { readonly kind: 'pick-theme' }
   | /** Switch straight to a named theme (`/theme light`). */
     { readonly kind: 'use-theme'; readonly name: string }
+  | /** Enter or leave the alt-screen viewport. */
+    { readonly kind: 'toggle-fullscreen' }
   | /**
    * A slash line this module does not own.
    *
@@ -119,6 +126,8 @@ export function runCommand(line: string): CommandOutcome {
       const argument = argumentOf(trimmed, name)
       return argument === '' ? { kind: 'pick-theme' } : { kind: 'use-theme', name: argument }
     }
+    case 'fullscreen':
+      return { kind: 'toggle-fullscreen' }
     case 'exit':
       return { kind: 'exit' }
     default:
@@ -152,8 +161,6 @@ export interface CommandSources {
   listHostCommands?: () => readonly HostCommand[]
   /** Skills the host exposes; shown under `/skill:` entries. */
   listSkills?: () => readonly HostSkill[]
-  /** Every selectable model, as `provider/id` values with display labels. */
-  listModels: () => readonly (ArgumentItem & { readonly provider: string; readonly id: string })[]
   /** Selectable theme names. */
   listThemes: () => readonly string[]
 }
@@ -189,18 +196,6 @@ export function buildCommands(sources: CommandSources): readonly TuiCommand[] {
 
   return [...TUI_COMMANDS, ...hostCommands, ...skillCommands].map((command) => {
     if (command.name === 'model') {
-      return {
-        ...command,
-        getArgumentCompletions: (prefix: string) => {
-          const all = sources.listModels()
-          if (all.length === 0) return null
-          const normalised = prefix.trim().toLowerCase()
-          if (normalised === '') return all
-          const matches = all.filter((item) =>
-            `${item.value} ${item.label} ${item.description ?? ''}`.toLowerCase().includes(normalised))
-          return matches.length === 0 ? null : matches
-        },
-      }
     }
     if (command.name === 'theme') {
       return {
@@ -221,3 +216,4 @@ export function buildCommands(sources: CommandSources): readonly TuiCommand[] {
     return command
   })
 }
+

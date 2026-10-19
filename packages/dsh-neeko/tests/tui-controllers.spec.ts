@@ -209,13 +209,13 @@ describe('CommandController', () => {
     await c.ensureModels()
     await c.ensureModels()
     expect(loadModels).toHaveBeenCalledTimes(1)
-    expect(c.modelCatalogue).toHaveLength(1)
+    expect(await c.ensureModels()).toHaveLength(1)
   })
 
   it('fails open when the catalogue cannot load', async () => {
     const c = new CommandController({ loadModels: async () => { throw new Error('down') } })
     await expect(c.ensureModels()).resolves.toEqual([])
-    expect(c.modelCatalogue).toEqual([])
+    expect(await c.ensureModels()).toEqual([])
   })
 
   it('retries after an EMPTY result instead of caching the miss', async () => {
@@ -288,6 +288,6 @@ describe('CommandController — catalogue retry contract', () => {
     })
     await expect(controller.ensureModels()).resolves.toEqual([])
     await expect(controller.ensureModels()).resolves.toHaveLength(1)
-    expect(controller.modelCatalogue).toHaveLength(1)
+    expect(await controller.ensureModels()).toHaveLength(1)
   })
 })

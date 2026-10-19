@@ -24,6 +24,8 @@ export interface ModelChoice {
   readonly id: string
   readonly name: string
   readonly provider: string
+  /** The profile's default selection (`agent-default-model`). */
+  readonly isDefault?: boolean
 }
 
 /** What the controller asks the app to do for one outcome. */
@@ -37,6 +39,8 @@ export type CommandAction =
   | /** Apply a model id after validating it against the catalogue. */
     { readonly kind: 'select-model'; readonly id: string }
   | { readonly kind: 'theme-picker' }
+  | /** Enter or leave the alt-screen viewport. */
+    { readonly kind: 'toggle-fullscreen' }
   | { readonly kind: 'apply-theme'; readonly name: string }
   | { readonly kind: 'host'; readonly line: string; readonly name: string }
 
@@ -65,11 +69,13 @@ export class CommandController {
 
   constructor(private readonly options: CommandControllerOptions) {}
 
-  /** The cached catalogue (`[]` until `ensureModels` resolves). */
-  get modelCatalogue(): readonly ModelChoice[] {
-    return this.models
-  }
-
+  /**
+   * The catalogue as currently known, without triggering a load.
+   *
+   * Argument completions are synchronous (pi-tui draws them per keystroke), so
+   * they can only read what is cached; the app asks for a reload when this is
+   * empty and the next keystroke sees the rows.
+   */
   /**
    * Classify one submission.
    *
@@ -101,6 +107,8 @@ export class CommandController {
         return { kind: 'theme-picker' }
       case 'use-theme':
         return { kind: 'apply-theme', name: outcome.name }
+      case 'toggle-fullscreen':
+        return { kind: 'toggle-fullscreen' }
     }
   }
 
