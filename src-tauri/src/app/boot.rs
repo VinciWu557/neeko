@@ -79,10 +79,12 @@ fn init_prerequisites() -> Arc<LibraryStore> {
     );
 
     library::db::ensure_db_ready().expect("Failed to prepare library database");
-    Arc::new(
-        library::LibraryStore::open(&library::db::db_path())
-            .expect("Failed to create library store"),
-    )
+    // One pool for neeko.db, created here and shared by every domain that
+    // needs the file. A second pool would mean two owners for the same
+    // handle and no bound on the connection count.
+    let pool = crate::common::db::open_pool(&library::db::db_path(), 8)
+        .expect("Failed to open database pool");
+    Arc::new(library::LibraryStore::with_pool(pool).expect("Failed to create library store"))
 }
 
 /// `setup` 阶段：把持久化状态投影回内存，并注入运行时句柄。
