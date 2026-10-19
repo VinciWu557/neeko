@@ -228,4 +228,71 @@
   .cm-editor .cm-git-line-added .cm-git-word {
     background: color-mix(in srgb, var(--git-status-added, #30d158) 24%, transparent) !important;
   }
+
+  /* ── 注释译文（`commentView.ts` 产出的 widget 类名）──
+   * 为什么需要这组样式：译文 widget 与原文注释在同一个编辑器里，若无视觉区隔，
+   * 读者分不清「哪行是原文、哪行是译文」；失败 reason 也只是裸文字。
+   * 字体一律走角色变量（`quality-guidelines.md` 字体角色约定：禁止裸 font-family）。
+   * `!important`：CM 运行时注入无 layer 样式，@layer 内普通规则会被压掉（同本文件其他 .cm-* 覆盖）。 */
+  .cm-editor .cm-comment-translation {
+    box-sizing: border-box;
+    font-family: var(--font-mono) !important;
+    line-height: var(--line-height-mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* 块级译文（below，默认模式）：左侧竖线 + 淡底，与正文注释拉开层次 */
+  .cm-editor .cm-comment-translation--below {
+    margin: 2px 0 4px;
+    padding: 3px 8px 3px 10px;
+    border-left: 2px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
+    border-radius: 0 3px 3px 0;
+    background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+    color: var(--text-secondary) !important;
+    font-size: 0.92em;
+  }
+
+  /* 行内译文（inline）：widget 里已带 `→ ` 箭头，此处只负责配色与间距 */
+  .cm-comment-translation--inline {
+    margin-left: 12px;
+    padding: 0 6px;
+    border-left: 2px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+    color: var(--text-secondary) !important;
+    font-size: 0.92em;
+    font-style: italic;
+  }
+
+  /* 多行译文的每一行（重建后已带原前缀 `// ` / ` * `，样式不再补前缀） */
+  .cm-comment-translation__line {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* 失败原因 chip（校验未通过）—— 可点击：只重试这一组（R6.6） */
+  .cm-comment-translation__reason {
+    display: inline-block;
+    padding: 1px 6px;
+    border: 1px solid color-mix(in srgb, var(--accent-red) 35%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+    color: var(--accent-red) !important;
+    font-size: 0.88em;
+    cursor: pointer;
+  }
+
+  /* 悬停提示可点击（否则用户以为 chip 只是状态标签） */
+  .cm-editor .cm-comment-translation__reason:hover {
+    border-color: color-mix(in srgb, var(--accent-red) 60%, transparent);
+    background: color-mix(in srgb, var(--accent-red) 20%, transparent);
+  }
+
+  /* 悬停锚点（hover 模式）：虚线下划线提示「此处可悬停」 */
+  .cm-comment-translation__hover-anchor {
+    cursor: help;
+    border-bottom: 1px dashed color-mix(in srgb, var(--accent-blue) 60%, transparent);
+  }
 }

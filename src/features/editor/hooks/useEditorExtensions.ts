@@ -16,6 +16,7 @@ import {
 import type { EditorView } from '@codemirror/view';
 import { useMemo } from 'react';
 
+import { commentTranslationView } from '@/features/editor/comment/commentView';
 import { navigateCaretExtension } from '@/features/editor/navigateCaret';
 import { neekoSearchExtension } from '@/features/editor/searchPanel';
 import { lspDiagnosticsProjection } from '@/features/lsp';
@@ -147,9 +148,19 @@ export function useEditorExtensions({
     // 这里按「编辑器级稳定扩展」装配，生命周期 = EditorView。
     exts.push(lspDiagnosticsProjection());
 
+    // 注释译文：`StateField`（数据）+ `ViewPlugin`（渲染）都是**模块级单例**，
+    // 因此放进稳定段不引入配置抖动（AC16）。
+    //
+    // 关键：这里放的是 **field + view 两个扩展本身**，不是译文数据 —— 译文经
+    // `setCommentTranslations` effect 推送。若把译文接进 `extensions` 依赖，
+    // 每批译文到达都会触发 reconfigure，把 lint 等惰性扩展丢弃
+    // （`quality-guidelines.md` 禁止模式 10）。
+
     // LSP: @codemirror/lsp-client plugin (hover, diagnostics, completion, document sync)
     // + custom keybinding (F12/Shift+F12) + Cmd+Click jump + link highlight
     // (Cmd/Ctrl+hover underline)
+    exts.push(commentTranslationView());
+
     exts.push(...lspClientExt);
     exts.push(lspKeymap);
     exts.push(quickFixExt);

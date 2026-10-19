@@ -19,6 +19,7 @@ import { useGitChangeEditor } from '../hooks/useGitChangeEditor';
 import { useNavigateGoal } from '../hooks/useNavigateGoal';
 import { useUnifiedGutterExtension } from '../hooks/useUnifiedGutter';
 
+import CommentTranslationBar from './CommentTranslationBar';
 import FileEditorFallback, { fileEditorFallbackKind } from './FileEditorFallback';
 import FileEditorView from './FileEditorView';
 
@@ -163,7 +164,6 @@ function FileEditor({
     onReloaded: resetEditorRestored,
   });
 
-  // Determine if file can be edited
   const canEdit = !tab.readOnly && !tab.content.is_binary && tab.content.size <= 512 * 1024;
 
   // 可运行动作（TS 点击直跑 → Task Console；Rust/Go/Java 测试用例与 main 入口
@@ -242,6 +242,14 @@ function FileEditor({
 
   return (
     <>
+      <CommentTranslationBar
+        filePath={tab.filePath}
+        projectId={tab.workspace.projectId}
+        editorViewRef={editorViewRef}
+        content={currentContent}
+        canEdit={canEdit}
+      />
+
       <FileEditorView
         tab={tab}
         tabKey={tabKey}
