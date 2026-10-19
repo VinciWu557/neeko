@@ -97,6 +97,8 @@ const DEFAULT_MAX_ENTRIES = 5000;
 export class PersistentKeyValueStore<T extends PersistentCacheEntry> {
   private map: Map<string, T> | null = null;
   private dirty = false;
+  /** Keys changed since the last flush (written or overwritten). */
+  private pendingKeys = new Set<string>();
   /** 待删除的键（淘汰产生）。flush 时一并提交。 */
   private pendingDeletes: string[] = [];
   private readonly maxEntries: number;
@@ -169,6 +171,7 @@ export class PersistentKeyValueStore<T extends PersistentCacheEntry> {
     const map = await this.load();
     map.set(key, value);
     this.dirty = true;
+    this.pendingKeys.add(key);
     this.evict(map);
   }
 
@@ -184,7 +187,10 @@ export class PersistentKeyValueStore<T extends PersistentCacheEntry> {
 
   async setMany(entries: ReadonlyArray<readonly [string, T]>): Promise<void> {
     const map = await this.load();
-    for (const [key, value] of entries) map.set(key, value);
+    for (const [key, value] of entries) {
+      map.set(key, value);
+      this.pendingKeys.add(key);
+    }
     this.dirty = true;
     this.evict(map);
     await this.flush();
@@ -198,22 +204,32 @@ export class PersistentKeyValueStore<T extends PersistentCacheEntry> {
   async flush(): Promise<void> {
     if (!this.dirty || !this.map) return;
     try {
-      // 增量写：只提交本次变更的键。整份重写会让 SQLite 后端退化成全表替换。
+      // 只提交自上次 flush 起**变更过**的键。整份重写会让 SQLite 后端每批都把
+      // 全部已有条目重新 INSERT 一遍 —— 会话越久，单批写入量越大，正是
+      // `PersistentCachePort` 从「整份字符串」改成「条目粒度」要避免的写放大。
       await this.options.port.putMany(this.pendingEntries());
       if (this.pendingDeletes.length > 0) {
         await this.options.port.deleteMany(this.pendingDeletes);
       }
       this.dirty = false;
+      this.pendingKeys.clear();
       this.pendingDeletes = [];
     } catch {
-      // 落盘失败只降级为「本次不持久化」——内存命中仍然生效
+      // 落盘失败只降级为「本次不持久化」——内存命中仍然生效。
+      // `dirty` / `pendingKeys` 保留，下次 flush 重试（清了这批数据就永不落盘）。
     }
   }
 
-  /** 自上次 flush 起变更过的条目。 */
+  /** 自上次 flush 起变更过的条目（不是整张表）。 */
   private pendingEntries(): Array<readonly [string, unknown]> {
     if (!this.map) return [];
-    return [...this.map.entries()];
+    const out: Array<readonly [string, unknown]> = [];
+    for (const key of this.pendingKeys) {
+      const value = this.map.get(key);
+      // 键可能已被本轮淘汰掉 —— 它走了 pendingDeletes，不再是待写入项。
+      if (value !== undefined) out.push([key, value]);
+    }
+    return out;
   }
 
   /** 按写入时间淘汰最旧条目。 */

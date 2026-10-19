@@ -110,6 +110,22 @@ describe('PersistentKeyValueStore', () => {
     expect(port.putMany).toHaveBeenCalledTimes(1);
   });
 
+  it('should send only the changed entries on each flush, not the whole map', async () => {
+    // 写放大回归：早期实现每次 flush 都提交「整张表」，于是每次批写都要把全部
+    // 已有条目重写一遍（会话越久单次写入越大）。Port 改成条目粒度就是为了避免
+    // 这件事，而 store 若仍旧发全量，这个设计就白做了。
+    const port = makePort();
+    const store = makeStore(port);
+
+    await store.set('a', ITEM('1'));
+    await store.flush();
+    await store.set('b', ITEM('2'));
+    await store.flush();
+
+    expect(port.putMany).toHaveBeenNthCalledWith(1, [['a', ITEM('1')]]);
+    expect(port.putMany).toHaveBeenNthCalledWith(2, [['b', ITEM('2')]]);
+  });
+
   it('should not write when flush is called with no dirty state', async () => {
     const port = makePort();
     await makeStore(port).flush();
