@@ -74,10 +74,22 @@ export interface TranslateSegmentsResult {
   failedAddresses: string[];
   /** address → 失败原因（进 UI）。 */
   failureReasons: Record<string, string>;
+  /**
+   * address → 失败**类型**。
+   *
+   * 两类的处置不同，所以必须在产生处区分（事后从 reason 字符串反推不可靠 ——
+   * 模型的报错文案是自由文本，可能恰好包含 `too short` 之类的校验词）：
+   * - `validation`：译文回来了但没过校验（占位符丢失、代码被译…）→ 在失败位置重试
+   * - `transport`：压根没拿到译文（断网 / Agent 崩溃 / 超时）→ 全局故障，走通知中心
+   */
+  failureKinds: Record<string, FailureKind>;
   /** 缓存命中数。 */
   cacheHits: number;
   aborted: boolean;
 }
+
+/** 失败类型（见 {@link TranslateSegmentsResult.failureKinds}）。 */
+export type FailureKind = 'validation' | 'transport';
 
 /** 引擎选项。 */
 export interface TranslateSegmentsOptions {
@@ -222,6 +234,7 @@ export async function translateSegments(
 
   const translations: Record<string, string> = {};
   const failureReasons: Record<string, string> = {};
+  const failureKinds: Record<string, FailureKind> = {};
   const failedSet = new Set<string>();
 
   // ── 1. 去重 ──────────────────────────────────────────
@@ -294,6 +307,7 @@ export async function translateSegments(
       if (candidate === null || candidate === undefined) {
         rejected.push(segment);
         failureReasons[segment.address] = 'missing segment in response';
+        failureKinds[segment.address] = 'validation';
         return;
       }
       const verdict = verifyComment({
@@ -305,6 +319,7 @@ export async function translateSegments(
       if (!verdict.ok) {
         rejected.push(segment);
         failureReasons[segment.address] = verdict.reason ?? 'validation failed';
+        failureKinds[segment.address] = 'validation';
         return;
       }
       // 展开到所有同文 address（跨文件同文都要拿到译文）
@@ -315,6 +330,7 @@ export async function translateSegments(
       const key = keys.get(segment.address);
       if (key) accepted.push([key, { source: segment.text, text: candidate, at: Date.now() }]);
       delete failureReasons[segment.address];
+      delete failureKinds[segment.address];
       failedSet.delete(segment.address);
       done++;
     });
@@ -365,6 +381,7 @@ export async function translateSegments(
       const reason = error instanceof Error ? error.message : String(error);
       for (const segment of engineBatch) {
         failureReasons[segment.address] = reason;
+        failureKinds[segment.address] = 'transport';
         failedSet.add(segment.address);
       }
       emitProgress();
@@ -387,6 +404,7 @@ export async function translateSegments(
     translations,
     failedAddresses: [...failedSet],
     failureReasons,
+    failureKinds,
     cacheHits,
     aborted: aborted || signal.aborted,
   };

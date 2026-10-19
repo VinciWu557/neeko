@@ -8,13 +8,9 @@
  *
  * ## 数据流
  *
- * ```
- * 用户点「翻译注释」
- *   → 从 editorView 取 syntaxTree(state)（复用增量树，不重解析）
- *   → runCommentTranslation（提取→分组→分段→分类→引擎）
- *   → dispatch setCommentTranslations（推送进 StateField）
- *   → commentView 的 ViewPlugin 重算 decoration → 译文出现在编辑器里
- * ```
+ * 点「翻译注释」→ 取 `syntaxTree(state)`（复用增量树）→ `runCommentTranslation`
+ * （提取→分组→分段→分类→引擎）→ dispatch `setCommentTranslations` →
+ * `commentView` 重算 decoration → 译文出现在编辑器里。
  *
  * ## 不写盘（R3.1 / AC15）
  *
@@ -33,6 +29,7 @@ import { isTranslatableCommentFile } from '../comment/isTranslatableCommentFile'
 import { DEFAULT_COMMENT_MODE, runCommentTranslation } from '../comment/useCommentTranslation';
 
 import { getSharedCommentCache } from './commentTranslationCacheSingleton';
+import { notifyTransportFailures, summarizeTransportFailures } from './commentTranslationFailures';
 import { useCommentRetryChipBridge } from './useCommentRetryChipBridge';
 
 /** 共享缓存的注入点在 `commentTranslationCacheSingleton.ts`（模块级单例，跨 tab 复用）。 */
@@ -183,6 +180,11 @@ export function useCommentTranslateActions(params: UseCommentTranslateActionsPar
         });
 
         push(state.mode, result.entries);
+
+        // 只上报传输层失败；分类依据与理由见 `commentTranslationFailures.ts`。
+        const transport = summarizeTransportFailures(result);
+        if (transport) notifyTransportFailures(transport);
+
         setState((prev) => ({
           ...prev,
           running: false,

@@ -377,3 +377,40 @@ describe('commentView / 行内模式的 chip 点击（`ignoreEvent` 的硬约束
     }
   });
 });
+
+describe('失败 chip / 按类型分流', () => {
+  /**
+   * 这条是本次改动的核心契约：两类失败的用户动作不同。
+   *
+   * validation（译文没过校验）→ 保留可点击的 ⚠ 原因，点一下只重试这一组。
+   * transport（断网 / Agent 崩溃 / 超时）→ 只说「翻译失败」，不挂重试：
+   *   单组重试对全局故障毫无意义，挂上去只会让人点了没反应。
+   */
+  it('should render a retryable chip for validation failures', () => {
+    const dom = createBelowWidgetForTest(
+      '',
+      'placeholder lost',
+      7,
+      'validation',
+    ).toDOM() as HTMLElement;
+    const chip = dom.querySelector('.cm-comment-translation__reason');
+
+    expect(chip?.textContent).toContain('placeholder lost');
+    expect(chip?.hasAttribute(RETRY_GROUP_ATTRIBUTE)).toBe(true);
+  });
+
+  it('should render a non-retryable label for transport failures', () => {
+    const dom = createBelowWidgetForTest(
+      '',
+      'agent exited with code 1',
+      7,
+      'transport',
+    ).toDOM() as HTMLElement;
+    const chip = dom.querySelector('.cm-comment-translation__reason');
+
+    expect(chip?.textContent).toBe('翻译失败');
+    expect(chip?.getAttribute('title')).toContain('agent exited');
+    // 关键：没有可重试的组 → 不得挂点击属性
+    expect(chip?.hasAttribute(RETRY_GROUP_ATTRIBUTE)).toBe(false);
+  });
+});

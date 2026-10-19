@@ -673,3 +673,54 @@ describe('translateSegments / onlyAddresses（R6.6 单组重试的作用域）',
     expect(prompt).toContain('second prose');
   });
 });
+
+describe('translateSegments / 失败分类（failureKinds）', () => {
+  /**
+   * 分类必须由**产生处**决定，不能事后从 reason 字符串反推 ——
+   * 模型的报错文案是自由文本，可能恰好包含 `too short` 之类的校验词。
+   * 这两条用例分别锁住两个产生点的标注。
+   */
+  it('should classify a validation rejection as validation', async () => {
+    const result = await translateSegments({
+      segments: [seg('a1', 'format {0}')],
+      targetLanguage: 'zh-CN',
+      turn: scriptedTurn({ 'format {0}': '格式化（丢了占位符）' }),
+      cache: new MemoryCache(),
+      retryFailed: false,
+    });
+
+    expect(result.failureKinds['a1']).toBe('validation');
+  });
+
+  it('should classify a thrown turn as transport', async () => {
+    const turn: TranslateTurn = {
+      async run() {
+        throw new Error('agent exited with code 1');
+      },
+    };
+    const result = await translateSegments({
+      segments: [seg('a1', 'text')],
+      targetLanguage: 'zh-CN',
+      turn,
+      cache: new MemoryCache(),
+      retryFailed: false,
+    });
+
+    expect(result.failureKinds['a1']).toBe('transport');
+    // 原因文案原样保留，供通知中心展示
+    expect(result.failureReasons['a1']).toContain('agent exited');
+  });
+
+  /** 成功后必须把类型也清掉，否则重试成功的组会残留旧分类。 */
+  it('should clear the kind when a segment succeeds', async () => {
+    const result = await translateSegments({
+      segments: [seg('a1', 'text')],
+      targetLanguage: 'zh-CN',
+      turn: scriptedTurn({}),
+      cache: new MemoryCache(),
+    });
+
+    expect(result.failureKinds['a1']).toBeUndefined();
+    expect(result.translations['a1']).toBe('译:text');
+  });
+});

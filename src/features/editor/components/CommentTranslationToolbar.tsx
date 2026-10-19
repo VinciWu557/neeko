@@ -6,17 +6,26 @@ import { Square } from '@/shared/components/icons';
 import type { CommentDisplayMode } from '../comment/commentTranslations';
 
 /**
- * 注释翻译工具条（按原型 `prototypes/comment-translation.html`）。
+ * 注释翻译工具条 —— **形态与文档翻译的 `TranslationToolbar` 保持一致**：
+ * 一排扁平控件（配置选择器 + 分段模式 + 右侧主按钮），不堆统计徽章。
  *
- * 组合层：只负责渲染与回调，状态与逻辑在 `useCommentTranslation` / 调用方 hook 里。
+ * ## 为什么去掉统计徽章
  *
- * 设计要点（来自原型与用户决策）：
- * - 「翻译注释」是显式动作（L0），不自动跑
- * - 四种显示模式可切（U1 定案默认 `below`）
- * - **跳过统计可见**：用户能看懂为什么某些注释没翻（代码段 / 指令 / 许可证）
- * - 失败数可见并可重试
- * - **两种重试粒度**：本工具条的按钮重试「全部失败组」；「只重试这一组」由编辑器里的
- *   失败 chip 承担（chip 是 widget 的 DOM，按钮是 React 节点，两者到达控制器的路径不同）
+ * 此前版本把「已译 0/1」「代码不翻 68」「跳过 2」「失败 274」各做成一个圆角 pill
+ * 排在右侧。问题不是不好看，而是**信息层级错乱**：四个同等视觉权重的数字里，
+ * 用户唯一需要立刻知道的是「这次有没有成功」，其余都是诊断信息。274 这个数字
+ * 尤其糟 —— 它把「一批本来就不该翻的段」渲染成了警报。
+ *
+ * 现在：进度归主按钮（`已译 N/M` 直接进文案），诊断信息进 `title`（hover 可见）。
+ *
+ * ## 失败不在这里显示
+ *
+ * 失败按原因分两类处置（见 `TranslateSegmentsResult.failureKinds`）：
+ * - **传输层**（断网 / Agent 崩溃 / 超时）→ 右下角通知中心（全局故障，一条告警）
+ * - **校验**（译文没过闸）→ 编辑器里失败位置的 chip，点击只重试该组
+ *
+ * 工具条只保留一个「失败 N · 重试全部」的快捷入口 —— 与文档翻译的「重新翻译」同形，
+ * 不做成第四个统计 pill。
  */
 export interface CommentTranslationToolbarProps {
   running: boolean;
@@ -31,7 +40,7 @@ export interface CommentTranslationToolbarProps {
   skippedGroups: number;
   /** 失败段数。 */
   failed: number;
-  /** 缓存命中数（证明增量真的生效）。 */
+  /** 缓存命中数。 */
   cacheHits: number;
   onModeChange: (mode: CommentDisplayMode) => void;
   onStart: () => void;
@@ -46,12 +55,9 @@ const MODES: Array<{ value: CommentDisplayMode; label: string; title: string }> 
   { value: 'off', label: '关闭', title: '只显示原文（写代码时用）' },
 ];
 
-const STAT_PILL =
-  'inline-flex items-center gap-1 rounded-full border border-border bg-bg-secondary px-2 py-[2px] font-mono text-[10px] text-text-muted';
-
 /**
  * 工具条。`React.memo`：父级每次渲染都传新回调时会重渲，但 props 引用稳定时收益明显
- * （`quality-guidelines.md` 必需模式 2；此处 props 含数字与稳定回调，比较有效）。
+ * （`quality-guidelines.md` 必需模式 2）。
  */
 const CommentTranslationToolbar: React.FC<CommentTranslationToolbarProps> = ({
   running,
@@ -66,90 +72,98 @@ const CommentTranslationToolbar: React.FC<CommentTranslationToolbarProps> = ({
   onStart,
   onStop,
   onRetryFailed,
-}) => (
-  <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/20 px-3 py-1.5">
-    <button
-      type="button"
-      className={cn(
-        'rounded-md border px-2 py-1 text-xs',
-        running
-          ? 'cursor-not-allowed border-border bg-bg-secondary text-text-muted'
-          : 'border-accent-blue bg-accent-blue font-medium text-white hover:brightness-110',
-      )}
-      onClick={onStart}
-      disabled={running}
-    >
-      {total > 0 && done > 0 ? '重新翻译' : '翻译注释'}
-    </button>
+}) => {
+  const hasResult = total > 0 && done > 0;
+  // 诊断信息收进 title：需要的人 hover 就能看到，不需要的人不必先读懂它。
+  const diagnostics = [
+    `可翻译 ${total} 段，已译 ${done} 段`,
+    `代码不翻 ${codeSegments} 段（注释里的代码一律不翻译，含死代码与示例）`,
+    `跳过 ${skippedGroups} 组（工具链指令 / 许可证 / shebang）`,
+    ...(cacheHits > 0 ? [`缓存命中 ${cacheHits} 段`] : []),
+    ...(failed > 0 ? [`失败 ${failed} 组`] : []),
+  ].join('\n');
 
-    {running ? (
-      <button
-        type="button"
-        className="rounded-md border border-[rgba(var(--accent-red-rgb),0.4)] px-2 py-1 text-xs text-accent-red"
-        onClick={onStop}
-        aria-label="停止翻译"
-      >
-        <Square className="mr-1 inline h-2.5 w-2.5" />
-        停止
-      </button>
-    ) : null}
-
-    <span className="h-4 w-px bg-border" aria-hidden="true" />
-
-    <span className="text-[11px] text-text-muted">显示</span>
-    <div
-      className="inline-flex overflow-hidden rounded-md border border-border"
-      role="group"
-      aria-label="译文显示模式"
-    >
-      {MODES.map((item, index) => (
-        <button
-          key={item.value}
-          type="button"
-          className={cn(
-            'px-2 py-1 text-[11px]',
-            index > 0 ? 'border-l border-border' : '',
-            mode === item.value
-              ? 'bg-[rgba(var(--accent-blue-rgb),0.18)] font-semibold text-accent-blue'
-              : 'bg-bg-secondary text-text-muted hover:bg-bg-tertiary',
-          )}
-          aria-pressed={mode === item.value}
-          title={item.title}
-          onClick={() => onModeChange(item.value)}
+  return (
+    <>
+      <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-border/20 bg-bg-secondary/50 flex-wrap">
+        <div
+          className="flex border border-border rounded-md overflow-hidden"
+          role="group"
+          aria-label="译文显示模式"
         >
-          {item.label}
-        </button>
-      ))}
-    </div>
+          {MODES.map((item, index) => (
+            <button
+              key={item.value}
+              type="button"
+              className={cn(
+                'px-2 py-1 text-xs',
+                index > 0 ? 'border-l border-border' : '',
+                mode === item.value
+                  ? 'bg-bg-selected text-text-primary'
+                  : 'text-text-muted hover:text-text-primary',
+              )}
+              aria-pressed={mode === item.value}
+              title={item.title}
+              onClick={() => onModeChange(item.value)}
+              disabled={running}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
 
-    <span className="flex-1" />
+        <div className="ml-auto flex items-center gap-2" title={diagnostics}>
+          {running ? (
+            <>
+              <span className="text-xs text-text-muted font-mono">
+                已译 {done} / {total}
+              </span>
+              <button
+                className="tb-icon-btn w-6 h-6 rounded-md flex items-center justify-center text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                onClick={onStop}
+                title="停止"
+                aria-label="停止翻译"
+                type="button"
+              >
+                <Square size={12} />
+              </button>
+            </>
+          ) : (
+            <>
+              {failed > 0 ? (
+                <button
+                  className="px-2 py-1 text-xs rounded-md text-accent-red hover:bg-[rgba(var(--accent-red-rgb),0.1)] transition-colors"
+                  onClick={onRetryFailed}
+                  title={`重试全部失败组（共 ${failed} 组）；单组重试请点编辑器里的失败位置`}
+                  type="button"
+                >
+                  失败 {failed} · 重试全部
+                </button>
+              ) : null}
+              <button
+                className="px-3 py-1 text-xs rounded-md bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 transition-colors"
+                onClick={onStart}
+                title={hasResult ? '使用当前设置重新翻译' : '开始翻译'}
+                type="button"
+              >
+                {hasResult ? '重新翻译' : '翻译注释'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
-    <span className={STAT_PILL}>
-      已译 <b className="text-accent-green">{done}</b>/{total}
-    </span>
-    <span className={STAT_PILL} title="注释中的代码一律不翻译（含死代码与示例）">
-      代码不翻 <b className="text-accent-purple">{codeSegments}</b>
-    </span>
-    <span className={STAT_PILL} title="工具链指令 / 许可证 / shebang 整组跳过">
-      跳过 <b className="text-accent-yellow">{skippedGroups}</b>
-    </span>
-    {cacheHits > 0 ? (
-      <span className={STAT_PILL} title="命中缓存的段数（增量生效的证明）">
-        缓存 <b className="text-accent-blue">{cacheHits}</b>
-      </span>
-    ) : null}
-    {failed > 0 ? (
-      <button
-        type="button"
-        className="rounded-full border border-[rgba(var(--accent-red-rgb),0.3)] bg-[rgba(var(--accent-red-rgb),0.1)] px-2 py-[2px] font-mono text-[10px] text-accent-red"
-        onClick={onRetryFailed}
-        disabled={running}
-        title="重试全部校验失败的组（单组重试请点编辑器里的失败 chip）"
-      >
-        失败 {failed} · 重试全部
-      </button>
-    ) : null}
-  </div>
-);
+      {/* 进度条 —— 与文档翻译同形 */}
+      {running && (
+        <div className="shrink-0 h-0.5 bg-bg-tertiary">
+          <div
+            className="h-full bg-accent-blue transition-all duration-300"
+            style={{ width: `${total === 0 ? 0 : Math.round((done / total) * 100)}%` }}
+          />
+        </div>
+      )}
+    </>
+  );
+};
 
 export default React.memo(CommentTranslationToolbar);

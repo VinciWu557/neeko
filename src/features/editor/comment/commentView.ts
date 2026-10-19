@@ -53,13 +53,17 @@ class BelowWidget extends WidgetType {
     private readonly text: string,
     private readonly reason: string | undefined,
     private readonly groupKey: number | undefined,
+    private readonly failureKind: 'validation' | 'transport' | undefined = undefined,
   ) {
     super();
   }
 
   eq(other: BelowWidget): boolean {
     return (
-      other.text === this.text && other.reason === this.reason && other.groupKey === this.groupKey
+      other.text === this.text &&
+      other.reason === this.reason &&
+      other.groupKey === this.groupKey &&
+      other.failureKind === this.failureKind
     );
   }
 
@@ -68,11 +72,7 @@ class BelowWidget extends WidgetType {
     wrapper.className = 'cm-comment-translation cm-comment-translation--below';
 
     if (this.reason) {
-      const chip = document.createElement('span');
-      chip.className = 'cm-comment-translation__reason';
-      chip.textContent = `⚠ ${this.reason}`;
-      markChipRetryable(chip, this.groupKey);
-      wrapper.appendChild(chip);
+      wrapper.appendChild(buildFailureChip(this.reason, this.groupKey, this.failureKind));
       return wrapper;
     }
 
@@ -97,13 +97,17 @@ class InlineWidget extends WidgetType {
     private readonly text: string,
     private readonly reason: string | undefined,
     private readonly groupKey: number | undefined,
+    private readonly failureKind: 'validation' | 'transport' | undefined = undefined,
   ) {
     super();
   }
 
   eq(other: InlineWidget): boolean {
     return (
-      other.text === this.text && other.reason === this.reason && other.groupKey === this.groupKey
+      other.text === this.text &&
+      other.reason === this.reason &&
+      other.groupKey === this.groupKey &&
+      other.failureKind === this.failureKind
     );
   }
 
@@ -135,6 +139,7 @@ class HoverAnchorWidget extends WidgetType {
   constructor(
     private readonly text: string,
     private readonly reason: string | undefined,
+    private readonly failureKind: 'validation' | 'transport' | undefined = undefined,
   ) {
     super();
   }
@@ -146,7 +151,7 @@ class HoverAnchorWidget extends WidgetType {
   toDOM(): HTMLElement {
     const span = document.createElement('span');
     span.className = 'cm-comment-translation__hover-anchor';
-    span.title = this.reason ? `⚠ ${this.reason}` : this.text;
+    span.title = this.reason ? failureTitle(this.reason, this.failureKind) : this.text;
     return span;
   }
 
@@ -166,17 +171,17 @@ function toDecoration(spec: CommentDecoration): Decoration {
       // 另一条硬约束与本选项无关：block 装饰**不能来自 ViewPlugin**，只能来自
       // StateField（见 {@link blockDecorationsField}）。
       return Decoration.widget({
-        widget: new BelowWidget(spec.text, spec.reason, spec.groupKey),
+        widget: new BelowWidget(spec.text, spec.reason, spec.groupKey, spec.failureKind),
         block: true,
       });
     case 'inline-widget':
       return Decoration.widget({
-        widget: new InlineWidget(spec.text, spec.reason, spec.groupKey),
+        widget: new InlineWidget(spec.text, spec.reason, spec.groupKey, spec.failureKind),
         side: 1,
       });
     case 'hover-anchor':
       return Decoration.widget({
-        widget: new HoverAnchorWidget(spec.text, spec.reason),
+        widget: new HoverAnchorWidget(spec.text, spec.reason, spec.failureKind),
         side: 1,
       });
   }
@@ -359,8 +364,42 @@ export function createBelowWidgetForTest(
   text: string,
   reason?: string,
   groupKey?: number,
+  failureKind?: 'validation' | 'transport',
 ): WidgetType {
-  return new BelowWidget(text, reason, groupKey);
+  return new BelowWidget(text, reason, groupKey, failureKind);
+}
+
+/**
+ * 失败 chip 的两种措辞。
+ *
+ * `transport`（断网 / Agent 崩溃 / 超时）不是这一条注释的问题：点重试大概率还是失败，
+ * 而用户真正需要的是「知道刚才那批没跑成」。所以它不挂重试、措辞用与文档翻译一致的
+ * 「翻译失败」，原因收进 tooltip；全局性上报由调用方走通知中心。
+ *
+ * `validation`（译文回来了但没过校验）才是单组重试能救的：显示可点击的 ⚠ 原因。
+ */
+function buildFailureChip(
+  reason: string,
+  groupKey: number | undefined,
+  failureKind: 'validation' | 'transport' | undefined,
+): HTMLElement {
+  const chip = document.createElement('span');
+  chip.className = 'cm-comment-translation__reason';
+  if (failureKind === 'transport') {
+    chip.textContent = '翻译失败';
+    chip.title = reason;
+    // 不 markChipRetryable：没有可重试的组时挂上点击只会让人点了没反应。
+    return chip;
+  }
+  chip.textContent = `⚠ ${reason}`;
+  chip.title = '点击只重试这一组';
+  markChipRetryable(chip, groupKey);
+  return chip;
+}
+
+/** hover 模式的 tooltip 文案（没有 chip 可点，所以原因必须完整可见）。 */
+function failureTitle(reason: string, failureKind: 'validation' | 'transport' | undefined): string {
+  return failureKind === 'transport' ? `翻译失败：${reason}` : `⚠ ${reason}`;
 }
 
 /** 供控制器构造条目（避免上层重复处理 reason 的可选性）。 */

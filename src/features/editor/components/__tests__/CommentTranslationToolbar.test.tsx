@@ -35,23 +35,30 @@ describe('CommentTranslationToolbar', () => {
     expect(onModeChange).toHaveBeenCalledWith('hover');
   });
 
-  it('should show the code-segment counter so users see why some text is not translated', () => {
+  /**
+   * 诊断计数从独立徽章移进聚合 title —— 但「可见」这件事不能丢：
+   * U2（代码里的代码一律不翻）是产品铁律，用户必须能查到「为什么这句没翻」。
+   * 载体变了，可观测性本身是契约。
+   */
+  it('should expose the code-segment count in the diagnostics tooltip', () => {
     render(<CommentTranslationToolbar {...baseProps} />);
-    // U2 的可观测性：代码段数必须可见
-    expect(screen.getByTitle('注释中的代码一律不翻译（含死代码与示例）')).toBeInTheDocument();
+    const diagnostics = screen.getByTitle(/代码不翻 4/);
+    expect(diagnostics).toBeInTheDocument();
+    expect(diagnostics).toHaveAttribute('title', expect.stringContaining('注释里的代码一律不翻译'));
   });
 
-  it('should show the skipped-group counter', () => {
+  it('should expose the skipped-group count in the diagnostics tooltip', () => {
     render(<CommentTranslationToolbar {...baseProps} />);
-    expect(screen.getByTitle('工具链指令 / 许可证 / shebang 整组跳过')).toBeInTheDocument();
+    const diagnostics = screen.getByTitle(/跳过 2 组/);
+    expect(diagnostics).toHaveAttribute('title', expect.stringContaining('许可证'));
   });
 
-  it('should show cache hits only when non-zero', () => {
+  it('should report cache hits only when non-zero', () => {
     const { rerender } = render(<CommentTranslationToolbar {...baseProps} />);
-    expect(screen.queryByTitle('命中缓存的段数（增量生效的证明）')).not.toBeInTheDocument();
+    expect(screen.getByTitle(/可翻译 3 段/).getAttribute('title')).not.toContain('缓存命中');
 
     rerender(<CommentTranslationToolbar {...baseProps} cacheHits={5} />);
-    expect(screen.getByTitle('命中缓存的段数（增量生效的证明）')).toBeInTheDocument();
+    expect(screen.getByTitle(/缓存命中 5 段/)).toBeInTheDocument();
   });
 
   it('should show the retry button only when something failed', () => {
@@ -64,10 +71,16 @@ describe('CommentTranslationToolbar', () => {
     expect(onRetryFailed).toHaveBeenCalled();
   });
 
-  it('should disable the start button while running and show stop', () => {
-    render(<CommentTranslationToolbar {...baseProps} done={0} running />);
-    expect(screen.getByRole('button', { name: '翻译注释' })).toBeDisabled();
+  /**
+   * 运行中不再渲染主按钮，而是换成「已译 N/M + 停止」——与文档翻译同形。
+   * 断言的是「主按钮消失了」，比「按钮被禁用」更强：禁用的按钮仍会被点击测试命中。
+   */
+  it('should swap the primary action for progress and stop while running', () => {
+    render(<CommentTranslationToolbar {...baseProps} done={1} running />);
+    expect(screen.queryByRole('button', { name: '翻译注释' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '重新翻译' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '停止翻译' })).toBeInTheDocument();
+    expect(screen.getByText('已译 1 / 3')).toBeInTheDocument();
   });
 
   it('should call onStart when the primary action is clicked', () => {

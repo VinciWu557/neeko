@@ -108,6 +108,23 @@ describe('commentDecorations / 失败条目', () => {
     expect(result[0]?.text).toBe('');
   });
 
+  /**
+   * 失败类型必须一路透到 decoration 数据上：chip 的措辞与「能不能点重试」
+   * 都只依赖这个字段，丢了它 transport 失败会被渲染成可点击的 ⚠ 原因。
+   */
+  it('should carry failureKind through to the decoration', () => {
+    const failed: CommentTranslationEntry = {
+      from: 0,
+      to: 10,
+      text: '',
+      reason: 'agent exited with code 1',
+      groupKey: 1,
+      failureKind: 'transport',
+    };
+    const result = build([failed], ranges([0, 100]), 'below');
+    expect(result[0]?.failureKind).toBe('transport');
+  });
+
   it('should render the failure chip in inline mode too', () => {
     const failed: CommentTranslationEntry = {
       from: 0,

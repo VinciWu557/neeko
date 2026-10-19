@@ -34,6 +34,14 @@ export interface CommentTranslationEntry {
   /** 失败原因（有值表示这条没翻成功，呈现层画 reason chip）。 */
   reason?: string;
   /**
+   * 失败类型：决定 chip 的措辞与「重试」是否可用。
+   *
+   * `transport`（断网 / Agent 崩溃 / 超时）不是这一条注释的问题，重试单组通常也没用 ——
+   * 这类故障由通知中心统一上报，chip 只说明发生了什么。`validation`（译文没过校验）
+   * 才是单组重试真正能救的场景。
+   */
+  failureKind?: 'validation' | 'transport';
+  /**
    * 所属组的标识（`CommentGroup.startLine`，1-based）—— 单组重试（R6.6）的定位依据。
    *
    * 为什么带在这条数据上而不是另建一张表：chip 是**纯 DOM** 产物（`WidgetType.toDOM`），

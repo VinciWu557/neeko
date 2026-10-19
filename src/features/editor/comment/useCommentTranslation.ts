@@ -50,7 +50,7 @@ import { extractComments, type TreeLike } from './extractComments';
 import { groupComments, type CommentGroup } from './groupComments';
 import { rebuildBlock, type RebuildInput } from './rebuildBlock';
 import { segmentBlock, type Segment, type SegmentBlock } from './segmentBlock';
-import { translateSegments, type TranslateTurn } from './translateSegments';
+import { translateSegments, type FailureKind, type TranslateTurn } from './translateSegments';
 import type { TranslationCache } from './translationCache';
 
 /** 跳过统计（进 UI，让用户看懂为什么某些注释没翻）。 */
@@ -78,6 +78,15 @@ export interface CommentTranslationResult {
   translatedSegments: number;
   cacheHits: number;
   failedAddresses: string[];
+  /**
+   * address → 失败原因 / 类型。
+   *
+   * 从引擎原样透出：调用方要据此决定「在失败处重试」还是「上报到通知中心」。
+   * 在控制器里把它们丢掉，消费侧就只能从 entry 的 reason 字符串反推类型 ——
+   * 模型的报错文案是自由文本，那种反推必然误判。
+   */
+  failureReasons: Record<string, string>;
+  failureKinds: Record<string, FailureKind>;
   aborted: boolean;
 }
 
@@ -267,6 +276,8 @@ export async function runCommentTranslation(
     translatedSegments: 0,
     cacheHits: 0,
     failedAddresses: [],
+    failureReasons: {},
+    failureKinds: {},
     aborted: false,
   });
 
@@ -352,6 +363,7 @@ export async function runCommentTranslation(
   for (const plan of plans) {
     const texts = new Map<Segment, string>();
     let reason: string | undefined;
+    let failureKind: 'validation' | 'transport' | undefined;
 
     for (const [segment, address] of plan.addresses) {
       const text = engine.translations[address];
@@ -360,8 +372,12 @@ export async function runCommentTranslation(
         translatedSegments++;
         continue;
       }
-      // 组级 entry 只带**第一条**失败段的原因（多段失败时取文档顺序首个）
-      if (reason === undefined) reason = engine.failureReasons[address];
+      // 组级 entry 只带**第一条**失败段的原因（多段失败时取文档顺序首个）。
+      // 类型跟着同一条走，否则会出现「原因来自 A 段、类型来自 B 段」的错配。
+      if (reason === undefined) {
+        reason = engine.failureReasons[address];
+        failureKind = engine.failureKinds[address];
+      }
     }
 
     // 组内一段都没翻成、也无失败原因（如被 abort 跳过）→ 不画
@@ -376,7 +392,14 @@ export async function runCommentTranslation(
     );
     entries.push(
       reason
-        ? { from, to, text: lines.join('\n'), reason, groupKey: plan.group.startLine }
+        ? {
+            from,
+            to,
+            text: lines.join('\n'),
+            reason,
+            groupKey: plan.group.startLine,
+            ...(failureKind === undefined ? {} : { failureKind }),
+          }
         : { from, to, text: lines.join('\n'), groupKey: plan.group.startLine },
     );
   }
@@ -389,6 +412,8 @@ export async function runCommentTranslation(
     translatedSegments,
     cacheHits: engine.cacheHits,
     failedAddresses: engine.failedAddresses,
+    failureReasons: engine.failureReasons,
+    failureKinds: engine.failureKinds,
     aborted: engine.aborted,
   };
 }

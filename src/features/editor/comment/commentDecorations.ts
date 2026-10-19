@@ -39,6 +39,8 @@ export interface CommentDecoration {
   text: string;
   /** 失败原因（有值则画 reason chip）。 */
   reason?: string;
+  /** 失败类型（决定 chip 措辞与重试是否可用）。 */
+  failureKind?: 'validation' | 'transport';
   /** 所属组标识（`CommentGroup.startLine`）—— 失败 chip 的单组重试据此定位（R6.6）。 */
   groupKey?: number;
 }
@@ -97,6 +99,7 @@ export function buildCommentDecorations(options: BuildOptions): CommentDecoratio
       to: entry.to,
       text: entry.text,
       ...(entry.reason ? { reason: entry.reason } : {}),
+      ...(entry.failureKind ? { failureKind: entry.failureKind } : {}),
       // `groupKey` 必须一同下发：chip 是纯 DOM 产物，点击时只能从 DOM 上读回定位信息。
       // 漏拷这一字段的表现是「chip 渲染正常但点击无任何反应」，无报错。
       ...(entry.groupKey === undefined ? {} : { groupKey: entry.groupKey }),
