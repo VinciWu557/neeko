@@ -25,6 +25,23 @@ export function rawText(docText: string, node: SyntaxNode): string {
 }
 
 /**
+ * 行首位置表（**行索引的唯一构造点**）：0-based 行号 → 字符位置。
+ *
+ * 两种用法共享同一次 O(n) 扫描：
+ * - `pos → 行号`（{@link createLineLookup}）—— 提取/发现路径按位置求行号；
+ * - `行号 → pos`（本函数）—— 需要某行的起止位置时（工具链指令的载判、段落定位）。
+ *
+ * 为什么不给两个独立实现：它们扫的是同一份 `\n` 分布，分家必然漂移（已实测过三份副本）。
+ */
+export function createLineStarts(docText: string): number[] {
+  const starts: number[] = [0];
+  for (let i = 0; i < docText.length; i++) {
+    if (docText.charCodeAt(i) === 10 /* \n */) starts.push(i + 1);
+  }
+  return starts;
+}
+
+/**
  * 行号查询器：**O(n) 建索引一次，O(log n) 查询**。
  *
  * **为什么必须用它、而不是「按位置扫一遍」**：`line = 数 docText[0..pos] 里的 \n` 这种写法
@@ -34,11 +51,7 @@ export function rawText(docText: string, node: SyntaxNode): string {
  * 让「误用成二次方」在 API 层面不可能发生。
  */
 export function createLineLookup(docText: string): (pos: number) => number {
-  const lineStarts: number[] = [0];
-  for (let i = 0; i < docText.length; i++) {
-    if (docText.charCodeAt(i) === 10 /* \n */) lineStarts.push(i + 1);
-  }
-  const starts = lineStarts;
+  const starts = createLineStarts(docText);
   return (pos: number): number => {
     // 二分：最后一个 <= pos 的行首下标，+1 转 1-based（与 TestCaseInfo.line 同坐标系）
     let lo = 0;

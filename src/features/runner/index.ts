@@ -41,3 +41,7 @@ export {
   isTestCaseFile,
 } from './languages';
 export { overlayKey, overlayProviderFor } from './languages';
+// 行号索引（`syntax/lezer`）：editor 域的行号/位置换算与 runner 的发现路径必须是
+// **同一份实现**（O(n) 建一次 + O(log n) 查询）。`syntax/lezer` 是深导路径，
+// 防火墙不允许，故经门面公开。runner 不反向依赖 editor，无环。
+export { createLineLookup, createLineStarts } from './syntax/lezer';
