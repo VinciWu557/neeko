@@ -24,6 +24,7 @@ import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai
 import { planSession } from './session-plan.ts'
 import { switchedSelection } from './model-switch.ts'
 import { withReasoningEffort } from './thinking.ts'
+import { titlesFromObservations } from './resume-list.ts'
 
 /**
  * The slice of dsh's `llm` service the model picker consumes.
@@ -65,6 +66,15 @@ import type { TranscriptState } from './transcript.ts'
 import { buildHistory, readSessionEvents } from '../dsh-adapter.ts'
 import { TuiApp } from './app.ts'
 import type { ModelChoice } from './command-controller.ts'
+
+/**
+ * How many session titles are folded at once.
+ *
+ * Matches dsh's own prepared-session cache size: each title decompresses one
+ * session artifact, and an unbounded fan-out over the whole corpus never
+ * completes.
+ */
+const TITLE_CONCURRENCY = 5
 
 /** Stable Cordis plugin name — must match the `neeko-tui` patch row. */
 export const name = 'tui'
@@ -298,13 +308,20 @@ export function apply(ctx: Context, config: TuiConfig): void {
         })
       }
 
-      const agent = handle.agent
+      // Reassignable: `/resume` switches the whole attachment (agent, history,
+      // transcript, timing) at runtime, and every consumer below reads this
+      // binding rather than a captured one.
+      // Reassignable: `/resume` rebuilds the attachment (agent, history,
+      // transcript, timing) at runtime, and every consumer below reads these
+      // bindings rather than captured copies.
+      let current = handle
+      let agent = current.agent
       await agent.whenIdle()
 
       // Restore history first: settled rows render before any live frame, so
       // the attach timeline (transcript's attachTime vs event time) cleanly
       // separates "was already in the log" from "will arrive as a delta".
-      const transcript: TranscriptState = { attachTime: Date.now(), rows: [] }
+      let transcript: TranscriptState = { attachTime: Date.now(), rows: [] }
       restoreRows(transcript, buildHistory(readSessionEvents(agent.session)))
 
       // Skills are an async catalogue, so they arrive as a **startup snapshot**
@@ -322,6 +339,39 @@ export function apply(ctx: Context, config: TuiConfig): void {
           usageFold = { size: events.length, value: foldUsage(events) }
         }
         return usageFold.value
+      }
+
+      /**
+       * The session corpus, typed to what this runner reads.
+       *
+       * Narrow on purpose: `listSessions` plus the optional per-session title
+       * fold. A resolve failure is thrown (not swallowed) so the app can report
+       * a real reason instead of showing an empty list.
+       */
+      type SessionCorpus = {
+        listSessions(signal?: AbortSignal): Promise<readonly {
+          header: { id: string; createdAt: number; cwd?: string }
+          live: boolean
+          persisted: boolean
+        }[]>
+        readTitle?(id: never, signal?: AbortSignal): Promise<{ title: string } | undefined>
+        /**
+         * Batch title fold: one corpus observation for many sessions.
+         *
+         * Much cheaper than `readTitle` per id — the persistence listing and the
+         * per-source reads are shared across the batch, which is what makes a
+         * pre-scan of the list affordable at all.
+         */
+        readTitleSnapshots?(ids: readonly never[], signal?: AbortSignal): Promise<readonly {
+          sessionId: string
+          status: 'fulfilled' | 'rejected'
+          value?: { title?: { title: string } }
+        }[]>
+      }
+      const sessionQuery = (): SessionCorpus => {
+        const query = ctx.get('sessionQuery') as SessionCorpus | undefined
+        if (query === undefined) throw new Error('the session query service is unavailable')
+        return query
       }
 
       app = new TuiApp({
@@ -469,6 +519,70 @@ export function apply(ctx: Context, config: TuiConfig): void {
           // "provider default", and an explicit one verbatim).
           selectionRef.current = withReasoningEffort(liveSelection(), effort)
         },
+        // `/resume`: dsh owns the corpus (filesystem logs folded into a query
+        // service); titles are per-session folds, so they are read in parallel
+        // and a failing title must not drop the session from the list.
+        // `/resume`: dsh owns the corpus. `listSessions()` is cheap (it reads one
+        // header per stored session: 419 files in ~60 ms here), but a *title* is a
+        // separate log read per session — doing that for the whole corpus is what
+        // made the picker appear to hang. So titles are fetched lazily, in
+        // batches, as the user moves the cursor (see `listSessions` +
+        // `sessionTitles`).
+        listSessions: async () => {
+          const query = sessionQuery()
+          const records = await query.listSessions()
+          return records.map((record) => ({
+            header: record.header,
+            live: record.live,
+            persisted: record.persisted,
+          }))
+        },
+        // Titles for a bounded slice, with bounded concurrency.
+        //
+        // Each title is a log read that has to decompress the session artifact,
+        // and dsh's own prepared-session cache defaults to 5 for exactly this
+        // reason. Firing one read per session in parallel (424 here) does not
+        // finish at all — measured: still pending after 40 s, which is why every
+        // row showed the id fallback instead of its title.
+        sessionTitles: async (ids: readonly string[]) => {
+          const query = sessionQuery()
+          const out: Record<string, string> = {}
+          // Batch path first: it shares one corpus observation across every id,
+          // and falls through to the per-id loop only when the service does not
+          // expose it (an older dsh).
+          if (typeof query.readTitleSnapshots === 'function') {
+            try {
+              const results = await query.readTitleSnapshots(ids as readonly never[])
+              // The shape mapping is load-bearing (batch is the only affordable
+              // path), so it lives in `resume-list` where it is unit-tested.
+              return titlesFromObservations(results)
+            } catch {
+              // Fall through to the per-id reads rather than losing the page.
+            }
+          }
+          const queue = [...ids]
+          const worker = async (): Promise<void> => {
+            for (;;) {
+              const id = queue.shift()
+              if (id === undefined) return
+              try {
+                const title = await query.readTitle?.(id as never)
+                if (title !== undefined) out[id] = title.title
+              } catch {
+                // A session whose title cannot be folded is still resumable.
+              }
+            }
+          }
+          await Promise.all(
+            Array.from({ length: Math.min(TITLE_CONCURRENCY, ids.length) }, () => worker()),
+          )
+          return out
+        },
+        // Switching rebuilds the attachment: the transcript is a projection of
+        // one session's log, so it cannot be patched across a switch.
+        resumeSession: (sessionId: string) => {
+          void switchTo(sessionId)
+        },
         onExit: () => {
           // Order matters: stop the TUI first — that restores raw mode and
           // pauses stdin, the handle keeping the event loop alive. `appExit` is
@@ -489,14 +603,62 @@ export function apply(ctx: Context, config: TuiConfig): void {
           })
         },
       })
+      /**
+       * Re-attach the whole TUI to another session.
+       *
+       * A transcript is a projection of *one* session's log, and the event
+       * pumps, status facts and timing window are all bound to one agent — so a
+       * switch rebuilds them rather than patching them. The old handle is
+       * disposed first: two live agents would both answer `agent/status` and the
+       * spinner would follow whichever fired last.
+       *
+       * Failure leaves the current session running: a bad id must not cost the
+       * user their conversation.
+       *
+       * @param sessionId - the session to attach to.
+       */
+      async function switchTo(sessionId: string): Promise<void> {
+        const live = app
+        if (live === undefined) return
+        try {
+          const next = await agents!.resume({
+            resumeSessionId: SessionId(sessionId),
+            agentOptions: { provider: liveSelection().provider, model: liveSelection().model },
+            setup,
+          })
+          await next.agent.whenIdle()
+          const previous = current
+          current = next
+          agent = next.agent
+          // A different session is a different measurement window and a
+          // different log, so both caches belong to the old attachment.
+          timing = emptyTiming()
+          usageFold = undefined
+          const restored: TranscriptState = { attachTime: Date.now(), rows: [] }
+          restoreRows(restored, buildHistory(readSessionEvents(agent.session)))
+          transcript = restored
+          live.mountTranscript(restored)
+          live.refreshStatus()
+          live.requestRender()
+          // Release the old attachment only after the new one is live, so a
+          // failed switch cannot leave the TUI attached to nothing.
+          await previous.dispose().catch(() => {})
+        } catch (error: unknown) {
+          out.stderr.write(`tui-runner: /resume ${sessionId} failed (${error instanceof Error ? error.message : String(error)})\n`)
+          live.notify(`could not resume ${sessionId}: ${error instanceof Error ? error.message : String(error)}`, 'error')
+        }
+      }
+
       app.mountTranscript(transcript)
       // Session timing (pi-timing's model): generation spans are measured from
       // the attempt's start frame to its end frame, tool time counts contiguous
       // runs once (parallel tools share a wall clock), and `active` excludes
       // idle gaps.
-      const timing = emptyTiming()
-      // Live event pumps: host-level subscriptions, filtered to the live agent
-      // (same shape as the bridge's start()).
+      let timing = emptyTiming()
+      // Live event pumps: host-level subscriptions, filtered to the agent we are
+      // currently attached to. `agent` is reassigned by `/resume`, so these
+      // filters keep working across a switch without re-subscribing (which would
+      // leak a listener per switch).
       ctx.on('session/event', (session, event) => {
         if (session !== agent.session) return
         const now = Date.now()

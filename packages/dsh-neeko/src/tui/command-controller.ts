@@ -35,6 +35,8 @@ export type CommandAction =
     { readonly kind: 'notice'; readonly text: string }
   | /** `/thinking` — bare opens the selector, an argument applies it. */
     { readonly kind: 'thinking'; readonly argument: string }
+  | /** `/resume` — bare opens the session picker, an argument resumes that id. */
+    { readonly kind: 'resume'; readonly argument: string }
   | { readonly kind: 'clear' }
   | { readonly kind: 'exit' }
   | { readonly kind: 'model-picker' }
@@ -113,6 +115,8 @@ export class CommandController {
         return { kind: 'toggle-fullscreen' }
       case 'thinking':
         return { kind: 'thinking', argument: outcome.argument }
+      case 'resume':
+        return { kind: 'resume', argument: outcome.argument }
     }
   }
 

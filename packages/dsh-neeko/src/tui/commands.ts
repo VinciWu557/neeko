@@ -58,6 +58,7 @@ export const TUI_COMMANDS: readonly TuiCommand[] = [
   // shape-free: a fixed `[low|high]` would advertise levels the current model
   // may not accept.
   { name: 'thinking', description: 'Set the reasoning effort', argumentHint: '[level]' },
+  { name: 'resume', description: 'Switch to another session', argumentHint: '[session]' },
   { name: 'theme', description: 'Switch the color theme', argumentHint: '[dark|light]' },
   { name: 'fullscreen', description: 'Toggle fullscreen (click to expand, own selection)' },
   { name: 'exit', description: 'Quit the terminal UI' },
@@ -78,6 +79,8 @@ export type CommandOutcome =
     { readonly kind: 'use-theme'; readonly name: string }
   | /** `/thinking` — bare opens a selector, with an argument applies it. */
     { readonly kind: 'thinking'; readonly argument: string }
+  | /** `/resume` — bare opens the session picker, an argument resumes that id. */
+    { readonly kind: 'resume'; readonly argument: string }
   | /** Enter or leave the alt-screen viewport. */
     { readonly kind: 'toggle-fullscreen' }
   | /**
@@ -126,6 +129,10 @@ export function runCommand(line: string): CommandOutcome {
       // `/model <id>` applies directly; a bare `/model` opens the picker.
       const argument = argumentOf(trimmed, name)
       return argument === '' ? { kind: 'pick-model' } : { kind: 'use-model', id: argument }
+    }
+    case 'resume': {
+      // pi's split: bare opens the list, an argument resumes that id directly.
+      return { kind: 'resume', argument: argumentOf(trimmed, name) }
     }
     case 'thinking': {
       // pi's split: bare opens the selector, an argument is applied directly.
