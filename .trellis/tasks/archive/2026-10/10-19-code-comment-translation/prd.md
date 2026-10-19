@@ -155,7 +155,8 @@
 - R6.3 **按可视区裁剪**：只装饰 `view.visibleRanges` 内的组。
 - R6.4 `code` / `fence` 段在呈现上**原样显示**，并有视觉区分（等宽底纹），让用户看得出「这段没翻」。
 - R6.5 译文不进文档、不参与选中/复制。
-- R6.6 失败组显示原因 chip，可单组重试。
+- R6.6 失败组显示原因 chip，可单组重试。（**粒度是组**：点某组 chip 只重算该组，
+  其余组译文必须保留；工具条按钮保留「重试全部失败组」的粗粒度入口。）
 - R6.7 **docstring 重建缩进（D8-Docstring）**：译文多行时首行沿用原文首行缩进，
   后续行对齐到同一内容列（**不逐行照搬原文缩进** —— 译文行数常与原文不同）。
   引号风格（`"""` / `'''`）原样保留。
@@ -238,6 +239,10 @@
       | classifyBlock / segmentBlock / commentView | 87-93 | 68-81 |
       剩余缺口是**正则组合的不可达交叉**与**防御性早退**；判定逻辑的关键路径均有变异验证背书
       （共 40+ 次变异，全部被抓）。不为了指标改写生产代码结构。
+- [x] AC16b **失败组单组重试（R6.6）**：点某组的失败 chip 只重算该组 ——
+      prompt 里不出现其他组文本；**其他组的既有译文仍在**（entries 显式合并，
+      不是整体替换）；工具条的「重试全部」与 chip 的「只重试这一组」是两种粒度。
+      → 判定粒度取组的 `startLine`（下标会被门禁跳过摇摆、偏移会随编辑平移）。
 - [x] AC18 原型 HTML 自包含、无外部依赖、无 JS 报错，演示：四种显示模式 · 跳过分类 ·
       **块内代码段原样保留** · docstring/JSDoc 翻译 · 校验失败重试。
       → 已完成（jsdom 22/22，零 console 错误）：
@@ -278,13 +283,30 @@ src/features/editor/comment/
   commentDecorations.ts   装饰规格（纯函数，visibleRanges 裁剪）
   commentView.ts          Decoration/Widget 渲染 + ViewPlugin
   useCommentTranslation.ts 端到端控制器
-src/features/editor/components/CommentTranslationToolbar.tsx  工具条
+src/features/editor/hooks/useCommentTranslateActions.ts      入口状态机（方案 A）
+src/features/editor/comment/isTranslatableCommentFile.ts     入口显示判据
+src/features/editor/components/CommentTranslationBar.tsx     入口装配（避免 FileEditor 越线）
+src/features/editor/components/CommentTranslationToolbar.tsx  工具条（纯展示）
 .trellis/spec/frontend/comment-translation.md                沉淀的契约与踩坑表
 ```
 
-**未接线项（刻意）**：控制器 `runCommentTranslation` 与工具条尚未挂到 `FileEditor`/`TranslationView`
-—— 那需要先定「注释翻译」入口放在哪（编辑器内浮动按钮 vs 现有 Translate 视图的第五个子模式），
-属产品决策。当前状态：能力完整可调用，入口待定。
+**入口已接线（方案 A：编辑器内浮动工具条，用户 2026-10-19 定案）**：
+
+```
+FileViewer（每个文件 tab）
+  └─ FileEditor
+       ├─ CommentTranslationBar      ← 新增：装配 hook + 条件显示（canEdit + 语言可翻译）
+       │    ├─ useCommentTranslateActions   状态机（run/stop/retry/mode）
+       │    └─ CommentTranslationToolbar    纯展示（四模式 + 跳过/失败/缓存统计）
+       └─ FileEditorView            编辑器（decoration 由 commentView 渲染）
+```
+
+启动路径：点「翻译注释」→ `syntaxTree(view.state)`（复用增量树）→ `runCommentTranslation`
+→ `dispatch(setCommentTranslations)` → `ViewPlugin` 重算 decoration → 译文出现。
+**全程不触碰文档字节**（AC15 有断言）。
+
+默认项（agent / model / 语言 / 显示模式）由 `CommentTranslationBar` 自读
+`AppConfig.translation`，不经 `FileEditor` 透传 —— 后者贴着 300 行红线。
 
 ## Notes
 
