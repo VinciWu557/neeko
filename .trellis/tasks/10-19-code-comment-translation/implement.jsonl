@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "禁止模式 10（配置纯净 / reconfigure 丢 lint 扩展）是本任务 D3 的直接依据；另含 check:quick 与 check 分工"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "useCommentTranslation 控制器与 useDeltaBatcher 的 rAF 批处理模式；execution-effect 依赖对象陷阱"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "comment/ 与 translation/ 新增模块的落点与命名约定"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "纯函数 100% + fake turn 桩 + EditorState 级测试的层级划分"}

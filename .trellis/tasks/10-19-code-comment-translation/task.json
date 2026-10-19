@@ -1,0 +1,28 @@
+{
+  "id": "code-comment-translation",
+  "name": "code-comment-translation",
+  "title": "代码编辑器注释翻译（AST 注释单元 + 原位叠层 + 内容寻址缓存）",
+  "description": "在 Neeko 代码编辑器内翻译源码注释（非文档文件）：按 Lezer 语法树提取注释节点为翻译单元，内容寻址缓存实现增量与跨文件去重，校验层保证代码语义不被破坏（占位符/标识符/URL 不可翻），译文以 CodeMirror 装饰原位叠层展示（不改源文件），支持单文件手动、打开即预热与目录批译三档触发。复用现有 AgentAdapter 传输、TRANSLATION_EVENT 通道与 batches/prompt/verify 抽象；Rust 侧 0 改动。交付 HTML 交互原型。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "tincopper",
+  "assignee": "tincopper",
+  "createdAt": "2026-10-19",
+  "completedAt": null,
+  "branch": "main",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "superseded_by": "task re-scoped 2026-10-19: original PRD targeted documentation files (md/html/txt); user intent is code comment translation inside the editor. Artifacts rewritten in place."
+  }
+}

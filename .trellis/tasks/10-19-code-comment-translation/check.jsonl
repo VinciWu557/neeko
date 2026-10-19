@@ -1,0 +1,4 @@
+{"file": "src/AGENTS.md", "reason": "前端红线：导入防火墙、状态管理单源、红线 12 路径身份；确认 comment/ 纯层不破坏依赖方向"}
+{"file": "AGENTS.md", "reason": "跨栈红线 4/5 自检：译文按批走事件流、复用 TRANSLATION_EVENT 不新增通道"}
+{"file": ".trellis/spec/frontend/api-layer.md", "reason": "事件监听与常量来源：复用 TRANSLATION_EVENT 而非裸字符串，载荷类型来自 shared/types"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "address/cacheKey 的唯一构造点与 branded 类型约束（替代超限的 state-management.md）"}
