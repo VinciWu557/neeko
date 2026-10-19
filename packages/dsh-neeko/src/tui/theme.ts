@@ -21,42 +21,26 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { foregroundAnsi } from '@earendil-works/pi-tui'
+import { backgroundAnsi, foregroundAnsi, styleTextWithAnsi } from '@earendil-works/pi-tui'
 import { parseColor } from '@earendil-works/pi-tui'
 import type { Color, MarkdownTheme, TerminalColorMode } from '@earendil-works/pi-tui'
+import { highlightCodeFence } from './highlight.ts'
+import { THEME_TOKENS } from './theme-tokens.ts'
+import type { ThemeToken } from './theme-tokens.ts'
 import { BUILTIN_THEMES } from './theme-data.ts'
 import type { ThemeDocument } from './theme-data.ts'
 
 export { BUILTIN_THEMES }
 export type { ThemeDocument }
-
-/**
- * Every theme token pi defines (56), in pi's own order.
- *
- * Transcribed from `pi-coding-agent`'s `theme-tokens.js` so that a **pi theme
- * file works unchanged**: locking the parser to the dozen tokens this TUI
- * paints today would reject valid pi themes outright, and would silently drop
- * their Markdown / syntax colors. Rendering still only reads what it uses.
- */
-export const THEME_TOKENS = [
-  'accent', 'border', 'borderAccent', 'borderMuted', 'success', 'error',
-  'warning', 'muted', 'dim', 'text', 'thinkingText', 'scrollbarTrack',
-  'scrollbarThumb', 'selectedBg', 'searchMatchBg', 'searchMatchText', 'userMessageBg', 'userMessageText',
-  'customMessageBg', 'customMessageText', 'customMessageLabel', 'toolPendingBg', 'toolSuccessBg', 'toolErrorBg',
-  'toolTitle', 'toolOutput', 'mdHeading', 'mdLink', 'mdLinkUrl', 'mdCode',
-  'mdCodeBlock', 'mdCodeBlockBorder', 'mdQuote', 'mdQuoteBorder', 'mdHr', 'mdListBullet',
-  'toolDiffAdded', 'toolDiffRemoved', 'toolDiffContext', 'syntaxComment', 'syntaxKeyword', 'syntaxFunction',
-  'syntaxVariable', 'syntaxString', 'syntaxNumber', 'syntaxType', 'syntaxOperator', 'syntaxPunctuation',
-  'thinkingOff', 'thinkingMinimal', 'thinkingLow', 'thinkingMedium', 'thinkingHigh', 'thinkingXhigh',
-  'thinkingMax', 'bashMode',
-] as const
-
-/** A theme token name. */
-export type ThemeToken = (typeof THEME_TOKENS)[number]
+// Re-exported so the palette module stays the single import site for callers;
+// the definitions live in `theme-tokens.ts` to keep that file dependency-free.
+export { THEME_TOKENS } from './theme-tokens.ts'
+export type { ThemeToken } from './theme-tokens.ts'
 
 /** A resolved theme: token → ANSI escape, plus styling helpers. */
 export class Theme {
   private readonly fgAnsi = new Map<string, string>()
+  private readonly bgAnsi = new Map<string, string>()
   private readonly mode: TerminalColorMode
 
   constructor(
@@ -74,6 +58,7 @@ export class Theme {
       // `""` means "terminal default foreground": emit the reset sequence so the
       // token still produces well-formed output.
       this.fgAnsi.set(token, color === undefined ? '\x1b[39m' : foregroundAnsi(color, this.mode))
+      this.bgAnsi.set(token, color === undefined ? '\x1b[49m' : backgroundAnsi(color, this.mode))
     }
   }
 
@@ -82,6 +67,36 @@ export class Theme {
     const ansi = this.fgAnsi.get(token)
     if (ansi === undefined) throw new Error(`theme "${this.name}" has no color for "${token}"`)
     return `${ansi}${text}\x1b[39m`
+  }
+
+  /**
+   * Wrap text in a token's **background** colour.
+   *
+   * A tool card needs a filled band to read as a distinct object: without it the
+   * transcript is one undifferentiated column of text, which is exactly what
+   * made the cards unrecognisable.
+   *
+   * @param token - the token to read.
+   * @param text - the text to fill behind.
+   * @returns the text with a background escape.
+   */
+  bg(token: ThemeToken, text: string): string {
+    const ansi = this.bgAnsi.get(token)
+    if (ansi === undefined) throw new Error(`theme "${this.name}" has no background for "${token}"`)
+    return `${ansi}${text}\x1b[49m`
+  }
+
+  /**
+   * Whether a token is defined by this theme.
+   *
+   * Lets a surface fall back rather than throw when a pi theme omits a token
+   * this TUI would like to paint with.
+   *
+   * @param token - the token to test.
+   * @returns true when the theme defines it.
+   */
+  has(token: ThemeToken): boolean {
+    return this.document.colors[token] !== undefined
   }
 
   /**
@@ -383,6 +398,15 @@ export function resolveThemeByName(name: string, userThemes: readonly UserTheme[
  * @param theme - the active theme.
  * @returns a Markdown theme for `Markdown` components.
  */
+/**
+ * Width of the rule that replaces a code fence.
+ *
+ * pi-tui passes the fence string to `codeBlockBorder` without a width, so the
+ * rule cannot match the viewport; a fixed short rule reads as a separator
+ * without pretending to be a full-width frame.
+ */
+const CODE_RULE_WIDTH = 40
+
 export function markdownThemeOf(theme: Theme): MarkdownTheme {
   const paint = (token: ThemeToken, text: string): string =>
     theme.spec.colors[token] === undefined ? text : theme.fg(token, text)
@@ -392,15 +416,37 @@ export function markdownThemeOf(theme: Theme): MarkdownTheme {
     linkUrl: (text) => paint('mdLinkUrl', text),
     code: (text) => paint('mdCode', text),
     codeBlock: (text) => paint('mdCodeBlock', text),
-    codeBlockBorder: (text) => paint('mdCodeBlockBorder', text),
+    // pi-tui draws the fence as a literal ``` line and offers no way to drop it,
+    // so it is turned into a plain rule instead: a code block should read as a
+    // bordered region, not as Markdown source.
+    // pi-tui draws the fence as a literal ``` line and offers no way to drop it,
+    // so it becomes a rule instead: a code block should read as a bordered region,
+    // not as Markdown source. The language survives, because it is information
+    // (it explains why the code looks the way it does).
+    codeBlockBorder: (text) => {
+      const language = /^```(\w+)$/u.exec(text)?.[1]
+      return language === undefined
+        ? paint('mdCodeBlockBorder', '─'.repeat(CODE_RULE_WIDTH))
+        : `${paint('mdCodeBlockBorder', `─ ${language} `)}${paint('mdCodeBlockBorder',
+          '─'.repeat(Math.max(2, CODE_RULE_WIDTH - language.length - 3)))}`
+    },
     quote: (text) => paint('mdQuote', text),
     quoteBorder: (text) => paint('mdQuoteBorder', text),
     hr: (text) => paint('mdHr', text),
-    listBullet: (text) => paint('mdListBullet', text),
-    // pi derives emphasis from the text token rather than a dedicated one.
-    bold: (text) => text,
-    italic: (text) => text,
-    strikethrough: (text) => text,
-    underline: (text) => text,
+    // `-` is source syntax; the rendered list shows a bullet. pi does the same.
+    listBullet: (text) => paint('mdListBullet', text.replace(/^\s*[-*+]\s*/u, '• ')),
+    // Emphasis uses terminal attributes, not colour: a theme has no "bold pink"
+    // token, and returning the text unchanged (as this did) dropped **bold** and
+    // *italic* entirely, so emphasised words were indistinguishable.
+    bold: (text) => styleTextWithAnsi(text, undefined, undefined, { bold: true }),
+    italic: (text) => styleTextWithAnsi(text, undefined, undefined, { italic: true }),
+    strikethrough: (text) => styleTextWithAnsi(text, undefined, undefined, { strikethrough: true }),
+    underline: (text) => styleTextWithAnsi(text, undefined, undefined, { underline: true }),
+    // Fenced code is highlighted from the `syntax*` tokens. Without this a code
+    // block is one flat colour, which is the single biggest readability loss in
+    // a transcript full of code.
+    highlightCode: (code, language) => highlightCodeFence(code, language, paint),
+    // Two cells keeps long code readable against the surrounding prose.
+    codeBlockIndent: '  ',
   }
 }

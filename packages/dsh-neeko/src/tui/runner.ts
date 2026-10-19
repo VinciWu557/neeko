@@ -22,6 +22,18 @@ import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-app
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { planSession } from './session-plan.ts'
 import { switchedSelection } from './model-switch.ts'
+
+/**
+ * The slice of dsh's `llm` service the model picker consumes.
+ *
+ * `listProviders()` is synchronous and returns the *registered* routes, so it is
+ * the authority on which providers are configured right now; `listModels()` is
+ * per-provider and async (its adapter may be registered by another fiber).
+ */
+interface LlmCatalogue {
+  listProviders(): readonly { id: string; name: string }[]
+  listModels(provider: string): Promise<readonly { id: string; name: string; description?: string }[]>
+}
 import { collectHostCommands, collectSkills, executeHostCommand } from './host-commands.ts'
 import type { CommandExecuteRegistryLike, CommandRegistryLike, SkillRegistryLike } from './host-commands.ts'
 import { contextWindowOf, dshVersion, gitBranch, readContextPressure } from './host-facts.ts'
@@ -34,6 +46,7 @@ import { feedEvent, restoreRows } from './transcript.ts'
 import type { TranscriptState } from './transcript.ts'
 import { buildHistory, readSessionEvents } from '../dsh-adapter.ts'
 import { TuiApp } from './app.ts'
+import type { ModelChoice } from './command-controller.ts'
 
 /** Stable Cordis plugin name — must match the `neeko-tui` patch row. */
 export const name = 'tui'
@@ -229,6 +242,24 @@ export function apply(ctx: Context, config: TuiConfig): void {
         getSelection: liveSelection,
         cwd,
         version: dshVersion(),
+        // Attachments are content-addressed and verified on read, so the app
+        // cannot decode them itself; it asks here and caches the bytes.
+        readImage: async (attachmentId: string) => {
+          const attachment = ctx.get('attachment') as {
+            readImage(ref: { attachmentId: string }): Promise<{ ref: { mediaType: string }; data: Uint8Array }>
+          } | undefined
+          if (attachment === undefined) return undefined
+          try {
+            const stored = await attachment.readImage({ attachmentId } as never)
+            return {
+              base64: Buffer.from(stored.data).toString('base64'),
+              mediaType: stored.ref.mediaType,
+            }
+          } catch {
+            // A pruned or corrupt attachment must not break the transcript.
+            return undefined
+          }
+        },
         // Host command surface: DSH plugins register commands (including
         // skills-as-commands); this TUI renders them in the same `/` menu and
         // dispatches through the registry so their semantics stay owned by the
@@ -268,6 +299,10 @@ export function apply(ctx: Context, config: TuiConfig): void {
         },
         // `exactOptionalPropertyTypes`: omit the key rather than pass undefined.
         ...(process.env['DSH_NEEKO_THEME'] === undefined ? {} : { initialTheme: process.env['DSH_NEEKO_THEME'] }),
+        // `DSH_NEEKO_FULLSCREEN=1` starts in the alt screen. Opt-in via env rather
+        // than hard-coded: fullscreen owns scrolling and prints its document back
+        // on exit, which not every user wants by default.
+        ...(process.env['DSH_NEEKO_FULLSCREEN'] === '1' ? { initialFullscreen: true } : {}),
         getSessionId: () => String(agent.session.id),
         onSubmit: (text) => {
           const trimmed = text.trim()
@@ -280,16 +315,38 @@ export function apply(ctx: Context, config: TuiConfig): void {
           }))
         },
         modelPicker: async () => {
-          const llm = ctx.get('llm') as { listModels(provider: string): Promise<readonly { id: string; name: string; description?: string }[]> } | undefined
+          const llm = ctx.get('llm') as LlmCatalogue | undefined
           if (llm === undefined) throw new Error('llm service unavailable')
           const route = liveSelection()
-          const models = await llm.listModels(route.provider)
+          // Every *configured* provider, not just the active one: the picker is
+          // how a user switches provider, so scoping it to `route.provider`
+          // hides every alternative route (pi shows 195 models across all
+          // providers, not 36 from one).
+          const defaultSelection = ctx.get('agentDefaultModel')?.currentSelection()
+          const rows: ModelChoice[] = []
+          for (const provider of llm.listProviders()) {
+            // One failing provider must not blank the whole catalogue.
+            let models: Awaited<ReturnType<LlmCatalogue['listModels']>> = []
+            try {
+              models = await llm.listModels(provider.id)
+            } catch {
+              continue
+            }
+            for (const model of models) {
+              rows.push({
+                id: model.id,
+                name: model.name,
+                provider: provider.id,
+                // `default` is the profile's configured selection, not a
+                // provider-declared one — `LlmModelInfo` carries no such flag.
+                isDefault: defaultSelection !== undefined
+                  && defaultSelection.provider === provider.id
+                  && defaultSelection.model === model.id,
+              })
+            }
+          }
           return {
-            models: models.map((model) => ({
-              id: model.id,
-              name: model.name,
-              provider: route.provider,
-            })),
+            models: rows,
             // Composite identity so the picker can mark the active row even
             // when two providers expose the same model id.
             current: `${route.provider}/${route.model}`,
@@ -301,6 +358,10 @@ export function apply(ctx: Context, config: TuiConfig): void {
           // for why carrying `reasoningEffort` over makes the switch silent.
           selectionRef.current = switchedSelection(route, id)
           void defaultModel.saveSelection({ provider: route.provider, model: id }).catch(() => {})
+        },
+        setDefaultModel: (provider: string, id: string) => {
+          // The panel lists every provider, so the row names its own route.
+          void defaultModel.saveSelection({ provider, model: id }).catch(() => {})
         },
         onExit: () => {
           // Order matters: stop the TUI first — that restores raw mode and
@@ -348,8 +409,11 @@ export function apply(ctx: Context, config: TuiConfig): void {
         feedEvent(transcript, { kind: 'stream', frame })
         // Per-chunk path: only the timing ticks. Re-reading facts here would
         // fold the durable log once per token (see StatusController docs).
+        //
+        // No explicit `requestRender()`: `updateTiming` already notifies, and the
+        // transcript flush is coalesced on its own window. Rendering twice per
+        // token is what made streaming feel sluggish.
         app.updateTiming(timingLine(timing, now))
-        app.requestRender()
       })
       ctx.on('agent/status', ({ agent: owner, status }) => {
         if (owner !== agent) return
