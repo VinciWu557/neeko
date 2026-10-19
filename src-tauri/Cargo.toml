@@ -65,6 +65,8 @@ axum = "0.8"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["catch-panic", "timeout", "limit"] }
 subtle = "2"
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
