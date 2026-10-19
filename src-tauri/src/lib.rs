@@ -137,6 +137,8 @@ macro_rules! neeko_invoke_handler {
             $crate::agent::commands::discover_opencode_models,
             // ── Generic cache commands ───────────────────────────────────
             $crate::common::cache::commands::cache_get_many,
+            $crate::common::cache::commands::cache_list_keys,
+            $crate::common::cache::commands::cache_delete_many,
             $crate::common::cache::commands::cache_put_many,
             $crate::common::cache::commands::cache_evict,
             $crate::common::cache::commands::cache_clear,

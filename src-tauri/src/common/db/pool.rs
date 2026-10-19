@@ -38,12 +38,21 @@ pub fn open_pool(db_path: &Path, max_size: u32) -> Result<DbPool> {
 
 /// Open a pooled in-memory database.
 ///
-/// Capped at one connection on purpose: `SqliteConnectionManager::memory()`
-/// yields a *new empty database* per connection, so a larger pool would hand
-/// out databases that share nothing.
+/// Capped at one connection on purpose. `SqliteConnectionManager::memory()`
+/// (r2d2_sqlite 0.25) opens `file:<uuid>?mode=memory&cache=shared`, so every
+/// connection of one manager does share the same database — but capping at one
+/// keeps the test fixtures deterministic (no second connection can observe a
+/// half-written transaction, and `max_size` never becomes a knob a test has to
+/// reason about).
+///
+/// `busy_timeout` is still set here even though a single connection cannot
+/// contend with itself: fixtures that hand this pool to a second writer (or a
+/// test that later raises `max_size`) must not silently lose the timeout that
+/// [`open_pool`] guarantees. The two openers stay symmetric so a missing pragma
+/// is one diff away from being caught by the shared assertion below.
 pub fn open_memory_pool() -> Result<DbPool> {
     let manager = SqliteConnectionManager::memory()
-        .with_init(|conn| conn.execute_batch("PRAGMA foreign_keys=ON;"));
+        .with_init(|conn| conn.execute_batch("PRAGMA busy_timeout=7000; PRAGMA foreign_keys=ON;"));
     let pool = Pool::builder().max_size(1).build(manager)?;
     Ok(pool)
 }
@@ -147,5 +156,26 @@ mod tests {
                 .unwrap();
             assert_eq!(timeout, 7000, "with_init must apply to every connection");
         }
+    }
+
+    /// The in-memory opener must configure connections the same way.
+    ///
+    /// Without this, the file opener and the memory opener drift and the test
+    /// fixtures lose the timeout / FK guarantees that production has. Asserting
+    /// the non-default value is what gives it discriminative power.
+    #[test]
+    fn memory_pool_connections_carry_the_same_pragmas() {
+        let pool = open_memory_pool().unwrap();
+        let conn = pool.get().unwrap();
+
+        let timeout: i64 = conn
+            .pragma_query_value(None, "busy_timeout", |row| row.get(0))
+            .unwrap();
+        assert_eq!(timeout, 7000, "memory pool must keep busy_timeout");
+
+        let fk: i64 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(fk, 1, "memory pool must keep foreign_keys");
     }
 }
