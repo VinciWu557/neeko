@@ -23,9 +23,23 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 
+/**
+ * One image attached to a row.
+ *
+ * The bytes are **not** carried here: an `ImageBlock` holds an opaque
+ * `attachmentId`, and only the attachment service can turn that into bytes (with
+ * integrity verification). Storing the id keeps the row model serialisable and
+ * makes the read explicit — a synchronous render cannot do I/O.
+ */
+export interface RowImage {
+  readonly attachmentId: string
+  readonly mediaType: string
+  readonly name?: string
+}
+
 /** One rendered transcript row. */
 export type TranscriptRow =
-  | { kind: 'user'; messageId: string; content: string }
+  | { kind: 'user'; messageId: string; content: string; images?: readonly RowImage[] }
   | {
       kind: 'assistant'
       turn: number
@@ -43,6 +57,10 @@ export type TranscriptRow =
       args: unknown
       status: 'running' | 'success' | 'failed'
       result: string | undefined
+      /** Turn the call belongs to (drives folding); -1 when restored. */
+      turn: number
+      /** Images the result carried, if any. */
+      images?: readonly RowImage[]
     }
 
 /** Mutable transcript state owned by the UI layer. */
@@ -103,8 +121,11 @@ function feedLogEvent(state: TranscriptState, event: SessionEvent): void {
   switch (event.type) {
     case 'user/message': {
       const text = textFromBlocks(event.data.content)
-      if (text !== '') {
-        state.rows.push({ kind: 'user', messageId: String(event.data.id), content: text })
+      const images = imagesFromBlocks(event.data.content)
+      // An image-only message is still a message: dropping it would hide the
+      // turn entirely.
+      if (text !== '' || images.length > 0) {
+        state.rows.push({ kind: 'user', messageId: String(event.data.id), content: text, images })
       }
       break
     }
@@ -116,6 +137,9 @@ function feedLogEvent(state: TranscriptState, event: SessionEvent): void {
         args: parseToolArguments(event.data.arguments),
         status: 'running',
         result: undefined,
+        images: [],
+        // Tool rows fold with their turn, so they need one.
+        turn: currentTurn(state),
       })
       break
     }
@@ -125,6 +149,7 @@ function feedLogEvent(state: TranscriptState, event: SessionEvent): void {
       if (row === undefined) break // orphan result — the call predates this view
       row.status = event.data.message.isError === true ? 'failed' : 'success'
       row.result = textFromBlocks(event.data.message.content)
+      row.images = imagesFromBlocks(event.data.message.content)
       break
     }
     case 'assistant/message': {
@@ -147,7 +172,7 @@ function feedLogEvent(state: TranscriptState, event: SessionEvent): void {
 export function restoreRows(state: TranscriptState, rows: readonly HistoryRow[]): void {
   for (const row of rows) {
     if (row.kind === 'user' && row.messageId !== undefined && row.content !== undefined) {
-      state.rows.push({ kind: 'user', messageId: row.messageId, content: row.content })
+      state.rows.push({ kind: 'user', messageId: row.messageId, content: row.content, images: [] })
     } else if (row.kind === 'assistant' && row.messageId !== undefined
       && row.text !== undefined && row.thinking !== undefined) {
       state.rows.push({
@@ -168,6 +193,8 @@ export function restoreRows(state: TranscriptState, rows: readonly HistoryRow[])
         args: row.args,
         status: row.status,
         result: typeof row.result === 'string' ? row.result : undefined,
+        turn: -1,
+        images: [],
       })
     }
   }
@@ -190,6 +217,15 @@ export interface HistoryRow {
   result?: unknown
 }
 
+/** The turn the transcript is currently in (the newest assistant bubble's). */
+function currentTurn(state: TranscriptState): number {
+  for (let i = state.rows.length - 1; i >= 0; i -= 1) {
+    const row = state.rows[i]
+    if (row !== undefined && row.kind === 'assistant') return row.turn
+  }
+  return 0
+}
+
 /** The open assistant bubble for one attempt, if any. */
 function findOpenBubble(state: TranscriptState, attemptId: string): Extract<TranscriptRow, { kind: 'assistant' }> | undefined {
   for (let i = state.rows.length - 1; i >= 0; i -= 1) {
@@ -208,75 +244,33 @@ function parseToolArguments(raw: string): unknown {
   }
 }
 
+/**
+ * Collect the images of a message's content.
+ *
+ * Only the attachment id is kept: bytes need an async, verified read through the
+ * attachment service, which a render path cannot do.
+ *
+ * @param content - the message's content blocks.
+ * @returns one entry per image block, in order.
+ */
+function imagesFromBlocks(content: readonly ContentBlock[]): RowImage[] {
+  const images: RowImage[] = []
+  for (const block of content) {
+    if (block.type !== 'image') continue
+    const { attachment } = block
+    images.push({
+      attachmentId: String(attachment.attachmentId),
+      mediaType: attachment.mediaType,
+      ...(attachment.name === undefined ? {} : { name: attachment.name }),
+    })
+  }
+  return images
+}
+
 /** Join the text blocks of a message's content. */
 function textFromBlocks(content: readonly ContentBlock[]): string {
   return content
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('')
-}
-
-// ── rendering ───────────────────────────────────────────────────────────────
-// Row → pi-tui component. Kept in transcript.ts (not app.ts) so the mapping
-// stays a pure, testable function of the row model.
-
-import { Text } from '@earendil-works/pi-tui'
-import { Markdown } from '@earendil-works/pi-tui'
-import type { MarkdownTheme } from '@earendil-works/pi-tui'
-import type { ThemeToken } from './theme.ts'
-
-/** Colorless fallback used when the caller supplies no theme (tests). */
-const PLAIN_MARKDOWN_THEME: MarkdownTheme = {
-  heading: (text: string) => text,
-  link: (text: string) => text,
-  linkUrl: (text: string) => text,
-  code: (text: string) => text,
-  codeBlock: (text: string) => text,
-  codeBlockBorder: (text: string) => text,
-  quote: (text: string) => text,
-  quoteBorder: (text: string) => text,
-  hr: (text: string) => text,
-  listBullet: (text: string) => text,
-  bold: (text: string) => text,
-  italic: (text: string) => text,
-  strikethrough: (text: string) => text,
-  underline: (text: string) => text,
-}
-
-/**
- * Render one transcript row as a pi-tui component.
- *
- * @param row - the transcript row.
- * @param theme - token painter; absent means plain text (tests).
- * @param markdownTheme - Markdown styling; defaults to the colorless theme.
- * @returns the component to mount in the messages container.
- */
-export function renderRow(
-  row: TranscriptRow,
-  theme?: { fg(token: ThemeToken, text: string): string },
-  markdownTheme: MarkdownTheme = PLAIN_MARKDOWN_THEME,
-): Text | Markdown {
-  const paint = theme === undefined
-    ? (_token: ThemeToken, text: string): string => text
-    : (token: ThemeToken, text: string): string => theme.fg(token, text)
-  switch (row.kind) {
-    case 'user':
-      return new Text(`${paint('accent', '❯')} ${paint('userMessageText', row.content)}`)
-    case 'assistant': {
-      const parts: string[] = []
-      if (row.thinking !== '') parts.push(paint('thinkingText', row.thinking))
-      if (row.text !== '') parts.push(row.text)
-      if (parts.length === 0) parts.push(row.done ? '(no content)' : '…')
-      return new Markdown(parts.join('\n\n'), 1, 0, markdownTheme)
-    }
-    case 'tool': {
-      const [mark, token] = row.status === 'running'
-        ? ['⟳', 'muted'] as const
-        : row.status === 'failed'
-          ? ['✗', 'error'] as const
-          : ['✓', 'success'] as const
-      const detail = row.result === undefined ? '' : paint('dim', `\n  ${row.result}`)
-      return new Text(`${paint(token, mark)} ${paint('text', row.name)} ${paint('muted', JSON.stringify(row.args))}${detail}`)
-    }
-  }
 }

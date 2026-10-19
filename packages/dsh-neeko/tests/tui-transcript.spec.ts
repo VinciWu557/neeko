@@ -91,7 +91,7 @@ describe('transcript — durable log events', () => {
     const s = state()
     feedEvent(s, { kind: 'event', event: ev('tool/call', { turn: 1, step: 1, callId: 'c1', name: 'bash', arguments: '{"cmd":"ls"}' }) })
     expect(s.rows).toEqual([
-      { kind: 'tool', taskId: 'c1', name: 'bash', args: { cmd: 'ls' }, status: 'running', result: undefined },
+      { kind: 'tool', taskId: 'c1', name: 'bash', args: { cmd: 'ls' }, status: 'running', result: undefined, turn: 0, images: [] },
     ])
   })
 
@@ -117,7 +117,7 @@ describe('transcript — durable log events', () => {
   it('user/message renders as a settled user row', () => {
     const s = state()
     feedEvent(s, { kind: 'event', event: ev('user/message', { id: 'u1', content: [{ type: 'text', text: 'hi' }], source: {} }) })
-    expect(s.rows).toEqual([{ kind: 'user', messageId: 'u1', content: 'hi' }])
+    expect(s.rows).toEqual([{ kind: 'user', messageId: 'u1', content: 'hi', images: [] }])
   })
 
   it('unknown future events are ignored (fail-open)', () => {
