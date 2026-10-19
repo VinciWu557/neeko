@@ -213,11 +213,16 @@ describe('/clear is a view operation that sticks', () => {
     expect(rows()).toBe(0)
 
     // A repaint (what any session event triggers) must not resurrect the row.
+    // The flush is driven explicitly: it no longer re-arms itself, so an idle
+    // app must not repaint — that self-scheduling was the sluggishness.
+    const seam = app as unknown as { scheduleRender?: () => void }
+    seam.scheduleRender?.()
     await new Promise((resolve) => setTimeout(resolve, 120))
     expect(rows()).toBe(0)
 
     // Rows produced after the clear are new information and do appear.
     ;(state as { rows: unknown[] }).rows.push({ kind: 'user', content: 'new row' })
+    seam.scheduleRender?.()
     await new Promise((resolve) => setTimeout(resolve, 120))
     expect(rows()).toBe(1)
   })
@@ -364,61 +369,199 @@ describe('/model switch failures are visible', () => {
   })
 })
 
-describe('bare /model lists the catalogue', () => {
-  function makeWithModels(load: () => Promise<{ id: string; name: string; provider: string }[]>): {
+describe('/model opens a panel in place of the input area', () => {
+  function makePanel(models: { id: string; name: string; provider: string }[], current: string): {
+    app: TuiApp
     submit: (text: string) => Promise<void>
-    notices: () => string
+    panelScreen: (width?: number) => string
+    hasPanel: () => boolean
+    key: (data: string) => void
   } {
     const app = new TuiApp({
-      getSelection: () => ({ provider: 'test', model: 'm1' }),
+      getSelection: () => ({ provider: 'magpie', model: current }),
       cwd: '/tmp/test',
       getSessionId: () => 'session-test',
       onSubmit: () => {},
       onExit: () => {},
       version: '0.0.0-test',
       statusFacts: () => ({ cwd: '/tmp/test' }),
-      modelPicker: async () => ({ models: await load(), current: 'test/m1' }),
+      modelPicker: async () => ({ models, current: `magpie/${current}` }),
       selectModel: () => {},
       terminal: new FakeTerminal(),
     })
+    type Seams = {
+      modelPanel?: { component: { render(w: number): string[] } }
+      handleInput(d: string): unknown
+      submit(t: string): Promise<void>
+    }
+    const seam = app as unknown as Seams
     return {
-      submit: (text) => (app as unknown as { submit(t: string): Promise<void> }).submit.call(app, text),
-      notices: () => (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
-        .notices.children.map((child) => child.render(200).join('')).join('\n'),
+      app,
+      submit: (text) => seam.submit.call(app, text),
+      panelScreen: (width = 90) => seam.modelPanel === undefined
+        ? ''
+        : seam.modelPanel.component.render(width).join('\n').replace(/\x1b\[[0-9;]*m/gu, ''),
+      hasPanel: () => seam.modelPanel !== undefined,
+      key: (data) => { seam.handleInput.call(app, data) },
     }
   }
 
-  it('prints every model and marks the current one', async () => {
-    const { submit, notices } = makeWithModels(async () => [
+  it('shows the header, the catalogue and the key hint', async () => {
+    const { submit, panelScreen, hasPanel } = makePanel([
+      { id: 'group/auto-a', name: 'Model A', provider: 'magpie' },
+      { id: 'ark/b', name: 'Model B', provider: 'ark' },
+    ], 'group/auto-a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await submit('/model')
+    expect(hasPanel()).toBe(true)
+    const screen = panelScreen()
+    expect(screen).toContain('Only showing models from configured providers')
+    expect(screen).toContain('group/auto-a')
+    expect(screen).toContain('ark/b')
+    expect(screen).toContain('Enter to select')
+    expect(screen).toContain('Escape/Ctrl+C to cancel')
+  })
+
+  it('annotates each row with its provider and marks the current model', async () => {
+    const { submit, panelScreen } = makePanel([
+      { id: 'group/auto-a', name: 'Model A', provider: 'magpie' },
+      { id: 'ark/b', name: 'Model B', provider: 'ark' },
+    ], 'group/auto-a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await submit('/model')
+    const rows = panelScreen().split('\n')
+    expect(rows.some((row) => row.includes('group/auto-a') && row.includes('✓'))).toBe(true)
+    expect(panelScreen()).toContain('[magpie]')
+    expect(panelScreen()).toContain('[ark]')
+  })
+
+  it('shows the highlighted model\'s name in the detail line', async () => {
+    const { submit, panelScreen } = makePanel([
+      { id: 'group/auto-a', name: 'Model A', provider: 'magpie' },
+    ], 'group/auto-a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await submit('/model')
+    expect(panelScreen()).toContain('Model Name: Model A')
+  })
+
+  it('filters the catalogue as the user types', async () => {
+    // A 195-model catalogue is only usable if typing narrows it.
+    const { submit, panelScreen, key } = makePanel([
       { id: 'group/auto-a', name: 'A', provider: 'magpie' },
-      { id: 'group/auto-b', name: 'B', provider: 'magpie' },
-    ])
+      { id: 'ark/b', name: 'B', provider: 'ark' },
+    ], 'group/auto-a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
     await submit('/model')
-    const text = notices()
-    expect(text).toContain('group/auto-a')
-    expect(text).toContain('group/auto-b')
-    expect(text).toContain('Models (2)')
-    // The active route is marked so the list answers "which one am I on".
-    expect(text).toContain('test/m1')
+    key('a')
+    key('r')
+    key('k')
+    const screen = panelScreen()
+    expect(screen).toContain('ark/b')
+    expect(screen).not.toContain('group/auto-a')
   })
 
-  it('retries a transiently empty catalogue instead of reporting no models', async () => {
-    // Measured against the real runtime: llm.listModels() throws
-    // "no adapter registered for provider …" until another fiber registers it
-    // (~200ms), while the app warms the catalogue at construction.
-    let calls = 0
-    const { submit, notices } = makeWithModels(async () => {
-      calls += 1
-      return calls === 1 ? [] : [{ id: 'group/late', name: 'Late', provider: 'magpie' }]
+  it('commits the highlighted model on Enter', async () => {
+    const switched: string[] = []
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'magpie', model: 'group/auto-a' }),
+      cwd: '/tmp/test',
+      getSessionId: () => 'session-test',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0.0.0-test',
+      statusFacts: () => ({ cwd: '/tmp/test' }),
+      modelPicker: async () => ({
+        models: [{ id: 'group/auto-a', name: 'A', provider: 'magpie' }],
+        current: 'magpie/group/auto-a',
+      }),
+      selectModel: (id) => { switched.push(id) },
+      terminal: new FakeTerminal(),
     })
-    await submit('/model')
-    expect(notices()).toContain('group/late')
-    expect(calls).toBeGreaterThan(1)
+    const seam = app as unknown as { submit(t: string): Promise<void>; handleInput(d: string): unknown }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await seam.submit.call(app, '/model')
+    seam.handleInput.call(app, '\r')
+    // The switch is committed asynchronously (applyModelById validates the id
+    // against the catalogue before calling back).
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(switched).toEqual(['group/auto-a'])
   })
 
-  it('only reports a hard absence after a retry also comes back empty', async () => {
-    const { submit, notices } = makeWithModels(async () => [])
+  it('closes on Esc without switching', async () => {
+    const switched: string[] = []
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'magpie', model: 'group/auto-a' }),
+      cwd: '/tmp/test',
+      getSessionId: () => 'session-test',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0.0.0-test',
+      statusFacts: () => ({ cwd: '/tmp/test' }),
+      modelPicker: async () => ({
+        models: [{ id: 'group/auto-a', name: 'A', provider: 'magpie' }],
+        current: 'magpie/group/auto-a',
+      }),
+      selectModel: (id) => { switched.push(id) },
+      terminal: new FakeTerminal(),
+    })
+    const seam = app as unknown as {
+      submit(t: string): Promise<void>; handleInput(d: string): unknown
+      modelPanel?: unknown
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await seam.submit.call(app, '/model')
+    seam.handleInput.call(app, '\x1b')
+    expect(seam.modelPanel).toBeUndefined()
+    expect(switched).toEqual([])
+  })
+
+  it('occupies the editor slot instead of floating over the transcript', async () => {
+    // The panel replaces the input surface, so it must be a direct child of the
+    // screen in the editor's position — not an overlay composited on top.
+    const { app, submit } = makePanel([{ id: 'group/a', name: 'A', provider: 'magpie' }], 'group/a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
     await submit('/model')
-    expect(notices()).toContain('models are not available')
+    const seam = app as unknown as {
+      tui: { children: { constructor: { name: string } }[] }
+      editor: object
+      modelPanel?: { component: object }
+    }
+    const names = seam.tui.children.map((child) => child.constructor.name)
+    expect(names).toContain('Container')
+    expect(seam.tui.children).toContain(seam.modelPanel?.component)
+    expect(seam.tui.children).not.toContain(seam.editor)
+  })
+
+  it('puts the status bar last and only once', async () => {
+    // `addChild` appends: without detaching first, every open would stack
+    // another status bar.
+    const { app, submit } = makePanel([{ id: 'group/a', name: 'A', provider: 'magpie' }], 'group/a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    for (let i = 0; i < 3; i += 1) {
+      await submit('/model')
+      ;(app as unknown as { handleInput(d: string): unknown }).handleInput('\x1b')
+    }
+    const seam = app as unknown as {
+      tui: { children: object[] }
+      status: { component: object }
+    }
+    const occurrences = seam.tui.children.filter((child) => child === seam.status.component)
+    expect(occurrences).toHaveLength(1)
+    expect(seam.tui.children.at(-1)).toBe(seam.status.component)
+  })
+
+  it('restores the editor when cancelled', async () => {
+    const { app, submit } = makePanel([{ id: 'group/a', name: 'A', provider: 'magpie' }], 'group/a')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await submit('/model')
+    ;(app as unknown as { handleInput(d: string): unknown }).handleInput('\x1b')
+    const seam = app as unknown as { tui: { children: object[] }; editor: object }
+    expect(seam.tui.children).toContain(seam.editor)
+  })
+
+  it('reports a hard absence instead of opening an empty panel', async () => {
+    const { submit, hasPanel } = makePanel([], '')
+    await submit('/model')
+    expect(hasPanel()).toBe(false)
   })
 })
