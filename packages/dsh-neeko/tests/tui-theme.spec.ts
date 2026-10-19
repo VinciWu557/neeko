@@ -267,6 +267,58 @@ describe('pi theme compatibility', () => {
     expect(md.quote?.('z')).toContain(dark.ansiOf('mdQuote'))
   })
 
+  it('highlights fenced code from the syntax tokens', () => {
+    // Without this a code block is one flat colour — the biggest readability
+    // loss in a transcript full of code.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    expect(md.highlightCode).toBeTypeOf('function')
+    const lines = md.highlightCode?.('const a = "x" // note', 'ts') ?? []
+    expect(lines).toHaveLength(1)
+    // Each class is painted from its own token.
+    expect(lines[0]).toContain(dark.ansiOf('syntaxKeyword'))
+    expect(lines[0]).toContain(dark.ansiOf('syntaxString'))
+    expect(lines[0]).toContain(dark.ansiOf('syntaxComment'))
+  })
+
+  it('returns the code unchanged when the fence has no language', () => {
+    const dark = resolveTheme(findBuiltin('dark')!)
+    expect(markdownThemeOf(dark).highlightCode?.('plain text', undefined)).toEqual(['plain text'])
+  })
+
+  it('renders list markers as bullets, not source dashes', () => {
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    const striped = (md.listBullet?.('- ') ?? '').replace(/\x1b\[[0-9;]*m/gu, '')
+    expect(striped).toBe('• ')
+  })
+
+  it('draws a code fence as a rule instead of raw backticks', () => {
+    // A ``` fence is Markdown *source*; the reader wants a bordered region.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    const strip = (text?: string): string => (text ?? '').replace(/\x1b\[[0-9;]*m/gu, '')
+    expect(strip(md.codeBlockBorder?.('```'))).not.toContain('```')
+    expect(strip(md.codeBlockBorder?.('```'))).toContain('─')
+    // …and the language label survives: it explains the code.
+    expect(strip(md.codeBlockBorder?.('```ts'))).toContain('ts')
+  })
+
+  it('indents code so it reads as a block', () => {
+    expect(markdownThemeOf(resolveTheme(findBuiltin('dark')!)).codeBlockIndent).toBe('  ')
+  })
+
+  it('styles emphasis with terminal attributes', () => {
+    // Returning the text unchanged dropped **bold** and *italic* entirely, so
+    // emphasised words read exactly like the rest of the sentence.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    expect(md.bold?.('x')).toContain('\x1b[1m')
+    expect(md.italic?.('x')).toContain('\x1b[3m')
+    expect(md.underline?.('x')).toContain('\x1b[4m')
+    expect(md.strikethrough?.('x')).toContain('\x1b[9m')
+  })
+
   it('leaves md tokens unstyled only for a hand-built sparse theme', () => {
     // `resolveTheme` always overlays, so this shape exists only via `new Theme`
     // — the guard keeps Markdown rendering safe there too.
