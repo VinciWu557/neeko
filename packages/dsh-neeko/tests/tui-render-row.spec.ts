@@ -7,6 +7,7 @@ import { Theme, findBuiltin, resolveTheme } from '../src/tui/theme.ts'
 import { TuiApp } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
 import { foldText } from '../src/tui/tool-present.ts'
+import { TranscriptFold } from '../src/tui/fold.ts'
 
 /**
  * Row → component rendering.
@@ -40,6 +41,20 @@ const tool = (over: Partial<Extract<TranscriptRow, { kind: 'tool' }>> = {}): Tra
 /** Narrow to a component that accepts mouse events. */
 function clickable(component: unknown): { handleMouse?(e: unknown): unknown } {
   return component as { handleMouse?(e: unknown): unknown }
+}
+
+/** A fold with every row expanded (`ctrl+o` pressed once). */
+function expandedAll(): TranscriptFold {
+  const fold = new TranscriptFold()
+  fold.toggleAll()
+  return fold
+}
+
+/** A fold where only the given rows are open, i.e. after a click. */
+function expandedRows(...rows: readonly TranscriptRow[]): TranscriptFold {
+  const fold = new TranscriptFold()
+  for (const row of rows) fold.toggle(row)
+  return fold
 }
 
 const assistant = (over: Partial<Extract<TranscriptRow, { kind: 'assistant' }>> = {}): TranscriptRow => ({
@@ -76,13 +91,13 @@ describe('renderRow — tool cards', () => {
   })
 
   it('shows the result body when expanded', () => {
-    const text = flat(renderRow(tool(), undefined, undefined, { boundary: 0 }))
+    const text = flat(renderRow(tool(), undefined, undefined, { fold: expandedAll() }))
     expect(text).toContain('line one')
     expect(text).toContain('line two')
   })
 
-  it('folds to one bounded line when the turn is old', () => {
-    const text = flat(renderRow(tool({ turn: 1 }), undefined, undefined, { boundary: 5 }))
+  it('folds to one bounded line by default', () => {
+    const text = flat(renderRow(tool({ turn: 1 })))
     // Still identifiable …
     expect(text).toContain('Read')
     expect(text).toContain('[ok]')
@@ -94,29 +109,51 @@ describe('renderRow — tool cards', () => {
     // Quoting a slice of a file tells the reader less than the filename does.
     const text = flat(renderRow(
       tool({ name: 'read', args: { path: '/work/src/a.ts' }, result: 'x'.repeat(500), turn: 1 }),
-      undefined, undefined, { boundary: 5, cwd: '/work' },
+      undefined, undefined, { cwd: '/work' },
     ))
     expect(text).toContain('src/a.ts')
     expect(text).not.toContain('xxxx')
   })
 
+  it('reports the hidden line count on a folded tool card', () => {
+    // pi prints `(N more lines, ctrl+o to expand)`; without it a folded card
+    // looks complete and there is no reason to press the key.
+    const result = Array.from({ length: 15 }, (_, index) => `line ${index}`).join('\n')
+    const text = flat(renderRow(tool({ name: 'bash', args: { command: 'ls' }, result })))
+    expect(text.split('\n')).toHaveLength(1)
+    expect(text).toContain('(+15 lines, ctrl+o)')
+  })
+
+  it('omits the count when a folded row hides nothing', () => {
+    const text = flat(renderRow(tool({ name: 'bash', args: { command: 'ls' }, result: 'one line' })))
+    expect(text).not.toContain('ctrl+o')
+  })
+
+  it('omits the count on a folded file read', () => {
+    // The path already names the file; a line count only adds noise.
+    const result = Array.from({ length: 300 }, (_, index) => `row ${index}`).join('\n')
+    const text = flat(renderRow(tool({ name: 'read', args: { path: 'src/a.ts' }, result })))
+    expect(text).toContain('src/a.ts')
+    expect(text).not.toContain('ctrl+o')
+  })
+
   it('still previews a folded non-file tool', () => {
     const text = flat(renderRow(
       tool({ name: 'bash', args: { command: 'ls' }, result: 'drwxr-xr-x lots of output', turn: 1 }),
-      undefined, undefined, { boundary: 9 },
+      undefined, undefined, {},
     ))
     expect(text).toContain('drwxr-xr-x')
   })
 
-  it('re-opens an old card the user expanded', () => {
+  it('re-opens a card the user expanded', () => {
     const row = tool({ turn: 1 })
-    const text = flat(renderRow(row, undefined, undefined, { boundary: 5, expanded: new Set([row]) }))
+    const text = flat(renderRow(row, undefined, undefined, { fold: expandedRows(row) }))
     expect(text.split('\n').length).toBeGreaterThan(1)
     expect(text).toContain('line two')
   })
 
   it('shows the raw call while running', () => {
-    const text = flat(renderRow(tool({ status: 'running', result: undefined }), undefined, undefined, { boundary: 0 }))
+    const text = flat(renderRow(tool({ status: 'running', result: undefined }), undefined, undefined, { fold: expandedAll() }))
     expect(text).toContain('path')
   })
 })
@@ -165,7 +202,7 @@ describe('renderRow — assistant', () => {
     // answer off screen and grow a wall the user cannot read anyway.
     const text = flat(renderRow(
       assistant({ text: '', thinking: 'full reasoning', done: false }),
-      undefined, undefined, { boundary: 0, spinnerFrame: '⠹' },
+      undefined, undefined, { fold: expandedAll(), spinnerFrame: '⠹' },
     ))
     expect(text).toContain('⠹')
     // One line for the reasoning itself: the whole block is collapsed to a
@@ -177,7 +214,7 @@ describe('renderRow — assistant', () => {
   it('expands a settled reasoning block without a spinner', () => {
     const text = flat(renderRow(
       assistant({ thinking: 'full reasoning', done: true }),
-      undefined, undefined, { boundary: 0, spinnerFrame: '⠹' },
+      undefined, undefined, { fold: expandedAll(), spinnerFrame: '⠹' },
     ))
     expect(text).toContain('full reasoning')
     expect(text).not.toContain('⠹')
@@ -186,7 +223,7 @@ describe('renderRow — assistant', () => {
   it('folds settled reasoning to one line with the expand hint', () => {
     const text = flat(renderRow(
       assistant({ thinking: 'first thought\nsecond thought' }),
-      undefined, undefined, { boundary: 9 },
+      undefined, undefined, {},
     ))
     expect(text).toContain('first thought')
     expect(text).toContain('ctrl+o to expand')
@@ -205,29 +242,33 @@ describe('renderRow — user', () => {
 })
 
 describe('isExpanded', () => {
-  it('folds by default when no boundary is given', () => {
-    // Folded is the default state; a row opens by click, not by omission.
+  it('folds by default', () => {
+    // Folded is the default state; a row opens by click or `ctrl+o`.
     expect(isExpanded(tool({ turn: 1 }), {})).toBe(false)
   })
 
-  it('expands everything for boundary: 0', () => {
-    // The explicit "show the raw transcript" switch.
-    expect(isExpanded(tool({ turn: 1 }), { boundary: 0 })).toBe(true)
+  it('expands every row while the global switch is on', () => {
+    const fold = expandedAll()
+    expect(isExpanded(tool({ turn: 1 }), { fold })).toBe(true)
+    expect(isExpanded(tool({ turn: 9 }), { fold })).toBe(true)
   })
 
-  it('folds rows before the boundary', () => {
-    expect(isExpanded(tool({ turn: 1 }), { boundary: 2 })).toBe(false)
-    expect(isExpanded(tool({ turn: 2 }), { boundary: 2 })).toBe(true)
-  })
-
-  it('lets an explicit expansion win', () => {
+  it('folds a row the user clicked closed under the global switch', () => {
     const row = tool({ turn: 1 })
-    expect(isExpanded(row, { boundary: 2, expanded: new Set([row]) })).toBe(true)
+    const fold = expandedAll()
+    fold.toggle(row)
+    expect(isExpanded(row, { fold })).toBe(false)
+    expect(isExpanded(tool({ turn: 2 }), { fold })).toBe(true)
   })
 
-  it('never folds a user row', () => {
-    // A folded user message would hide what the conversation was asked to do.
-    expect(isExpanded({ kind: 'user', messageId: 'm', content: 'x', images: [] }, { boundary: 99 })).toBe(true)
+  it('expands a row the user clicked open', () => {
+    const row = tool({ turn: 1 })
+    expect(isExpanded(row, { fold: expandedRows(row) })).toBe(true)
+  })
+
+  it('folds a user row like every other row', () => {
+    // Every row folds: a long pasted prompt would otherwise bury the answer.
+    expect(isExpanded({ kind: 'user', messageId: 'm', content: 'x', images: [] }, {})).toBe(false)
   })
 })
 
@@ -238,7 +279,7 @@ describe('renderRow — images', () => {
     // Rendering must never block on I/O, so an unresolved attachment shows a
     // labelled placeholder instead of nothing.
     const row = { kind: 'user' as const, messageId: 'm', content: 'look', images: [image] }
-    const text = flat(renderRow(row, undefined, undefined, { expanded: new Set([row]) }))
+    const text = flat(renderRow(row, undefined, undefined, { fold: expandedRows(row) }))
     expect(text).toContain('shot.png')
     expect(text).toContain('image/png')
   })
@@ -247,7 +288,7 @@ describe('renderRow — images', () => {
     const row = { kind: 'user' as const, messageId: 'm', content: 'look', images: [image] }
     const text = flat(renderRow(
       row, undefined, undefined,
-      { expanded: new Set([row]), imageData: () => ({ base64: 'AAAA', mediaType: 'image/png' }) },
+      { fold: expandedRows(row), imageData: () => ({ base64: 'AAAA', mediaType: 'image/png' }) },
     ))
     // The placeholder is gone: a component was built from the bytes.
     expect(text).not.toContain('(image/png)')
@@ -256,14 +297,14 @@ describe('renderRow — images', () => {
   it('shows images attached to a tool result', () => {
     const text = flat(renderRow(
       tool({ images: [image] }),
-      undefined, undefined, { boundary: 0 },
+      undefined, undefined, { fold: expandedAll() },
     ))
     expect(text).toContain('shot.png')
   })
 
   it('keeps the caption above the image', () => {
     const row = { kind: 'user' as const, messageId: 'm', content: 'look', images: [image] }
-    const text = flat(renderRow(row, undefined, undefined, { expanded: new Set([row]) }))
+    const text = flat(renderRow(row, undefined, undefined, { fold: expandedRows(row) }))
     expect(text.indexOf('look')).toBeLessThan(text.indexOf('shot.png'))
   })
 })
@@ -273,7 +314,7 @@ describe('visual separation', () => {
     // Without a band a card is indistinguishable from prose.
     const bg = (text: string): string => `<bg>${text}</bg>`
     const text = flat(renderRow(tool(), undefined, undefined, {
-      boundary: 0,
+      fold: expandedAll(),
       cardBackground: () => bg,
     }))
     expect(text).toContain('<bg>')
@@ -289,7 +330,7 @@ describe('visual separation', () => {
   })
 
   it('renders without a band when the owner supplies none', () => {
-    const text = flat(renderRow(tool(), undefined, undefined, { boundary: 0 }))
+    const text = flat(renderRow(tool(), undefined, undefined, { fold: expandedAll() }))
     expect(text).toContain('Read')
   })
 
@@ -325,7 +366,6 @@ describe('click to expand', () => {
     const clicked: TranscriptRow[] = []
     const row = tool({ turn: 1 })
     const component = renderRow(row, undefined, undefined, {
-      boundary: 5,
       onToggle: (target) => { clicked.push(target) },
     })
     clickable(component).handleMouse?.(click())
@@ -334,14 +374,13 @@ describe('click to expand', () => {
 
   it('ignores a click when no handler is wired', () => {
     // Without an owner there is nothing to toggle; the card must not crash.
-    const component = renderRow(tool(), undefined, undefined, { boundary: 5 })
+    const component = renderRow(tool())
     expect(clickable(component).handleMouse?.(click())).toBeUndefined()
   })
 
   it('ignores a wheel event on a card', () => {
     const clicked: TranscriptRow[] = []
     const component = renderRow(tool(), undefined, undefined, {
-      boundary: 5,
       onToggle: (target) => { clicked.push(target) },
     })
     clickable(component).handleMouse?.({ ...click(), button: 'none', wheelDelta: -3 })
@@ -424,7 +463,7 @@ describe('renderOptionsFor', () => {
   const theme = resolveTheme(findBuiltin('dark')!)
   const context = (over: Partial<RenderContext> = {}): RenderContext => ({
     theme,
-    expanded: new Set<TranscriptRow>(),
+    fold: new TranscriptFold(),
     cwd: '/w',
     spinnerFrame: '⠋',
     imageData: () => undefined,
@@ -451,9 +490,9 @@ describe('renderOptionsFor', () => {
   })
 
   it('carries the owner view state straight through', () => {
-    const expanded = new Set<TranscriptRow>()
-    const options = renderOptionsFor(context({ expanded, cwd: '/repo', spinnerFrame: '⠼' }))
-    expect(options.expanded).toBe(expanded)
+    const fold = expandedAll()
+    const options = renderOptionsFor(context({ fold, cwd: '/repo', spinnerFrame: '⠼' }))
+    expect(options.fold).toBe(fold)
     expect(options.cwd).toBe('/repo')
     expect(options.spinnerFrame).toBe('⠼')
   })
@@ -464,5 +503,135 @@ describe('cardBackgroundToken', () => {
     expect(cardBackgroundToken('running')).toBe('toolPendingBg')
     expect(cardBackgroundToken('success')).toBe('toolSuccessBg')
     expect(cardBackgroundToken('failed')).toBe('toolErrorBg')
+  })
+})
+
+describe('renderRow — model failures', () => {
+  const failure = (over: Partial<Extract<TranscriptRow, { kind: 'failure' }>> = {}): TranscriptRow => ({
+    kind: 'failure', turn: 2, text: 'Error: Invalid API key [AUTH_INVALID]', ...over,
+  })
+
+  it('prints the failure with an error marker', () => {
+    const text = flat(renderRow(failure()))
+    expect(text).toContain('Invalid API key')
+    expect(text).toContain('AUTH_INVALID')
+  })
+
+  it('paints it with the error token', () => {
+    // `flat()` strips ANSI, so assert the token through a marker painter (the
+    // same trick the card-background cases use) rather than a real theme.
+    const theme = { fg: (token: string, text: string): string => `<${token}>${text}` }
+    const text = flat(renderRow(failure(), theme as never))
+    expect(text).toContain('<error>')
+  })
+
+  it('stays visible when everything else is folded', () => {
+    // Hiding the reason a reply did not arrive would return the screen to the
+    // bug this row exists to fix.
+    const row = failure()
+    expect(isExpanded(row, { fold: new TranscriptFold() })).toBe(true)
+    expect(isExpanded(row, {})).toBe(true)
+  })
+
+  it('renders a multi-line provider message without losing lines', () => {
+    const text = flat(renderRow(failure({ text: 'Error: line one\nline two' })))
+    expect(text).toContain('line one')
+    expect(text).toContain('line two')
+  })
+})
+
+describe('vertical rhythm', () => {
+  /**
+   * Reported from a real session: consecutive user rows had a blank line between
+   * them (looking like a huge gap), and the reasoning block sat flush against the
+   * answer so the two read as one paragraph.
+   */
+  it('gives a user row no vertical padding', () => {
+    // `new Text(...)` defaults to paddingY = 1, which adds an empty line above
+    // *and* below — two blank lines between adjacent rows.
+    const text = flat(renderRow({ kind: 'user', messageId: 'm', content: 'hello', images: [] }))
+    expect(text.split('\n')).toHaveLength(1)
+  })
+
+  it('separates a folded reasoning block from the answer by one blank line', () => {
+    const text = flat(renderRow(
+      assistant({ thinking: 'a thought', text: 'the answer', done: true }),
+    ))
+    const lines = text.split('\n')
+    const thinking = lines.findIndex((line) => line.includes('a thought'))
+    const answer = lines.findIndex((line) => line.includes('the answer'))
+    expect(thinking).toBeGreaterThanOrEqual(0)
+    expect(answer).toBe(thinking + 2)
+    expect(lines[thinking + 1]?.trim()).toBe('')
+  })
+
+  it('does not separate an answer from a row that has no reasoning', () => {
+    const text = flat(renderRow(assistant({ thinking: '', text: 'just the answer' })))
+    expect(text.split('\n')).toHaveLength(1)
+  })
+})
+
+describe('left margin (pi outputPad)', () => {
+  /**
+   * pi keeps transcript content one column off the left edge: `outputPad`
+   * (default 1, `settings-defaults.js`) is passed as `paddingX` to EVERY chat
+   * component — assistant markdown, thinking, user message, tool output, errors.
+   *
+   * Ours was inconsistent: `Box(1, 0, bg)` gave tool cards and the reasoning band
+   * a column, while the user row and the assistant markdown started at column 0.
+   * So prose hugged the terminal edge and cards did not.
+   */
+  const pad = (component: { render(w: number): string[] }, width = 60): string =>
+    component.render(width)[0] ?? ''
+
+  it('indents a user row by one column', () => {
+    const line = pad(renderRow({ kind: 'user', messageId: 'm', content: 'hi', images: [] }))
+    expect(line.startsWith(' ❯')).toBe(true)
+  })
+
+  it('indents the assistant markdown by one column', () => {
+    const line = pad(renderRow(assistant({ text: 'plain answer' })))
+    expect(line.startsWith(' plain answer')).toBe(true)
+  })
+
+  it('indents a folded reasoning line by one column', () => {
+    const line = pad(renderRow(assistant({ thinking: 'a thought', text: 'x', done: true })))
+    expect(line.startsWith(' 🐳')).toBe(true)
+  })
+
+  it('indents a tool card by one column', () => {
+    const line = pad(renderRow(tool({ name: 'bash', args: { command: 'ls' } })))
+    expect(line.startsWith(' 🖥️')).toBe(true)
+  })
+
+  it('indents a failure by one column', () => {
+    const line = pad(renderRow({ kind: 'failure', turn: 1, text: 'Error: boom' }))
+    expect(line.startsWith(' ✖')).toBe(true)
+  })
+})
+
+describe('left margin — bands do not double-inset', () => {
+  it('insets a reasoning line exactly once when it has a background band', () => {
+    // The band supplies the column; the text inside it must not add another, or
+    // reasoning would sit two columns in while the answer sits one.
+    const bg = (text: string): string => text
+    const bare = flat(renderRow(assistant({ thinking: 'a thought', text: 'x', done: true })))
+    const banded = flat(renderRow(
+      assistant({ thinking: 'a thought', text: 'x', done: true }),
+      undefined, undefined, { thinkingBackground: bg },
+    ))
+    const indent = (line: string): number => line.length - line.trimStart().length
+    expect(indent(banded.split('\n')[0] ?? '')).toBe(indent(bare.split('\n')[0] ?? ''))
+  })
+
+  it('insets a tool card exactly once with and without a band', () => {
+    const bg = (text: string): string => text
+    const indent = (line: string): number => line.length - line.trimStart().length
+    const bare = flat(renderRow(tool({ name: 'bash', args: { command: 'ls' } })))
+    const banded = flat(renderRow(tool({ name: 'bash', args: { command: 'ls' } }), undefined, undefined, {
+      cardBackground: () => bg,
+    }))
+    expect(indent(banded)).toBe(indent(bare))
+    expect(indent(bare)).toBe(1)
   })
 })

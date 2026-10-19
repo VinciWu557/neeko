@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { renderThemePicker, themePickerIntent, THEME_PICKER_MAX_VISIBLE } from '../src/tui/theme-picker.ts'
+import { renderThemePicker, THEME_PICKER_MAX_VISIBLE } from '../src/tui/theme-picker.ts'
 import { resolveTheme, findBuiltin } from '../src/tui/theme.ts'
 import type { ThemePickerView } from '../src/tui/theme-controller.ts'
 
 /**
- * The picker's two pure halves: the panel text and the key mapping.
+ * The theme picker's panel text.
  *
- * Both were extracted from `TuiApp` so they could be asserted without a screen —
- * the app keeps only the mount and the effect.
+ * The key mapping lives in `tui-picker.spec.ts`: every selector in this TUI
+ * answers the same four keys, so that half is stated and tested once.
  */
 
 const dark = resolveTheme(findBuiltin('dark')!)
@@ -53,30 +53,6 @@ describe('renderThemePicker', () => {
     const lines = plain(renderThemePicker(view, dark)).split('\n')
     expect(lines[0]).toMatch(/^─+$/)
     expect(lines.at(-1)).toMatch(/^─+$/)
-  })
-})
-
-describe('themePickerIntent', () => {
-  it('maps escape to close', () => {
-    expect(themePickerIntent(key('escape'))).toEqual({ kind: 'close' })
-  })
-
-  it('maps the arrows to movement (up is -1)', () => {
-    expect(themePickerIntent(key('up'))).toEqual({ kind: 'move', delta: -1 })
-    expect(themePickerIntent(key('down'))).toEqual({ kind: 'move', delta: 1 })
-  })
-
-  it('maps enter to confirm', () => {
-    expect(themePickerIntent(key('enter'))).toEqual({ kind: 'confirm' })
-  })
-
-  it('ignores every other key', () => {
-    expect(themePickerIntent(key('x'))).toEqual({ kind: 'ignore' })
-  })
-
-  it('checks escape before the others', () => {
-    // A key that matched everything must still read as a cancel.
-    expect(themePickerIntent(() => true)).toEqual({ kind: 'close' })
   })
 })
 
@@ -130,5 +106,23 @@ describe('renderThemePicker — windowing', () => {
   it('defaults to pi\'s ten-row window', () => {
     expect(THEME_PICKER_MAX_VISIBLE).toBe(10)
     expect(plain(renderThemePicker(many(50), dark)).split('\n')).toHaveLength(14)
+  })
+})
+
+describe('renderThemePicker — cursor inside a windowed list', () => {
+  it('puts the cursor on the right row when the window has scrolled', () => {
+    // Regression: the cursor is a position *within the rendered slice*. Passing
+    // the catalogue index straight through put `→` on a row that was not the
+    // cursor's (or off the end of the panel) as soon as the list scrolled.
+    const many: ThemePickerView = {
+      index: 9,
+      choices: Array.from({ length: 20 }, (_, i) => ({ name: `t${i}`, appearance: 'dark' as const })),
+    }
+    const lines = renderThemePicker(many, dark, 5).split('\n')
+    const rows = lines.filter((line) => /t\d+/u.test(line))
+    // Exactly one row carries the cursor, and it is the row for choice 9.
+    const cursored = rows.filter((line) => line.includes('→'))
+    expect(cursored).toHaveLength(1)
+    expect(cursored[0]).toContain('t9')
   })
 })

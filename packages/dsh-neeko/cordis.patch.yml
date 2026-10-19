@@ -31,3 +31,4 @@
         port: !!js ctx.neekoStartup.port ?? 3081
         sessionId: !!js ctx.neekoStartup.sessionId
         tui: !!js ctx.neekoStartup.tui === true
+        mainScreen: !!js ctx.neekoStartup.mainScreen === true

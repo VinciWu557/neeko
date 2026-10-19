@@ -80,6 +80,20 @@ export type HistoryItem =
       status: 'success' | 'failed'
       createdAt: number
     }
+  | {
+      /**
+       * A model-response failure, settled from the turn's `turn/end` reason.
+       *
+       * Its own variant, not a flag on `assistant`: a request can fail before
+       * any assistant message exists (auth, rate limit, transport), and a
+       * resumed turn would otherwise show the prompt and then silence.
+       */
+      kind: 'failure'
+      turn: number
+      /** Pre-worded line, ready to paint. */
+      text: string
+      createdAt: number
+    }
 
 /** An interactive approval gate: Neeko must decide before the tool may run. */
 export interface ApprovalRequestMessage {

@@ -47,11 +47,16 @@ describe('ThemeController', () => {
     expect(themes.isPickerOpen).toBe(true)
   })
 
-  it('wraps the cursor at both ends', () => {
+  it('clamps the cursor at both ends', () => {
+    // It used to wrap, which was the odd one out: pi's theme and thinking
+    // selectors are both `SelectList`, and its `handleInput` clamps
+    // (`Math.max(0, Math.min(len - 1, index + delta))`). Wrapping also dragged
+    // the rendered window with it, so `↓` on the last row scrolled the panel
+    // back to the top.
     const themes = new ThemeController({ userThemes: [] })
     themes.openPicker()
-    expect(themes.movePicker(-1)?.index).toBe(1) // wrapped past dark
-    expect(themes.movePicker(1)?.index).toBe(0)
+    expect(themes.movePicker(-1)?.index).toBe(0)
+    expect(themes.movePicker(1)?.index).toBe(1)
   })
 
   it('applies the picker selection and closes', () => {

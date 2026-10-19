@@ -54,6 +54,10 @@ export const TUI_COMMANDS: readonly TuiCommand[] = [
   // The catalogue opens inline in the editor frame (pi's shape): `/model ` shows
   // candidates under the input row, positioned against the text being typed.
   { name: 'model', description: 'Choose the model', argumentHint: '[model]' },
+  // The effort levels are the *model's* (adapter-declared), so the hint stays
+  // shape-free: a fixed `[low|high]` would advertise levels the current model
+  // may not accept.
+  { name: 'thinking', description: 'Set the reasoning effort', argumentHint: '[level]' },
   { name: 'theme', description: 'Switch the color theme', argumentHint: '[dark|light]' },
   { name: 'fullscreen', description: 'Toggle fullscreen (click to expand, own selection)' },
   { name: 'exit', description: 'Quit the terminal UI' },
@@ -72,6 +76,8 @@ export type CommandOutcome =
     { readonly kind: 'pick-theme' }
   | /** Switch straight to a named theme (`/theme light`). */
     { readonly kind: 'use-theme'; readonly name: string }
+  | /** `/thinking` — bare opens a selector, with an argument applies it. */
+    { readonly kind: 'thinking'; readonly argument: string }
   | /** Enter or leave the alt-screen viewport. */
     { readonly kind: 'toggle-fullscreen' }
   | /**
@@ -112,7 +118,7 @@ export function runCommand(line: string): CommandOutcome {
     case 'help':
       return {
         kind: 'message',
-        text: ['Commands:', ...TUI_COMMANDS.map((command) => `  /${command.name} — ${command.description}`), '', 'Keys: enter send · / commands · tab or ↑/↓ + enter to complete · ctrl+c exit'].join('\n'),
+        text: ['Commands:', ...TUI_COMMANDS.map((command) => `  /${command.name} — ${command.description}`), '', 'Keys: enter send · / commands · tab or ↑/↓ + enter to complete · ctrl+o expand all · ctrl+c exit'].join('\n'),
       }
     case 'clear':
       return { kind: 'clear' }
@@ -120,6 +126,10 @@ export function runCommand(line: string): CommandOutcome {
       // `/model <id>` applies directly; a bare `/model` opens the picker.
       const argument = argumentOf(trimmed, name)
       return argument === '' ? { kind: 'pick-model' } : { kind: 'use-model', id: argument }
+    }
+    case 'thinking': {
+      // pi's split: bare opens the selector, an argument is applied directly.
+      return { kind: 'thinking', argument: argumentOf(trimmed, name) }
     }
     case 'theme': {
       // `/theme <name>` applies directly; a bare `/theme` opens the picker.

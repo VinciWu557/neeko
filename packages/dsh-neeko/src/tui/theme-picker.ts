@@ -12,6 +12,7 @@
 import type { Theme } from './theme.ts'
 import type { ThemePickerView } from './theme-controller.ts'
 import { listWindow, overflowMarkers } from './window.ts'
+import { renderPanel } from './picker.ts'
 
 /**
  * How many theme rows may be rendered before the list is windowed.
@@ -21,19 +22,13 @@ import { listWindow, overflowMarkers } from './window.ts'
  */
 export const THEME_PICKER_MAX_VISIBLE = 10
 
-/** What one keystroke means while the picker is open. */
-export type ThemePickerIntent =
-  | { readonly kind: 'close' }
-  | { readonly kind: 'move'; readonly delta: 1 | -1 }
-  | { readonly kind: 'confirm' }
-  /** The picker owns the keyboard but this key does nothing. */
-  | { readonly kind: 'ignore' }
-
 /**
  * Render the picker panel.
  *
  * `→` marks the cursor, `✓` the active theme, `[appearance]` the palette, and
- * `· custom` the origin — pi's three-marker layout.
+ * `· custom` the origin — pi's three-marker layout. The chrome (rules, title,
+ * keys) and the marker positions come from the shared `picker.ts`; this function
+ * supplies only the row text.
  *
  * The list is **windowed**: the catalogue is every `*.json` under two theme
  * directories, so rendering it whole let a user with many themes push the editor
@@ -51,36 +46,24 @@ export function renderThemePicker(
   maxVisible: number = THEME_PICKER_MAX_VISIBLE,
 ): string {
   const window = listWindow(view.choices.length, view.index, maxVisible)
-  const rows = view.choices.slice(window.start, window.end).map((choice, offset) => {
-    const index = window.start + offset
-    const cursor = index === view.index ? '→ ' : '  '
-    const active = choice.name === theme.name ? '✓ ' : '  '
-    const origin = choice.sourcePath === undefined ? '' : theme.fg('dim', ' · custom')
-    return `${cursor}${active}${choice.name} [${choice.appearance}]${origin}`
-  })
+  const rows = view.choices.slice(window.start, window.end).map((choice) => ({
+    text: `${choice.name} [${choice.appearance}]${
+      choice.sourcePath === undefined ? '' : theme.fg('dim', ' · custom')}`,
+    active: choice.name === theme.name,
+  }))
   const [hiddenAbove, hiddenBelow] = overflowMarkers(window, (token, text) => theme.fg(token, text))
+  // Only the *visible* slice reaches `renderPanel`, so its cursor must be the
+  // row's position inside the window, not in the full catalogue.
+  const notes = [hiddenAbove, hiddenBelow].filter((marker) => marker !== '')
   const hint = window.total > window.end - window.start
-    ? ` — ↑/↓ move · ${window.total} total`
-    : ' — ↑/↓ move, enter apply, esc cancel'
-  return [
-    theme.fg('border', '─'.repeat(50)),
-    theme.fg('accent', 'Theme') + theme.fg('dim', hint),
-    ...(hiddenAbove === '' ? [] : [hiddenAbove]),
-    ...rows,
-    ...(hiddenBelow === '' ? [] : [hiddenBelow]),
-    theme.fg('border', '─'.repeat(50)),
-  ].join('\n')
-}
-
-/**
- * Map one keystroke to a picker intent.
- * @param isKey - predicate: does this key data match a named key?
- * @returns the intent.
- */
-export function themePickerIntent(isKey: (name: 'escape' | 'up' | 'down' | 'enter') => boolean): ThemePickerIntent {
-  if (isKey('escape')) return { kind: 'close' }
-  if (isKey('up')) return { kind: 'move', delta: -1 }
-  if (isKey('down')) return { kind: 'move', delta: 1 }
-  if (isKey('enter')) return { kind: 'confirm' }
-  return { kind: 'ignore' }
+    ? `↑/↓ move · ${window.total} total`
+    : undefined
+  return renderPanel({
+    title: 'Theme',
+    rows,
+    index: window.cursorRow,
+    theme,
+    ...(hint === undefined ? {} : { hint }),
+    ...(notes.length === 0 ? {} : { notes }),
+  })
 }

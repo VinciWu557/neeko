@@ -31,8 +31,17 @@ export interface FullscreenOptions {
   readonly header: Component
   /** The transcript container; it is the region that scrolls. */
   readonly transcript: Component
-  /** Anything that must sit between transcript and input (pending prompt, notices). */
-  readonly notices?: Component | undefined
+  /**
+   * Everything that sits between the transcript and the input, in one component.
+   *
+   * A single container on purpose: this list used to be enumerated field by
+   * field (`notices`, then a panel slot…) and every panel added to `TuiApp`
+   * afterwards was silently absent here — `/thinking` and `/theme` rendered
+   * nothing in fullscreen while their keys still worked, because the panel was
+   * mounted into the *main* screen's tree, which is stopped while the alt screen
+   * owns the terminal. One slot cannot drift.
+   */
+  readonly aboveInput?: Component | undefined
   /** The editor, or whatever currently occupies the input slot. */
   readonly input: Component
   /** Status bar below the input. */
@@ -66,7 +75,7 @@ export interface Fullscreen {
  * @returns the mounted surface.
  */
 export function mountFullscreen(options: FullscreenOptions): Fullscreen {
-  const { terminal, header, transcript, notices, input, footer, onInput } = options
+  const { terminal, header, transcript, aboveInput, input, footer, onInput } = options
   const screen = new TuiAltScreen(terminal)
   const scroll = new ScrollView(transcript, {
     follow: 'end',
@@ -78,7 +87,7 @@ export function mountFullscreen(options: FullscreenOptions): Fullscreen {
   const children = [
     { component: header, basis: 'auto' as const, shrink: 1, minSize: 1 },
     { component: scroll, basis: 0, grow: 1, minSize: 1 },
-    ...(notices === undefined ? [] : [{ component: notices, basis: 'auto' as const, shrink: 1, minSize: 1 }]),
+    ...(aboveInput === undefined ? [] : [{ component: aboveInput, basis: 'auto' as const, shrink: 1, minSize: 1 }]),
     { component: input, basis: 'auto' as const, shrink: 0, minSize: 1 },
     { component: footer, basis: 'auto' as const, shrink: 0, minSize: 1 },
   ]
@@ -91,9 +100,20 @@ export function mountFullscreen(options: FullscreenOptions): Fullscreen {
     screen,
     scroll,
     dispose(): void {
-      // `stop()` restores the main buffer *and* prints the final document, so the
-      // conversation stays in the terminal's scrollback.
-      screen.stop()
+      // `preserveScreen` on purpose — pi does the same when it quits from
+      // fullscreen (`stopInteractiveTui`: `ui.stop({ preserveScreen: mode ===
+      // 'fullscreen' })`).
+      //
+      // The alternative (`stop()` without it) is supposed to print the final
+      // document back into scrollback, but with a `VStack` layout root it does
+      // not: `afterTerminalStop()` calls `render(width)`, which delegates to
+      // `layoutRoot.render()` — and a layout root that was never measured by
+      // `renderLayoutFrame()` returns ONE line. Measured: 1 row (banner only)
+      // instead of the conversation. Leaving the alt screen is the caller's job
+      // here: `TuiApp.exitFullscreen()` restarts the main screen and repaints the
+      // whole transcript into real scrollback, which is both correct and what
+      // the user asked for.
+      screen.stop({ preserveScreen: true })
     },
   }
 }

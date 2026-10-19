@@ -124,3 +124,20 @@ describe('resolveStartupValues — tui flag', () => {
     expect(values.autoSpawn).toBe(false)
   })
 })
+
+describe('resolveStartupValues — main screen opt-out', () => {
+  it('propagates --main-screen into the values', () => {
+    // Fullscreen is the default (pi's `tuiMode: 'fullscreen'`), so the flag that
+    // exists is the one that turns it off; the main screen keeps scrollback.
+    expect(resolveStartupValues({ mainScreen: true }).mainScreen).toBe(true)
+  })
+
+  it('omits the key when the flag is absent (fullscreen stays the default)', () => {
+    expect(resolveStartupValues({})).not.toHaveProperty('mainScreen')
+  })
+
+  it('is independent of --tui', () => {
+    const values = resolveStartupValues({ tui: true, mainScreen: true })
+    expect(values).toMatchObject({ tui: true, mainScreen: true })
+  })
+})

@@ -238,3 +238,26 @@ describe('buildHistory — assembled from settled messages', () => {
     expect(buildHistory(events)).toEqual([])
   })
 })
+
+describe('buildHistory — failed turns', () => {
+  it('emits a failure row so a resumed session explains the silence', () => {
+    // A failed turn never produces `assistant/message`, so without this a
+    // resumed session showed the question and then nothing at all.
+    const events = [
+      ev('user/message', { id: 'u1', content: [{ type: 'text', text: 'question?' }], source: {} }, 10),
+      ev('turn/end', {
+        turn: 1,
+        reason: { kind: 'error', error: { message: 'Invalid API key', code: 'AUTH_INVALID' } },
+      }, 20),
+    ]
+    expect(buildHistory(events)).toEqual([
+      { kind: 'user', messageId: 'u1', content: 'question?', createdAt: 10 },
+      { kind: 'failure', turn: 1, text: 'Error: Invalid API key [AUTH_INVALID]', createdAt: 20 },
+    ])
+  })
+
+  it('stays silent for a completed turn', () => {
+    const events = [ev('turn/end', { turn: 1, reason: { kind: 'completed' } }, 20)]
+    expect(buildHistory(events)).toEqual([])
+  })
+})

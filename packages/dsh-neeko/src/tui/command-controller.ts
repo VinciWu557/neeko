@@ -33,6 +33,8 @@ export type CommandAction =
   | { readonly kind: 'prompt'; readonly text: string }
   | /** A locally produced informational reply (`/help`, …). */
     { readonly kind: 'notice'; readonly text: string }
+  | /** `/thinking` — bare opens the selector, an argument applies it. */
+    { readonly kind: 'thinking'; readonly argument: string }
   | { readonly kind: 'clear' }
   | { readonly kind: 'exit' }
   | { readonly kind: 'model-picker' }
@@ -109,6 +111,8 @@ export class CommandController {
         return { kind: 'apply-theme', name: outcome.name }
       case 'toggle-fullscreen':
         return { kind: 'toggle-fullscreen' }
+      case 'thinking':
+        return { kind: 'thinking', argument: outcome.argument }
     }
   }
 

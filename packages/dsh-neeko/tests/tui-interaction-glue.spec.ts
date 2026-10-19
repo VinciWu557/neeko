@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Text } from '@earendil-works/pi-tui'
 import { TuiApp } from '../src/tui/app.ts'
+import type { TuiAppOptions } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
 
 /**
@@ -30,7 +31,7 @@ type Seams = {
   rows: () => number
 }
 
-function makeSeams(onSubmit = vi.fn()): Seams {
+function makeSeams(onSubmit = vi.fn(), extra: Partial<TuiAppOptions> = {}): Seams {
   const app = new TuiApp({
     getSelection: () => ({ provider: 'test', model: 'test-model' }),
     cwd: '/tmp/test',
@@ -42,6 +43,7 @@ function makeSeams(onSubmit = vi.fn()): Seams {
     modelPicker: async () => ({ models: [], current: '' }),
     selectModel: () => {},
     terminal: new FakeTerminal(),
+    ...extra,
   })
   const call = <T>(name: string, ...args: unknown[]): T => {
     const fn = (app as unknown as Record<string, ((...a: unknown[]) => T) | undefined>)[name]
@@ -563,5 +565,204 @@ describe('/model opens a panel in place of the input area', () => {
     const { submit, hasPanel } = makePanel([], '')
     await submit('/model')
     expect(hasPanel()).toBe(false)
+  })
+})
+
+describe('ctrl+o expands and collapses the whole transcript', () => {
+  /** A transcript with one tool row whose result body is the folded part. */
+  function withToolRow(): { seams: Seams; state: { attachTime: number; rows: unknown[] } } {
+    const seams = makeSeams()
+    const state = {
+      attachTime: 0,
+      rows: [{
+        kind: 'tool', taskId: 't1', name: 'bash',
+        args: { command: 'ls' }, status: 'success',
+        result: 'first result line\nsecond result line', turn: 1, images: [],
+      }],
+    }
+    seams.app.mountTranscript(state as never)
+    return { seams, state }
+  }
+
+  /** Render the mounted transcript to plain text. */
+  const transcript = (seams: Seams): string =>
+    (seams.app as unknown as { messages: { render(w: number): string[] } })
+      .messages.render(120).join('\n').replace(/\x1b\[[0-9;]*m/gu, '').replace(/\x1b_pi:[^\\]*\\/gu, '')
+
+  it('is folded before the key is pressed', () => {
+    const { seams } = withToolRow()
+    expect(transcript(seams)).not.toContain('second result line')
+  })
+
+  it('expands every row on the first press', async () => {
+    // pi's `app.tools.expand` is a global switch (`setToolsExpanded` broadcasts
+    // to every expandable child), not a per-row toggle.
+    const { seams } = withToolRow()
+    expect(seams.key('\x0f')).toEqual({ consume: true })
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(transcript(seams)).toContain('second result line')
+  })
+
+  it('collapses everything again on the second press', async () => {
+    const { seams } = withToolRow()
+    seams.key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    seams.key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(transcript(seams)).not.toContain('second result line')
+  })
+
+  it('invalidates the cached row components', async () => {
+    // Regression guard: the fold state is part of `rowSignature()`. Left out,
+    // the cache hits the old component and the key visibly does nothing.
+    const { seams } = withToolRow()
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const before = (seams.app as unknown as { messages: { children: unknown[] } }).messages.children[0]
+    seams.key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const after = (seams.app as unknown as { messages: { children: unknown[] } }).messages.children[0]
+    expect(after).not.toBe(before)
+  })
+
+  it('reports the new state as a notice', async () => {
+    const { seams } = withToolRow()
+    seams.key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(seams.notices()).toContain('expanded')
+    seams.key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(seams.notices()).toContain('collapsed')
+  })
+
+  it('yields the keyboard to an open modal surface', async () => {
+    // A pending approval owns every key; `ctrl+o` must not reach the transcript.
+    const { seams } = withToolRow()
+    const pending = openApproval(seams.app)
+    seams.key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(transcript(seams)).not.toContain('second result line')
+    seams.app.interactions.cancelAll()
+    await pending.catch(() => {})
+  })
+})
+
+describe('status notices replace and expire', () => {
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('does not stack repeated status lines', async () => {
+    // pi's `showStatus()` updates the previous status line in place rather than
+    // appending, "to avoid log spam". Four `ctrl+o` presses must leave ONE line.
+    const { app, key, notices } = makeSeams(vi.fn(), { statusNoticeMs: 10_000 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    key('\x0f')
+    key('\x0f')
+    key('\x0f')
+    await wait(60)
+    const lines = notices().split('\n').map((l) => l.trim()).filter((l) => l !== '')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('transcript:')
+  })
+
+  it('shows the newest state, not the first one', async () => {
+    const { app, key, notices } = makeSeams(vi.fn(), { statusNoticeMs: 10_000 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f') // expanded
+    key('\x0f') // collapsed
+    await wait(60)
+    expect(notices()).toContain('collapsed')
+    expect(notices()).not.toContain('expanded')
+  })
+
+  it('expires the status line instead of leaving it forever', async () => {
+    // Reported by the user: the fold notices piled up and never went away.
+    const { app, key, notices } = makeSeams(vi.fn(), { statusNoticeMs: 30 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    expect(notices()).toContain('transcript:')
+    await wait(120)
+    expect(notices()).toBe('')
+  })
+
+  it('a second press restarts the countdown', async () => {
+    const { app, key, notices } = makeSeams(vi.fn(), { statusNoticeMs: 60 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    await wait(40)
+    key('\x0f')
+    await wait(40)
+    // 80 ms have passed since the first press, but only 40 since the second.
+    expect(notices()).toContain('transcript:')
+    await wait(80)
+    expect(notices()).toBe('')
+  })
+
+  it('keeps an error notice until the user clears it', async () => {
+    // An error is an event, not a status: expiring it would hide the reason a
+    // command failed. pi appends errors and warnings, never auto-clears them.
+    const { submit, notices } = makeSeams(vi.fn(), { statusNoticeMs: 30 })
+    await submit('/model does/not/exist')
+    await wait(120)
+    expect(notices()).toContain('no models available')
+    await wait(80)
+    expect(notices()).toContain('no models available')
+  })
+
+  it('a new status does not strand the previous component', async () => {
+    // The expiring timer must clear the slot, not an arbitrary child: two
+    // different statuses in a row leave the notices area empty, not one stale line.
+    const { app, key, submit, notices } = makeSeams(vi.fn(), { statusNoticeMs: 30 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    await wait(120)
+    await submit('/help')
+    expect(notices()).toContain('Commands:')
+    await wait(80)
+    // The fold status expired; the /help output (content, not status) remains.
+    expect(notices()).not.toContain('transcript:')
+    expect(notices()).toContain('Commands:')
+  })
+
+  it('stops the countdown when the app stops', async () => {
+    // A live timer keeps the event loop alive, which would delay process exit.
+    const { app, key } = makeSeams(vi.fn(), { statusNoticeMs: 10_000 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    app.stop()
+    const pending = (app as unknown as { statusTimer: unknown }).statusTimer
+    expect(pending).toBeUndefined()
+  })
+
+  it('clears the status slot with the rest of the view', async () => {
+    // A re-mounted line must be visible again (a stale slot would update text on
+    // a component nobody sees), and the countdown must not be lost: with no
+    // mounted line, a new status mounts a fresh one with a fresh timer.
+    const { app, key, submit, notices } = makeSeams(vi.fn(), { statusNoticeMs: 30 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    await wait(60)
+    await submit('/clear')
+    expect(notices()).toBe('')
+    key('\x0f')
+    expect(notices()).toContain('transcript:')
+    await wait(120)
+    expect(notices()).toBe('')
+  })
+})
+
+describe('the status slot survives the notices bound', () => {
+  it('does not keep updating an evicted status line', async () => {
+    // `addMessage` drops the OLDEST child past `MAX_NOTICE_COMPONENTS`. When the
+    // status line is what gets dropped, `showStatus` must mount a new one —
+    // reusing the pointer would be a `setText()` nobody can see.
+    const { app, key, submit, notices } = makeSeams(vi.fn(), { statusNoticeMs: 10_000 })
+    app.mountTranscript({ attachTime: 0, rows: [{ kind: 'user', content: 'a' }] } as never)
+    key('\x0f')
+    for (let i = 0; i < 70; i += 1) await submit('/theme nope') // one error notice each
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(notices()).not.toContain('transcript:')
+    key('\x0f')
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(notices()).toContain('transcript:')
   })
 })

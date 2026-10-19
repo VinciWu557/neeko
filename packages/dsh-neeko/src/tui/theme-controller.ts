@@ -14,6 +14,7 @@
 
 import { findBuiltin, listThemes, loadUserThemes, resolveTheme, resolveThemeByName, Theme } from './theme.ts'
 import type { ThemeChoice, UserTheme } from './theme.ts'
+import { movedIndex } from './picker.ts'
 
 /** What the picker currently shows, or `undefined` when closed. */
 export interface ThemePickerView {
@@ -93,14 +94,20 @@ export class ThemeController {
   }
 
   /**
-   * Move the picker cursor, wrapping at both ends (pi's list behaviour).
+   * Move the picker cursor.
+   *
+   * Clamps at both ends, like every other selector here — pi's theme and thinking
+   * selectors are both `SelectList`, whose `handleInput` clamps
+   * (`Math.max(0, Math.min(len - 1, index + delta))`). Wrapping also moved the
+   * *window*: from the last visible row, `↓` jumped the list back to the top and
+   * the panel scrolled somewhere the user did not ask to go.
+   *
    * @param delta - `-1` up, `+1` down.
    * @returns the updated view, or `undefined` when closed.
    */
   movePicker(delta: 1 | -1): ThemePickerView | undefined {
     if (!this.pickerOpen || this.choices.length === 0) return undefined
-    const count = this.choices.length
-    this.pickerIndex = (this.pickerIndex + delta + count) % count
+    this.pickerIndex = movedIndex(this.pickerIndex, delta, this.choices.length)
     return this.picker
   }
 

@@ -17,11 +17,13 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import type { AgentHandle, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { planSession } from './session-plan.ts'
 import { switchedSelection } from './model-switch.ts'
+import { withReasoningEffort } from './thinking.ts'
 
 /**
  * The slice of dsh's `llm` service the model picker consumes.
@@ -33,6 +35,22 @@ import { switchedSelection } from './model-switch.ts'
 interface LlmCatalogue {
   listProviders(): readonly { id: string; name: string }[]
   listModels(provider: string): Promise<readonly { id: string; name: string; description?: string }[]>
+  /**
+   * Exact-route metadata, including `reasoning.efforts` when the adapter exposes
+   * them. A catalogue entry (`listModels`) does not carry this: the effort set is
+   * a property of the resolved model, and `resolveCallConfig` validates against
+   * exactly that answer — so `/thinking` must ask here, not guess.
+   *
+   * Typed with dsh's own `LlmModelReasoningInfo` rather than a hand-written
+   * narrow shape: a reshape upstream then fails to compile here instead of
+   * silently yielding `undefined` (whose symptom would be an empty level list
+   * with no error anywhere).
+   */
+  resolveModelInfo(
+    provider: string,
+    model: string,
+    signal?: AbortSignal,
+  ): Promise<{ reasoning?: LlmModelReasoningInfo }>
 }
 import { collectHostCommands, collectSkills, executeHostCommand } from './host-commands.ts'
 import type { CommandExecuteRegistryLike, CommandRegistryLike, SkillRegistryLike } from './host-commands.ts'
@@ -68,6 +86,8 @@ export interface TuiConfig {
   sessionId?: string
   /** Set by the `--tui` flag; the patch row also conditions on it. */
   tui?: boolean
+  /** Set by `--main-screen` / `DSH_NEEKO_MAIN_SCREEN=1`: skip the alt screen. */
+  mainScreen?: boolean
 }
 
 /** Process-facing effects, replaced by tests. */
@@ -136,6 +156,72 @@ export function composeSetup(agentCtx: AgentEventSource & Context, selection: Mo
 function stopApp(app: { stop(): void; interactions: { cancelAll(): void } }): void {
   app.stop()
   app.interactions.cancelAll()
+}
+
+/** The slice of a writable stream {@linkcode exitAfterFlush} needs. */
+export interface FlushStream {
+  once(event: 'drain', listener: () => void): unknown
+  readonly writableLength?: number
+}
+
+/** How long to wait for stdout before exiting regardless. */
+const EXIT_FLUSH_TIMEOUT_MS = 2_000
+
+/**
+ * Write the final document, then exit once it has actually left the process.
+ *
+ * `process.stdout.write()` is asynchronous. Leaving an alt screen writes the
+ * **whole conversation** back to scrollback in a single call — the largest write
+ * of the run — so `process.exit()` immediately after it truncates exactly the
+ * part the user wants to keep. Measured on a real pty: the printed document was
+ * 1426 bytes (banner only) instead of banner + conversation.
+ *
+ * Three ways out, because a TUI must never hang on quit:
+ * - the write callback fires → exit;
+ * - the callback fires but the stream is backed up → wait for `drain`;
+ * - nothing acknowledges within {@linkcode EXIT_FLUSH_TIMEOUT_MS} → exit anyway.
+ *
+ * @param options - the stream to drain, the exit hook, and the write to perform.
+ */
+export async function exitAfterFlush(options: {
+  readonly stream: FlushStream
+  readonly exit: (code: number) => void
+  /** Perform the final writes; invoke the callback once they are accepted. */
+  readonly write: (done: () => void) => void
+  readonly timeoutMs?: number
+}): Promise<void> {
+  const { stream, exit, write } = options
+  const timeoutMs = options.timeoutMs ?? EXIT_FLUSH_TIMEOUT_MS
+  await new Promise<void>((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    // Node keeps the process alive for a pending timer; the TUI may have closed
+    // stdin, so nothing else would. `unref` lets a truly idle process still exit.
+    timer.unref?.()
+    const onWritten = (): void => {
+      // `write()`'s callback means "handed to the OS", not "drained": with a
+      // full pipe buffer the bytes are still queued, and exiting now would cut
+      // the document short.
+      if ((stream.writableLength ?? 0) === 0) {
+        finish()
+        return
+      }
+      stream.once('drain', finish)
+    }
+    try {
+      write(onWritten)
+    } catch {
+      // A closed stdout (EPIPE) must not keep the user stuck in the TUI.
+      finish()
+    }
+  })
+  exit(0)
 }
 
 /**
@@ -299,10 +385,14 @@ export function apply(ctx: Context, config: TuiConfig): void {
         },
         // `exactOptionalPropertyTypes`: omit the key rather than pass undefined.
         ...(process.env['DSH_NEEKO_THEME'] === undefined ? {} : { initialTheme: process.env['DSH_NEEKO_THEME'] }),
-        // `DSH_NEEKO_FULLSCREEN=1` starts in the alt screen. Opt-in via env rather
-        // than hard-coded: fullscreen owns scrolling and prints its document back
-        // on exit, which not every user wants by default.
-        ...(process.env['DSH_NEEKO_FULLSCREEN'] === '1' ? { initialFullscreen: true } : {}),
+        // Fullscreen is the **default** (pi: `tuiMode: 'fullscreen'` in
+        // `settings-defaults.js`): the alt screen is where clicking a card works
+        // and the whole viewport is ours. It costs the terminal's own scrollback,
+        // so the opt-out is explicit — `--main-screen` or the env var, which is
+        // what a user who wants their shell history back reaches for.
+        ...((config.mainScreen === true || process.env['DSH_NEEKO_MAIN_SCREEN'] === '1')
+          ? { startOnMainScreen: true }
+          : {}),
         getSessionId: () => String(agent.session.id),
         onSubmit: (text) => {
           const trimmed = text.trim()
@@ -363,14 +453,40 @@ export function apply(ctx: Context, config: TuiConfig): void {
           // The panel lists every provider, so the row names its own route.
           void defaultModel.saveSelection({ provider, model: id }).catch(() => {})
         },
+        // `/thinking`: the effort set is the *current* route's, read from the
+        // adapter each time — a switch to another model changes it, and caching
+        // would offer levels the new model rejects.
+        reasoningSupport: async () => {
+          const llm = ctx.get('llm') as LlmCatalogue | undefined
+          if (llm === undefined) throw new Error('llm service unavailable')
+          const route = liveSelection()
+          const info = await llm.resolveModelInfo(route.provider, route.model)
+          return info.reasoning
+        },
+        selectReasoningEffort: (effort: string | undefined) => {
+          // Only the effort changes; `withReasoningEffort` drops the key when
+          // clearing so the provider default applies (DSH reads absent effort as
+          // "provider default", and an explicit one verbatim).
+          selectionRef.current = withReasoningEffort(liveSelection(), effort)
+        },
         onExit: () => {
           // Order matters: stop the TUI first — that restores raw mode and
           // pauses stdin, the handle keeping the event loop alive. `appExit` is
           // dsh's *graceful* disposer (it only sets `process.exitCode` and waits
           // for the loop to drain), so force the exit once it settles; a TUI
           // that waits on a lingering handle would hang on quit.
+          //
+          // The exit must wait for stdout: `stop()` writes the whole conversation
+          // back to scrollback when it leaves the alt screen, and
+          // `process.exit()` right after it truncated that document (measured
+          // on a real pty: banner only, no conversation).
           stopApp(app!)
-          void Promise.resolve(exit(0)).finally(() => process.exit(0))
+          void exitAfterFlush({
+            stream: process.stdout,
+            exit: (code) => { void Promise.resolve(exit(code)).finally(() => process.exit(code)) },
+            // `stop()` already wrote; this is the flush barrier, not a new write.
+            write: (done) => { process.stdout.write('', done) },
+          })
         },
       })
       app.mountTranscript(transcript)

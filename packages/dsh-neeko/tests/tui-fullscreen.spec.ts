@@ -217,7 +217,7 @@ describe('exit leaves the terminal usable', () => {
 })
 
 describe('fullscreen can be the default', () => {
-  function bootWith(initialFullscreen?: boolean): {
+  function bootWith(startOnMainScreen?: boolean): {
     terminal: FakeTerminal
     isFullscreen: () => boolean
     stop: () => void
@@ -234,7 +234,7 @@ describe('fullscreen can be the default', () => {
       statusFacts: () => ({ cwd: '/tmp/w' }),
       modelPicker: async () => ({ models: [], current: '' }),
       selectModel: () => {},
-      ...(initialFullscreen === undefined ? {} : { initialFullscreen }),
+      ...(startOnMainScreen === undefined ? {} : { startOnMainScreen }),
       terminal,
     })
     const seam = app as unknown as {
@@ -253,29 +253,271 @@ describe('fullscreen can be the default', () => {
   }
 
   it('enters the alt screen on start', () => {
-    const app = bootWith(true)
+    const app = bootWith(undefined)
     expect(app.isFullscreen()).toBe(true)
     expect(app.terminal.output).toContain('\x1b[?1049h')
   })
 
-  it('stays on the main screen by default', () => {
-    // Fullscreen is opt-in: it owns scrolling and repaints its whole viewport.
+  it('starts in the alt screen by default', () => {
+    // pi's own default is `tuiMode: 'fullscreen'` (settings-defaults.js): the alt
+    // screen is the mode where clicking a card works and the whole viewport is
+    // ours, so it is what a user should get without asking.
     const app = bootWith(undefined)
+    expect(app.isFullscreen()).toBe(true)
+    expect(app.terminal.output).toContain('\x1b[?1049h')
+  })
+
+  it('stays on the main screen when asked to', () => {
+    // The main screen keeps the terminal's scrollback: it is the opt-out.
+    const app = bootWith(true)
     expect(app.isFullscreen()).toBe(false)
     expect(app.terminal.output).not.toContain('\x1b[?1049h')
   })
 
   it('still exits cleanly from a fullscreen boot', async () => {
     // The boot path and the `/fullscreen` path must leave the same state behind.
-    const app = bootWith(true)
+    const app = bootWith(undefined)
     app.stop()
     expect(app.terminal.output).toContain('\x1b[?1049l')
     expect(app.isFullscreen()).toBe(false)
   })
 
   it('toggles back to the main screen on /fullscreen', async () => {
-    const app = bootWith(true)
+    const app = bootWith(undefined)
     await app.submit('/fullscreen')
     expect(app.isFullscreen()).toBe(false)
+  })
+})
+
+describe('leaving the alt screen keeps the conversation in scrollback', () => {
+  /**
+   * pi-tui's "print the final document" path is broken for a `VStack` layout
+   * root: `afterTerminalStop()` calls `render(width)`, which delegates to
+   * `layoutRoot.render()`, and a layout root that was never measured by
+   * `renderLayoutFrame()` returns ONE line. Measured on a real pty: the document
+   * was 1426 bytes (banner only) — the whole conversation was gone.
+   *
+   * So we stop with `preserveScreen: true` (pi's own choice when quitting from
+   * fullscreen) and let `exitFullscreen()` repaint the transcript onto the main
+   * screen, which lands in real scrollback.
+   */
+  it('prints the whole conversation onto the main screen on quit', async () => {
+    const terminal = new FakeTerminal({ columns: 80, rows: 24 })
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal,
+    })
+    const seam = app as unknown as {
+      start(): void
+      stop(): void
+      messages: { render(w: number): string[] }
+    }
+    app.mountTranscript({
+      attachTime: 0,
+      rows: [{ kind: 'user', messageId: 'u1', content: 'remember pineapple', images: [] }],
+    } as never)
+    seam.start.call(app)
+    const before = terminal.output.length
+    seam.stop.call(app)
+    const written = terminal.output.slice(before)
+    expect(written).toContain('\x1b[?1049l')
+    // The transcript reached the terminal's normal buffer, not just the alt screen.
+    expect(written).toContain('pineapple')
+  })
+})
+
+describe('quitting does not leave terminal capability replies as text', () => {
+  /**
+   * Every `TuiBase.start()` calls `terminal.start()`, which writes three
+   * capability queries: Kitty keyboard protocol (`ESC[>1u ESC[?u`), device
+   * attributes (`ESC[c`), and cell size (`ESC[16t`). The terminal answers them
+   * asynchronously — after we have already exited, so the reply bytes are no
+   * longer parsed as input and the shell prints them literally:
+   *
+   *     7u  62;22;52c  34;16t
+   *
+   * (Reported by the user.) The quit path must therefore not start the terminal
+   * again: it repaints the transcript onto the *already running* main screen.
+   */
+  it('does not query the terminal again while quitting', () => {
+    const terminal = new FakeTerminal({ columns: 80, rows: 24 })
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal,
+    })
+    const seam = app as unknown as { start(): void; stop(): void }
+    seam.start.call(app)
+    const before = terminal.output.length
+    seam.stop.call(app)
+    const written = terminal.output.slice(before)
+    // The three query sequences, exactly as `Terminal.start()` emits them.
+    expect(written).not.toContain('\x1b[>1u')
+    expect(written).not.toContain('\x1b[?u')
+    expect(written).not.toContain('\x1b[c')
+    expect(written).not.toContain('\x1b[16t')
+  })
+})
+
+describe('the final document writes plain newlines', () => {
+  /**
+   * The terminal is in cooked mode when the document is printed, and tty ONLCR
+   * translates `\n` → `\r\n` for us. Writing `\r\n` therefore became `\r\r\n`
+   * on a real pty: a blank line between every row of the transcript.
+   */
+  it('uses \n rather than \r\n', () => {
+    const terminal = new FakeTerminal({ columns: 80, rows: 24 })
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal,
+    })
+    const seam = app as unknown as { start(): void; stop(): void }
+    seam.start.call(app)
+    const before = terminal.output.length
+    seam.stop.call(app)
+    const written = terminal.output.slice(before)
+    expect(written).not.toContain('\r\r\n')
+  })
+})
+
+describe('the printed document ends with the resume hint', () => {
+  function boot(sessionId: string): { terminal: FakeTerminal; stop: () => void } {
+    const terminal = new FakeTerminal({ columns: 80, rows: 24 })
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => sessionId,
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal,
+    })
+    const seam = app as unknown as { start(): void; stop(): void }
+    seam.start.call(app)
+    return { terminal, stop: () => { seam.stop.call(app) } }
+  }
+
+  const strip = (s: string): string => s
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, '')
+    .replace(/\x1b\][^\x07]*\x07/gu, '')
+    .replace(/\x1b_pi:[^\\]*\\/gu, '')
+
+  it('names the dsh invocation, not pi', () => {
+    // pi prints `To resume this session: pi --session <id>`; ours must be the
+    // command that actually reaches this TUI (dsh needs the profile + --tui).
+    const app = boot('01a15350-e56a-77a9-8dfd-411652d4c087')
+    const before = app.terminal.output.length
+    app.stop()
+    const written = strip(app.terminal.output.slice(before))
+    expect(written).toContain('To resume this session: dsh --profile neeko --tui --session 01a15350-e56a-77a9-8dfd-411652d4c087')
+    expect(written).not.toContain('To resume this session: pi')
+  })
+
+  it('is the last thing printed', () => {
+    const app = boot('abc-123')
+    const before = app.terminal.output.length
+    app.stop()
+    const lines = strip(app.terminal.output.slice(before)).split('\n').filter((l) => l.trim() !== '')
+    expect(lines.at(-1)).toContain('To resume this session:')
+  })
+
+  it('prints nothing when the session has no id', () => {
+    const app = boot('')
+    const before = app.terminal.output.length
+    app.stop()
+    expect(strip(app.terminal.output.slice(before))).not.toContain('To resume this session:')
+  })
+})
+
+describe('panels are visible in fullscreen too', () => {
+  /**
+   * Reported from a real session: `/thinking` (and `/theme`) rendered nothing in
+   * the default fullscreen mode, while the arrow keys still moved a cursor and
+   * enter still applied a level — the panel was mounted into the *main* screen's
+   * tree, which is stopped while the alt screen owns the terminal.
+   *
+   * The cause is the layout: `mountFullscreen()` takes an explicit component
+   * list, so every panel added to `TuiApp` afterwards is silently absent until
+   * someone remembers to thread it through here.
+   */
+  function bootInFullscreen(): {
+    app: TuiApp
+    terminal: FakeTerminal
+    submit: (text: string) => Promise<void>
+  } {
+    const terminal = new FakeTerminal({ columns: 100, rows: 40 })
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      reasoningSupport: async () => ({
+        efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+      }),
+      selectReasoningEffort: () => {},
+      terminal,
+    } as never)
+    const seam = app as unknown as { start(): void; submit(t: string): Promise<void> }
+    seam.start.call(app)
+    return { app, terminal, submit: (text) => seam.submit.call(app, text) }
+  }
+
+  const strip = (s: string): string => s
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, '')
+    .replace(/\x1b\][^\x07]*\x07/gu, '')
+    .replace(/\x1b_pi:[^\\]*\\/gu, '')
+
+  /** Let the alt screen's (coalesced, async) repaint land. */
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 250))
+
+  it('shows the thinking panel on the alt screen', async () => {
+    const { terminal, submit } = bootInFullscreen()
+    expect(terminal.output).toContain('\x1b[?1049h')
+    const before = terminal.output.length
+    await submit('/thinking')
+    await settle()
+    // The panel must be painted by the renderer that is actually on screen.
+    const painted = strip(terminal.output.slice(before))
+    expect(painted).toContain('Thinking level')
+    expect(painted).toContain('High')
+  })
+
+  it('shows the theme panel on the alt screen', async () => {
+    const { terminal, submit } = bootInFullscreen()
+    const before = terminal.output.length
+    await submit('/theme')
+    await settle()
+    expect(strip(terminal.output.slice(before))).toContain('Theme')
   })
 })

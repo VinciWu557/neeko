@@ -44,7 +44,7 @@
  * @module dsh-neeko/tui/app
  */
 
-import { TuiMainScreen } from '@earendil-works/pi-tui'
+import { CURSOR_MARKER, TuiMainScreen } from '@earendil-works/pi-tui'
 import { Editor } from '@earendil-works/pi-tui'
 import { Container } from '@earendil-works/pi-tui'
 import { Text } from '@earendil-works/pi-tui'
@@ -55,13 +55,15 @@ import { matchesKey, isKeyRelease, isKeyRepeat } from '@earendil-works/pi-tui'
 import type { Component, TUI } from '@earendil-works/pi-tui'
 import { buildCommands } from './commands.ts'
 import { LiveSlashProvider } from './slash-provider.ts'
-import { renderThemePicker, themePickerIntent } from './theme-picker.ts'
+import { renderThemePicker } from './theme-picker.ts'
+import { runPickerKey } from './picker.ts'
 import { buildModelPanel, handleModelPanelKey } from './model-panel.ts'
 import type { ModelPanel } from './model-panel.ts'
 import { markdownThemeOf } from './theme.ts'
 import { renderBanner } from './banner.ts'
 import type { TranscriptRow, TranscriptState } from './transcript.ts'
 import { renderOptionsFor, renderRow } from './transcript-view.ts'
+import { TranscriptFold } from './fold.ts'
 import { mountFullscreen } from './fullscreen.ts'
 import type { Fullscreen } from './fullscreen.ts'
 import { InteractionManager, interactionIntent, renderInteractionPanel } from './interactions.ts'
@@ -70,7 +72,11 @@ import { StatusController } from './status-controller.ts'
 import type { LiveStatusFacts } from './status-controller.ts'
 import { CommandController } from './command-controller.ts'
 import type { ModelChoice } from './command-controller.ts'
+import { resumeHint } from './resume-hint.ts'
+import { renderThinkingPicker, thinkingChoices, thinkingOutcome } from './thinking.ts'
+import type { ThinkingPickerView, ReasoningSupport } from './thinking.ts'
 import type { Theme } from './theme.ts'
+import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 
 /** Plain (colorless) select-list theme; a real palette is R3 scope. */
 const selectListTheme: SelectListTheme = {
@@ -116,6 +122,18 @@ const THINKING_INTERVAL_MS = 80
  */
 const MAX_NOTICE_COMPONENTS = 64
 
+/**
+ * How long a status notice stays on screen before it clears itself.
+ *
+ * A status reports *the state of an action* — "model → x", "transcript:
+ * expanded". Once the action is visible in the transcript the report is stale
+ * chrome, and pi proves the point by keeping exactly one status line and
+ * updating it in place. Ours also expires, because a fold toggle repeated while
+ * reading output would otherwise leave a stack of stale lines above the prompt.
+ * Errors are **not** on this path: they are events and stay until `/clear`.
+ */
+const STATUS_NOTICE_MS = 3_000
+
 export type { ModelChoice }
 
 export interface TuiAppOptions {
@@ -126,7 +144,7 @@ export interface TuiAppOptions {
    * every paint (banner, status bar) must read the new route — a snapshot
    * taken at construction would keep showing the boot model forever.
    */
-  readonly getSelection: () => { readonly provider: string; readonly model: string }
+  readonly getSelection: () => ModelSelection
   readonly getSessionId: () => string
   /**
    * The working directory of this session.
@@ -150,6 +168,17 @@ export interface TuiAppOptions {
    */
   readonly setDefaultModel?: ((provider: string, id: string) => void) | undefined
   /**
+   * The live selection's reasoning effort support for the **current** model.
+   *
+   * Async and host-owned: dsh answers `llm.resolveModelInfo(provider, model)`,
+   * and those efforts are the only set a level may be picked from — a hard-coded
+   * list would offer levels `resolveCallConfig` rejects before the request even
+   * leaves the process. `undefined` means the model has no reasoning support.
+   */
+  readonly reasoningSupport?: (() => Promise<ReasoningSupport | undefined>) | undefined
+  /** Apply one reasoning effort to the live selection (`undefined` clears it). */
+  readonly selectReasoningEffort?: ((effort: string | undefined) => void) | undefined
+  /**
    * Read one attachment's bytes.
    *
    * Supplied by the runner, which owns the attachment service. Reading is async
@@ -160,14 +189,18 @@ export interface TuiAppOptions {
   /** Theme to start with; `/theme` switches it at runtime. */
   readonly initialTheme?: string
   /**
-   * Enter fullscreen on start.
+   * Start on the main screen instead of the alt screen.
    *
-   * Fullscreen is where clicking a row works (the alt screen owns its own
-   * selection and copy, so reporting the pointer costs nothing native there). A
-   * user who prefers that as the default should not have to type `/fullscreen`
-   * every launch; `/fullscreen` still toggles it back off.
+   * Fullscreen is the **default**, matching pi (`settings-defaults.js`:
+   * `tuiMode: 'fullscreen'`): it is where clicking a row works (the alt screen
+   * owns its own selection and copy, so reporting the pointer costs nothing
+   * native there) and where the whole viewport belongs to us.
+   *
+   * The cost of the alt screen is the terminal's own scrollback, so opting out
+   * is a single switch — `--main-screen` / `DSH_NEEKO_MAIN_SCREEN=1` — and
+   * `/fullscreen` still toggles it either way at runtime.
    */
-  readonly initialFullscreen?: boolean
+  readonly startOnMainScreen?: boolean
   /** Harness version shown in the startup banner. */
   readonly version: string
   /** Live status snapshot for the bar under the editor. */
@@ -189,6 +222,13 @@ export interface TuiAppOptions {
    * developer's TTY.
    */
   readonly terminal?: Terminal
+  /**
+   * Override {@linkcode STATUS_NOTICE_MS} (tests use a short one).
+   *
+   * A number rather than a disable switch: "never expires" would put the stack
+   * of stale status lines back, which is the defect this exists to fix.
+   */
+  readonly statusNoticeMs?: number
 }
 
 /**
@@ -201,9 +241,30 @@ export class TuiApp {
   private readonly banner: Container
   private readonly messages: Container
   private readonly notices: Container
+  /**
+   * The rows between the transcript and the input: notices, the activity line,
+   * the interaction panel, the theme and thinking pickers.
+   *
+   * One container because both renderers mount it — the main screen as a child,
+   * the alt screen as its `aboveInput` slot. Enumerating these panels in
+   * `mountFullscreen()` is what made `/thinking` and `/theme` invisible in the
+   * default fullscreen mode while their keys still worked.
+   */
+  private readonly aboveInput: Container
   private readonly working: Text
   private readonly interactionText: Text
   private readonly themeText: Text
+  /** Its own panel line: a picker that renders into another's slot is a trap. */
+  private readonly thinkingText: Text
+  /**
+   * The open `/thinking` selector, if any.
+   *
+   * A panel rather than a full-height list: adapter effort sets are a handful of
+   * entries, so a `SelectList` with search would be more chrome than content.
+   * It owns the keyboard while open (checked in key arbitration alongside the
+   * theme picker).
+   */
+  private thinkingPicker: ThinkingPickerView | undefined
 
   /** Theme state, catalogue and picker. */
   private readonly themes: ThemeController
@@ -226,6 +287,15 @@ export class TuiApp {
   private transcript: TranscriptState | undefined
   /** The open model panel, if any (it owns the keyboard while visible). */
   private modelPanel: ModelPanel | undefined
+  /**
+   * The single status line, or `undefined` when nothing is reporting.
+   *
+   * A view concern like {@linkcode fold}: the flush rebuilds row components, so
+   * this cannot live in the notices container's contents or it would be lost.
+   */
+  private statusLine: Text | undefined
+  /** Countdown that hides {@linkcode statusLine}; one at a time. */
+  private statusTimer: ReturnType<typeof setTimeout> | undefined
   private readonly terminal: Terminal
   /** The alt-screen surface, while fullscreen is on. */
   private fullscreen: Fullscreen | undefined
@@ -238,13 +308,13 @@ export class TuiApp {
   /** Drives {@linkcode spinnerFrame} while something is still streaming. */
   private spinnerTimer: ReturnType<typeof setInterval> | undefined
   /**
-   * Rows the user explicitly expanded with `ctrl+o`.
+   * What the transcript shows expanded.
    *
    * Held here rather than in the row model: expansion is a *view* preference, so
    * a re-flush (which rebuilds every component) must not lose it, and the
    * transcript itself stays a pure projection of session events.
    */
-  private readonly expandedRows = new WeakSet<TranscriptRow>()
+  private readonly fold = new TranscriptFold()
   /**
    * Rendered component per row, keyed by the row object.
    *
@@ -276,9 +346,11 @@ export class TuiApp {
     // Local command replies live apart from `messages`: mountTranscript clears
     // its container on every flush, so anything written there would be wiped.
     this.notices = new Container()
+    this.aboveInput = new Container()
     this.working = new Text('')
     this.interactionText = new Text('')
     this.themeText = new Text('')
+    this.thinkingText = new Text('')
     // pi's model list shows ten rows before scrolling (`(1/205)` below them);
     // the editor renders the same list, so the same bound applies here.
     // The editor is handed a *proxy* for the renderer, not the main screen.
@@ -293,10 +365,12 @@ export class TuiApp {
 
     this.tui.addChild(this.banner)
     this.tui.addChild(this.messages)
-    this.tui.addChild(this.notices)
-    this.tui.addChild(this.working)
-    this.tui.addChild(this.interactionText)
-    this.tui.addChild(this.themeText)
+    this.aboveInput.addChild(this.notices)
+    this.aboveInput.addChild(this.working)
+    this.aboveInput.addChild(this.interactionText)
+    this.aboveInput.addChild(this.themeText)
+    this.aboveInput.addChild(this.thinkingText)
+    this.tui.addChild(this.aboveInput)
     this.tui.addChild(this.editor)
     this.tui.addChild(this.status.component)
     this.tui.setFocus(this.editor)
@@ -320,7 +394,10 @@ export class TuiApp {
     this.status.refresh()
     // Fullscreen starts *instead of* the main screen, not on top of it: the two
     // renderers share one terminal, so whichever starts last owns the mode.
-    if (this.options.initialFullscreen === true) {
+    //
+    // Alt screen by default (pi's `tuiMode: 'fullscreen'`); the main screen is
+    // the opt-out because it is the mode that keeps the terminal's scrollback.
+    if (this.options.startOnMainScreen !== true) {
       this.enterFullscreen()
       return
     }
@@ -343,10 +420,71 @@ export class TuiApp {
     // `this.tui` is the *main* screen and it is already stopped while fullscreen
     // is on, so stopping only it left the terminal in the alternate buffer: the
     // shell then drew its prompt into a screen the user could not see, and every
-    // subsequent write looked like garbage. `dispose()` also prints the final
-    // document back into scrollback.
-    this.exitFullscreen()
-    this.tui.stop()
+    // subsequent write looked like garbage.
+    //
+    // The conversation has to land in the terminal's own scrollback. Two ways
+    // are closed:
+    //
+    // 1. pi-tui's "print the final document" on the alt screen yields ONE line
+    //    for a `VStack` layout root (see `fullscreen.ts`) — the conversation is
+    //    gone (measured: 1426 bytes = banner only).
+    // 2. Restarting the main screen calls `terminal.start()`, which re-sends the
+    //    capability queries (Kitty protocol / device attributes / cell size).
+    //    Their replies arrive after we exit, nothing parses them, and the shell
+    //    prints the bytes literally: `7u 62;22;52c 34;16t`.
+    //
+    // So: leave the alt screen, then write the document ourselves.
+    this.resumeMainScreenQuietly()
+    // A live timer keeps the event loop alive and would fire into a stopped
+    // screen; clear the status line on the way out.
+    this.clearStatus()
+    this.printFinalDocument()
+  }
+
+  /**
+   * Write the transcript to the terminal's normal buffer, then stop.
+   *
+   * Rendered straight from this app's own containers (banner, messages,
+   * notices, editor, status) rather than through `TuiMainScreen.start()` — see
+   * {@linkcode stop} for why that path is unusable on quit.
+   */
+  private printFinalDocument(): void {
+    const width = Math.max(1, this.terminal.columns)
+    const document = [
+      this.banner,
+      this.messages,
+      // The aggregate, not the panels one by one: a new panel must not be able
+      // to go missing from the final document either.
+      this.aboveInput,
+      this.editor,
+      this.status.component,
+    ]
+      .flatMap((component) => component.render(width))
+      // pi-tui's fake-cursor markers are render-time protocol, not text.
+      .map((line) => line.replaceAll(CURSOR_MARKER, ''))
+    if (document.length === 0) return
+    // pi closes its TUI with a one-line "how do I get back in" (§`resume-hint`),
+    // and so do we — as the last row of the printed document, so it stays in the
+    // terminal's scrollback next to the conversation it refers to.
+    const hint = resumeHint({ sessionId: this.options.getSessionId() })
+    if (hint !== undefined) document.push('', this.themes.current.fg('muted', hint))
+    // `\n`, not `\r\n`: the terminal is in cooked mode by now, so its ONLCR
+    // translation turns `\n` into `\r\n` for us. Writing `\r\n` produced `\r\r\n`
+    // (a blank line between every row) on a real pty.
+    this.terminal.write(`${document.join('\n')}\n`)
+  }
+
+  /**
+   * Return to the main screen **without** restarting the terminal.
+   *
+   * Used by {@linkcode stop}, where re-running `TuiBase.start()` would re-send
+   * capability queries whose replies land on the shell's prompt after exit (they
+   * are no longer consumed as input).
+   */
+  private resumeMainScreenQuietly(): void {
+    if (this.fullscreen === undefined) return
+    this.fullscreen.dispose()
+    this.fullscreen = undefined
   }
 
   /**
@@ -449,6 +587,9 @@ export class TuiApp {
       case 'theme-picker':
         this.openThemePicker()
         return
+      case 'thinking':
+        await this.applyThinking(action.argument)
+        return
       case 'toggle-fullscreen':
         this.toggleFullscreen()
         return
@@ -537,7 +678,7 @@ export class TuiApp {
   private toggleFullscreen(): void {
     if (this.fullscreen !== undefined) {
       this.exitFullscreen()
-      this.addNotice('fullscreen off — terminal scrollback restored', 'muted')
+      this.showStatus('fullscreen off — terminal scrollback restored')
       return
     }
     this.enterFullscreen()
@@ -558,7 +699,7 @@ export class TuiApp {
       terminal: this.terminal,
       header: this.banner,
       transcript: this.messages,
-      notices: this.notices,
+      aboveInput: this.aboveInput,
       input: this.editor,
       footer: this.status.component,
       onInput: (data) => this.handleInput(data),
@@ -635,7 +776,139 @@ export class TuiApp {
     }
     // The banner bakes colors + the route into strings; a switch repaints it.
     this.repaintChrome()
-    this.addNotice(`model → ${match.provider}/${match.id}`, 'muted')
+    this.showStatus(`model → ${match.provider}/${match.id}`)
+  }
+
+  // ── reasoning effort (`/thinking`) ─────────────────────────────────────────
+
+  /**
+   * `/thinking [level]`: open the selector, or apply one level.
+   *
+   * The level list is the adapter's (`llm.resolveModelInfo`), so this is the
+   * only place that knows how to ask for it; the four outcomes are decided by
+   * the pure `thinkingOutcome()`.
+   *
+   * @param argument - the text after `/thinking`.
+   */
+  private async applyThinking(argument: string): Promise<void> {
+    const support = this.options.reasoningSupport;
+    if (support === undefined) {
+      this.addNotice('this build cannot read the model\'s reasoning settings', 'error')
+      return;
+    }
+    let resolved: ReasoningSupport | undefined
+    try {
+      resolved = await support()
+    } catch (error: unknown) {
+      this.addNotice(
+        `could not read reasoning settings: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      )
+      return
+    }
+    const current = this.options.getSelection().reasoningEffort
+    const outcome = thinkingOutcome(argument, resolved, current)
+    switch (outcome.kind) {
+      case 'unsupported':
+        this.addNotice(`model ${this.options.getSelection().model} has no reasoning levels`, 'error')
+        return
+      case 'unknown':
+        this.addNotice(outcome.message, 'error')
+        return
+      case 'unchanged':
+        this.showStatus(`thinking level: ${outcome.effort} (already set)`)
+        return
+      case 'picker':
+        this.openThinkingPicker(resolved, current)
+        return
+      case 'apply':
+        this.commitThinking(outcome.effort)
+        return
+    }
+  }
+
+  /**
+   * Apply one effort to the live selection.
+   *
+   * `undefined` clears it, which the DSH contract reads as "provider default" —
+   * the same rule `switchedSelection` follows when changing models.
+   *
+   * @param effort - the effort to apply, or `undefined` to clear.
+   */
+  private commitThinking(effort: string | undefined): void {
+    const apply = this.options.selectReasoningEffort
+    if (apply === undefined) {
+      this.addNotice('this build cannot change the reasoning level', 'error')
+      return
+    }
+    try {
+      apply(effort)
+    } catch (error: unknown) {
+      this.addNotice(
+        `thinking level not applied: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      )
+      return
+    }
+    // The status bar carries the effort; repaint it so the change is visible
+    // without waiting for the next session event.
+    this.repaintChrome()
+    this.showStatus(`thinking level: ${effort ?? 'default'}`)
+  }
+
+  private openThinkingPicker(
+    support: ReasoningSupport | undefined,
+    current: string | undefined,
+  ): void {
+    const choices = thinkingChoices(support, current)
+    if (choices.length === 0) {
+      this.addNotice(`model ${this.options.getSelection().model} has no reasoning levels`, 'error')
+      return
+    }
+    // Start on the level in effect so enter-without-moving is a no-op rather
+    // than a silent change.
+    const active = choices.findIndex((choice) => choice.current)
+    this.thinkingPicker = { choices, index: active < 0 ? 0 : active }
+    this.renderThinkingPicker()
+  }
+
+  private renderThinkingPicker(): void {
+    const view = this.thinkingPicker
+    if (view === undefined) return
+    this.thinkingText.setText(renderThinkingPicker(view, this.themes.current))
+    this.requestRender()
+  }
+
+  private closeThinkingPicker(): void {
+    this.thinkingPicker = undefined
+    this.thinkingText.setText('')
+    this.requestRender()
+  }
+
+  /**
+   * Route one key against the open thinking picker.
+   *
+   * `runPickerKey()` owns the routing (and the clamped cursor rule); this only
+   * supplies where the cursor comes from and what confirming does.
+   */
+  private handleThinkingPickerKey(data: string): { consume?: boolean } | undefined {
+    const view = this.thinkingPicker
+    return runPickerKey({
+      state: view === undefined ? undefined : { index: view.index, length: view.choices.length },
+      data,
+      isKey: (name) => matchesKey(data, name),
+      onMove: (index) => {
+        if (view === undefined) return
+        this.thinkingPicker = { choices: view.choices, index }
+        this.renderThinkingPicker()
+      },
+      onClose: () => { this.closeThinkingPicker() },
+      onConfirm: () => {
+        const chosen = view?.choices[view.index]
+        this.closeThinkingPicker()
+        if (chosen !== undefined) this.commitThinking(chosen.id)
+      },
+    })
   }
 
   // ── theme ──────────────────────────────────────────────────────────────────
@@ -664,7 +937,7 @@ export class TuiApp {
       this.addNotice(`unknown theme "${name}" (try /theme)`, 'error')
       return
     }
-    this.addNotice(`theme → ${name}`, 'muted')
+    this.showStatus(`theme → ${name}`)
   }
 
   /** Repaint everything whose colors are baked into strings. */
@@ -721,12 +994,12 @@ export class TuiApp {
       const md = markdownThemeOf(theme)
       // Rows added after a clear are kept; only the pre-clear prefix is hidden.
       const live = state.rows.slice(this.visibleFrom)
-      // Everything folds by default; a click (or `ctrl+o`) opens one row. This is
-      // the whole point: a transcript that is expanded by default is unreadable
-      // the moment a tool returns a file.
+      // Everything folds by default; `ctrl+o` opens the whole transcript and a
+      // click opens one row. This is the whole point: a transcript that is
+      // expanded by default is unreadable the moment a tool returns a file.
       const options = renderOptionsFor({
         theme,
-        expanded: this.expandedRows,
+        fold: this.fold,
         cwd: this.cwd(),
         spinnerFrame: this.spinnerFrame,
         imageData: (image) => this.imageCache.get(image.attachmentId),
@@ -797,7 +1070,7 @@ export class TuiApp {
    * @returns a string that differs whenever the output would differ.
    */
   private rowSignature(row: TranscriptRow, themeName: string, state: TranscriptState): string {
-    const expanded = this.expandedRows.has(row) ? '1' : '0'
+    const expanded = this.fold.isExpanded(row) ? '1' : '0'
     if (row.kind === 'assistant') {
       // `thinking.length`/`text.length` change on every streamed token, which is
       // exactly when this row must be rebuilt.
@@ -808,6 +1081,10 @@ export class TuiApp {
       const images = row.images?.length ?? 0
       return `t|${themeName}|${expanded}|${row.status}|${images}|` +
         `${row.result?.length ?? -1}|${state.attachTime}`
+    }
+    if (row.kind === 'failure') {
+      // Written once and never mutated, so only the fold can change it.
+      return `f|${themeName}|${expanded}|${row.text.length}`
     }
     const images = row.images?.length ?? 0
     return `u|${themeName}|${expanded}|${row.content.length}|${images}`
@@ -833,11 +1110,73 @@ export class TuiApp {
 
   /**
    * Append one themed notice line.
+   *
+   * Durable: it stays until `/clear` or the bounded list drops it. Use this for
+   * **content and errors** — an expiring error would hide the reason a command
+   * failed (pi appends `showError`/`showWarning` and never auto-clears them).
+   *
    * @param text - the message body.
    * @param tone - theme token to color it with.
    */
   private addNotice(text: string, tone: 'text' | 'dim' | 'muted' | 'error'): void {
     this.addMessage(new Text(this.themes.current.fg(tone, text)))
+  }
+
+  /**
+   * Report the state of one action on a single, self-clearing line.
+   *
+   * pi keeps exactly **one** status line and calls `setText()` on it when the
+   * next status arrives — its comment says "to avoid log spam". This adds the
+   * other half of what makes a status line disposable: it expires, because a
+   * `ctrl+o` pressed while reading output would otherwise leave a stack of stale
+   * `transcript: expanded / collapsed` lines above the prompt forever.
+   *
+   * The line is reused rather than re-added, so repeated calls cannot grow the
+   * notices list (and cannot re-trigger the bounded trim on the way).
+   *
+   * @param text - the message body.
+   */
+  private showStatus(text: string): void {
+    // Reuse the slot only while it is still mounted. It can be unmounted two
+    // ways — `/clear` and `addMessage`'s bound (which drops the oldest child,
+    // and a status line that has been sitting there is often the oldest). Updating
+    // an unmounted component is a `setText()` nobody can see.
+    const line = this.statusLine !== undefined && this.notices.children.includes(this.statusLine)
+      ? this.statusLine
+      : undefined
+    if (line !== undefined) {
+      // pi's exact move: the slot exists, so update it in place. Mounting a
+      // second line here is what made the stack.
+      line.setText(this.themes.current.fg('muted', text))
+    } else {
+      // `paddingY: 0` — a status line sits above the prompt and must not push it
+      // two rows down on every call.
+      this.statusLine = new Text(this.themes.current.fg('muted', text), 1, 0)
+      this.addMessage(this.statusLine)
+    }
+    // One countdown for the line, restarted by every new status: the last action
+    // is the one worth seeing, and its window starts when it happened.
+    if (this.statusTimer !== undefined) clearTimeout(this.statusTimer)
+    const ms = this.options.statusNoticeMs ?? STATUS_NOTICE_MS
+    this.statusTimer = setTimeout(() => { this.clearStatus() }, ms)
+    this.requestRender()
+  }
+
+  /** Hide the status line and drop it from the notices area. */
+  private clearStatus(): void {
+    if (this.statusTimer !== undefined) {
+      clearTimeout(this.statusTimer)
+      this.statusTimer = undefined
+    }
+    const line = this.statusLine
+    this.statusLine = undefined
+    if (line === undefined) return
+    // Remove it rather than emptying it: an empty `Text` renders nothing, but it
+    // still occupies a slot, and the notices bound counts slots — a long session
+    // of statuses would push real command replies out of the container.
+    line.setText('')
+    this.notices.removeChild(line)
+    this.requestRender()
   }
 
   /**
@@ -855,6 +1194,10 @@ export class TuiApp {
     this.tui.setClearOnShrink(true)
     this.messages.clear()
     this.notices.clear()
+    // The status line was mounted in `notices`, so it is gone now; drop the
+    // pointer and its countdown with it. Leaving them would make the next
+    // `showStatus()` call `setText()` on an unmounted component = invisible.
+    this.clearStatus()
     this.tui.renderNow(true)
   }
 
@@ -926,7 +1269,8 @@ export class TuiApp {
   // ── key arbitration ────────────────────────────────────────────────────────
 
   /**
-   * Top-level routing. Priority: exit → theme picker → interaction → editor.
+   * Top-level routing. Priority: exit → model panel → theme picker → fold →
+   * interaction → editor.
    *
    * Returning `undefined` lets pi-tui pass the key to the focused component
    * (the editor); `{ consume: true }` swallows it.
@@ -944,10 +1288,12 @@ export class TuiApp {
       this.requestRender()
       return { consume: true }
     }
+    if (this.thinkingPicker !== undefined) return this.handleThinkingPickerKey(data)
     if (this.themes.isPickerOpen) return this.handleThemePickerKey(data)
-    // `ctrl+o` toggles the newest foldable row, then repaints. Placed after the
-    // modal surfaces: an open panel or prompt owns the keyboard first.
-    if (matchesKey(data, 'ctrl+o')) {
+    // `ctrl+o` flips the whole transcript, then repaints. A pending approval or
+    // question owns the keyboard first: the view behind it is not the surface
+    // the user is looking at.
+    if (!this.interactions.busy && matchesKey(data, 'ctrl+o')) {
       this.toggleFold()
       return { consume: true }
     }
@@ -955,18 +1301,22 @@ export class TuiApp {
   }
 
   /**
-   * Expand or collapse the newest row.
+   * Expand or collapse the whole transcript.
    *
-   * Targeting "the newest row" rather than a cursor keeps the key stateless —
-   * there is no selected row to track, and the thing the user just watched
-   * happen is the thing they want to re-read. This is the keyboard route to the
-   * same toggle a click performs.
+   * pi binds `ctrl+o` to `app.tools.expand`, whose handler broadcasts
+   * `setExpanded()` to every expandable child — one global switch, not a cursor.
+   * The same key here means the same thing: no selected row to track, and the
+   * key restores a uniform view (per-row clicks are dropped, see
+   * {@linkcode TranscriptFold.toggleAll}).
    */
   private toggleFold(): void {
-    const rows = this.transcript?.rows.slice(this.visibleFrom) ?? []
-    const newest = rows[rows.length - 1]
-    if (newest === undefined) return
-    this.toggleRow(newest)
+    const expanded = this.fold.toggleAll()
+    // One status line, updated in place and expiring (see
+    // {@linkcode showStatus}). An *appended* notice here is what the user
+    // reported: every press left another `transcript: expanded / collapsed`
+    // line above the prompt that never went away.
+    this.showStatus(`transcript: ${expanded ? 'expanded' : 'collapsed'}`)
+    this.scheduleRender?.()
   }
 
   /**
@@ -1025,36 +1375,32 @@ export class TuiApp {
   /**
    * Flip one row's expansion.
    *
-   * Rows fold by default and the set holds the *exceptions*, so opening one is an
-   * insert and closing it is a delete. Keeping the exceptions (rather than the
-   * folded set) is what makes the default cheap: a row added later is folded
-   * without touching the set.
+   * The fold holds the *overrides*, so opening a row is an insert and closing it
+   * a delete; the global switch decides the default they invert.
    *
-   * @param row - the clicked (or newest) row.
+   * @param row - the clicked row.
    */
   private toggleRow(row: TranscriptRow): void {
-    if (this.expandedRows.has(row)) this.expandedRows.delete(row)
-    else this.expandedRows.add(row)
+    this.fold.toggle(row)
     this.scheduleRender?.()
   }
 
   private handleThemePickerKey(data: string): { consume?: boolean } | undefined {
-    const intent = themePickerIntent((name) => matchesKey(data, name))
-    switch (intent.kind) {
-      case 'close':
-        this.closeThemePicker()
-        return { consume: true }
-      case 'move':
-        this.themes.movePicker(intent.delta)
+    const view = this.themes.picker
+    return runPickerKey({
+      state: view === undefined ? undefined : { index: view.index, length: view.choices.length },
+      data,
+      isKey: (name) => matchesKey(data, name),
+      // The controller owns this cursor, so it takes the delta itself (and
+      // applies the same clamp); recomputing an index here would be a second
+      // copy of the cursor rule.
+      onMove: (_index, delta) => {
+        this.themes.movePicker(delta)
         this.renderThemePicker()
-        return { consume: true }
-      case 'confirm':
-        this.confirmThemePicker()
-        return { consume: true }
-      case 'ignore':
-        // The picker owns the keyboard: never let a stray key reach the editor.
-        return { consume: true }
-    }
+      },
+      onClose: () => { this.closeThemePicker() },
+      onConfirm: () => { this.confirmThemePicker() },
+    })
   }
 
   private confirmThemePicker(): void {
@@ -1067,7 +1413,7 @@ export class TuiApp {
       return
     }
     const origin = choice.sourcePath === undefined ? 'built-in' : 'custom'
-    this.addNotice(`theme → ${choice.name} (${origin})`, 'muted')
+    this.showStatus(`theme → ${choice.name} (${origin})`)
   }
 
   /**

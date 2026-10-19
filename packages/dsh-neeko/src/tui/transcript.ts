@@ -22,6 +22,7 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
+import { turnEndFailure } from '../dsh-adapter.ts'
 
 /**
  * One image attached to a row.
@@ -49,6 +50,19 @@ export type TranscriptRow =
       thinking: string
       /** Set when the attempt's `end` frame arrived. */
       done: boolean
+    }
+  | {
+      /**
+       * A model-response failure, settled from the turn's `turn/end` reason.
+       *
+       * A row kind of its own rather than a field on the assistant bubble:
+       * a request can fail before any `start` frame arrives (auth, rate limit,
+       * transport), so there is often no bubble to attach it to.
+       */
+      kind: 'failure'
+      turn: number
+      /** Pre-worded line, ready to paint (see {@linkcode turnEndFailure}). */
+      text: string
     }
   | {
       kind: 'tool'
@@ -158,6 +172,24 @@ function feedLogEvent(state: TranscriptState, event: SessionEvent): void {
       // would double every token.
       break
     }
+    case 'turn/end': {
+      // The one durable place a failed model request lands. `dsh-agent-loop`
+      // writes this in the turn's `finally`, so a turn that retried into a good
+      // reply ends `completed` and produces no row here.
+      const text = turnEndFailure(event.data.reason)
+      if (text === undefined) break
+      state.rows.push({ kind: 'failure', turn: event.data.turn, text })
+      // A turn that dies mid-tool-call leaves its cards `[running]` forever —
+      // nothing will ever write their result. Close them out with the failure,
+      // which is what pi does to `pendingTools` on `stopReason: 'error'`.
+      for (const row of state.rows) {
+        if (row.kind === 'tool' && row.status === 'running') {
+          row.status = 'failed'
+          row.result = text
+        }
+      }
+      break
+    }
     default:
       break // unknown / presentation-only rows are fail-open
   }
@@ -196,6 +228,10 @@ export function restoreRows(state: TranscriptState, rows: readonly HistoryRow[])
         turn: -1,
         images: [],
       })
+    } else if (row.kind === 'failure' && row.text !== undefined && row.text !== '') {
+      // Restored after the fact, so no live turn is in flight: -1 matches the
+      // other restored rows and keeps it out of any turn-window logic.
+      state.rows.push({ kind: 'failure', turn: -1, text: row.text })
     }
   }
 }
@@ -205,7 +241,7 @@ export function restoreRows(state: TranscriptState, rows: readonly HistoryRow[])
  * the bridge's `buildHistory` output shape).
  */
 export interface HistoryRow {
-  kind: 'user' | 'assistant' | 'tool'
+  kind: 'user' | 'assistant' | 'tool' | 'failure'
   messageId?: string
   content?: string
   text?: string
@@ -215,6 +251,8 @@ export interface HistoryRow {
   args?: unknown
   status?: 'success' | 'failed'
   result?: unknown
+  /** Turn the row closed, used by `kind: 'failure'`. */
+  turn?: number
 }
 
 /** The turn the transcript is currently in (the newest assistant bubble's). */

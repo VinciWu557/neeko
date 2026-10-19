@@ -50,6 +50,13 @@ export interface NeekoStartupValues {
   spawnCommand?: string
   /** Run the interactive terminal UI instead of the Neeko bridge. */
   tui?: boolean
+  /**
+   * Start the TUI on the terminal's main screen instead of the alt screen.
+   *
+   * Fullscreen is the default (pi's `tuiMode: 'fullscreen'`); this is the
+   * opt-out for anyone who wants their scrollback back.
+   */
+  mainScreen?: boolean
 }
 
 /** Flags as commander actually reports them. */
@@ -66,6 +73,8 @@ export interface StartupFlags {
   spawn?: string | false
   /** `--tui`: run the interactive TUI instead of the bridge. */
   tui?: boolean
+  /** `--main-screen`: keep the terminal's scrollback instead of entering the alt screen. */
+  mainScreen?: boolean
 }
 
 /**
@@ -92,6 +101,7 @@ export function resolveStartupValues(flags: StartupFlags, positional?: string): 
     ...(flags.spawn === false ? { autoSpawn: false } : {}),
     ...(typeof flags.spawn === 'string' ? { spawnCommand: flags.spawn } : {}),
     ...(flags.tui === true ? { tui: true } : {}),
+    ...(flags.mainScreen === true ? { mainScreen: true } : {}),
   }
 }
 
@@ -107,6 +117,7 @@ function neekoCommand(): Command {
     .option('--spawn <command>', 'override the command used to launch Neeko (e.g. "open -a Neeko")')
     .option('--no-spawn', 'do not spawn Neeko even in CLI mode')
     .option('--tui', 'run the interactive terminal UI instead of the Neeko bridge')
+    .option('--main-screen', 'TUI: keep the terminal scrollback (fullscreen is the default)')
     .argument('[mode]', "'daemon' runs the bridge in pure-wait mode (alias of --daemon)")
     .addHelpText('after', `
 Examples:

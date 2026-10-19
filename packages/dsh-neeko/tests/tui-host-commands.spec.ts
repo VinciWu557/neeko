@@ -174,6 +174,6 @@ describe('buildCommands — host + skill merge', () => {
   it('works when the host exposes nothing', () => {
     const names = buildCommands({ listThemes: () => [] })
       .map((command) => command.name)
-    expect(names).toEqual(['help', 'clear', 'model', 'theme', 'fullscreen', 'exit'])
+    expect(names).toEqual(['help', 'clear', 'model', 'thinking', 'theme', 'fullscreen', 'exit'])
   })
 })

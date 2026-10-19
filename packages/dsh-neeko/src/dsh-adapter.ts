@@ -222,11 +222,60 @@ export function buildHistory(events: readonly SessionEvent[]): HistoryItem[] {
         })
         break
       }
+      case 'turn/end': {
+        // A failed turn leaves no `assistant/message`, so without this a
+        // resumed session shows the question and then nothing — the same
+        // silence the live path had before `turn/end` was handled.
+        const text = turnEndFailure(event.data.reason)
+        if (text !== undefined) {
+          items.push({ kind: 'failure', turn: event.data.turn, text, createdAt: event.time })
+        }
+        break
+      }
       default:
         break
     }
   }
   return items
+}
+
+/**
+ * Word one `turn/end` reason for the screen, in pi's wording.
+ *
+ * Exported and pure so the wording is assertable without a terminal — and so a
+ * reason this build does not know returns `undefined` (no row) instead of
+ * throwing: `TurnEndReason` is merge-extensible, so a plugin can add a variant
+ * nobody here has seen.
+ *
+ * @param reason - the turn's end reason, as recorded in the durable log.
+ * @returns the line to show, or `undefined` when nothing failed.
+ */
+export function turnEndFailure(reason: unknown): string | undefined {
+  if (typeof reason !== 'object' || reason === null) return undefined
+  const kind = (reason as { kind?: unknown }).kind
+  if (kind === 'error') {
+    const failure = (reason as { error?: unknown }).error
+    if (typeof failure !== 'object' || failure === null) return 'Error: Unknown error'
+    const { message, code, status } = failure as { message?: unknown; code?: unknown; status?: unknown }
+    const text = typeof message === 'string' && message !== '' ? message : 'Unknown error'
+    // The code is what makes two 401s distinguishable; `UNKNOWN` is the loop's
+    // own flattening of a non-Llm error and names nothing.
+    const tag = typeof code === 'string' && code !== '' && code !== 'UNKNOWN'
+      ? typeof status === 'number' ? ` [${code} ${status}]` : ` [${code}]`
+      : ''
+    return `Error: ${text}${tag}`
+  }
+  if (kind === 'aborted') {
+    const cause = (reason as { reason?: unknown }).reason
+    const note = typeof cause === 'object' && cause !== null
+      && (cause as { kind?: unknown }).kind === 'hook'
+      && typeof (cause as { reason?: unknown }).reason === 'string'
+      ? (cause as { reason: string }).reason
+      : undefined
+    return note === undefined ? 'Operation aborted' : `Operation aborted (${note})`
+  }
+  if (kind === 'max-tokens') return 'Response was truncated before completion.'
+  return undefined
 }
 
 /** Parse a tool call's raw argument JSON; falls back to the raw string. */
