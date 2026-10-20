@@ -394,6 +394,33 @@ pub async fn agent_input(
         .await
 }
 
+/// Set one session config option (`session/set_config_option`).
+///
+/// 供模型 popover 里的 `model_config` / `thought_level` 控件使用。响应里的
+/// 全量配置通过 `config_option_update` 事件回到前端 —— 本命令不返回状态，
+/// 因为「改完之后是什么」由 agent 决定，不由客户端猜。
+#[tauri::command]
+pub async fn agent_set_config_option(
+    session_id: String,
+    config_id: String,
+    value: serde_json::Value,
+    state: State<'_, AppStateWrapper>,
+) -> Result<(), AppError> {
+    let value =
+        serde_json::from_value::<crate::agent::chat::adapter::acp_config::SessionConfigValue>(
+            value,
+        )
+        .map_err(|e| AppError::InvalidInput(format!("invalid config option value: {e}")))?;
+
+    state
+        .agent_chat_manager
+        .send(
+            &session_id,
+            SessionRequest::SetConfigOption { config_id, value },
+        )
+        .await
+}
+
 /// Rebind context on project switch (A4).
 #[tauri::command]
 pub async fn agent_context_set(

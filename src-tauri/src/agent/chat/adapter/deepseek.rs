@@ -64,6 +64,7 @@ impl AgentAdapter for DeepSeekHarnessAdapter {
                 session_id: session_id.clone(),
                 agent: ctx_agent_id,
                 model: None,
+                config_options: Vec::new(),
                 capabilities: Capabilities {
                     approvals: true,
                     command_echo: true,
@@ -165,6 +166,11 @@ impl AgentAdapter for DeepSeekHarnessAdapter {
 /// Serialize a page→agent request into the harness's JSON-Lines shape.
 fn request_to_line(req: &SessionRequest) -> serde_json::Value {
     match req {
+        // DeepSeek harness 不支持会话配置项：发一个 no-op 帧而不是静默丢弃，
+        // 让「发了但 agent 不认」在日志里可见（而不是看起来像没发）。
+        SessionRequest::SetConfigOption { config_id, value } => {
+            serde_json::json!({"type":"set_config_option","config_id":config_id,"value":value})
+        }
         SessionRequest::Approve { call_id, allow } => {
             serde_json::json!({"type":"approval","call_id":call_id,"allow":allow})
         }
@@ -241,6 +247,7 @@ fn translate_line(session_id: &str, line: &str) -> StreamEvent {
             agent: "deepseek-harness".into(),
             model: None,
             capabilities: Capabilities::default(),
+            config_options: Vec::new(),
         },
         "turn_start" => StreamEvent::TurnStart {
             session_id: session_id.into(),

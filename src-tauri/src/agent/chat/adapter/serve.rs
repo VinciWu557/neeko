@@ -25,11 +25,14 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{mpsc, OnceCell};
 use tokio::time::timeout;
 
-use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
+use crate::agent::chat::adapter::{
+    AgentAdapter, AgentContext, AgentKind, AgentSession, ModelCatalog,
+};
 use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, ErrorKind, SessionRequest, StreamEvent, TodoItem,
     TurnEndReason,
 };
+use crate::common::agent::types::AgentConfig;
 use crate::common::error::AppError;
 use crate::common::executor::factory::ExecTarget;
 use crate::common::executor::BoxAsyncRead;
@@ -643,10 +646,45 @@ impl ServeAdapter {
     }
 }
 
+/// `opencode models --verbose` 快速路径。
+///
+/// 存在理由：ACP 的模型列表只能从会话里取，而设置页没有会话。opencode 自带一条
+/// 独立命令，能让用户在**打开会话之前**看到可选模型。这是优化，不是主路径 ——
+/// 拿不到时 UI 会退回「会话内可选」的说明。
+pub struct OpencodeCatalog;
+
+#[async_trait]
+impl ModelCatalog for OpencodeCatalog {
+    async fn list(
+        &self,
+        config: &AgentConfig,
+    ) -> Result<Vec<crate::common::agent::types::ModelInfo>, AppError> {
+        // 用户在设置里可以覆盖二进制路径；未覆盖时用 `command`。
+        let binary = if config.command.is_empty() {
+            None
+        } else {
+            Some(config.command.clone())
+        };
+        crate::agent::model_discovery::discover_opencode_models(binary).await
+    }
+}
+
+static OPENCODE_CATALOG: OpencodeCatalog = OpencodeCatalog;
+
 #[async_trait]
 impl AgentAdapter for ServeAdapter {
     fn kind(&self) -> AgentKind {
         AgentKind::Opencode
+    }
+
+    /// serve 支持按轮次指定模型（每次 prompt 都带 model 字段）。
+    fn supports_model_selection(&self) -> bool {
+        true
+    }
+
+    /// 唯一拥有「不建会话列模型」命令的传输。
+    fn model_catalog(&self) -> Option<&dyn ModelCatalog> {
+        Some(&OPENCODE_CATALOG)
     }
 
     async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError> {
@@ -758,6 +796,7 @@ async fn attach_streaming(
                 session_id: inner_sid.clone(),
                 agent: ctx_agent_id,
                 model: pump_model_id,
+                config_options: Vec::new(),
                 capabilities: Capabilities {
                     approvals: true,
                     command_echo: false,
@@ -1059,6 +1098,8 @@ async fn run_request_loop(
     } = scope;
     while let Some(req) = req_rx.recv().await {
         match req {
+            // serve 的模型走 per-turn（每次 prompt 带 model），不消费 config option。
+            SessionRequest::SetConfigOption { .. } => {}
             SessionRequest::Approve { call_id, allow } => {
                 let url = format!("{base_url}/session/{serve_sid}/permissions/{call_id}");
                 let body = serde_json::json!({

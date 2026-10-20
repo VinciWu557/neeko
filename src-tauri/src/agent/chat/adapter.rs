@@ -5,11 +5,13 @@
 //! adapter only; the protocol and page are untouched (OCP).
 
 use async_trait::async_trait;
+use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::agent::chat::events::{SessionRequest, StreamEvent};
 use crate::common::agent::types::{AgentConfig, ChatStart};
 pub mod acp;
+pub mod acp_config;
 pub mod deepseek;
 pub mod serve;
 
@@ -137,6 +139,56 @@ pub trait AgentAdapter: Send + Sync {
     fn supports_chat_resume(&self) -> bool {
         false
     }
+    /// Whether this transport can expose model selection at all.
+    ///
+    /// Default `false`, adapters opt in — same shape as `supports_chat_resume`
+    /// so a new agent never forces edits onto the command layer (OCP).
+    fn supports_model_selection(&self) -> bool {
+        false
+    }
+    /// Optional out-of-session model catalog (the "quick list" fast path).
+    ///
+    /// `None` means "no standalone list": either the transport has no such
+    /// command (ACP — models come from the session's `configOptions`), or it
+    /// cannot select models at all. Callers distinguish the two via
+    /// [`AgentAdapter::supports_model_selection`].
+    fn model_catalog(&self) -> Option<&dyn ModelCatalog> {
+        None
+    }
+}
+
+/// `list_agent_models` 的结果类型。
+///
+/// 早先返回 `Vec<ModelInfo>`，空数组同时表示「不支持」「执行失败」「还没加载」——
+/// 三者对用户是三种完全不同的处境，UI 只能给出一个永久禁用的 "No models"。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ModelCatalogResult {
+    /// 拿到列表了（私有命令路径，如 `opencode models --verbose`）。
+    Available {
+        /// 模型条目。
+        models: Vec<crate::common::agent::types::ModelInfo>,
+    },
+    /// 该 agent 支持模型选择，但列表**只能在会话内**取得。
+    ///
+    /// ACP 没有独立的「列模型」方法：模型来自 `session/new` 响应的 `configOptions`。
+    /// 因此设置页无法预先枚举 —— 这是协议约束，不是缺陷。
+    SessionScoped,
+    /// 该 agent 不支持模型选择。
+    Unsupported,
+}
+
+/// 一个 agent 私有的模型目录（「不建会话就列出模型」的快速路径）。
+///
+/// 只有确实拥有这种命令的适配器才实现；ACP 路径**故意不实现** —— 它的模型来自
+/// 会话的 `configOptions`，本来就不该有独立目录。
+#[async_trait]
+pub trait ModelCatalog: Send + Sync {
+    /// 列出该 agent 的模型。
+    async fn list(
+        &self,
+        config: &AgentConfig,
+    ) -> Result<Vec<crate::common::agent::types::ModelInfo>, AppError>;
 }
 
 /// A live, cancelable agent session (A5 — standard adapter shape).

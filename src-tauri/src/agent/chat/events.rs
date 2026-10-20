@@ -126,11 +126,28 @@ pub enum SessionRequest {
     Turn {
         /// User's prompt for the new turn.
         prompt: String,
-        /// Model ID selected by the user for this turn (per-turn model switching).
-        /// `None` keeps the session's initial model / agent default.
-        /// 仅传 ID 不传完整 ModelInfo，减少 IPC 负载（serve 适配器内部按 ID 做 slug split）。
+        /// Model ID selected by the user.
+        ///
+        /// **语义按传输不同**：
+        /// - `serve`：per-turn（每次 prompt 都带 model，可逐轮切换）；
+        /// - `acp`：会话级 —— ACP 没有 per-turn 模型参数，适配器会在发 prompt **之前**
+        ///   先发 `session/set_config_option`，因此语义是「本轮开始前切到这个模型」。
+        ///   并发回合不可能用不同模型（协议决定的，不是实现缺陷）。
+        ///
+        /// `None` 保持会话当前模型 / agent 默认。
         #[serde(default)]
         model_id: Option<String>,
+    },
+    /// Set one session config option (ACP `session/set_config_option`).
+    ///
+    /// 用于 `model_config` / `thought_level` 等非模型选择器的配置项 —— 用户在下拉
+    /// 旁边改「上下文大小」「推理档位」时走这条通道。模型切换**不走这里**（它是
+    /// `Turn.model_id`），但两者最终发出的是同一个协议方法。
+    SetConfigOption {
+        /// 选项标识（`configOptions[].id`）。
+        config_id: String,
+        /// 目标值：select 形态给文本，boolean 形态给布尔。
+        value: crate::agent::chat::adapter::acp_config::SessionConfigValue,
     },
     /// Rebind context on project switch (A4).
     ContextSet {
@@ -161,6 +178,15 @@ pub enum StreamEvent {
         /// Capabilities the agent declares for this session.
         #[serde(default)]
         capabilities: Capabilities,
+        /// Session configuration options (ACP `configOptions`).
+        ///
+        /// 这是**模型列表的唯一来源**：ACP 没有独立的「列模型」方法，`session/new`
+        /// 响应里的 `configOptions` 就是全部信息。不把它送到前端，UI 即使在会话内
+        /// 也拿不到可选项。
+        ///
+        /// 其余传输（serve / jsonl）不发这个字段 → 前端看到空数组，走各自路径。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        config_options: Vec<crate::agent::chat::adapter::acp_config::SessionConfigOption>,
     },
     /// Context bound at session start (A4).
     ContextInit {
@@ -304,6 +330,18 @@ pub enum StreamEvent {
         #[serde(default)]
         usage: Option<Usage>,
     },
+    /// Agent pushed new session config options (`config_option_update`).
+    ///
+    /// ACP 允许 agent **主动**变更配置 —— 最典型的是 rate limit 时 fallback 到另一个
+    /// 模型。不订阅它，UI 显示的当前模型会与真实会话脱节。
+    ///
+    /// 载荷是**全量**：协议要求整体替换，不做增量合并。
+    ConfigOptionUpdate {
+        /// Session identifier.
+        session_id: String,
+        /// Complete configuration state after the change.
+        config_options: Vec<crate::agent::chat::adapter::acp_config::SessionConfigOption>,
+    },
     /// Session finished.
     SessionDone {
         /// Session identifier.
@@ -335,6 +373,7 @@ mod tests {
     #[test]
     fn session_start_roundtrip() {
         let ev = StreamEvent::SessionStart {
+            config_options: Vec::new(),
             session_id: "s1".into(),
             agent: "opencode".into(),
             model: Some("deepseek-v4-flash".into()),
@@ -494,6 +533,7 @@ mod sequenced_event_tests {
         let ev = SequencedEvent {
             seq: 42,
             event: StreamEvent::SessionStart {
+                config_options: Vec::new(),
                 session_id: "s1".into(),
                 agent: "opencode".into(),
                 model: None,

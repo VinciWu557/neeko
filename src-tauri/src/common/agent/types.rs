@@ -20,7 +20,8 @@ use std::collections::HashMap;
 pub enum ChatStart {
     /// Agent Client Protocol over JSON-RPC stdio（子进程）。
     /// `args` 为二进制后附加的 ACP 子命令参数（opencode 需 `["acp"]`；二进制本身
-    /// 即 ACP 则空）。args 是内置启动特例，不随配置持久化。
+    /// 即 ACP 则空）。**会随配置持久化** —— 这是让任意 agent 声明 ACP 启动方式的
+    /// 唯一通道；内置定义仍可直接提供，用户配置可覆盖。
     Acp {
         /// ACP 子命令参数（opencode: `["acp"]`）。
         args: Vec<String>,
@@ -47,21 +48,70 @@ impl ChatStart {
 }
 
 impl Serialize for ChatStart {
+    /// ACP 且带启动参数时写对象形态 `{"transport":"acp","args":[...]}`，
+    /// 其余（含 args 为空的 ACP）写裸字符串。
+    ///
+    /// 优先写字符串的理由：已有用户的 config.json 就是这种形态，无参数时
+    /// 不制造 diff；对象形态只在**确实有信息要带**时出现。
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
+        match self {
+            Self::Acp { args } if !args.is_empty() => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("transport", self.as_str())?;
+                map.serialize_entry("args", args)?;
+                map.end()
+            }
+            _ => serializer.serialize_str(self.as_str()),
+        }
     }
 }
 
 impl<'de> Deserialize<'de> for ChatStart {
+    /// 接受两种形态：
+    ///
+    /// - **裸字符串**（旧格式）：`"acp" | "serve" | "jsonl" | "mock"`。
+    ///   未知字符串沿用旧语义当作 `acp`（不带 args），保证老配置与未来新增
+    ///   传输名都不会让整个 `AgentConfig` 反序列化失败。
+    /// - **对象**（新格式）：`{"transport":"acp","args":[...]}`。
+    ///   目前只有 ACP 需要携带启动参数 —— 其余传输的启动方式由 `command` 决定。
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Ok(match s.as_str() {
-            "serve" => Self::Serve,
-            "jsonl" => Self::Jsonl,
-            "mock" => Self::Mock,
-            // "acp" 及未知值 → Acp（args 由内置定义提供，用户配置不持久化 args）。
-            _ => Self::Acp { args: Vec::new() },
-        })
+        use serde::de::Error as _;
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Some(s) = value.as_str() {
+            return Ok(match s {
+                "serve" => Self::Serve,
+                "jsonl" => Self::Jsonl,
+                "mock" => Self::Mock,
+                // "acp" 及未知值 → Acp（args 由内置定义提供）。
+                _ => Self::Acp { args: Vec::new() },
+            });
+        }
+
+        let obj = value
+            .as_object()
+            .ok_or_else(|| D::Error::custom("ChatStart must be a string or an object"))?;
+        let transport = obj
+            .get("transport")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| D::Error::custom("ChatStart object requires a string 'transport'"))?;
+
+        match transport {
+            "acp" => {
+                let args = obj
+                    .get("args")
+                    .map(|v| serde_json::from_value::<Vec<String>>(v.clone()))
+                    .transpose()
+                    .map_err(D::Error::custom)?
+                    .unwrap_or_default();
+                Ok(Self::Acp { args })
+            }
+            other => Err(D::Error::custom(format!(
+                "transport '{other}' does not accept a structured form (only 'acp' does)"
+            ))),
+        }
     }
 }
 
@@ -117,31 +167,33 @@ impl DeploySpec {
     }
 }
 
-/// Information about a model supported by an agent（运行时动态发现，不持久化）。
+/// 一个可选的模型条目（运行时发现，不持久化）。
+///
+/// # 字段为什么只有三个
+///
+/// 这与 ACP 的 `SessionConfigSelectOption` 一一对应（`value` / `name` /
+/// `description`），因为模型列表的正统来源就是协议本身。
+///
+/// 早先这里有 `provider_id` / `provider_name` / `context_window` /
+/// `supported_reasoning_efforts` / `default_reasoning_effort` / `is_free` —— 全部
+/// 由 opencode 的私有 NDJSON（`providerID`、`limit.context`、
+/// `variants[].reasoningEffort`、`cost`）解析而来。把它们放在这个通用类型里，等于把
+/// **单个 agent 的私有能力伪装成通用契约**，任何走别的传输的 agent 都只能填 `None`。
+///
+/// 这些信息在 ACP 里有正当归属：`category: "model_config"` 的会话配置项
+/// （上下文大小、速度/质量取舍）与 `category: "thought_level"`（推理档位）。
+/// 它们**不是模型条目的属性**，而是与模型相关的独立配置项 —— 见
+/// `agent/chat/adapter/acp_config.rs`。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModelInfo {
-    /// Model identifier (slug), e.g. "anthropic/claude-sonnet-4-20250514".
+    /// 模型标识。**对其语义作不透明处理**：opencode 用 `provider/model` 复合串，
+    /// Claude 可能是 `default` 这类别名，不解析、不拆分。
     pub id: String,
-    /// Human-readable model name.
+    /// 展示名。
     pub name: String,
-    /// Upstream provider ID (e.g. "anthropic", "openai").
+    /// 可选说明。
     #[serde(default)]
-    pub provider_id: Option<String>,
-    /// Upstream provider name.
-    #[serde(default)]
-    pub provider_name: Option<String>,
-    /// Supported reasoning efforts (e.g. "low", "medium", "high").
-    #[serde(default)]
-    pub supported_reasoning_efforts: Vec<String>,
-    /// Default reasoning effort, if any.
-    #[serde(default)]
-    pub default_reasoning_effort: Option<String>,
-    /// Context window in tokens, if known.
-    #[serde(default)]
-    pub context_window: Option<u32>,
-    /// Whether this model is free.
-    #[serde(default)]
-    pub is_free: bool,
+    pub description: Option<String>,
 }
 
 /// Agent 配置 —— 唯一数据结构（内置 + 自定义同构，设置页编辑/持久化的对象）。
@@ -231,5 +283,81 @@ impl AgentConfig {
     #[must_use]
     pub fn resolve_post_prompt_args(&self) -> Vec<String> {
         self.post_prompt_args.clone().unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod chat_start_serde_tests {
+    use super::ChatStart;
+
+    /// 旧配置写的是裸字符串。**必须继续可读** —— 已有用户的 config.json 里就是这种形态。
+    #[test]
+    fn reads_legacy_bare_string_acp() {
+        let parsed: ChatStart = serde_json::from_str(r#""acp""#).expect("legacy acp");
+        assert_eq!(parsed, ChatStart::Acp { args: vec![] });
+    }
+
+    #[test]
+    fn reads_legacy_bare_string_variants() {
+        assert_eq!(
+            serde_json::from_str::<ChatStart>(r#""serve""#).unwrap(),
+            ChatStart::Serve
+        );
+        assert_eq!(
+            serde_json::from_str::<ChatStart>(r#""jsonl""#).unwrap(),
+            ChatStart::Jsonl
+        );
+        assert_eq!(
+            serde_json::from_str::<ChatStart>(r#""mock""#).unwrap(),
+            ChatStart::Mock
+        );
+    }
+
+    /// 新形态：对象承载 ACP 启动参数。这是「给任意 agent 配 ACP 命令」的前提。
+    #[test]
+    fn reads_object_form_with_args() {
+        let parsed: ChatStart =
+            serde_json::from_str(r#"{"transport":"acp","args":["--acp"]}"#).expect("object acp");
+        assert_eq!(
+            parsed,
+            ChatStart::Acp {
+                args: vec!["--acp".to_string()]
+            }
+        );
+    }
+
+    /// args 为空时写字符串：保持 config.json 的 diff 最小，也不改变既有用户文件形态。
+    #[test]
+    fn writes_bare_string_when_args_are_empty() {
+        let json = serde_json::to_string(&ChatStart::Acp { args: vec![] }).unwrap();
+        assert_eq!(json, r#""acp""#);
+    }
+
+    /// args 非空才写对象 —— 这是信息的唯一承载处，不能丢。
+    #[test]
+    fn writes_object_form_when_args_are_present() {
+        let json = serde_json::to_string(&ChatStart::Acp {
+            args: vec!["--acp".to_string(), "--verbose".to_string()],
+        })
+        .unwrap();
+        assert_eq!(json, r#"{"transport":"acp","args":["--acp","--verbose"]}"#);
+    }
+
+    /// 往返不变量：序列化再反序列化必须回到同一值（含 args）。
+    #[test]
+    fn round_trips_acp_args() {
+        let original = ChatStart::Acp {
+            args: vec!["--acp".to_string()],
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let back: ChatStart = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, original);
+    }
+
+    /// 未知字符串沿用旧语义（当作 acp、无 args），不 panic、不报错。
+    #[test]
+    fn unknown_string_still_parses_as_acp() {
+        let parsed: ChatStart = serde_json::from_str(r#""something-new""#).unwrap();
+        assert_eq!(parsed, ChatStart::Acp { args: vec![] });
     }
 }

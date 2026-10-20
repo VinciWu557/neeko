@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
+use crate::agent::chat::adapter::acp_config;
 use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
 use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, SessionRequest, StreamEvent, TurnEndReason,
@@ -139,6 +140,20 @@ fn translate_notification(session_id: &str, params: &serde_json::Value) -> Optio
                 }),
                 _ => None, // image / other blocks: no text surface
             }
+        }
+        // agent 主动变更配置（典型场景：rate limit 时换模型）。协议要求视为全量。
+        "config_option_update" => {
+            let config_options = update
+                .get("configOptions")
+                .map(|v| {
+                    serde_json::from_value::<Vec<acp_config::SessionConfigOption>>(v.clone())
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            Some(StreamEvent::ConfigOptionUpdate {
+                session_id: session_id.into(),
+                config_options,
+            })
         }
         "turn_end" => Some(StreamEvent::TurnEnd {
             session_id: session_id.into(),
@@ -270,13 +285,19 @@ fn translate_permission_request(
     })
 }
 
-/// Serialize a [`SessionRequest`] into a JSON-RPC write to stdin.
+/// Serialize a [`SessionRequest`] into the JSON-RPC frames to write to stdin.
+///
+/// 返回**序列**而不是单帧：ACP 的模型选择是会话级的（`session/set_config_option`），
+/// 不是 `session/prompt` 的参数。所以「本轮换模型」必须先发一次 set_config_option，
+/// 等它落定后再发 prompt —— 一个请求对应两个帧。返回单帧的实现只能二选一：
+/// 要么静默丢掉模型（旧行为），要么把 prompt 发在切换之前（模型不生效）。
 fn request_to_jsonrpc(
     session_id: &str,
     req: &SessionRequest,
     pending: &Mutex<HashMap<String, i64>>,
     wire_format: WireFormat,
-) -> Option<serde_json::Value> {
+    configs: &acp_config::ConfigOptionsState,
+) -> Vec<serde_json::Value> {
     match req {
         SessionRequest::Cancel => {
             // OpenCode uses session/close instead of session/cancel.
@@ -285,24 +306,26 @@ fn request_to_jsonrpc(
             } else {
                 "session/cancel"
             };
-            Some(serde_json::json!({
+            vec![serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": next_rpc_id(),
                 "method": method,
                 "params": { "sessionId": session_id }
-            }))
+            })]
         }
         SessionRequest::Approve { call_id, allow } => {
-            let id = pending.lock().ok()?.get(call_id).copied()?;
-            Some(serde_json::json!({
+            let Some(id) = pending.lock().ok().and_then(|p| p.get(call_id).copied()) else {
+                return Vec::new();
+            };
+            vec![serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "result": {
                     "outcome": if *allow { "allow-once" } else { "reject-once" }
                 }
-            }))
+            })]
         }
-        SessionRequest::Input { turn_id, prompt } => Some(serde_json::json!({
+        SessionRequest::Input { turn_id, prompt } => vec![serde_json::json!({
             "jsonrpc": "2.0",
             "id": next_rpc_id(),
             "method": "session/prompt",
@@ -312,20 +335,46 @@ fn request_to_jsonrpc(
                     { "type": "text", "text": format!("[{turn_id}] {prompt}") }
                 ]
             }
-        })),
-        // ACP has no per-turn model selection (upstream limitation); the
-        // field is ignored here.
-        SessionRequest::Turn { prompt, .. } => Some(serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": next_rpc_id(),
-            "method": "session/prompt",
-            "params": {
-                "sessionId": session_id,
-                "prompt": [ { "type": "text", "text": prompt } ]
+        })],
+        // ACP 的模型选择是**会话级**（`session/set_config_option`），不是 per-turn 参数。
+        // 因此本轮若带 model_id，必须先切配置再发 prompt —— 顺序反了模型就不生效。
+        SessionRequest::Turn { prompt, model_id } => {
+            let mut frames = Vec::with_capacity(2);
+            // 换模型的入口共享同一套判定（见 `switch_model_frames`）。
+            // 注意 `SetConfigOption` **不走这里** —— 它的 `configId` 直接来自前端渲染时
+            // 那份 `configOptions` 的真实 `option.id`，本就不需要「按 category 定位」。
+            if let Some(model_id) = model_id {
+                if let Some(frame) = configs
+                    .switch_model_frames(next_rpc_id(), session_id, model_id)
+                    .into_frame()
+                {
+                    frames.push(frame);
+                }
             }
-        })),
+            frames.push(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": next_rpc_id(),
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": session_id,
+                    "prompt": [ { "type": "text", "text": prompt } ]
+                }
+            }));
+            frames
+        }
+        // 用户在 popover 里改 `model_config` / `thought_level` 项：与模型切换同一条写入通道。
+        SessionRequest::SetConfigOption { config_id, value } => {
+            vec![acp_config::set_config_option_request(
+                next_rpc_id(),
+                session_id,
+                config_id,
+                value,
+            )]
+        }
         // ACP has no mid-session context rebind; ignored (page keeps state).
-        SessionRequest::ContextSet { .. } | SessionRequest::Pause | SessionRequest::Resume => None,
+        SessionRequest::ContextSet { .. } | SessionRequest::Pause | SessionRequest::Resume => {
+            Vec::new()
+        }
     }
 }
 
@@ -393,6 +442,13 @@ impl AcpAdapter {
 
 #[async_trait]
 impl AgentAdapter for AcpAdapter {
+    /// ACP 支持模型选择，但**只在会话内**：模型列表来自 `session/new` 响应的
+    /// `configOptions`，协议没有独立的「列模型」方法（见 research 第 7 节）。
+    /// 因此不实现 `model_catalog` —— 返回 `SessionScoped` 才是诚实的回答。
+    fn supports_model_selection(&self) -> bool {
+        true
+    }
+
     fn kind(&self) -> AgentKind {
         AgentKind::Custom
     }
@@ -470,7 +526,14 @@ impl AcpAdapter {
             "params": {
                 "protocolVersion": ACP_PROTOCOL_VERSION,
                 "clientCapabilities": {
-                    "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false }
+                    "promptCapabilities": { "image": false, "audio": false, "embeddedContext": false },
+                    // 声明支持 boolean 形态的会话配置项。
+                    //
+                    // 规范强制：agent **MUST NOT** 下发 `type: "boolean"` 的
+                    // configOptions，除非客户端在这里声明过；`{}` 即「支持」。
+                    // 不声明的话，`model_config` 里的开关类参数（如 fast_mode）
+                    // 会整批消失，表现为「控件本来就不该有」。
+                    "session": { "configOptions": { "boolean": {} } }
                 }
             }
         });
@@ -517,6 +580,50 @@ impl AcpAdapter {
             .unwrap_or(&session_id)
             .to_string();
 
+        // 会话配置项（模型列表的唯一来源）。解析失败要降级为空，**不能**中断会话：
+        // Gemini / Kimi 实测根本不发这个字段，缺失是正常情况。
+        let config_options = acp_config::parse_config_options(&session_id_resp);
+        log::info!(
+            "[AcpAdapter::create_with_io] configOptions: {} entries (categories: {:?})",
+            config_options.len(),
+            config_options
+                .iter()
+                .map(|o| o.category.as_deref().unwrap_or("<none>"))
+                .collect::<Vec<_>>()
+        );
+        // 会话级配置状态：事件泵（读 / 被 agent 主动改）与请求通道（写）共享。
+        let configs = Arc::new(acp_config::ConfigOptionsState::new(config_options.clone()));
+        let configs_for_event = Arc::clone(&configs);
+        let configs_for_req = Arc::clone(&configs);
+
+        // ── Switch model before the first prompt, if one was chosen ───────
+        // 新会话是最容易被忽略的一条路径：`build_context` 把 model_id 放进了 ctx，
+        // 但握手后直接发 prompt 的话，用户在打开 Chat 时选的模型**不生效** —— 要等
+        // 到第二轮（走 Turn）才会切过去。这是 AC5 的一半，不能漏。
+        if let Some(model_id) = ctx.model_id.as_deref() {
+            match configs.switch_model_frames(next_rpc_id(), &acp_sid, model_id) {
+                acp_config::ModelSwitch::Frame(frame) => {
+                    log::info!(
+                        "[AcpAdapter::create_with_io] switching model to {model_id} before first prompt"
+                    );
+                    writer
+                        .write_all(&encode_frame(&frame.to_string(), wire_format))
+                        .await
+                        .map_err(|e| AppError::Io(format!("acp set_config_option write: {e}")))?;
+                }
+                acp_config::ModelSwitch::AlreadySet => {
+                    log::info!(
+                        "[AcpAdapter::create_with_io] model {model_id} already active, skipping"
+                    );
+                }
+                acp_config::ModelSwitch::Unsupported => {
+                    log::info!(
+                        "[AcpAdapter::create_with_io] agent has no model selector; ignoring model_id"
+                    );
+                }
+            }
+        }
+
         // ── Send the initial prompt, then start the pump ──────────────────
         if !ctx.prompt.is_empty() {
             let prompt = serde_json::json!({
@@ -554,6 +661,7 @@ impl AcpAdapter {
                     session_id: sid.clone(),
                     agent: ctx_agent_id,
                     model: None,
+                    config_options: configs_for_event.snapshot(),
                     capabilities: Capabilities {
                         approvals: true,
                         command_echo: false,
@@ -586,11 +694,18 @@ impl AcpAdapter {
                         while let Some((body, consumed)) = try_decode_frame(&buf, wire_format) {
                             buf.drain(..consumed);
                             log::debug!("[AcpAdapter event pump] received frame: {body}");
-                            if let Some(ev) = handle_inbound(&body, &sid, &pending_pump) {
+                            for ev in handle_inbound(&body, &sid, &pending_pump, &configs_for_event)
+                            {
                                 log::debug!(
                                     "[AcpAdapter event pump] translated to event: {:?}",
                                     ev
                                 );
+                                // agent 主动变更配置 → 同步到共享状态，否则后续的写请求
+                                // 会拿过期的 configId / 当前值做判断。
+                                if let StreamEvent::ConfigOptionUpdate { config_options, .. } = &ev
+                                {
+                                    configs_for_event.replace(config_options.clone());
+                                }
                                 if event_tx.send(ev).await.is_err() {
                                     return;
                                 }
@@ -614,16 +729,25 @@ impl AcpAdapter {
         let wire_format_req = wire_format;
         tokio::spawn(async move {
             while let Some(req) = req_rx.recv().await {
-                let Some(msg) =
-                    request_to_jsonrpc(&acp_sid_req, &req, &pending_req, wire_format_req)
-                else {
-                    continue;
-                };
-                if writer
-                    .write_all(&encode_frame(&msg.to_string(), wire_format))
-                    .await
-                    .is_err()
-                {
+                let frames = request_to_jsonrpc(
+                    &acp_sid_req,
+                    &req,
+                    &pending_req,
+                    wire_format_req,
+                    &configs_for_req,
+                );
+                let mut failed = false;
+                for msg in frames {
+                    if writer
+                        .write_all(&encode_frame(&msg.to_string(), wire_format))
+                        .await
+                        .is_err()
+                    {
+                        failed = true;
+                        break;
+                    }
+                }
+                if failed {
                     break;
                 }
             }
@@ -676,43 +800,81 @@ fn handle_inbound(
     body: &str,
     session_id: &str,
     pending: &Mutex<HashMap<String, i64>>,
-) -> Option<StreamEvent> {
-    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    configs: &acp_config::ConfigOptionsState,
+) -> Vec<StreamEvent> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Vec::new();
+    };
 
     // Server → client requests / notifications carry a `method`. They may also
     // carry an `id` (JSON-RPC server request, e.g. `session/request_permission`)
     // — the method must be dispatched before the response branch below, which
     // would otherwise drop id-bearing requests.
     if let Some(method) = v.get("method").and_then(|m| m.as_str()) {
-        let params = v.get("params")?;
+        let Some(params) = v.get("params") else {
+            return Vec::new();
+        };
         return match method {
-            "session/update" => translate_notification(session_id, params),
+            "session/update" => translate_notification(session_id, params)
+                .into_iter()
+                .collect(),
             "session/request_permission" => {
                 let id = v.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
                 translate_permission_request(session_id, id, params, pending)
+                    .into_iter()
+                    .collect()
             }
-            _ => None,
+            _ => Vec::new(),
         };
     }
 
     // Responses to our client requests (messages with `id` and `result`).
     if let Some(id) = v.get("id").and_then(|i| i.as_i64()) {
         if let Some(result) = v.get("result") {
-            // Check if this is a turn-end response (has stopReason).
+            // 响应里可能同时带 `configOptions` 与 `stopReason`（协议未禁止）。
+            // **先处理状态同步、再判回合结束**，但两者不能互相 early-return ——
+            // 若在 configOptions 分支直接 return，回合永远不会结束，UI 会一直停在
+            // 「思考中」。所以这里先把配置状态落定，再走回合判定。
+            //
+            // `session/set_config_option` 的响应携带**全量**配置（协议强制），
+            // 必须整体替换：换模型可能连带改变 thought_level 的可选项，局部合并会
+            // 留下与真实状态不符的陈旧项。
+            let config_update = result
+                .get("configOptions")
+                .and_then(|raw| {
+                    serde_json::from_value::<Vec<acp_config::SessionConfigOption>>(raw.clone()).ok()
+                })
+                .map(|options| {
+                    configs.replace(options.clone());
+                    StreamEvent::ConfigOptionUpdate {
+                        session_id: session_id.into(),
+                        config_options: options,
+                    }
+                });
+
+            // 两个事件可以同时存在（协议未禁止），**都发**。
+            // 返回 `Option` 的实现必须二选一，无论选哪个都会丢事件：丢 TurnEnd →
+            // 回合永不结束（UI 卡在「思考中」）；丢 ConfigOptionUpdate → 前端与
+            // agent 的真实配置分叉。改成返回序列后这个取舍消失。
+            let mut events = Vec::with_capacity(2);
             if result.get("stopReason").is_some() {
                 log::info!("[AcpAdapter handle_inbound] turn ended with id={}", id);
-                return Some(StreamEvent::TurnEnd {
+                events.push(StreamEvent::TurnEnd {
                     session_id: session_id.into(),
                     turn_id: String::new(),
                     reason: TurnEndReason::Completed,
                 });
             }
+            if let Some(update) = config_update {
+                events.push(update);
+            }
+            return events;
         }
-        // Other responses are ignored (e.g. session/new, session/prompt acknowledgments).
-        return None;
+        // Other responses are ignored (e.g. session/new acknowledgments).
+        return Vec::new();
     }
 
-    None
+    Vec::new()
 }
 
 /// A live ACP session.
@@ -837,10 +999,78 @@ mod tests {
         }
     }
 
+    /// 响应同时带 `configOptions` 与 `stopReason` 时**两个事件都要发出**。
+    ///
+    /// 返回 `Option` 的实现只能二选一：丢 `TurnEnd` → 回合永不结束（UI 卡在
+    /// 「思考中」）；丢 `ConfigOptionUpdate` → 前端配置与 agent 分叉。
+    #[test]
+    fn inbound_response_with_both_config_and_stop_reason_emits_both_events() {
+        let pending = Mutex::new(HashMap::new());
+        let configs = acp_config::ConfigOptionsState::default();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "result": {
+                "stopReason": "end_turn",
+                "configOptions": [{
+                    "id": "model",
+                    "name": "Model",
+                    "category": "model",
+                    "type": "select",
+                    "currentValue": "claude-sonnet",
+                    "options": []
+                }]
+            }
+        })
+        .to_string();
+
+        let events = handle_inbound(&body, "s1", &pending, &configs);
+
+        assert_eq!(
+            events.len(),
+            2,
+            "expected both TurnEnd and ConfigOptionUpdate"
+        );
+        assert!(matches!(events[0], StreamEvent::TurnEnd { .. }));
+        assert!(matches!(events[1], StreamEvent::ConfigOptionUpdate { .. }));
+        // 状态同步是副作用，与事件是否发出无关：已经切到 claude-sonnet 了，
+        // 再要求切到同一个值应当被识别为 AlreadySet。
+        assert_eq!(
+            configs.switch_model_frames(1, "s1", "claude-sonnet"),
+            acp_config::ModelSwitch::AlreadySet
+        );
+    }
+
+    /// 只有 configOptions（set_config_option 的响应）→ 只发一个事件。
+    #[test]
+    fn inbound_config_option_response_emits_only_the_update() {
+        let pending = Mutex::new(HashMap::new());
+        let configs = acp_config::ConfigOptionsState::default();
+        let body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 100,
+            "result": {
+                "configOptions": [{
+                    "id": "model",
+                    "name": "Model",
+                    "category": "model",
+                    "type": "select",
+                    "currentValue": "gpt-5",
+                    "options": []
+                }]
+            }
+        })
+        .to_string();
+
+        let events = handle_inbound(&body, "s1", &pending, &configs);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], StreamEvent::ConfigOptionUpdate { .. }));
+    }
+
     #[test]
     fn approve_replies_to_recorded_id() {
         let pending = Mutex::new(HashMap::from([("c2".to_string(), 7i64)]));
-        let msg = request_to_jsonrpc(
+        let frames = request_to_jsonrpc(
             "s1",
             &SessionRequest::Approve {
                 call_id: "c2".into(),
@@ -848,8 +1078,9 @@ mod tests {
             },
             &pending,
             WireFormat::ContentLength,
-        )
-        .expect("message");
+            &acp_config::ConfigOptionsState::default(),
+        );
+        let msg = frames.into_iter().next().expect("message");
         assert_eq!(msg.get("id").and_then(|v| v.as_i64()), Some(7));
         assert_eq!(
             msg.get("result")
@@ -862,13 +1093,14 @@ mod tests {
     #[test]
     fn cancel_is_a_request_content_length() {
         let pending = Mutex::new(HashMap::new());
-        let msg = request_to_jsonrpc(
+        let frames = request_to_jsonrpc(
             "s1",
             &SessionRequest::Cancel,
             &pending,
             WireFormat::ContentLength,
-        )
-        .expect("message");
+            &acp_config::ConfigOptionsState::default(),
+        );
+        let msg = frames.into_iter().next().expect("message");
         assert_eq!(
             msg.get("method").and_then(|v| v.as_str()),
             Some("session/cancel")
@@ -876,11 +1108,154 @@ mod tests {
         assert!(msg.get("id").is_some());
     }
 
+    /// 构造一份带模型项的会话配置状态。
+    ///
+    /// `id` 故意**不叫** `"model"` —— 规范说 `category` 才是语义判据，`id` 只是
+    /// 一个标识。写请求必须从这个状态里取真实 `configId`，不能用字面量。
+    fn configs_with_model(id: &str, current: &str) -> acp_config::ConfigOptionsState {
+        acp_config::ConfigOptionsState::new(vec![acp_config::SessionConfigOption {
+            id: id.into(),
+            name: "Model".into(),
+            description: None,
+            category: Some(acp_config::CATEGORY_MODEL.into()),
+            kind: Some("select".into()),
+            current_value: Some(acp_config::SessionConfigValue::Text(current.into())),
+            options: Some(acp_config::SessionConfigSelectOptions::Ungrouped(vec![
+                acp_config::SessionConfigSelectOption {
+                    value: current.into(),
+                    name: current.into(),
+                    description: None,
+                },
+                acp_config::SessionConfigSelectOption {
+                    value: "claude-sonnet".into(),
+                    name: "Claude Sonnet".into(),
+                    description: None,
+                },
+            ])),
+            _meta: None,
+        }])
+    }
+
+    /// AC5 的核心断言：带 model 的 Turn 必须**先**发 set_config_option，**再**发 prompt。
+    ///
+    /// ACP 的模型选择是会话级的，不是 prompt 参数。顺序反了模型就不生效 ——
+    /// 这正是「显示了但不起作用」的成因。
+    ///
+    /// 同时锁住另一件事：`configId` 来自会话状态里的模型项，而不是字面量 `"model"`。
+    /// 一个 `category: "model"` 但 `id` 为其他值的 agent 正是靠这条才不会「列得出、
+    /// 切不动」。
+    #[test]
+    fn turn_with_model_sets_config_before_prompt() {
+        let pending = Mutex::new(HashMap::new());
+        let configs = configs_with_model("primary-model-selector", "gpt-5");
+        let frames = request_to_jsonrpc(
+            "s1",
+            &SessionRequest::Turn {
+                prompt: "hello".into(),
+                model_id: Some("claude-sonnet".into()),
+            },
+            &pending,
+            WireFormat::ContentLength,
+            &configs,
+        );
+
+        assert_eq!(frames.len(), 2, "expected set_config_option + prompt");
+        assert_eq!(frames[0]["method"], "session/set_config_option");
+        // 真实 configId，不是字面量 "model"
+        assert_eq!(frames[0]["params"]["configId"], "primary-model-selector");
+        assert_eq!(frames[0]["params"]["value"], "claude-sonnet");
+        assert_eq!(frames[1]["method"], "session/prompt");
+        assert_eq!(frames[1]["params"]["prompt"][0]["text"], "hello");
+    }
+
+    /// 没指定模型时不发无意义的配置切换（少一次往返）。
+    #[test]
+    fn turn_without_model_sends_only_prompt() {
+        let pending = Mutex::new(HashMap::new());
+        let frames = request_to_jsonrpc(
+            "s1",
+            &SessionRequest::Turn {
+                prompt: "hi".into(),
+                model_id: None,
+            },
+            &pending,
+            WireFormat::ContentLength,
+            &configs_with_model("model", "a"),
+        );
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["method"], "session/prompt");
+    }
+
+    /// 目标模型已经是当前模型 → 不重发配置帧。
+    ///
+    /// 冗余的 set 并非无害：agent 可能把它当成一次真实变更去重建内部状态。
+    #[test]
+    fn turn_with_same_model_sends_only_prompt() {
+        let pending = Mutex::new(HashMap::new());
+        let configs = configs_with_model("model", "claude-sonnet");
+        let frames = request_to_jsonrpc(
+            "s1",
+            &SessionRequest::Turn {
+                prompt: "hi".into(),
+                model_id: Some("claude-sonnet".into()),
+            },
+            &pending,
+            WireFormat::ContentLength,
+            &configs,
+        );
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["method"], "session/prompt");
+    }
+
+    /// agent 不支持模型选择（没有模型项）→ 静默降级为只发 prompt，不报错。
+    #[test]
+    fn turn_with_model_but_no_model_option_sends_only_prompt() {
+        let pending = Mutex::new(HashMap::new());
+        let frames = request_to_jsonrpc(
+            "s1",
+            &SessionRequest::Turn {
+                prompt: "hi".into(),
+                model_id: Some("x".into()),
+            },
+            &pending,
+            WireFormat::ContentLength,
+            &acp_config::ConfigOptionsState::default(),
+        );
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["method"], "session/prompt");
+    }
+
+    /// model_config 控件走独立变体，但发出的是同一个协议方法。
+    #[test]
+    fn set_config_option_sends_single_frame() {
+        let pending = Mutex::new(HashMap::new());
+        let frames = request_to_jsonrpc(
+            "s1",
+            &SessionRequest::SetConfigOption {
+                config_id: "fast_mode".into(),
+                value: acp_config::SessionConfigValue::Flag(true),
+            },
+            &pending,
+            WireFormat::ContentLength,
+            &acp_config::ConfigOptionsState::default(),
+        );
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["method"], "session/set_config_option");
+        assert_eq!(frames[0]["params"]["type"], "boolean");
+        assert_eq!(frames[0]["params"]["value"], true);
+    }
+
     #[test]
     fn cancel_is_a_request_ndjson() {
         let pending = Mutex::new(HashMap::new());
-        let msg = request_to_jsonrpc("s1", &SessionRequest::Cancel, &pending, WireFormat::Ndjson)
-            .expect("message");
+        let frames = request_to_jsonrpc(
+            "s1",
+            &SessionRequest::Cancel,
+            &pending,
+            WireFormat::Ndjson,
+            &acp_config::ConfigOptionsState::default(),
+        );
+        let msg = frames.into_iter().next().expect("message");
         assert_eq!(
             msg.get("method").and_then(|v| v.as_str()),
             Some("session/close")

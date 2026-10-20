@@ -178,63 +178,22 @@ pub fn parse_opencode_model_json(
         .and_then(|v| v.as_str())
         .unwrap_or("opencode");
 
-    let name = value.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+    let bare_name = value.get("name").and_then(|v| v.as_str()).unwrap_or(id);
 
-    // Extract context window from limit.context.
-    let context_window = value
-        .get("limit")
-        .and_then(|l| l.get("context"))
-        .and_then(|v| v.as_u64())
-        .map(|v| u32::try_from(v).unwrap_or(u32::MAX));
+    // provider 信息没有独立的协议字段 —— OpenCode 的 ACP 实现也是把它拼进展示名
+    // （`${providerID}/${name}`）。这里做同样的拼接，保证用户在跨 provider 的模型
+    // 列表里仍能分辨来源，而不是丢掉这层信息。
+    let name = format!("{provider_id}/{bare_name}");
 
-    // Extract reasoning effort from variants.
-    let mut supported_reasoning_efforts = Vec::new();
-    let default_reasoning_effort = None;
-    if let Some(variants) = value.get("variants").and_then(|v| v.as_object()) {
-        for (_key, variant) in variants {
-            if let Some(effort) = variant
-                .get("reasoningEffort")
-                .or_else(|| variant.get("reasoning_effort"))
-                .or_else(|| variant.get("effort"))
-                .and_then(|v| v.as_str())
-            {
-                if !supported_reasoning_efforts.contains(&effort.to_string()) {
-                    supported_reasoning_efforts.push(effort.to_string());
-                }
-            }
-        }
-    }
-    // Sort for deterministic output.
-    supported_reasoning_efforts.sort();
-
-    // Check if model is free.
-    let is_free = value
-        .get("cost")
-        .map(|c| {
-            let input = c.get("input").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let output = c.get("output").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            input == 0.0 && output == 0.0
-        })
-        .unwrap_or(false);
-
-    let provider_name = match provider_id {
-        "opencode" => Some("OpenCode".to_string()),
-        "anthropic" => Some("Anthropic".to_string()),
-        "openai" => Some("OpenAI".to_string()),
-        "google" => Some("Google".to_string()),
-        "deepseek" => Some("DeepSeek".to_string()),
-        _ => Some(provider_id.to_string()),
-    };
+    // 说明：`limit.context` / `variants[].reasoningEffort` / `cost` 这些字段这里不再
+    // 解析 —— 它们不属于「模型条目」，在 ACP 里由 `category: "model_config"` 与
+    // `"thought_level"` 的会话配置项承载（见 adapter/acp_config.rs）。保留解析会让
+    // 通用类型重新长出私有字段。
 
     Ok(Some(ModelInfo {
         id: slug.unwrap_or(id).to_string(),
-        name: name.to_string(),
-        provider_id: Some(provider_id.to_string()),
-        provider_name,
-        supported_reasoning_efforts,
-        default_reasoning_effort,
-        context_window,
-        is_free,
+        name,
+        description: None,
     }))
 }
 
@@ -276,16 +235,13 @@ opencode/claude-fable-5
         let models = parse_opencode_models_output(input).expect("parse should succeed");
         assert_eq!(models.len(), 2);
 
+        // `id` 保持原始 slug（含 provider 前缀），`name` 也带 provider —— 后者是
+        // 因为 `ModelInfo` 已不再有 `provider_id` 字段，来源信息只能在展示名里保留。
         assert_eq!(models[0].id, "opencode/big-pickle");
-        assert_eq!(models[0].name, "Big Pickle");
-        assert_eq!(models[0].provider_id, Some("opencode".to_string()));
-        assert!(models[0].is_free);
-        assert_eq!(models[0].context_window, Some(200000));
+        assert_eq!(models[0].name, "opencode/Big Pickle");
 
         assert_eq!(models[1].id, "opencode/claude-fable-5");
-        assert_eq!(models[1].name, "Claude Fable 5");
-        assert!(!models[1].is_free);
-        assert_eq!(models[1].context_window, Some(1000000));
+        assert_eq!(models[1].name, "opencode/Claude Fable 5");
     }
 
     #[test]
@@ -294,16 +250,19 @@ opencode/claude-fable-5
         assert!(models.is_empty());
     }
 
+    /// `variants` / `cost` / `limit` 等私有字段**不再进入** `ModelInfo` ——
+    /// 它们属于 ACP 的 `model_config` / `thought_level` 配置项，不是模型条目属性。
+    /// 这里锁住「解析仍成功、但产物只有一个协议形状」。
     #[test]
-    fn parse_opencode_model_json_extracts_reasoning_efforts() {
+    fn parse_opencode_model_json_ignores_private_rich_fields() {
         let json = r#"{
   "id": "test-model",
   "providerID": "opencode",
   "name": "Test Model",
+  "cost": { "input": 0, "output": 0 },
+  "limit": { "context": 200000 },
   "variants": {
-    "thinking": {
-      "reasoningEffort": "high"
-    },
+    "thinking": { "reasoningEffort": "high" },
     "normal": {}
   }
 }"#;
@@ -313,7 +272,8 @@ opencode/claude-fable-5
             .expect("model should be Some");
 
         assert_eq!(model.id, "opencode/test-model");
-        assert_eq!(model.supported_reasoning_efforts, vec!["high".to_string()]);
+        assert_eq!(model.name, "opencode/Test Model");
+        assert_eq!(model.description, None);
     }
     // ── 纯核：ExecOutput → ModelInfo（零进程，不触二进制）─────────────────────
 
@@ -327,7 +287,6 @@ opencode/claude-fable-5
         let models = models_from_exec_output(output).expect("should succeed");
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "opencode/big-pickle");
-        assert!(models[0].is_free);
     }
 
     #[test]

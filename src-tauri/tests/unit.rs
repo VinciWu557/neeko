@@ -6,6 +6,8 @@
 
 #[path = "unit/acp_test.rs"]
 mod acp_test;
+#[path = "unit/agent_model_dispatch_test.rs"]
+mod agent_model_dispatch_test;
 #[path = "unit/agent_test.rs"]
 mod agent_test;
 #[path = "unit/git_test.rs"]

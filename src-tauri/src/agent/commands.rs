@@ -1,5 +1,7 @@
 //! Tauri commands for agent CRUD and installation checks.
 
+use crate::agent::chat::adapter::ModelCatalogResult;
+use crate::agent::chat::commands::resolve_agent_config;
 use crate::common::agent::types::{AgentConfig, ModelInfo};
 use crate::AppError;
 use crate::AppStateWrapper;
@@ -48,19 +50,47 @@ pub fn list_chat_agents(state: State<AppStateWrapper>) -> Result<Vec<AgentConfig
         })
 }
 
-/// List model IDs an agent supports in Agent Chat（运行时动态发现，不持久化）。
+/// List the models an agent offers, for the chat / settings model pickers.
 ///
-/// OpenCode 执行 `opencode models --verbose` 动态发现；其他 agent 返回空列表
-/// （模型是 agent 自己的事，Neeko 不管理模型配置）。
+/// # 分派依据是传输类型，不是 agent id
+///
+/// 能力挂在 `ChatStart` 上（`adapter_for` 已经按它分派），因此新增一个支持模型的
+/// agent **不需要**改动本函数 —— 这正是旧实现缺失的性质：
+///
+/// ```ignore
+/// // 旧实现：每个新 agent 都得回头改这里
+/// if agent_id == "opencode" { return discover_opencode_models(None).await; }
+/// Ok(Vec::new())
+/// ```
+///
+/// # 三种结果，不是一个空数组
+///
+/// - `Available`：有独立目录（目前只有 opencode 的 `models --verbose` 快速路径）；
+/// - `SessionScoped`：支持模型选择，但列表只能在会话内取（ACP 协议约束 ——
+///   模型来自 `session/new` 响应的 `configOptions`，没有独立查询方法）；
+/// - `Unsupported`：该 agent 不支持模型选择。
+///
+/// 三者对用户是三种不同处境，UI 需要分别措辞（旧实现把它们都压成 `[]`）。
 #[tauri::command]
 pub async fn list_agent_models(
     agent_id: String,
-    _state: State<'_, AppStateWrapper>,
-) -> Result<Vec<ModelInfo>, AppError> {
-    if agent_id == "opencode" {
-        return crate::agent::model_discovery::discover_opencode_models(None).await;
+    state: State<'_, AppStateWrapper>,
+) -> Result<ModelCatalogResult, AppError> {
+    let agent = resolve_agent_config(&state, &agent_id)?;
+    let adapter = crate::agent::chat::adapter::adapter_for(&agent)?;
+
+    if let Some(catalog) = adapter.model_catalog() {
+        return catalog
+            .list(&agent)
+            .await
+            .map(|models| ModelCatalogResult::Available { models });
     }
-    Ok(Vec::new())
+
+    Ok(if adapter.supports_model_selection() {
+        ModelCatalogResult::SessionScoped
+    } else {
+        ModelCatalogResult::Unsupported
+    })
 }
 
 /// Add or update an agent and persist to config.

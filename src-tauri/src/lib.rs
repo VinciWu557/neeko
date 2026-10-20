@@ -200,6 +200,7 @@ macro_rules! neeko_invoke_handler {
             $crate::agent::chat::commands::agent_stream_cancel,
             $crate::agent::chat::commands::agent_approve,
             $crate::agent::chat::commands::agent_input,
+            $crate::agent::chat::commands::agent_set_config_option,
             $crate::agent::chat::commands::agent_context_set,
             $crate::agent::chat::commands::agent_chat_context,
             // chat 可见会话上报（通知焦点抑制事实源）
