@@ -59,8 +59,7 @@ import { LiveSlashProvider } from './slash-provider.ts'
 import { renderThemePicker } from './theme-picker.ts'
 import { renderPanel, runPickerKey } from './picker.ts'
 import { listWindow, overflowMarkers } from './window.ts'
-import { initialResumeIndex, toResumeChoices, visibleResumeChoices } from './resume-list.ts'
-import type { ResumeChoice } from './resume-list.ts'
+import { ResumeController } from './resume-controller.ts'
 import { buildModelPanel, handleModelPanelKey } from './model-panel.ts'
 import type { ModelPanel } from './model-panel.ts'
 import { markdownThemeOf } from './theme.ts'
@@ -113,75 +112,8 @@ function assertNever(value: never, context: string): never {
   throw new Error(`${context}: ${JSON.stringify(value)}`)
 }
 
-/**
- * How long a session listing may take before it is reported as failed.
- *
- * The corpus is on disk and dsh answers it locally; a listing that has not
- * returned by then is not slow, it is broken (observed: `sessionQuery` never
- * settles). Without this the panel simply never appears and the user is left
- * with a dead key.
- */
-const SESSION_LIST_TIMEOUT_MS = 30_000
-
 /** Session rows rendered before the panel scrolls (matches the theme picker). */
 const RESUME_PANEL_MAX_VISIBLE = 10
-
-/**
- * Sessions whose titles are folded before the picker is shown.
- *
- * Sorted newest-first, the head of the corpus is a run of sessions that every
- * short-lived launch left behind (no prompt, so no title). Measured on a real
- * profile: the first 60 had **zero** titled sessions and the first titled one sat
- * at index 60, so a window of 60 showed an empty list. 150 covers the whole run
- * comfortably.
- *
- * Affordable only because the runner folds them with dsh's *batch* title read
- * (`readTitleSnapshots`), which shares one corpus observation across the batch:
- * 60 ids took 320 ms, i.e. nothing like the per-session path (60 ids never
- * finished inside two seconds).
- */
-const RESUME_PRESCAN = 150
-
-
-
-/**
- * Reject when `work` does not settle in time.
- *
- * The underlying promise is left running: dsh owns it, and there is nothing
- * useful to cancel from here.
- *
- * @param work - the pending operation.
- * @param ms - budget in milliseconds.
- * @param what - the operation's name, for the message.
- * @returns the operation's result, or a rejection when it overruns.
- */
-function withTimeout<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => { reject(new Error(`${what} timed out after ${ms}ms`)) }, ms)
-    timer.unref?.()
-    work.then(
-      (value) => { clearTimeout(timer); resolve(value) },
-      (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))) },
-    )
-  })
-}
-
-/**
- * Whether one session answer matches what the user typed.
- *
- * Accepts the full id and the id without dsh's `session-` prefix; the picker
- * shows the shortened form, so typing what you see has to work.
- *
- * @param source - one listed session.
- * @param wanted - the typed argument.
- * @returns true when this is the session meant.
- */
-function sessionMatches(source: ResumeSource, wanted: string): boolean {
-  const id = source.header.id
-  const lowered = wanted.toLowerCase()
-  return id.toLowerCase() === lowered
-    || id.replace(/^session-/u, '').toLowerCase() === lowered
-}
 
 /** Coalesced repaint interval for streaming events, in ms. */
 const REPAINT_FLUSH_MS = 50
@@ -398,27 +330,8 @@ export class TuiApp {
   private thinkingPicker: ThinkingPickerView | undefined
   /** Its own panel line, like the other two selectors. */
   private readonly resumeText: Text
-  /** The open `/resume` selector, if any. */
-  private resumePicker: {
-    choices: readonly ResumeChoice[]
-    index: number
-    /** Show sessions that never had a conversation (`/resume all`). */
-    includeEmpty: boolean
-  } | undefined
-  /** Raw listing behind the picker, kept so late titles can be merged in. */
-  private resumeSources: readonly ResumeSource[] = []
-  /**
-   * Titles already folded, keyed by session id.
-   *
-   * A cache rather than a fetch-once: the picker pages, so the same window is
-   * requested again whenever the user scrolls back. Without this, scrolling up
-   * and down re-reads the same session artifacts.
-   */
-  private readonly sessionTitleCache = new Map<string, string>()
-  /** Ids requested but not yet answered, so one page is fetched once. */
-  private readonly sessionTitlesPending = new Set<string>()
-  /** Bumped whenever the picker reopens, so stale pages are dropped. */
-  private sessionTitlesGeneration = 0
+  /** `/resume`: listing, paged title enrichment and the picker. */
+  private readonly resumeList: ResumeController
 
   /** Theme state, catalogue and picker. */
   private readonly themes: ThemeController
@@ -488,6 +401,20 @@ export class TuiApp {
     this.commands = new CommandController({
       loadModels: async () => (await options.modelPicker()).models,
       ...(options.runHostCommand === undefined ? {} : { runHostCommand: options.runHostCommand }),
+    })
+    // The controller owns the listing and the paging; the app supplies the host
+    // calls and the two ways a result becomes visible.
+    this.resumeList = new ResumeController({
+      // The host may decline to offer session switching at all (`--session`
+      // builds); that is reported once, not per keystroke.
+      listSessions: options.listSessions ?? (async () => {
+        throw new Error('this build cannot list sessions')
+      }),
+      ...(options.sessionTitles === undefined ? {} : { sessionTitles: options.sessionTitles }),
+      resumeSession: (sessionId) => { options.resumeSession?.(sessionId) },
+      currentSessionId: () => options.getSessionId(),
+      onStatus: (text) => { this.showStatus(text) },
+      onNotice: (text, tone) => { this.addNotice(text, tone) },
     })
     this.status = new StatusController({
       readFacts: options.statusFacts,
@@ -1094,194 +1021,25 @@ export class TuiApp {
   /**
    * `/resume [id]`: open the session list, or resume one id directly.
    *
-   * pi's split (`showSessionSelector` / `handleResumeSession`). The list is the
-   * host's: dsh folds it from its session corpus, and this method only decides
-   * what to do with the answer.
+   * The state machine lives in {@linkcode ResumeController} — this supplies the
+   * host calls and paints the panel. What is left here is the two things the
+   * controller cannot know: where the panel is drawn and how a status line reads.
    *
    * @param argument - the text after `/resume`.
    */
   private async applyResume(argument: string): Promise<void> {
-    const list = this.options.listSessions
-    if (list === undefined || this.options.resumeSession === undefined) {
-      this.addNotice('this build cannot list or switch sessions', 'error')
-      return
-    }
-    let sources: readonly ResumeSource[]
-    try {
-      sources = await withTimeout(list(), SESSION_LIST_TIMEOUT_MS, 'listing sessions')
-    } catch (error: unknown) {
-      this.addNotice(
-        `could not list sessions: ${error instanceof Error ? error.message : String(error)}`,
-        'error',
-      )
-      return
-    }
-    const wanted = argument.trim()
-    // `all` is a view flag, not a session id, so it must be decided before the
-    // id lookup below.
-    const includeEmpty = wanted === 'all'
-    if (wanted !== '' && !includeEmpty) {
-      // An id (or the leading segment the row shows) is enough to pick one.
-      const match = sources.find((source) => sessionMatches(source, wanted))
-      if (match === undefined) {
-        this.addNotice(`unknown session "${wanted}" (type /resume to browse)`, 'error')
-        return
-      }
-      this.commitResume(match.header.id)
-      return
-    }
-    const now = Date.now()
-    // No pre-scan: deciding which sessions "have history" would mean folding
-    // titles for a large slice of the corpus, and each title is a session-artifact
-    // decompress — sixty of them did not finish in two seconds on a real profile.
-    // So the panel opens on the raw listing and the filter is applied as titles
-    // arrive (see `fillSessionTitles`); ids show in the meantime.
-    // Fold the head of the list before deciding what to show: the filter keys on
-    // "has a title", so an unfiltered first render would be nothing but the run
-    // of empty launches that sort newest. This is the one title read that delays
-    // the panel, and it uses the batch API for that reason.
-    await this.rescanTitles(sources)
-    const every = toResumeChoices(this.withCachedTitles(sources), now)
-    const choices = visibleResumeChoices(every, includeEmpty)
-    if (choices.length === 0) {
-      this.addNotice('no sessions to resume', 'muted')
-      return
-    }
-    const hidden = every.length - choices.length
-    if (hidden > 0) {
-      // Say it, or the shorter list reads as "my session is missing".
-      this.addNotice(`hiding ${hidden} session(s) with no conversation — /resume all to show them`, 'muted')
-    }
-    this.resumeSources = sources
-    // A fresh open invalidates any page still in flight from a previous one.
-    this.sessionTitlesGeneration += 1
-    this.sessionTitlesPending.clear()
-    this.resumePicker = { choices, index: initialResumeIndex(choices), includeEmpty }
-    this.renderResumePicker()
-    // Titles arrive after the panel is already usable: each one is a log read,
-    // and waiting for all of them is what made `/resume` look like a dead key.
-    void this.fillSessionTitles(now)
-  }
-
-  /**
-   * Fold titles for the rows that are currently visible, one page at a time.
-   *
-   * A title costs one session-artifact read and decompress, so the cost has to
-   * follow what is on screen — not the size of the corpus. Measured on a
-   * 424-session profile: asking for all of them never finished (still pending
-   * after 40 s), and asking for a fixed head window left every scrolled-to row
-   * stranded on its id fallback.
-   *
-   * Fetched pages are cached by id, so scrolling back over the same rows costs
-   * nothing, and an in-flight page is not requested twice.
-   *
-   * @param now - the clock used when the rows were built, so ages stay stable.
-   */
-  private async fillSessionTitles(now: number): Promise<void> {
-    const load = this.options.sessionTitles
-    const view = this.resumePicker
-    if (load === undefined || view === undefined || this.resumeSources.length === 0) return
-
-    // One page: the rows the window can paint, plus a row of margin so a single
-    // keypress does not immediately need another fetch.
-    const window = listWindow(view.choices.length, view.index, RESUME_PANEL_MAX_VISIBLE)
-    const page = this.resumeSources
-      .slice(window.start, window.end)
-      .filter((source) => !this.sessionTitleCache.has(source.header.id)
-        && !this.sessionTitlesPending.has(source.header.id))
-      .map((source) => source.header.id)
-    if (page.length === 0) return
-
-    const generation = this.sessionTitlesGeneration
-    for (const id of page) this.sessionTitlesPending.add(id)
-    let titles: Readonly<Record<string, string>>
-    try {
-      titles = await withTimeout(load(page), SESSION_LIST_TIMEOUT_MS, 'reading session titles')
-    } catch (error: unknown) {
-      for (const id of page) this.sessionTitlesPending.delete(id)
-      // The list is already usable; a failed page must not replace it.
-      this.addNotice(
-        `session titles unavailable: ${error instanceof Error ? error.message : String(error)}`,
-        'error',
-      )
-      return
-    }
-    for (const id of page) this.sessionTitlesPending.delete(id)
-    for (const [id, title] of Object.entries(titles)) this.sessionTitleCache.set(id, title)
-
-    // A page that lands after the picker closed (or was reopened) belongs to
-    // nothing; its cache entries stay, the repaint does not happen.
-    if (generation !== this.sessionTitlesGeneration) return
-    const current = this.resumePicker
-    if (current === undefined) return
-    this.resumePicker = {
-      choices: this.resumeChoicesWithTitles(now, current.includeEmpty),
-      index: Math.min(current.index, current.choices.length - 1),
-      includeEmpty: current.includeEmpty,
-    }
+    await this.resumeList.open(argument)
     this.renderResumePicker()
   }
 
-  /**
-   * Fold titles for the head of the listing, so the filter can run.
-   *
-   * No timeout: this one decides what the panel contains, and a partial scan
-   * would silently show empty sessions while looking like it had filtered them.
-   * A failure leaves the cache as it was — the rows then fall back to ids, which
-   * is visible rather than wrong.
-   *
-   * @param sources - the listing, newest first.
-   */
-  private async rescanTitles(sources: readonly ResumeSource[]): Promise<void> {
-    const load = this.options.sessionTitles
-    if (load === undefined) return
-    const page = sources
-      .slice(0, RESUME_PRESCAN)
-      .map((source) => source.header.id)
-      .filter((id) => !this.sessionTitleCache.has(id))
-    if (page.length === 0) return
-    try {
-      const titles = await load(page)
-      for (const [id, title] of Object.entries(titles)) this.sessionTitleCache.set(id, title)
-    } catch {
-      // Keep whatever is cached; ids are a usable fallback.
-    }
-  }
-
-  /**
-   * The listing with every cached title applied.
-   *
-   * @param sources - the raw listing.
-   * @returns sources ready for `toResumeChoices`.
-   */
-  private withCachedTitles(sources: readonly ResumeSource[]): readonly ResumeSource[] {
-    // `exactOptionalPropertyTypes`: omit the key rather than pass `undefined`.
-    return sources.map((source) => {
-      const title = this.sessionTitleCache.get(source.header.id)
-      return title === undefined ? source : { ...source, title }
-    })
-  }
-
-  /**
-   * The picker's rows with every cached title applied.
-   *
-   * Rebuilt from `resumeSources` rather than mutated in place so the fallback
-   * (id) and the enriched text always agree about what is known.
-   *
-   * @param now - the clock, for the ages.
-   * @returns rows ready to render.
-   */
-  private resumeChoicesWithTitles(now: number, includeEmpty: boolean): readonly ResumeChoice[] {
-    const every = toResumeChoices(this.withCachedTitles(this.resumeSources), now)
-    // Titles are what make a row "have history", so the filter has to be
-    // re-applied after a page lands — otherwise hidden sessions would reappear
-    // as soon as their title arrived.
-    return visibleResumeChoices(every, includeEmpty)
-  }
-
+  /** Paint the open `/resume` panel, or clear the line when it is closed. */
   private renderResumePicker(): void {
-    const view = this.resumePicker
-    if (view === undefined) return
+    const view = this.resumeList.view
+    if (view === undefined) {
+      this.resumeText.setText('')
+      this.requestRender()
+      return
+    }
     // Windowed like the theme catalogue: the corpus here is every session on the
     // machine (426 on this one), and rendering them all would push the editor
     // off screen while the picker still owned the keyboard.
@@ -1303,69 +1061,17 @@ export class TuiApp {
     this.requestRender()
   }
 
-  private closeResumePicker(): void {
-    this.sessionTitlesGeneration += 1
-    this.resumePicker = undefined
-    this.resumeText.setText('')
-    this.requestRender()
-  }
-
   /**
    * Route one key against the open session picker.
    *
-   * `runPickerKey()` owns the routing and the clamp; this supplies the cursor
-   * and what confirming does.
+   * The controller decides what the key means; this repaints after it, because a
+   * move may have paged in new titles.
    */
   private handleResumePickerKey(data: string): { consume?: boolean } | undefined {
-    const view = this.resumePicker
-    return runPickerKey({
-      state: view === undefined ? undefined : { index: view.index, length: view.choices.length },
-      data,
-      isKey: (name) => matchesKey(data, name),
-      onMove: (index) => {
-        if (view === undefined) return
-        this.resumePicker = { choices: view.choices, index, includeEmpty: view.includeEmpty }
-        this.renderResumePicker()
-        // Paged: only the window the cursor scrolled into is fetched, and the
-        // cache makes scrolling back free.
-        void this.fillSessionTitles(Date.now())
-      },
-      onClose: () => { this.closeResumePicker() },
-      onConfirm: () => {
-        const chosen = view?.choices[view.index]
-        this.closeResumePicker()
-        if (chosen !== undefined) this.commitResume(chosen.id)
-      },
-    })
-  }
-
-  /**
-   * Hand one session id to the host.
-   *
-   * The switch itself is the runner's (it owns the agent and the transcript), so
-   * this only validates and reports. Resuming the session already in use is a
-   * no-op rather than a reload: re-attaching would rebuild the transcript for no
-   * reason and lose the scroll position.
-   *
-   * @param sessionId - the session to attach to.
-   */
-  private commitResume(sessionId: string): void {
-    const apply = this.options.resumeSession
-    if (apply === undefined) return
-    if (sessionId === this.options.getSessionId()) {
-      this.showStatus(`already on ${sessionId}`)
-      return
-    }
-    try {
-      apply(sessionId)
-    } catch (error: unknown) {
-      this.addNotice(
-        `could not resume session: ${error instanceof Error ? error.message : String(error)}`,
-        'error',
-      )
-      return
-    }
-    this.showStatus(`resuming ${sessionId}`)
+    if (this.resumeList.view === undefined) return undefined
+    this.resumeList.handleKey((name) => matchesKey(data, name))
+    this.renderResumePicker()
+    return { consume: true }
   }
 
   // ── theme ──────────────────────────────────────────────────────────────────
@@ -1768,7 +1474,7 @@ export class TuiApp {
       this.requestRender()
       return { consume: true }
     }
-    if (this.resumePicker !== undefined) return this.handleResumePickerKey(data)
+    if (this.resumeList.view !== undefined) return this.handleResumePickerKey(data)
     if (this.thinkingPicker !== undefined) return this.handleThinkingPickerKey(data)
     if (this.themes.isPickerOpen) return this.handleThemePickerKey(data)
     // `ctrl+o` flips the whole transcript, then repaints. A pending approval or
