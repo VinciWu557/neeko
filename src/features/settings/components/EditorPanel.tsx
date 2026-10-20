@@ -1,9 +1,11 @@
 import React, { useMemo } from 'react';
 
-import type { AgentConfig } from '@/shared/types';
-import { agentCapabilities } from '@/shared/types/agent';
+import { useAgentModels } from '@/features/agent';
+import type { AgentConfig, CommentDisplayMode } from '@/shared/types';
+import { isTranslationAgentStale, translatableAgents } from '@/shared/utils/agents';
 import { Separator, Switch } from '@/ui';
 
+import SettingRow from './SettingRow';
 import WatcherExcludeSection from './WatcherExcludeSection';
 
 interface EditorPanelProps {
@@ -21,10 +23,19 @@ interface EditorPanelProps {
   onWatcherExcludeChange: (patterns: string[]) => void;
   /** AI 翻译默认项 */
   translationAgentId?: string;
+  /** 翻译模型（空 = 使用 agent 默认模型）。 */
+  translationModelId?: string;
   translationTargetLanguage?: string;
+  /** 注释译文的显示形态（对照 / 行内 / 悬停 / 关闭）。 */
+  commentTranslationMode?: CommentDisplayMode;
+  /** 打开文件即翻译注释（默认关）。 */
+  commentTranslationAutoWarm?: boolean;
   agents: AgentConfig[];
   onTranslationAgentChange: (agentId: string) => void;
+  onTranslationModelChange: (modelId: string | null) => void;
   onTranslationTargetLanguageChange: (language: string) => void;
+  onCommentTranslationModeChange: (mode: CommentDisplayMode) => void;
+  onCommentTranslationAutoWarmChange: (enabled: boolean) => void;
 }
 
 /** 目标语言选项：value 为翻译 prompt 使用的语言名，label 为设置页英文展示 */
@@ -49,25 +60,40 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
   watcherExclude,
   onWatcherExcludeChange,
   translationAgentId,
+  translationModelId,
   translationTargetLanguage,
+  commentTranslationMode,
+  commentTranslationAutoWarm,
   agents,
   onTranslationAgentChange,
+  onTranslationModelChange,
   onTranslationTargetLanguageChange,
+  onCommentTranslationModeChange,
+  onCommentTranslationAutoWarmChange,
 }) => {
-  // 翻译走 AgentAdapter 抽象（adapter_for），默认 Agent 也仅 CHAT 能力可选
-  const chatAgents = useMemo(() => agents.filter((a) => agentCapabilities(a).chat), [agents]);
+  // 翻译走 AgentAdapter 抽象（adapter_for），默认 Agent 也仅 CHAT 能力可选。
+  // 判据归 `translatableAgents` 所有 —— 与运行时解析、陈旧检测同源。
+  const chatAgents = useMemo(() => translatableAgents(agents), [agents]);
+
+  // 模型列表跟随所选 agent。空 agent（= Agent default）时没有模型可选 ——
+  // 具体用哪个模型由 agent 自己决定，这里不该替它选。
+  const { models } = useAgentModels(translationAgentId || null);
+
+  /**
+   * 配置里的 agent 已不可用（被删 / 失去 chat 能力 / 被停用）。
+   *
+   * 非 `null` 时下拉里会多出一个标注 `unavailable` 的选项 —— 否则 HTML select
+   * 会把它回落显示成第一项，用户看不出配置里存着一个坏 id。
+   */
+  const staleAgentId = isTranslationAgentStale(translationAgentId, agents)
+    ? translationAgentId
+    : null;
 
   return (
     <>
       <h3 className="text-base font-semibold text-text-primary mb-4">Editor</h3>
       <Separator className="mb-5" />
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6 [&:last-child]:border-b-0">
-        <div className="flex-1 min-w-0">
-          <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Font Size</div>
-          <div className="text-[0.79em] text-text-muted leading-relaxed">
-            Font size for the file editor.
-          </div>
-        </div>
+      <SettingRow title="Font Size" description="Font size for the file editor.">
         <div className="flex items-center gap-2 shrink-0">
           <button
             className="size-7 bg-bg-tertiary border border-border rounded text-text-primary text-[1.07em] cursor-pointer flex items-center justify-center transition-colors duration-150 hover:bg-bg-hover disabled:opacity-35 disabled:cursor-not-allowed"
@@ -87,45 +113,55 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
             +
           </button>
         </div>
-      </div>
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6 [&:last-child]:border-b-0">
-        <div className="flex-1 min-w-0">
-          <div className="text-[0.86em] text-text-primary font-medium mb-0.75">
-            Auto-locate file on tab switch
-          </div>
-          <div className="text-[0.79em] text-text-muted leading-relaxed">
-            When switching file tabs, automatically reveal the file in the file tree.
-          </div>
-        </div>
+      </SettingRow>
+      <SettingRow
+        title="Auto-locate file on tab switch"
+        description="When switching file tabs, automatically reveal the file in the file tree."
+      >
         <Switch
           checked={autoLocateFileOnTabSwitch}
           onCheckedChange={onAutoLocateFileOnTabSwitchChange}
         />
-      </div>
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6 [&:last-child]:border-b-0">
-        <div className="flex-1 min-w-0">
-          <div className="text-[0.86em] text-text-primary font-medium mb-0.75">
-            Git Change Highlight
-          </div>
-          <div className="text-[0.79em] text-text-muted leading-relaxed">
-            Show git change gutter marks and line highlights in the editor.
-          </div>
-        </div>
+      </SettingRow>
+      <SettingRow
+        title="Git Change Highlight"
+        description="Show git change gutter marks and line highlights in the editor."
+      >
         <Switch
           checked={editorGitChangeHighlight}
           onCheckedChange={onEditorGitChangeHighlightChange}
         />
-      </div>
+      </SettingRow>
+      <SettingRow
+        title="Comment Translation Display"
+        description="How translated comments appear in the editor. Inline and hover keep the file compact; the button in the editor header starts and stops translation."
+      >
+        <select
+          className={selectClass}
+          value={commentTranslationMode ?? 'below'}
+          onChange={(e) => onCommentTranslationModeChange(e.target.value as CommentDisplayMode)}
+          aria-label="Comment translation display mode"
+        >
+          <option value="below">Below comment</option>
+          <option value="inline">Inline</option>
+          <option value="hover">On hover</option>
+          <option value="off">Off</option>
+        </select>
+      </SettingRow>
+      <SettingRow
+        title="Translate Comments on Open"
+        description="Start translating a file's comments as soon as it opens. Off by default: the first run on a file costs a model call."
+      >
+        <Switch
+          checked={commentTranslationAutoWarm === true}
+          onCheckedChange={onCommentTranslationAutoWarmChange}
+        />
+      </SettingRow>
       <WatcherExcludeSection excludes={watcherExclude} onExcludesChange={onWatcherExcludeChange} />
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6 [&:last-child]:border-b-0">
-        <div className="flex-1 min-w-0">
-          <div className="text-[0.86em] text-text-primary font-medium mb-0.75">
-            Default Translation Agent
-          </div>
-          <div className="text-[0.79em] text-text-muted leading-relaxed">
-            Default agent used by the AI Translate view for Markdown / HTML / TXT documents.
-          </div>
-        </div>
+      <SettingRow
+        title="Default Translation Agent"
+        description="Default agent used by the AI Translate view for Markdown / HTML / TXT documents."
+      >
         <select
           className={selectClass}
           value={translationAgentId ?? ''}
@@ -133,22 +169,50 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
           aria-label="Default translation agent"
         >
           <option value="">Agent default</option>
+          {/*
+            陈旧值必须**显式可见**。HTML select 遇到不在 options 里的 value 会回落显示
+            第一项（实测：显示成 "Agent default"），于是「配置里存着一个已删除的 agent」
+            在界面上表现为「没设置」—— 用户改不动、也看不出问题，而翻译时照旧用那个坏 id。
+          */}
+          {staleAgentId !== null && (
+            <option value={staleAgentId}>{staleAgentId} (unavailable — pick another)</option>
+          )}
           {chatAgents.map((agent) => (
             <option key={agent.id} value={agent.id}>
               {agent.name}
             </option>
           ))}
         </select>
-      </div>
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6 [&:last-child]:border-b-0">
-        <div className="flex-1 min-w-0">
-          <div className="text-[0.86em] text-text-primary font-medium mb-0.75">
-            Default Target Language
-          </div>
-          <div className="text-[0.79em] text-text-muted leading-relaxed">
-            Default target language used by the AI Translate view.
-          </div>
-        </div>
+      </SettingRow>
+      <SettingRow
+        title="Default Translation Model"
+        description="Model used by the translation agent. Leave empty to let the agent pick its own default."
+      >
+        <select
+          className={selectClass}
+          value={translationModelId ?? ''}
+          onChange={(e) => onTranslationModelChange(e.target.value || null)}
+          aria-label="Default translation model"
+          disabled={models.length === 0}
+        >
+          <option value="">
+            {translationAgentId
+              ? models.length === 0
+                ? 'No models'
+                : 'Agent default'
+              : 'Agent default'}
+          </option>
+          {models.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name || model.id}
+            </option>
+          ))}
+        </select>
+      </SettingRow>
+      <SettingRow
+        title="Default Target Language"
+        description="Default target language used by the AI Translate view."
+      >
         <select
           className={selectClass}
           value={translationTargetLanguage ?? ''}
@@ -162,7 +226,7 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
             </option>
           ))}
         </select>
-      </div>
+      </SettingRow>
     </>
   );
 };

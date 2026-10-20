@@ -25,6 +25,7 @@ import type {
   CustomLspServerConfig,
 } from '@/features/settings/types';
 import { BUILTIN_THEMES } from '@/features/settings/types';
+import type { CommentDisplayMode } from '@/shared/types/settings';
 
 /** 应用默认配置（也是「磁盘缺字段」时的回落基准）。 */
 export const DEFAULT_CONFIG: AppConfig = {
@@ -244,8 +245,8 @@ export function normalizeLoadedConfig(loaded: unknown): LoadedAppConfig {
 const COMMENT_MODES = ['below', 'inline', 'hover', 'off'] as const;
 
 /** 校验注释显示模式；非法 / 缺省 → `undefined`（由消费方兜底默认值）。 */
-function normalizeCommentMode(value: unknown): 'below' | 'inline' | 'hover' | 'off' | undefined {
+function normalizeCommentMode(value: unknown): CommentDisplayMode | undefined {
   return typeof value === 'string' && (COMMENT_MODES as readonly string[]).includes(value)
-    ? (value as 'below' | 'inline' | 'hover' | 'off')
+    ? (value as CommentDisplayMode)
     : undefined;
 }

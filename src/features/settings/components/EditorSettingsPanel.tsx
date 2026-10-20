@@ -38,13 +38,34 @@ const EditorSettingsPanel: React.FC<EditorSettingsPanelProps> = ({
     watcherExclude={config.watcherExclude ?? []}
     onWatcherExcludeChange={(patterns) => onConfigChange({ ...config, watcherExclude: patterns })}
     translationAgentId={config.translation?.agentId}
+    translationModelId={config.translation?.modelId}
     translationTargetLanguage={config.translation?.targetLanguage}
+    commentTranslationMode={config.translation?.commentMode}
+    commentTranslationAutoWarm={config.translation?.commentAutoWarm}
     agents={agents}
     onTranslationAgentChange={(agentId) =>
-      onConfigChange({ ...config, translation: { ...config.translation, agentId } })
+      // 换 agent 必须同时清掉 modelId：模型是 agent 的子集，旧 agent 的模型 id
+      // 对新 agent 无效。留着它会让翻译请求带上一个不存在的模型，
+      // 表现为「翻译一直失败但看不出原因」。
+      onConfigChange({
+        ...config,
+        translation: { ...config.translation, agentId, modelId: undefined },
+      })
+    }
+    onTranslationModelChange={(modelId) =>
+      onConfigChange({
+        ...config,
+        translation: { ...config.translation, modelId: modelId ?? undefined },
+      })
     }
     onTranslationTargetLanguageChange={(targetLanguage) =>
       onConfigChange({ ...config, translation: { ...config.translation, targetLanguage } })
+    }
+    onCommentTranslationModeChange={(commentMode) =>
+      onConfigChange({ ...config, translation: { ...config.translation, commentMode } })
+    }
+    onCommentTranslationAutoWarmChange={(commentAutoWarm) =>
+      onConfigChange({ ...config, translation: { ...config.translation, commentAutoWarm } })
     }
   />
 );

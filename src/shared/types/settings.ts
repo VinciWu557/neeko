@@ -74,6 +74,16 @@ export interface DapConfig {
 /** Java 调试后端选择。 */
 export type JavaDebugBackend = 'auto' | 'jdtls' | 'host';
 
+/**
+ * 注释译文的显示形态。
+ *
+ * 定义在这里（而不是 `editor/comment/commentTranslations.ts`）的原因：
+ * 它同时是**配置契约**（`AppConfig.translation.commentMode` 的取值）与**渲染模式**。
+ * 配置层必须能引用它，而 `shared/` 不得反向依赖 `features/` —— 所以权威定义在 shared，
+ * 渲染层复用。此前两处各写一份联合，加一种模式要改两边、漏一边不报错。
+ */
+export type CommentDisplayMode = 'below' | 'inline' | 'hover' | 'off';
+
 export interface AppConfig {
   theme: AppTheme;
   appearanceFontSize: number;
@@ -128,7 +138,7 @@ export interface AppConfig {
      *
      * `off` 表示装了能力但不默认显示 —— 写代码时用户会立刻想要这个。
      */
-    commentMode?: 'below' | 'inline' | 'hover' | 'off';
+    commentMode?: CommentDisplayMode;
     /** 打开文件即预热注释翻译（默认关：首次冷启动有成本）。 */
     commentAutoWarm?: boolean;
   };

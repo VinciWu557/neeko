@@ -20,8 +20,15 @@
  */
 import { StateEffect, StateField } from '@codemirror/state';
 
-/** 译文显示模式（U1 定案：默认 `below`）。 */
-export type CommentDisplayMode = 'below' | 'inline' | 'hover' | 'off';
+/**
+ * 译文显示模式（U1 定案：默认 `below`）。
+ *
+ * 权威定义在 `@/shared/types/settings` —— 它同时是配置契约，而 `shared/` 不得反向
+ * 依赖 `features/`。此处 re-export，让渲染层不必知道配置层的路径。
+ */
+import type { CommentDisplayMode } from '@/shared/types/settings';
+
+export type { CommentDisplayMode };
 
 /** 一条译文（位置 + 文本）。 */
 export interface CommentTranslationEntry {

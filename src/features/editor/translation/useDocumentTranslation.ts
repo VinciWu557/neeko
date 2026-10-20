@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useEditorContext } from '@/shared/contexts';
-import { agentCapabilities } from '@/shared/types/agent';
+import { resolveTranslationAgentId, translatableAgents } from '@/shared/utils/agents';
 import { isMarkdownFile } from '@/shared/utils/codemirror';
 import { isHtmlFile, isTxtFile } from '@/shared/utils/fileTree';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
@@ -76,11 +76,9 @@ export function useDocumentTranslation({
   const setPhase = useTranslationStore((s) => s.setPhase);
   const markStale = useTranslationStore((s) => s.markStale);
 
-  // 翻译走 AgentAdapter 抽象（adapter_for），仅 CHAT 能力的 agent 可选
-  const chatAgents = useMemo(
-    () => agents.filter((a) => a.enabled && agentCapabilities(a).chat),
-    [agents],
-  );
+  // 翻译走 AgentAdapter 抽象（adapter_for），仅 CHAT 能力的 agent 可选。
+  // 判据归 `translatableAgents` 所有 —— 本文件此前有 3 处各写一遍。
+  const chatAgents = useMemo(() => translatableAgents(agents), [agents]);
 
   const [bilingual, setBilingual] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
@@ -88,13 +86,9 @@ export function useDocumentTranslation({
   // 进入视图：初始化选择器（已有条目则原样保留，不覆盖用户选择）
   useEffect(() => {
     if (!enabled) return;
-    // 设置默认值不是 chat agent（或未配置）时回退到第一个 chat agent
-    const validAgentId = chatAgents.some((a) => a.id === defaultAgentId)
-      ? (defaultAgentId as string)
-      : chatAgents[0]?.id || 'opencode';
     initSelectors(tabKey, {
       targetLanguage: defaultTargetLanguage || DEFAULT_TARGET_LANGUAGE,
-      agentId: validAgentId,
+      agentId: resolveTranslationAgentId(defaultAgentId, agents),
       modelId: defaultModelId || null,
     });
     // defaults 与 chatAgents 变化不覆盖已初始化的选择器，故不进依赖
@@ -115,10 +109,9 @@ export function useDocumentTranslation({
     const blocks = splitDocumentBlocks(filePath, content);
     if (blocks.length === 0) return;
 
-    // 存储的选择器可能因 agent 能力变化而失效 → 发起前再校验一次
-    const agentId = chatAgents.some((a) => a.id === current.agentId)
-      ? current.agentId
-      : chatAgents[0]?.id || current.agentId;
+    // 存储的选择器可能因 agent 能力变化而失效 → 发起前再解析一次。
+    // 与初始化用同一个函数：两处判据若各写一遍，漂移时不会报错。
+    const agentId = resolveTranslationAgentId(current.agentId, agents);
 
     startInStore(tabKey, { source: content, blocks });
     const controller = new AbortController();
@@ -202,7 +195,11 @@ export function useDocumentTranslation({
     snapshot,
     chatAgents,
     targetLanguage: snapshot?.targetLanguage ?? DEFAULT_TARGET_LANGUAGE,
-    agentId: snapshot?.agentId ?? chatAgents[0]?.id ?? 'opencode',
+    // 与注释翻译走同一个解析器：snapshot 里存的是历史选择，agent 可能已被删除、
+    // 失去 chat 能力或被停用。直接下发会让翻译在运行时失败，而本地就能判定。
+    // 传原始 `agents`（不传已筛的 `chatAgents`）：判据在解析器内部，调用方不预筛 ——
+    // 预筛会让「双重过滤幂等」成为隐含要求，而下一步的改动很容易破坏它。
+    agentId: resolveTranslationAgentId(snapshot?.agentId, agents),
     modelId: snapshot?.modelId ?? null,
     bilingual,
     setTargetLanguage: (v: string) => setSelectors(tabKey, { targetLanguage: v }),
