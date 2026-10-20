@@ -116,8 +116,13 @@ class InlineWidget extends WidgetType {
     span.className = 'cm-comment-translation cm-comment-translation--inline';
     if (this.reason) {
       span.textContent = `⚠ ${this.reason}`;
-      // 行内模式下整个 widget 就是 chip：标记直接落在 span 上（没有独立 chip 元素）
-      markChipRetryable(span, this.groupKey);
+      // 行内模式下整个 widget 就是 chip：标记直接落在 span 上（没有独立 chip 元素）。
+      // transport 不挂点击 —— 与 below / hover 的判定保持一致（单组重试救不了整批故障）。
+      if (this.failureKind === 'transport') {
+        span.title = `${this.reason}（整批失败，重试请点编辑器头部的翻译按钮）`;
+      } else {
+        markChipRetryable(span, this.groupKey);
+      }
     } else {
       span.textContent = `→ ${this.text}`;
     }
@@ -145,7 +150,11 @@ class HoverAnchorWidget extends WidgetType {
   }
 
   eq(other: HoverAnchorWidget): boolean {
-    return other.text === this.text && other.reason === this.reason;
+    return (
+      other.text === this.text &&
+      other.reason === this.reason &&
+      other.failureKind === this.failureKind
+    );
   }
 
   toDOM(): HTMLElement {
@@ -370,13 +379,19 @@ export function createBelowWidgetForTest(
 }
 
 /**
- * 失败 chip 的两种措辞。
+ * 失败 chip。
  *
- * `transport`（断网 / Agent 崩溃 / 超时）不是这一条注释的问题：点重试大概率还是失败，
- * 而用户真正需要的是「知道刚才那批没跑成」。所以它不挂重试、措辞用与文档翻译一致的
- * 「翻译失败」，原因收进 tooltip；全局性上报由调用方走通知中心。
+ * ## 为什么两种类型都显示原因
  *
- * `validation`（译文回来了但没过校验）才是单组重试能救的：显示可点击的 ⚠ 原因。
+ * 上一版把 `transport` 的正文改成纯「翻译失败」、原因只进 `title`，理由是「对齐文档
+ * 翻译的用词」。那是个错误：文档翻译的失败**没有原因可显示**（它只知道块没翻成），
+ * 而这里引擎给出了具体原因（`agent crashed` / `network unreachable`）。
+ * 把已有信息藏进 hover 的结果是用户反馈「失败没有提示原因」。
+ *
+ * **原因必须可见**，两类都一样；区别只在**能不能点重试**：
+ * - `validation`（译文回来了但没过校验）→ 单组重试能救，挂点击。
+ * - `transport`（断网 / Agent 崩溃 / 超时）→ 不是这一条注释的问题，重试单组无意义，
+ *   不挂点击（挂了只会让人点了没反应）；同类失败由调用方汇总上报通知中心。
  */
 function buildFailureChip(
   reason: string,
@@ -385,13 +400,14 @@ function buildFailureChip(
 ): HTMLElement {
   const chip = document.createElement('span');
   chip.className = 'cm-comment-translation__reason';
+  chip.textContent = `⚠ ${reason}`;
+
   if (failureKind === 'transport') {
-    chip.textContent = '翻译失败';
-    chip.title = reason;
+    chip.title = `${reason}（整批失败，重试请点编辑器头部的翻译按钮）`;
     // 不 markChipRetryable：没有可重试的组时挂上点击只会让人点了没反应。
     return chip;
   }
-  chip.textContent = `⚠ ${reason}`;
+
   chip.title = '点击只重试这一组';
   markChipRetryable(chip, groupKey);
   return chip;

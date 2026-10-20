@@ -399,7 +399,13 @@ describe('失败 chip / 按类型分流', () => {
     expect(chip?.hasAttribute(RETRY_GROUP_ATTRIBUTE)).toBe(true);
   });
 
-  it('should render a non-retryable label for transport failures', () => {
+  /**
+   * transport 同样必须**显示原因**（只是不可点）。
+   *
+   * 上一版把正文写成纯「翻译失败」、原因只进 title —— 用户反馈「失败没有提示原因」。
+   * 文档翻译那样做是因为它没有原因可显示；这里引擎给了具体原因，藏起来等于丢信息。
+   */
+  it('should show the reason for transport failures too, but not make them retryable', () => {
     const dom = createBelowWidgetForTest(
       '',
       'agent exited with code 1',
@@ -408,9 +414,78 @@ describe('失败 chip / 按类型分流', () => {
     ).toDOM() as HTMLElement;
     const chip = dom.querySelector('.cm-comment-translation__reason');
 
-    expect(chip?.textContent).toBe('翻译失败');
-    expect(chip?.getAttribute('title')).toContain('agent exited');
+    expect(chip?.textContent).toContain('agent exited with code 1');
     // 关键：没有可重试的组 → 不得挂点击属性
     expect(chip?.hasAttribute(RETRY_GROUP_ATTRIBUTE)).toBe(false);
+  });
+});
+
+describe('失败原因必须可见（三种模式）', () => {
+  /**
+   * 用户反馈「失败没有提示原因」的直接回归。
+   *
+   * 原因曾在 transport 分支里只进 `title` —— 要 hover 才看得到，正文只剩「翻译失败」。
+   * 三种模式都必须把原因写进**正文**。
+   */
+  it('should put the reason in the visible text for below mode', () => {
+    const dom = createBelowWidgetForTest(
+      '',
+      'network unreachable',
+      3,
+      'transport',
+    ).toDOM() as HTMLElement;
+    expect(dom.textContent).toContain('network unreachable');
+  });
+
+  it('should put the reason in the visible text for inline mode', () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: '// hi', extensions: [commentTranslationView()] }),
+    });
+    view.dispatch({
+      effects: setCommentTranslations.of({
+        mode: 'inline',
+        entries: [
+          {
+            from: 0,
+            to: 5,
+            text: '',
+            reason: 'too short (0.02)',
+            groupKey: 1,
+            failureKind: 'validation',
+          },
+        ],
+      }),
+    });
+
+    const inline = view.dom.querySelector('.cm-comment-translation--inline');
+    expect(inline?.textContent).toContain('too short');
+    view.destroy();
+  });
+
+  /** transport 的 inline 也不能点（与 below 一致）。 */
+  it('should not mark inline transport failures retryable', () => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: '// hi', extensions: [commentTranslationView()] }),
+    });
+    view.dispatch({
+      effects: setCommentTranslations.of({
+        mode: 'inline',
+        entries: [
+          {
+            from: 0,
+            to: 5,
+            text: '',
+            reason: 'agent crashed',
+            groupKey: 1,
+            failureKind: 'transport',
+          },
+        ],
+      }),
+    });
+
+    const inline = view.dom.querySelector('.cm-comment-translation--inline');
+    expect(inline?.textContent).toContain('agent crashed');
+    expect(inline?.hasAttribute(RETRY_GROUP_ATTRIBUTE)).toBe(false);
+    view.destroy();
   });
 });
