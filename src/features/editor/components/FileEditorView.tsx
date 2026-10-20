@@ -1,6 +1,6 @@
 import type { EditorView } from '@codemirror/view';
 import CodeMirror from '@uiw/react-codemirror';
-import React from 'react';
+import React, { useMemo } from 'react';
 
 import type { AppTheme, FileTab } from '@/shared/types';
 import type { EditorAction } from '@/shared/utils/agentPrompt';
@@ -47,6 +47,8 @@ interface FileEditorViewProps {
   currentContent: string;
   basePath: string | undefined;
   canEdit: boolean;
+  /** 注释翻译入口需要它取 syntaxTree；与 CodeMirror 实例同一引用源。 */
+  editorViewRef: React.MutableRefObject<EditorView | null>;
   extensions: unknown[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CM Extension 型从 hooks 推断，避免跨包类型依赖
   cmTheme: any;
@@ -88,6 +90,7 @@ function FileEditorView({
   currentContent,
   basePath,
   canEdit,
+  editorViewRef,
   extensions,
   cmTheme,
   cmClassName,
@@ -106,6 +109,28 @@ function FileEditorView({
   const showPreview = (isMd || isHtml || isSvg || isJson) && previewMode === 'preview';
   const translatable = isTranslatableFile(tab.filePath);
   const showTranslate = previewMode === 'translate' && translatable;
+
+  /**
+   * 注释翻译入口的位置信息（`null` = 不显示按钮）。
+   *
+   * **必须 useMemo**：内联对象会让 `EditorHeader` 的 `React.memo` 永久失效 ——
+   * props 引用每次渲染都不同，memo 退化成普通组件。
+   *
+   * `content` 有意**不进这个对象**：它随每次按键变化，放进来就抵消了 memo 的作用。
+   * 内容变化时 header 本就需要重渲一次（入口据此判断译文是否过期），这是合理成本；
+   * 但「因为别的原因重渲」不该连带触发它。
+   */
+  const commentTranslation = useMemo(
+    () =>
+      canEdit && !showPreview
+        ? {
+            projectId: tab.workspace.projectId,
+            editorViewRef,
+            content: currentContent,
+          }
+        : null,
+    [canEdit, showPreview, tab.workspace.projectId, editorViewRef, currentContent],
+  );
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -134,6 +159,7 @@ function FileEditorView({
         onOpenInSystemBrowser={callbacks.onOpenInSystemBrowser}
         canOpenInBrowser={callbacks.canOpenInBrowser}
         onSearch={showPreview ? undefined : callbacks.onOpenSearch}
+        commentTranslation={commentTranslation}
       />
 
       <div className="flex-1 min-h-0 overflow-hidden">

@@ -1,11 +1,15 @@
+import type { EditorView } from '@codemirror/view';
 import React, { useMemo, useRef } from 'react';
 
 import { cn } from '@/lib/utils';
 import { Eye, FileCode, Globe, ExternalLink, Languages, Search } from '@/shared/components/icons';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
+import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { useBreadcrumbSegments } from '../hooks/useBreadcrumbSegments';
 import type { PreviewMode } from '../types';
+
+import CommentTranslationButton from './CommentTranslationButton';
 
 interface EditorHeaderProps {
   /** 文件路径（可绝对或相对项目根，兼容本地/WSL/SSH） */
@@ -28,6 +32,17 @@ interface EditorHeaderProps {
   canOpenInBrowser?: boolean;
   /** 页内内容搜索（打开 CodeMirror 查找面板） */
   onSearch?: () => void;
+  /**
+   * 注释翻译入口所需的位置信息（`null` = 不显示按钮）。
+   *
+   * 只有这三样 —— 翻译状态机与配置读取由 `CommentTranslationButton` 自己持有，
+   * 本组件不为它新增任何状态（两者都贴着 300 行 ratchet 红线）。
+   */
+  commentTranslation?: {
+    projectId: ProjectId;
+    editorViewRef: React.MutableRefObject<EditorView | null>;
+    content: string;
+  } | null;
 }
 
 /** 项目根目录图标 */
@@ -53,6 +68,7 @@ function EditorHeader({
   onOpenInSystemBrowser,
   canOpenInBrowser,
   onSearch,
+  commentTranslation,
 }: EditorHeaderProps) {
   const crumbRef = useRef<HTMLDivElement>(null);
   const { items, segments } = useBreadcrumbSegments(filePath, projectPath, crumbRef, isDirty);
@@ -143,6 +159,15 @@ function EditorHeader({
           >
             <Search size={14} />
           </button>
+        )}
+
+        {commentTranslation && (
+          <CommentTranslationButton
+            filePath={filePath}
+            projectId={commentTranslation.projectId}
+            editorViewRef={commentTranslation.editorViewRef}
+            content={commentTranslation.content}
+          />
         )}
 
         {/* Markdown / HTML / SVG / JSON preview toggle；可翻译文件为三段式视图切换（图标按钮） */}

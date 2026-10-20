@@ -19,7 +19,6 @@ import { useGitChangeEditor } from '../hooks/useGitChangeEditor';
 import { useNavigateGoal } from '../hooks/useNavigateGoal';
 import { useUnifiedGutterExtension } from '../hooks/useUnifiedGutter';
 
-import CommentTranslationBar from './CommentTranslationBar';
 import FileEditorFallback, { fileEditorFallbackKind } from './FileEditorFallback';
 import FileEditorView from './FileEditorView';
 
@@ -242,14 +241,6 @@ function FileEditor({
 
   return (
     <>
-      <CommentTranslationBar
-        filePath={tab.filePath}
-        projectId={tab.workspace.projectId}
-        editorViewRef={editorViewRef}
-        content={currentContent}
-        canEdit={canEdit}
-      />
-
       <FileEditorView
         tab={tab}
         tabKey={tabKey}
@@ -265,6 +256,7 @@ function FileEditor({
         currentContent={currentContent}
         basePath={basePath}
         canEdit={canEdit}
+        editorViewRef={editorViewRef}
         extensions={extensions}
         cmTheme={cmTheme}
         cmClassName={cmClassName}
