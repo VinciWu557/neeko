@@ -27,12 +27,18 @@ import type { Component, Terminal } from '@earendil-works/pi-tui'
 /** What the fullscreen surface needs from the app. */
 export interface FullscreenOptions {
   readonly terminal: Terminal
-  /** Banner rows above the transcript. */
-  readonly header: Component
-  /** The transcript container; it is the region that scrolls. */
-  readonly transcript: Component
   /**
-   * Everything that sits between the transcript and the input, in one component.
+   * Everything that scrolls, as one component: the banner **and** the transcript.
+   *
+   * One container rather than `header` + `transcript` fields, because pi's own
+   * viewport scrolls the whole document (`createChatViewport` wraps
+   * `documentContainer` — header plus chat). Wrapping only the transcript leaves
+   * the banner pinned, so scrolling moves the conversation under a stationary
+   * header instead of scrolling the screen.
+   */
+  readonly document: Component
+  /**
+   * Rows docked between the scrolling document and the input.
    *
    * A single container on purpose: this list used to be enumerated field by
    * field (`notices`, then a panel slot…) and every panel added to `TuiApp`
@@ -62,10 +68,10 @@ export interface Fullscreen {
 /**
  * Mount the alt-screen viewport.
  *
- * Layout follows the README's shape: one `grow` region (the transcript) so the
- * input keeps its height, and `shrink: 0` on the fixed rows so a long
- * conversation never pushes the editor off screen. `basis`/`minSize` guard the
- * degenerate case of a very short terminal.
+ * Layout mirrors pi's `createChatViewport`: a **grow** region holding the
+ * scrolling document, then a dock of fixed rows (panels, editor, footer). The
+ * document — banner included — is what scrolls, so the whole screen scrolls
+ * rather than the conversation moving under a pinned header.
  *
  * `copyOnSelect` stays on and no `copySelection` is supplied, so pi-tui writes the
  * selection through OSC 52 — the terminal's own clipboard channel, which works
@@ -75,9 +81,9 @@ export interface Fullscreen {
  * @returns the mounted surface.
  */
 export function mountFullscreen(options: FullscreenOptions): Fullscreen {
-  const { terminal, header, transcript, aboveInput, input, footer, onInput } = options
+  const { terminal, document, aboveInput, input, footer, onInput } = options
   const screen = new TuiAltScreen(terminal)
-  const scroll = new ScrollView(transcript, {
+  const scroll = new ScrollView(document, {
     follow: 'end',
     primary: true,
     scrollbar: 'auto',
@@ -85,10 +91,11 @@ export function mountFullscreen(options: FullscreenOptions): Fullscreen {
   })
 
   const children = [
-    { component: header, basis: 'auto' as const, shrink: 1, minSize: 1 },
-    { component: scroll, basis: 0, grow: 1, minSize: 1 },
-    ...(aboveInput === undefined ? [] : [{ component: aboveInput, basis: 'auto' as const, shrink: 1, minSize: 1 }]),
-    { component: input, basis: 'auto' as const, shrink: 0, minSize: 1 },
+    // The scroll region takes every row the dock does not need.
+    { component: scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+    // Fixed rows below it: the editor must not move while the document scrolls.
+    ...(aboveInput === undefined ? [] : [{ component: aboveInput, basis: 'auto' as const, shrink: 1, minSize: 0 }]),
+    { component: input, basis: 'auto' as const, shrink: 0, minSize: 3 },
     { component: footer, basis: 'auto' as const, shrink: 0, minSize: 1 },
   ]
 

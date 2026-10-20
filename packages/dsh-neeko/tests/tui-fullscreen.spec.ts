@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Container, Text } from '@earendil-works/pi-tui'
+import type { TuiAltScreen } from '@earendil-works/pi-tui'
 import { mountFullscreen } from '../src/tui/fullscreen.ts'
 import { TuiApp } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The fullscreen surface.
@@ -13,6 +15,20 @@ import { FakeTerminal } from './support/fake-terminal.ts'
  * mode rather than a setting.
  */
 
+/**
+ * Strip terminal protocol from a captured frame.
+ *
+ * Three copies of this lived in separate `describe` blocks and drifted (the
+ * newest one dropped the pi-tui marker rule), so a test could assert on text a
+ * sibling would have removed.
+ *
+ * @param text - the raw bytes written to the terminal.
+ * @returns the visible characters only.
+ */
+function strip(text: string): string {
+  return stripAnsi(text)
+}
+
 function mount(onInput = vi.fn()): {
   screen: ReturnType<typeof mountFullscreen>['screen']
   dispose: () => void
@@ -20,12 +36,12 @@ function mount(onInput = vi.fn()): {
   text: () => string
 } {
   const terminal = new FakeTerminal({ columns: 80, rows: 24 })
-  const transcript = new Container()
-  transcript.addChild(new Text('TRANSCRIPT ROW'))
+  const document = new Container()
+  document.addChild(new Text('HEADER'))
+  document.addChild(new Text('TRANSCRIPT ROW'))
   const surface = mountFullscreen({
     terminal,
-    header: new Text('HEADER'),
-    transcript,
+    document,
     input: new Text('INPUT'),
     footer: new Text('FOOTER'),
     onInput,
@@ -38,7 +54,7 @@ function mount(onInput = vi.fn()): {
     // `render()` would skip the layout pass and show an empty viewport.
     text: () => {
       surface.screen.renderNow(true)
-      return surface.screen.getScreenLines().join('\n').replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, '')
+      return stripAnsi(surface.screen.getScreenLines().join('\n'))
     },
   }
 }
@@ -423,11 +439,6 @@ describe('the printed document ends with the resume hint', () => {
     return { terminal, stop: () => { seam.stop.call(app) } }
   }
 
-  const strip = (s: string): string => s
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, '')
-    .replace(/\x1b\][^\x07]*\x07/gu, '')
-    .replace(/\x1b_pi:[^\\]*\\/gu, '')
-
   it('names the dsh invocation, not pi', () => {
     // pi prints `To resume this session: pi --session <id>`; ours must be the
     // command that actually reaches this TUI (dsh needs the profile + --tui).
@@ -493,11 +504,6 @@ describe('panels are visible in fullscreen too', () => {
     return { app, terminal, submit: (text) => seam.submit.call(app, text) }
   }
 
-  const strip = (s: string): string => s
-    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, '')
-    .replace(/\x1b\][^\x07]*\x07/gu, '')
-    .replace(/\x1b_pi:[^\\]*\\/gu, '')
-
   /** Let the alt screen's (coalesced, async) repaint land. */
   const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 250))
 
@@ -519,5 +525,57 @@ describe('panels are visible in fullscreen too', () => {
     await submit('/theme')
     await settle()
     expect(strip(terminal.output.slice(before))).toContain('Theme')
+  })
+})
+
+
+describe('the whole document scrolls, not just the transcript', () => {
+  /**
+   * pi's viewport (`createChatViewport`) wraps the **document** — header plus
+   * chat — in its `ScrollView`, and keeps only the dock (editor, footer) fixed.
+   * Wrapping just the transcript leaves the banner pinned: scrolling moves the
+   * conversation under a stationary header, which is not what "scroll the screen"
+   * means.
+   */
+  function mountScrollingDocument(): {
+    screen: TuiAltScreen
+    document: Container
+    lines: () => string[]
+  } {
+    const terminal = new FakeTerminal({ columns: 60, rows: 12 })
+    const document = new Container()
+    // Enough rows that the viewport must scroll to show the tail.
+    for (let i = 0; i < 40; i += 1) document.addChild(new Text(`row ${i}`, 0, 0))
+    const input = new Text('input', 0, 0)
+    const footer = new Text('footer', 0, 0)
+    const surface = mountFullscreen({ terminal, document, input, footer, onInput: () => undefined })
+    return {
+      screen: surface.screen,
+      document,
+      // `renderNow` runs the layout pass; a bare `render()` skips it and shows a
+      // one-row degenerate viewport.
+      lines: () => {
+        surface.screen.renderNow(true)
+        return surface.screen.getScreenLines().map((line) => strip(line).trim())
+      },
+    }
+  }
+
+  it('scrolls the banner with the conversation', () => {
+    // A `ScrollView` over the document means the header is part of the scroll
+    // region: it is not pinned above it.
+    const { lines } = mountScrollingDocument()
+    const plain = lines()
+    // The viewport is 12 rows and the document is 40; the last row must be
+    // reachable, so the first rows have scrolled away.
+    expect(plain).toContain('row 39')
+    expect(plain).not.toContain('row 0')
+  })
+
+  it('keeps the input and footer out of the scroll region', () => {
+    // They are docked below the viewport, so they survive any scroll position.
+    const { lines } = mountScrollingDocument()
+    expect(lines()).toContain('input')
+    expect(lines()).toContain('footer')
   })
 })

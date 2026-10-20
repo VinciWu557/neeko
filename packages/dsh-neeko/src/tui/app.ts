@@ -29,7 +29,8 @@
  * TuiMainScreen
  *  ├─ banner      (mark, version, model, cwd, session, hints)
  *  ├─ messages    (transcript rows — owned by mountTranscript)
- *  ├─ notices     (local command replies — owned by addNotice)
+ *  ├─ notices     (local command replies — owned by addNotice; scrolls with the
+ *  │               conversation, because a reply belongs to the exchange it answers)
  *  ├─ working     (one-line activity hint)
  *  ├─ interaction (approval / question panel)
  *  ├─ themeText   (theme picker panel)
@@ -347,6 +348,15 @@ export class TuiApp {
   private readonly editor: Editor
   private readonly banner: Container
   private readonly messages: Container
+  /**
+   * The scrolling document: banner + transcript, in that order.
+   *
+   * One container because the viewport scrolls the whole screen (pi does the
+   * same: its `documentContainer` holds the header and the chat). Keeping the
+   * banner outside the scroll region pinned it, so scrolling slid the conversation
+   * under a stationary header.
+   */
+  private readonly document: Container
   private readonly notices: Container
   /**
    * The rows between the transcript and the input: notices, the activity line,
@@ -358,6 +368,20 @@ export class TuiApp {
    * default fullscreen mode while their keys still worked.
    */
   private readonly aboveInput: Container
+  /**
+   * The editor's slot, owned by the app and mounted by whichever screen is live.
+   *
+   * A container rather than the editor itself, because the input surface is
+   * *replaceable*: the model panel takes the editor's place while it is open.
+   * Handing the renderers a fixed component meant `replaceInputSlot()` had to
+   * guess where that component was mounted, and it guessed wrong in fullscreen —
+   * the editor belongs to the alt screen's `input` slot there, not to `tui`, so
+   * `/model` mounted the panel into the stopped main screen. Nothing was drawn
+   * while the panel still held the keyboard: "the model list is gone and the app
+   * is stuck". (The same mistake hid `/thinking` and `/theme`, see
+   * {@linkcode aboveInput}.)
+   */
+  private readonly inputSlot: Container
   private readonly working: Text
   private readonly interactionText: Text
   private readonly themeText: Text
@@ -473,9 +497,24 @@ export class TuiApp {
 
     this.banner = new Container()
     this.messages = new Container()
-    // Local command replies live apart from `messages`: mountTranscript clears
-    // its container on every flush, so anything written there would be wiped.
+    this.document = new Container()
+    this.document.addChild(this.banner)
+    this.document.addChild(this.messages)
+    // Local command replies scroll with the conversation, so they live in the
+    // document — *not* in the fixed rows above the editor.
+    //
+    // They were mounted in `aboveInput` until a `/compact` reply ("No
+    // compactable history yet.") was found pinned under the transcript, never
+    // scrolling with the conversation it answered. pi does not write command
+    // outcomes to a fixed area either: `/compact` calls `session.compact()` and
+    // the result arrives as a chat entry.
+    //
+    // A separate container from `messages` is still required: `mountTranscript`
+    // rebuilds its container on every flush, so a reply written there would vanish
+    // on the next repaint.
     this.notices = new Container()
+    this.document.addChild(this.notices)
+    this.inputSlot = new Container()
     this.aboveInput = new Container()
     this.working = new Text('')
     this.interactionText = new Text('')
@@ -494,16 +533,15 @@ export class TuiApp {
       autocompleteMaxVisible: AUTOCOMPLETE_MAX_VISIBLE,
     })
 
-    this.tui.addChild(this.banner)
-    this.tui.addChild(this.messages)
-    this.aboveInput.addChild(this.notices)
+    this.tui.addChild(this.document)
     this.aboveInput.addChild(this.working)
     this.aboveInput.addChild(this.interactionText)
     this.aboveInput.addChild(this.themeText)
     this.aboveInput.addChild(this.thinkingText)
     this.aboveInput.addChild(this.resumeText)
     this.tui.addChild(this.aboveInput)
-    this.tui.addChild(this.editor)
+    this.inputSlot.addChild(this.editor)
+    this.tui.addChild(this.inputSlot)
     this.tui.addChild(this.status.component)
     this.tui.setFocus(this.editor)
 
@@ -576,19 +614,21 @@ export class TuiApp {
   /**
    * Write the transcript to the terminal's normal buffer, then stop.
    *
-   * Rendered straight from this app's own containers (banner, messages,
-   * notices, editor, status) rather than through `TuiMainScreen.start()` — see
-   * {@linkcode stop} for why that path is unusable on quit.
+   * Rendered straight from this app's own containers (document, dock, input slot,
+   * status) rather than through `TuiMainScreen.start()` — see {@linkcode stop}
+   * for why that path is unusable on quit.
    */
   private printFinalDocument(): void {
     const width = Math.max(1, this.terminal.columns)
+    // Both aggregates, not their parts one by one: a component added to either
+    // must not be able to go missing from the final document.
     const document = [
-      this.banner,
-      this.messages,
-      // The aggregate, not the panels one by one: a new panel must not be able
-      // to go missing from the final document either.
+      this.document,
       this.aboveInput,
-      this.editor,
+      // The slot, not the editor: `/model` puts a panel there, and printing the
+      // editor would then render a component that is not mounted — the panel
+      // would be missing from the final document.
+      this.inputSlot,
       this.status.component,
     ]
       .flatMap((component) => component.render(width))
@@ -837,10 +877,9 @@ export class TuiApp {
     this.tui.stop()
     this.fullscreen = mountFullscreen({
       terminal: this.terminal,
-      header: this.banner,
-      transcript: this.messages,
+      document: this.document,
       aboveInput: this.aboveInput,
-      input: this.editor,
+      input: this.inputSlot,
       footer: this.status.component,
       onInput: (data) => this.handleInput(data),
     })
@@ -865,20 +904,19 @@ export class TuiApp {
   }
 
   /**
-   * Put `component` where the editor normally sits: after the transcript, before
-   * the status bar.
+   * Put `component` into the input slot.
    *
-   * `addChild` appends, so the status bar is detached first and re-attached to
-   * keep it last — otherwise repeated opens would stack copies of it.
+   * Only {@linkcode inputSlot}'s child changes — the slot itself stays mounted by
+   * whichever screen is live, so this works identically in main-screen and
+   * fullscreen mode. Swapping the slot's *parent* instead (removing and
+   * re-appending the editor to `tui`) is what made the model panel invisible in
+   * fullscreen.
    *
    * @param component - the input-slot occupant (editor, or the model panel).
    */
   private replaceInputSlot(component: Component): void {
-    this.tui.removeChild(this.editor)
-    if (this.modelPanel !== undefined) this.tui.removeChild(this.modelPanel.component)
-    this.tui.removeChild(this.status.component)
-    this.tui.addChild(component)
-    this.tui.addChild(this.status.component)
+    this.inputSlot.clear()
+    this.inputSlot.addChild(component)
   }
 
   /**

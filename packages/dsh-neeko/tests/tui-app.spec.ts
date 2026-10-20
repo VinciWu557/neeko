@@ -188,3 +188,124 @@ describe('TuiApp submit routing', () => {
     expect(view.notices.children).toHaveLength(0)
   })
 })
+
+describe('TuiApp notice placement', () => {
+  /**
+   * Command replies belong to the conversation, not to the dock.
+   *
+   * They were mounted in `aboveInput` (the fixed rows between the transcript and
+   * the editor), so a reply such as `/compact`'s "No compactable history yet."
+   * sat pinned above the prompt and never scrolled with the conversation it was
+   * answering. pi's own `/compact` writes nothing to a fixed area either: it
+   * calls `session.compact()` and the outcome arrives as a chat entry.
+   *
+   * The dock keeps only what is transient and self-clearing (the one-line status
+   * notice) and what must stay visible while the document scrolls (the editor,
+   * the pickers, the status bar).
+   */
+  const containerOf = (app: TuiApp, field: 'document' | 'aboveInput' | 'notices' | 'messages'): {
+    children: unknown[]
+  } => (app as unknown as Record<string, { children: unknown[] }>)[field] as { children: unknown[] }
+
+  it('mounts the notice container inside the scrolling document', () => {
+    const { app } = makeApp()
+    const document = containerOf(app, 'document')
+    const notices = containerOf(app, 'notices')
+    expect(document.children).toContain(notices)
+  })
+
+  it('keeps notices out of the fixed rows above the editor', () => {
+    const { app } = makeApp()
+    expect(containerOf(app, 'aboveInput').children).not.toContain(containerOf(app, 'notices'))
+  })
+
+  it('places notices after the transcript so replies read in order', () => {
+    // A reply that appeared above the message it answers would be unreadable.
+    const { app } = makeApp()
+    const children = containerOf(app, 'document').children
+    const messages = containerOf(app, 'messages')
+    const notices = containerOf(app, 'notices')
+    expect(children.indexOf(notices)).toBeGreaterThan(children.indexOf(messages))
+  })
+})
+
+describe('TuiApp input slot', () => {
+  /**
+   * The model panel replaces whatever occupies the input slot, in **both** screen
+   * modes.
+   *
+   * `replaceInputSlot` used to add the panel to `tui`'s own children. In
+   * fullscreen (the default) the editor is not a child of `tui` at all — it is
+   * handed to `mountFullscreen` as its `input` slot, and the main screen is
+   * stopped. So `/model` mounted the panel into a stopped tree: nothing was
+   * drawn, while the panel's own key handling kept waiting. From the outside that
+   * is "the model list is gone and the app is stuck".
+   *
+   * The fix is an indirection: a stable container owns the slot, and the app
+   * swaps that container's child. Whatever the screen does with the container
+   * stays the screen's business.
+   */
+  const anyApp = (app: TuiApp): Record<string, any> => app as unknown as Record<string, any>
+
+  /** Models the panel needs to open at all. */
+  function makeAppWithModels(): TuiApp {
+    return makeApp({
+      modelPicker: async () => ({
+        models: [{ id: 'm1', name: 'M1', provider: 'test' }],
+        current: 'm1',
+      }),
+    }).app
+  }
+
+  it('keeps the input slot in the tree in main-screen mode', async () => {
+    const app = makeAppWithModels()
+    await anyApp(app).openModelPanel()
+    expect(anyApp(app).inputSlot.children).toContain(anyApp(app).modelPanel.component)
+  })
+
+  it('keeps the input slot in the tree in fullscreen mode', async () => {
+    // The failing case: the panel must reach the alt screen's input slot, not
+    // the stopped main screen's child list.
+    const app = makeAppWithModels()
+    anyApp(app).enterFullscreen()
+    await anyApp(app).openModelPanel()
+    expect(anyApp(app).inputSlot.children).toContain(anyApp(app).modelPanel.component)
+  })
+
+  it('draws the panel on the live screen, not on the stopped main screen', async () => {
+    // Structure alone cannot catch this: with the slot mounted on `tui` and the
+    // alt screen handed the raw editor, `inputSlot.children` still contains the
+    // panel while the visible frame shows nothing. The assertion has to be the
+    // rendered frame of the *live* renderer.
+    const app = makeAppWithModels()
+    anyApp(app).enterFullscreen()
+    await anyApp(app).openModelPanel()
+    const screen = anyApp(app).fullscreen.screen as {
+      renderNow(force: boolean): void
+      getScreenLines(): string[]
+    }
+    // `getScreenLines()` is the frame written to the terminal; without a render
+    // pass it is empty and would pass for the wrong reason.
+    screen.renderNow(true)
+    expect(screen.getScreenLines().join('\n')).toContain('M1')
+  })
+
+  it('prints whatever occupies the slot on exit, not the editor', async () => {
+    // `printFinalDocument()` renders the live component tree for scrollback. It
+    // listed `this.editor` — but the editor is not what is in the slot while the
+    // model panel is open, so quitting from `/model` printed a component that was
+    // not mounted and lost the panel from the final document.
+    const app = makeAppWithModels()
+    await anyApp(app).openModelPanel()
+    anyApp(app).printFinalDocument()
+    expect(anyApp(app).terminal.output).toContain('M1')
+  })
+
+  it('restores the editor to the slot when the panel closes', async () => {
+    const app = makeAppWithModels()
+    anyApp(app).enterFullscreen()
+    await anyApp(app).openModelPanel()
+    anyApp(app).closeModelPanel()
+    expect(anyApp(app).inputSlot.children).toEqual([anyApp(app).editor])
+  })
+})

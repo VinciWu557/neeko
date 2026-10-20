@@ -403,7 +403,7 @@ describe('/model opens a panel in place of the input area', () => {
       submit: (text) => seam.submit.call(app, text),
       panelScreen: (width = 90) => seam.modelPanel === undefined
         ? ''
-        : seam.modelPanel.component.render(width).join('\n').replace(/\x1b\[[0-9;]*m/gu, ''),
+        : stripAnsi(seam.modelPanel.component.render(width).join('\n')),
       hasPanel: () => seam.modelPanel !== undefined,
       key: (data) => { seam.handleInput.call(app, data) },
     }
@@ -519,20 +519,23 @@ describe('/model opens a panel in place of the input area', () => {
   })
 
   it('occupies the editor slot instead of floating over the transcript', async () => {
-    // The panel replaces the input surface, so it must be a direct child of the
-    // screen in the editor's position — not an overlay composited on top.
+    // The panel replaces the input surface *inside the slot*, not by re-parenting
+    // itself onto the screen: the slot is what the live renderer mounts, so its
+    // child is the only thing that has to change. Re-parenting is what made
+    // `/model` invisible in fullscreen, where the editor is the alt screen's
+    // `input` and not a child of `tui` at all.
     const { app, submit } = makePanel([{ id: 'group/a', name: 'A', provider: 'magpie' }], 'group/a')
     await new Promise((resolve) => setTimeout(resolve, 20))
     await submit('/model')
     const seam = app as unknown as {
       tui: { children: { constructor: { name: string } }[] }
+      inputSlot: { children: object[] }
       editor: object
       modelPanel?: { component: object }
     }
-    const names = seam.tui.children.map((child) => child.constructor.name)
-    expect(names).toContain('Container')
-    expect(seam.tui.children).toContain(seam.modelPanel?.component)
-    expect(seam.tui.children).not.toContain(seam.editor)
+    expect(seam.tui.children.map((child) => child.constructor.name)).toContain('Container')
+    expect(seam.inputSlot.children).toContain(seam.modelPanel?.component)
+    expect(seam.inputSlot.children).not.toContain(seam.editor)
   })
 
   it('puts the status bar last and only once', async () => {
@@ -558,8 +561,8 @@ describe('/model opens a panel in place of the input area', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     await submit('/model')
     ;(app as unknown as { handleInput(d: string): unknown }).handleInput('\x1b')
-    const seam = app as unknown as { tui: { children: object[] }; editor: object }
-    expect(seam.tui.children).toContain(seam.editor)
+    const seam = app as unknown as { inputSlot: { children: object[] }; editor: object }
+    expect(seam.inputSlot.children).toEqual([seam.editor])
   })
 
   it('reports a hard absence instead of opening an empty panel', async () => {
@@ -570,7 +573,12 @@ describe('/model opens a panel in place of the input area', () => {
 })
 
 describe('ctrl+o expands and collapses the whole transcript', () => {
-  /** A transcript with one tool row whose result body is the folded part. */
+  /**
+   * A transcript with one tool row whose body is longer than the folded preview.
+   *
+   * pi previews the first ten lines while folded (`FALLBACK_PREVIEW_LINES`), so
+   * the fixture has to exceed that for "folded hides the tail" to mean anything.
+   */
   function withToolRow(): { seams: Seams; state: { attachTime: number; rows: unknown[] } } {
     const seams = makeSeams()
     const state = {
