@@ -8,4 +8,5 @@ export { default as AgentRailRow } from './components/AgentRailRow';
 export { default as AgentSelector } from './components/AgentSelector';
 export { default as CapabilityBadges } from './components/CapabilityBadges';
 export { useAgentActions } from './hooks/useAgentActions';
+export { useAgentModels } from './hooks/useAgentModels';
 export { useAgentClickHandler } from './hooks/useAgentClickHandler';

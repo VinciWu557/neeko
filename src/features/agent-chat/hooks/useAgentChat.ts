@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useAgentModels } from '@/features/agent';
 import { listChatAgents, listAgentModels } from '@/features/agent/api/agentApi';
 import type { ModelInfo } from '@/features/agent/api/agentApi';
 import {
@@ -85,7 +86,6 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   const [pendingUserInput, setPendingUserInput] = useState<PendingUserInput | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [chatAgents, setChatAgents] = useState<AgentConfig[]>([]);
-  const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
   const [ctxInfo, setCtxInfo] = useState<{
     projectName: string;
@@ -143,29 +143,25 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     };
   }, []);
 
+  // 列表获取归共享 hook（防竞态 + 失败静默的语义只有一份）。
+  const { models } = useAgentModels(agentId);
+
+  /**
+   * chat 域自己的策略：agent 就绪后把选中项落到「默认模型」。
+   *
+   * 这条**不属于** `useAgentModels` —— 它是对列表的消费决策（谁该被选中），
+   * 而那个 hook 只回答「有哪些」。设置页要的是后者（用户自己选），
+   * 混在一起会让两边的语义互相牵制。
+   */
   useEffect(() => {
-    if (!agentId) return;
-    let disposed = false;
-    void listAgentModels(agentId)
-      .then((modelList) => {
-        if (!disposed) {
-          setModels(modelList);
-          // Auto-select the first model or the one with default reasoning effort.
-          if (modelList.length > 0) {
-            const defaultModel = modelList.find((m) => m.default_reasoning_effort) ?? modelList[0];
-            setSelectedModel(defaultModel);
-          }
-        }
-      })
-      .catch(() => {
-        if (!disposed) {
-          setModels([]);
-        }
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [agentId]);
+    if (models.length === 0) return;
+    // 已有选择且仍在列表里 → 保留用户选择，不覆盖
+    if (selectedModel && models.some((m) => m.id === selectedModel.id)) return;
+    const defaultModel = models.find((m) => m.default_reasoning_effort) ?? models[0];
+    setSelectedModel(defaultModel);
+    // selectedModel 只用于「是否保留」，不作为触发条件（否则选一次就再跑一轮）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [models]);
 
   const selectedAgent = useMemo(() => {
     const found = agentId ? chatAgents.find((a) => a.id === agentId) : undefined;

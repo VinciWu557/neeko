@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 
-import { listAgentModels, type ModelInfo } from '@/features/agent/api/agentApi';
+import { useAgentModels } from '@/features/agent';
 import { useAppContext } from '@/shared/contexts/AppContext';
 
 import {
@@ -25,27 +25,12 @@ const TranslationView: React.FC<UseDocumentTranslationParams> = (params) => {
     defaultModelId: config.translation?.modelId,
     defaultTargetLanguage: config.translation?.targetLanguage,
   });
-  const [models, setModels] = useState<ModelInfo[]>([]);
 
-  // agent 变化 → 拉取其可用模型列表（失败静默，模型选择退回 agent 默认）
-  useEffect(() => {
-    if (!controller) return;
-    let cancelled = false;
-    // Defer to avoid sync setState in effect (can trigger cascading renders)
-    Promise.resolve().then(() => {
-      if (!cancelled) setModels([]);
-    });
-    listAgentModels(controller.agentId)
-      .then((list) => {
-        if (!cancelled) setModels(list);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-    // controller 仅取 agentId，依赖整对象会导致每帧重订阅；仅监听 agentId
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controller?.agentId]);
+  // agent 变化 → 拉取其可用模型列表。抽到 `useAgentModels` 是因为
+  // 「防 setState-after-unmount + 失败静默」这套语义设置页也要用同一份。
+  //
+  // 传 `agentId` 而不是 `controller`：后者每次渲染都是新对象，进了依赖会每帧重订阅。
+  const { models } = useAgentModels(controller?.agentId ?? null);
 
   // 未翻译（idle）：从当前内容切块展示原文，与翻译后的渲染器保持同一排版
   //（hooks 顺序：必须在条件 return 之前）
