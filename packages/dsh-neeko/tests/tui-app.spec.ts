@@ -55,10 +55,10 @@ async function submit(app: TuiApp, text: string): Promise<void> {
 }
 
 /** The rendered notice lines (theme colors included, substring-safe). */
-function notices(app: TuiApp): string {
-  const container = (app as unknown as {
-    notices: { children: { render(width: number): string[] }[] }
-  }).notices
+function noticeText(app: TuiApp): string {
+  const { container } = (app as unknown as {
+    noticeLog: { container: { children: { render(width: number): string[] }[] } }
+  }).noticeLog
   return container.children.map((child) => child.render(200).join('\n')).join('\n')
 }
 
@@ -115,7 +115,7 @@ describe('TuiApp submit routing', () => {
     const { app, onSubmit } = makeApp()
     await submit(app, '/help')
     expect(onSubmit).not.toHaveBeenCalled()
-    expect(notices(app)).toContain('Commands:')
+    expect(noticeText(app)).toContain('Commands:')
   })
 
   it('/model <id> validates against the catalogue, switches and reports the route', async () => {
@@ -129,7 +129,7 @@ describe('TuiApp submit routing', () => {
     })
     await submit(app, '/model m1')
     expect(selectModel).toHaveBeenCalledWith('m1')
-    expect(notices(app)).toContain('model → test/m1')
+    expect(noticeText(app)).toContain('model → test/m1')
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
@@ -144,7 +144,7 @@ describe('TuiApp submit routing', () => {
     })
     await submit(app, '/model nope')
     expect(selectModel).not.toHaveBeenCalled()
-    expect(notices(app)).toContain('unknown model "nope"')
+    expect(noticeText(app)).toContain('unknown model "nope"')
   })
 
   it('/model with an empty catalogue reports it instead of switching', async () => {
@@ -152,25 +152,25 @@ describe('TuiApp submit routing', () => {
     const { app } = makeApp({ modelPicker: async () => ({ models: [], current: '' }), selectModel })
     await submit(app, '/model anything')
     expect(selectModel).not.toHaveBeenCalled()
-    expect(notices(app)).toContain('no models available')
+    expect(noticeText(app)).toContain('no models available')
   })
 
   it('/theme <name> applies the theme and reports it', async () => {
     const { app } = makeApp()
     await submit(app, '/theme light')
-    expect(notices(app)).toContain('theme → light')
+    expect(noticeText(app)).toContain('theme → light')
   })
 
   it('a host command result renders as a notice (success or error)', async () => {
     const { app } = makeApp({ runHostCommand: async () => ({ kind: 'error', text: 'boom' }) })
     await submit(app, '/frobnicate')
-    expect(notices(app)).toContain('boom')
+    expect(noticeText(app)).toContain('boom')
   })
 
   it('an unmatched slash line with no host runner reports unknown', async () => {
     const { app } = makeApp()
     await submit(app, '/frobnicate')
-    expect(notices(app)).toContain('unknown command: /frobnicate (try /help)')
+    expect(noticeText(app)).toContain('unknown command: /frobnicate (try /help)')
   })
 
   it('/clear empties both the transcript and the notices', async () => {
@@ -182,10 +182,10 @@ describe('TuiApp submit routing', () => {
     await submit(app, '/clear')
     const view = app as unknown as {
       messages: { children: unknown[] }
-      notices: { children: unknown[] }
+      noticeLog: { container: { children: unknown[] } }
     }
     expect(view.messages.children).toHaveLength(0)
-    expect(view.notices.children).toHaveLength(0)
+    expect(view.noticeLog.container.children).toHaveLength(0)
   })
 })
 
@@ -203,20 +203,24 @@ describe('TuiApp notice placement', () => {
    * notice) and what must stay visible while the document scrolls (the editor,
    * the pickers, the status bar).
    */
-  const containerOf = (app: TuiApp, field: 'document' | 'aboveInput' | 'notices' | 'messages'): {
+  const containerOf = (app: TuiApp, field: 'document' | 'aboveInput' | 'messages'): {
     children: unknown[]
   } => (app as unknown as Record<string, { children: unknown[] }>)[field] as { children: unknown[] }
+
+  /** The notices container; it lives inside {@linkcode NoticeLog} now. */
+  const noticeContainerOf = (app: TuiApp): { children: unknown[] } =>
+    (app as unknown as { noticeLog: { container: { children: unknown[] } } }).noticeLog.container
 
   it('mounts the notice container inside the scrolling document', () => {
     const { app } = makeApp()
     const document = containerOf(app, 'document')
-    const notices = containerOf(app, 'notices')
+    const notices = noticeContainerOf(app)
     expect(document.children).toContain(notices)
   })
 
   it('keeps notices out of the fixed rows above the editor', () => {
     const { app } = makeApp()
-    expect(containerOf(app, 'aboveInput').children).not.toContain(containerOf(app, 'notices'))
+    expect(containerOf(app, 'aboveInput').children).not.toContain(noticeContainerOf(app))
   })
 
   it('places notices after the transcript so replies read in order', () => {
@@ -224,7 +228,7 @@ describe('TuiApp notice placement', () => {
     const { app } = makeApp()
     const children = containerOf(app, 'document').children
     const messages = containerOf(app, 'messages')
-    const notices = containerOf(app, 'notices')
+    const notices = noticeContainerOf(app)
     expect(children.indexOf(notices)).toBeGreaterThan(children.indexOf(messages))
   })
 })

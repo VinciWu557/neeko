@@ -59,6 +59,8 @@ import { LiveSlashProvider } from './slash-provider.ts'
 import { renderThemePicker } from './theme-picker.ts'
 import { renderPanel, runPickerKey } from './picker.ts'
 import { listWindow, overflowMarkers } from './window.ts'
+import { NoticeLog } from './notice-log.ts'
+import { rowSignature, syncChildren, visibleRows } from './row-cache.ts'
 import { ResumeController } from './resume-controller.ts'
 import { buildModelPanel, handleModelPanelKey } from './model-panel.ts'
 import type { ModelPanel } from './model-panel.ts'
@@ -136,25 +138,7 @@ const THINKING_FRAMES: readonly string[] = ['⠋', '⠙', '⠹', '⠸', '⠼', '
 /** Frame interval; 80 ms reads as motion without spending frames on one blink. */
 const THINKING_INTERVAL_MS = 80
 
-/**
- * Upper bound on notice components kept below the transcript.
- *
- * Sized so a long session of command replies stays visible without letting the
- * container grow without limit (see {@linkcode TuiApp.addMessage}).
- */
-const MAX_NOTICE_COMPONENTS = 64
 
-/**
- * How long a status notice stays on screen before it clears itself.
- *
- * A status reports *the state of an action* — "model → x", "transcript:
- * expanded". Once the action is visible in the transcript the report is stale
- * chrome, and pi proves the point by keeping exactly one status line and
- * updating it in place. Ours also expires, because a fold toggle repeated while
- * reading output would otherwise leave a stack of stale lines above the prompt.
- * Errors are **not** on this path: they are events and stay until `/clear`.
- */
-const STATUS_NOTICE_MS = 3_000
 
 export type { ModelChoice }
 
@@ -289,7 +273,8 @@ export class TuiApp {
    * under a stationary header.
    */
   private readonly document: Container
-  private readonly notices: Container
+  /** Durable replies and the self-clearing status line. */
+  private readonly noticeLog: NoticeLog
   /**
    * The rows between the transcript and the input: notices, the activity line,
    * the interaction panel, the theme and thinking pickers.
@@ -360,9 +345,7 @@ export class TuiApp {
    * A view concern like {@linkcode fold}: the flush rebuilds row components, so
    * this cannot live in the notices container's contents or it would be lost.
    */
-  private statusLine: Text | undefined
   /** Countdown that hides {@linkcode statusLine}; one at a time. */
-  private statusTimer: ReturnType<typeof setTimeout> | undefined
   private readonly terminal: Terminal
   /** The alt-screen surface, while fullscreen is on. */
   private fullscreen: Fullscreen | undefined
@@ -439,8 +422,12 @@ export class TuiApp {
     // A separate container from `messages` is still required: `mountTranscript`
     // rebuilds its container on every flush, so a reply written there would vanish
     // on the next repaint.
-    this.notices = new Container()
-    this.document.addChild(this.notices)
+    this.noticeLog = new NoticeLog({
+      ...(options.statusNoticeMs === undefined ? {} : { statusMs: options.statusNoticeMs }),
+      paint: (token, text) => this.themes.current.fg(token, text),
+      onChange: () => { this.requestRender() },
+    })
+    this.document.addChild(this.noticeLog.container)
     this.inputSlot = new Container()
     this.aboveInput = new Container()
     this.working = new Text('')
@@ -534,7 +521,7 @@ export class TuiApp {
     this.resumeMainScreenQuietly()
     // A live timer keeps the event loop alive and would fire into a stopped
     // screen; clear the status line on the way out.
-    this.clearStatus()
+    this.noticeLog.clearStatus()
     this.printFinalDocument()
   }
 
@@ -1156,7 +1143,7 @@ export class TuiApp {
       const theme = this.themes.current
       const md = markdownThemeOf(theme)
       // Rows added after a clear are kept; only the pre-clear prefix is hidden.
-      const live = state.rows.slice(this.visibleFrom)
+      const live = visibleRows(state, this.visibleFrom)
       // Everything folds by default; `ctrl+o` opens the whole transcript and a
       // click opens one row. This is the whole point: a transcript that is
       // expanded by default is unreadable the moment a tool returns a file.
@@ -1177,14 +1164,20 @@ export class TuiApp {
         bold: (text) => theme.bold(text),
       }
       const rendered = live.map((row) => {
-        const signature = this.rowSignature(row, theme.name, state)
+        const signature = rowSignature({
+          row,
+          themeName: theme.name,
+          fold: this.fold,
+          spinnerFrame: this.spinnerFrame,
+          attachTime: state.attachTime,
+        })
         const cached = this.rowComponents.get(row)
         if (cached !== undefined && cached.signature === signature) return cached.component
         const component = renderRow(row, capabilities, md, options)
         this.rowComponents.set(row, { signature, component })
         return component
       })
-      this.syncChildren(this.messages, rendered)
+      syncChildren(this.messages, rendered)
       // Queue reads for images this frame could not resolve, then repaint once
       // they land. Doing it here (not in `renderRow`) keeps rendering pure.
       for (const row of live) this.prefetchImages(row)
@@ -1202,81 +1195,15 @@ export class TuiApp {
   }
 
   /**
-   * Make `container` hold exactly `next`, touching as little as possible.
-   *
-   * `clear()` + re-`addChild` rebuilds the child array on every flush and runs an
-   * `indexOf` per removal. Matching by index keeps the array's identity, so the
-   * flush touches only the slots that differ. (pi-tui's `Container` keeps no line
-   * cache of its own, so the win is the array work, not memoised lines.)
-   *
-   * @param container - the container to reconcile.
-   * @param next - the children it should end up with.
-   */
-  private syncChildren(container: Container, next: readonly Component[]): void {
-    const current = container.children
-    for (let i = 0; i < next.length; i += 1) {
-      if (current[i] === next[i]) continue
-      const existing = current[i]
-      if (existing === undefined) container.addChild(next[i] as Component)
-      else container.children[i] = next[i] as Component
-    }
-    // Drop any trailing children a shorter transcript left behind.
-    while (container.children.length > next.length) {
-      const last = container.children[container.children.length - 1]
-      if (last === undefined) break
-      container.removeChild(last)
-    }
-  }
-
-  /**
-   * A cheap fingerprint of everything that changes how one row renders.
-   *
-   * Deliberately *not* a deep hash: it must be far cheaper than the render it
-   * guards. Row content mutates in place (streaming appends to `text`), so the
-   * mutable fields go in by value while identity comes from the row object.
-   *
-   * @param row - the row being rendered.
-   * @param themeName - a theme switch repaints every string.
-   * @param state - carries the attach time, which a restore re-uses.
-   * @returns a string that differs whenever the output would differ.
-   */
-  private rowSignature(row: TranscriptRow, themeName: string, state: TranscriptState): string {
-    const expanded = this.fold.isExpanded(row) ? '1' : '0'
-    if (row.kind === 'assistant') {
-      // `thinking.length`/`text.length` change on every streamed token, which is
-      // exactly when this row must be rebuilt.
-      return `a|${themeName}|${expanded}|${row.done ? '1' : '0'}|${this.spinnerFrame}|` +
-        `${row.text.length}|${row.thinking.length}`
-    }
-    if (row.kind === 'tool') {
-      const images = row.images?.length ?? 0
-      return `t|${themeName}|${expanded}|${row.status}|${images}|` +
-        `${row.result?.length ?? -1}|${state.attachTime}`
-    }
-    if (row.kind === 'failure') {
-      // Written once and never mutated, so only the fold can change it.
-      return `f|${themeName}|${expanded}|${row.text.length}`
-    }
-    const images = row.images?.length ?? 0
-    return `u|${themeName}|${expanded}|${row.content.length}|${images}`
-  }
-
-  /**
    * Append one component to the notices area.
    *
-   * Bounded: notices are user-triggerable without limit (`/help` alone appends
-   * eight lines each time), and every child participates in every repaint, so an
-   * unbounded list grows both memory and per-frame cost for the whole session.
-   * Oldest entries are dropped first.
+   * The bound and the container live in {@linkcode NoticeLog}; this exists for
+   * callers that already hold a component (the runner's own messages).
+   *
+   * @param component - the child to mount.
    */
   addMessage(component: Component): void {
-    this.notices.addChild(component)
-    while (this.notices.children.length > MAX_NOTICE_COMPONENTS) {
-      const oldest = this.notices.children[0]
-      if (oldest === undefined) break
-      this.notices.removeChild(oldest)
-    }
-    this.requestRender()
+    this.noticeLog.add(component)
   }
 
   /**
@@ -1284,85 +1211,32 @@ export class TuiApp {
    *
    * Public because the runner owns failures the app cannot see — a session
    * switch that dsh rejected, for instance. Durable on purpose: an expiring error
-   * would hide the reason a command failed (pi appends `showError` /
-   * `showWarning` and never auto-clears them).
+   * would hide the reason a command failed.
    *
    * @param text - the message body.
    * @param tone - theme token to color it with.
    */
   notify(text: string, tone: 'text' | 'dim' | 'muted' | 'error' = 'text'): void {
-    this.addNotice(text, tone)
+    this.noticeLog.notice(text, tone)
   }
 
   /**
    * Append one themed notice line.
    *
-   * Durable: it stays until `/clear` or the bounded list drops it. Use this for
-   * **content and errors** — an expiring error would hide the reason a command
-   * failed (pi appends `showError`/`showWarning` and never auto-clears them).
-   *
    * @param text - the message body.
    * @param tone - theme token to color it with.
    */
   private addNotice(text: string, tone: 'text' | 'dim' | 'muted' | 'error'): void {
-    this.addMessage(new Text(this.themes.current.fg(tone, text)))
+    this.noticeLog.notice(text, tone)
   }
 
   /**
-   * Report the state of one action on a single, self-clearing line.
-   *
-   * pi keeps exactly **one** status line and calls `setText()` on it when the
-   * next status arrives — its comment says "to avoid log spam". This adds the
-   * other half of what makes a status line disposable: it expires, because a
-   * `ctrl+o` pressed while reading output would otherwise leave a stack of stale
-   * `transcript: expanded / collapsed` lines above the prompt forever.
-   *
-   * The line is reused rather than re-added, so repeated calls cannot grow the
-   * notices list (and cannot re-trigger the bounded trim on the way).
+   * Report the state of one action on the single self-clearing line.
    *
    * @param text - the message body.
    */
   private showStatus(text: string): void {
-    // Reuse the slot only while it is still mounted. It can be unmounted two
-    // ways — `/clear` and `addMessage`'s bound (which drops the oldest child,
-    // and a status line that has been sitting there is often the oldest). Updating
-    // an unmounted component is a `setText()` nobody can see.
-    const line = this.statusLine !== undefined && this.notices.children.includes(this.statusLine)
-      ? this.statusLine
-      : undefined
-    if (line !== undefined) {
-      // pi's exact move: the slot exists, so update it in place. Mounting a
-      // second line here is what made the stack.
-      line.setText(this.themes.current.fg('muted', text))
-    } else {
-      // `paddingY: 0` — a status line sits above the prompt and must not push it
-      // two rows down on every call.
-      this.statusLine = new Text(this.themes.current.fg('muted', text), 1, 0)
-      this.addMessage(this.statusLine)
-    }
-    // One countdown for the line, restarted by every new status: the last action
-    // is the one worth seeing, and its window starts when it happened.
-    if (this.statusTimer !== undefined) clearTimeout(this.statusTimer)
-    const ms = this.options.statusNoticeMs ?? STATUS_NOTICE_MS
-    this.statusTimer = setTimeout(() => { this.clearStatus() }, ms)
-    this.requestRender()
-  }
-
-  /** Hide the status line and drop it from the notices area. */
-  private clearStatus(): void {
-    if (this.statusTimer !== undefined) {
-      clearTimeout(this.statusTimer)
-      this.statusTimer = undefined
-    }
-    const line = this.statusLine
-    this.statusLine = undefined
-    if (line === undefined) return
-    // Remove it rather than emptying it: an empty `Text` renders nothing, but it
-    // still occupies a slot, and the notices bound counts slots — a long session
-    // of statuses would push real command replies out of the container.
-    line.setText('')
-    this.notices.removeChild(line)
-    this.requestRender()
+    this.noticeLog.status(text)
   }
 
   /**
@@ -1379,11 +1253,10 @@ export class TuiApp {
     this.visibleFrom = this.transcript?.rows.length ?? 0
     this.tui.setClearOnShrink(true)
     this.messages.clear()
-    this.notices.clear()
-    // The status line was mounted in `notices`, so it is gone now; drop the
-    // pointer and its countdown with it. Leaving them would make the next
-    // `showStatus()` call `setText()` on an unmounted component = invisible.
-    this.clearStatus()
+    // Drops the notices and the status line together: the line was mounted
+    // among them, so its pointer and countdown have to go with the container or
+    // the next `showStatus()` would call `setText()` on an unmounted component.
+    this.noticeLog.clear()
     this.tui.renderNow(true)
   }
 

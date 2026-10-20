@@ -57,8 +57,8 @@ function makeApp(over: Partial<TuiAppOptions> = {}): {
     key: (data) => call('handleInput', data),
     panel: () => (app as unknown as { resumeText: { render(w: number): string[] } })
       .resumeText.render(120).join('\n').trim(),
-    notices: () => (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
-      .notices.children.map((child) => child.render(200).join('\n')).join('\n'),
+    notices: () => (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
+      .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
   }
 }
 

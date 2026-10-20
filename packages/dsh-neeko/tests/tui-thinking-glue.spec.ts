@@ -53,14 +53,16 @@ function makeApp(over: Partial<TuiAppOptions> = {}): {
   return {
     app,
     apply,
-    status: () => (app as unknown as { statusLine?: { render(w: number): string[] } }).statusLine
-      ?.render(200).join('\n').trim() ?? '',
+    // The transient line lives inside `NoticeLog` now; read it through the same
+    // container the notices use, so the test sees what the user sees.
+    status: () => (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
+      .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
     submit: (text) => call('submit', text),
     key: (data) => call('handleInput', data),
     panel: () => (app as unknown as { thinkingText: { render(w: number): string[] } })
       .thinkingText.render(120).join('\n').trim(),
-    notices: () => (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
-      .notices.children.map((child) => child.render(200).join('\n')).join('\n'),
+    notices: () => (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
+      .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
   }
 }
 

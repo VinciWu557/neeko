@@ -57,8 +57,8 @@ function makeSeams(onSubmit = vi.fn(), extra: Partial<TuiAppOptions> = {}): Seam
     submit: (text) => call('submit', text),
     panel: () => (app as unknown as { interactionText: { render(w: number): string[] } })
       .interactionText.render(120).join('\n').trim(),
-    notices: () => (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
-      .notices.children.map((child) => child.render(200).join('\n')).join('\n'),
+    notices: () => (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
+      .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
     rows: () => (app as unknown as { messages: { children: unknown[] } }).messages.children.length,
   }
 }
@@ -260,8 +260,8 @@ describe('notices survive transcript repaints', () => {
   it('is a separate container from the transcript', () => {
     const { app } = makeSeams()
     app.addMessage(new Text('notice'))
-    const view = app as unknown as { messages: { children: unknown[] }; notices: { children: unknown[] } }
-    expect(view.notices.children).toHaveLength(1)
+    const view = app as unknown as { messages: { children: unknown[] }; noticeLog: { container: { children: unknown[] } } }
+    expect(view.noticeLog.container.children).toHaveLength(1)
     expect(view.messages.children).toHaveLength(0)
   })
 })
@@ -312,9 +312,9 @@ describe('notices are bounded', () => {
     // participates in every repaint.
     const { app, submit } = makeSeams()
     for (let i = 0; i < 200; i += 1) await submit('/help')
-    const view = app as unknown as { notices: { children: unknown[] } }
-    expect(view.notices.children.length).toBeLessThanOrEqual(64)
-    expect(view.notices.children.length).toBeGreaterThan(0)
+    const view = app as unknown as { noticeLog: { container: { children: unknown[] } } }
+    expect(view.noticeLog.container.children.length).toBeLessThanOrEqual(64)
+    expect(view.noticeLog.container.children.length).toBeGreaterThan(0)
   })
 })
 
@@ -340,8 +340,8 @@ describe('/model switch failures are visible', () => {
     const submit = (text: string): Promise<void> =>
       (app as unknown as { submit(t: string): Promise<void> }).submit.call(app, text)
     const rendered = (): string =>
-      (app as unknown as { notices: { children: { render(w: number): string[] }[] } })
-        .notices.children.map((child) => child.render(200).join('')).join('\n')
+      (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
+        .noticeLog.container.children.map((child) => child.render(200).join('')).join('\n')
 
     await expect(submit('/model new')).resolves.toBeUndefined()
     expect(rendered()).toContain('model switch failed')
