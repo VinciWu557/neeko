@@ -3,6 +3,7 @@ import { Text } from '@earendil-works/pi-tui'
 import { TuiApp } from '../src/tui/app.ts'
 import type { TuiAppOptions } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The interaction glue: keyboard → InteractionManager → panel, and editor
@@ -577,7 +578,8 @@ describe('ctrl+o expands and collapses the whole transcript', () => {
       rows: [{
         kind: 'tool', taskId: 't1', name: 'bash',
         args: { command: 'ls' }, status: 'success',
-        result: 'first result line\nsecond result line', turn: 1, images: [],
+        result: Array.from({ length: 20 }, (_, i) =>
+          i === 0 ? 'first result line' : `line ${i}`).join('\n'), turn: 1, images: [],
       }],
     }
     seams.app.mountTranscript(state as never)
@@ -586,12 +588,12 @@ describe('ctrl+o expands and collapses the whole transcript', () => {
 
   /** Render the mounted transcript to plain text. */
   const transcript = (seams: Seams): string =>
-    (seams.app as unknown as { messages: { render(w: number): string[] } })
-      .messages.render(120).join('\n').replace(/\x1b\[[0-9;]*m/gu, '').replace(/\x1b_pi:[^\\]*\\/gu, '')
+    stripAnsi((seams.app as unknown as { messages: { render(w: number): string[] } })
+      .messages.render(120).join('\n'))
 
   it('is folded before the key is pressed', () => {
     const { seams } = withToolRow()
-    expect(transcript(seams)).not.toContain('second result line')
+    expect(transcript(seams)).not.toContain('line 19')
   })
 
   it('expands every row on the first press', async () => {
@@ -600,7 +602,7 @@ describe('ctrl+o expands and collapses the whole transcript', () => {
     const { seams } = withToolRow()
     expect(seams.key('\x0f')).toEqual({ consume: true })
     await new Promise((resolve) => setTimeout(resolve, 120))
-    expect(transcript(seams)).toContain('second result line')
+    expect(transcript(seams)).toContain('line 19')
   })
 
   it('collapses everything again on the second press', async () => {
@@ -609,7 +611,7 @@ describe('ctrl+o expands and collapses the whole transcript', () => {
     await new Promise((resolve) => setTimeout(resolve, 120))
     seams.key('\x0f')
     await new Promise((resolve) => setTimeout(resolve, 120))
-    expect(transcript(seams)).not.toContain('second result line')
+    expect(transcript(seams)).not.toContain('line 19')
   })
 
   it('invalidates the cached row components', async () => {
@@ -640,7 +642,7 @@ describe('ctrl+o expands and collapses the whole transcript', () => {
     const pending = openApproval(seams.app)
     seams.key('\x0f')
     await new Promise((resolve) => setTimeout(resolve, 120))
-    expect(transcript(seams)).not.toContain('second result line')
+    expect(transcript(seams)).not.toContain('line 19')
     seams.app.interactions.cancelAll()
     await pending.catch(() => {})
   })

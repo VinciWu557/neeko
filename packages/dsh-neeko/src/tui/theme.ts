@@ -100,6 +100,21 @@ export class Theme {
   }
 
   /**
+   * Emphasise text with the terminal's bold attribute.
+   *
+   * An attribute, not a colour: no theme declares "bold <colour>", and a theme
+   * without it would otherwise have to return the text unchanged. Lives on
+   * {@linkcode Theme} rather than only inside the markdown projection because
+   * every renderer needs it — the tool header bolds the tool name.
+   *
+   * @param text - the text to emphasise.
+   * @returns the text wrapped in the bold attribute.
+   */
+  bold(text: string): string {
+    return styleTextWithAnsi(text, undefined, undefined, { bold: true })
+  }
+
+  /**
    * The {@linkcode ThemeToken} for a hex/okhsl swatch, for previews.
    * @param token - the token to read.
    * @returns the resolved escape sequence, or `''` for terminal-default tokens.
@@ -438,7 +453,8 @@ export function markdownThemeOf(theme: Theme): MarkdownTheme {
     // Emphasis uses terminal attributes, not colour: a theme has no "bold pink"
     // token, and returning the text unchanged (as this did) dropped **bold** and
     // *italic* entirely, so emphasised words were indistinguishable.
-    bold: (text) => styleTextWithAnsi(text, undefined, undefined, { bold: true }),
+    // Reuses the theme's own emphasis so there is one implementation.
+    bold: (text) => theme.bold(text),
     italic: (text) => styleTextWithAnsi(text, undefined, undefined, { italic: true }),
     strikethrough: (text) => styleTextWithAnsi(text, undefined, undefined, { strikethrough: true }),
     underline: (text) => styleTextWithAnsi(text, undefined, undefined, { underline: true }),

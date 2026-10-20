@@ -66,6 +66,7 @@ import { markdownThemeOf } from './theme.ts'
 import { renderBanner } from './banner.ts'
 import type { TranscriptRow, TranscriptState } from './transcript.ts'
 import { renderOptionsFor, renderRow } from './transcript-view.ts'
+import type { ThemeCapabilities } from './transcript-view.ts'
 import { TranscriptFold } from './fold.ts'
 import { mountFullscreen } from './fullscreen.ts'
 import type { Fullscreen } from './fullscreen.ts'
@@ -1418,16 +1419,24 @@ export class TuiApp {
       const options = renderOptionsFor({
         theme,
         fold: this.fold,
-        cwd: this.cwd(),
         spinnerFrame: this.spinnerFrame,
         imageData: (image) => this.imageCache.get(image.attachmentId),
         onToggle: (target) => { this.toggleRow(target) },
       })
+      // One capability object per frame, not per row: both `fg` and `bold` come
+      // from the theme, and this runs inside the repaint loop. Arrow wrappers are
+      // required (not `theme.fg` itself) because `Theme`'s members are methods
+      // bound to their instance; the shape is otherwise exactly
+      // `ThemeCapabilities`.
+      const capabilities: ThemeCapabilities = {
+        fg: (token, text) => theme.fg(token, text),
+        bold: (text) => theme.bold(text),
+      }
       const rendered = live.map((row) => {
         const signature = this.rowSignature(row, theme.name, state)
         const cached = this.rowComponents.get(row)
         if (cached !== undefined && cached.signature === signature) return cached.component
-        const component = renderRow(row, { fg: (token, text) => theme.fg(token, text) }, md, options)
+        const component = renderRow(row, capabilities, md, options)
         this.rowComponents.set(row, { signature, component })
         return component
       })

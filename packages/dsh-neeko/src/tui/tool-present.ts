@@ -1,246 +1,204 @@
 /**
- * Tool-call presentation: name → variant → header, emoji and result body.
+ * Tool-call presentation, following pi's own renderer.
  *
- * ## Why a variant table instead of per-tool components
+ * ## What this module is
  *
- * pi's TUI classifies a tool into one of seven **row variants** (`read`,
- * `search`, `bash`, `write`, `edit`, `code`, `others`) and renders every tool of
- * a class the same way. The alternative — a component per tool name — needs a
- * change to the UI every time a plugin registers a tool, which is exactly the
- * open/closed boundary this module sits on. New tools therefore need **no code
- * change**: an unknown name falls into `others` and still renders correctly.
+ * pi has **no tool-specific styling**. `formatToolCallWithArgs` renders every
+ * tool the same way:
  *
- * The tables mirror `@xmoon76/dsh-pi-tui`'s `present.ts` so a tool reads the same
- * in both TUIs.
+ * - collapsed: `bold(name)` then `key=value` pairs on the same line, cut at
+ *   {@linkcode COLLAPSED_ARGS_CHARS};
+ * - expanded: the name, then one `key: value` line per argument.
+ *
+ * Result bodies are cut at {@linkcode FOLDED_PREVIEW_LINES} with
+ * `... (N more lines, ctrl+o to expand)`.
+ *
+ * ## What this module used to be
+ *
+ * A variant table — `read` / `search` / `bash` / `write` / `edit` / `code` /
+ * `others`, each with an emoji, a title and a summary heuristic — inherited from
+ * `@xmoon76/dsh-pi-tui`. That was the adapter's invention, not pi's, and it made
+ * a single row carry three competing labels:
+ *
+ * ```
+ * 🖥️ Bash List src/tui directory contents [ok] — app.ts banner.ts com… (+28 lines, ctrl+o)
+ * ```
+ *
+ * The name, the derived summary and the status pill all described the same call.
+ * pi's version says it once:
+ *
+ * ```
+ * bash command="ls src/tui"
+ * ```
+ *
+ * The status is carried by the card's background (`toolPendingBg` /
+ * `toolSuccessBg` / `toolErrorBg`), which is what a colour is for.
+ *
+ * ## Why the length helpers stay
+ *
+ * A transcript row has to remain **one line** while folded, and a tool result is
+ * unbounded — that is a rendering constraint, not a classification one, so
+ * {@linkcode foldText} and friends remain. They are used by assistant and user
+ * rows too and know nothing about tools.
  *
  * @module dsh-neeko/tui/tool-present
  */
 
-/** The seven presentation classes a tool can fall into. */
-export type ToolVariant = 'read' | 'search' | 'bash' | 'write' | 'edit' | 'code' | 'others'
-
-/** Row title per variant (design literals, not translatable copy). */
-export const VARIANT_TITLES: Readonly<Record<ToolVariant, string>> = {
-  search: 'Search',
-  read: 'Read',
-  bash: 'Bash',
-  write: 'Write',
-  edit: 'Edit',
-  code: 'Code',
-  others: 'Tool call',
-}
-
-/** Leading glyph per variant. */
-const VARIANT_EMOJIS: Readonly<Record<ToolVariant, string>> = {
-  read: '📖',
-  search: '🔍',
-  bash: '🖥️',
-  write: '📝',
-  edit: '✏️',
-  code: '⚙️',
-  others: '🛠️',
-}
+import type { ThemeToken } from './theme.ts'
 
 /**
- * Tool name → variant.
+ * Characters of collapsed arguments shown on the header line.
  *
- * A name absent from this table is `others` — deliberately, so a newly
- * registered tool renders without touching this file.
+ * Same bound as pi: enough for two or three `key=value` pairs, small enough that
+ * the row never wraps.
  */
-export const TOOL_VARIANTS: Readonly<Record<string, ToolVariant>> = {
-  bash: 'bash',
-  pwsh: 'bash',
-  read: 'read',
-  web_fetch: 'read',
-  web_search: 'search',
-  grep: 'search',
-  glob: 'search',
-  write: 'write',
-  edit: 'edit',
-  run_code: 'code',
-  cordis_package_inspect: 'read',
-  cordis_runtime_inspect: 'read',
-  cordis_run: 'others',
-  cordis_stop: 'others',
-  cordis_undefine: 'others',
-}
-
-/** Tool-owned titles that refine a generic variant without replacing it. */
-const TOOL_TITLES: Readonly<Record<string, string>> = {
-  cordis_package_inspect: 'Inspect',
-  cordis_runtime_inspect: 'Inspect',
-  cordis_run: 'Run Cordis Plugin',
-  cordis_stop: 'Stop Cordis Plugin',
-  cordis_undefine: 'Remove Cordis Plugin',
-  pwsh: 'Pwsh',
-}
+export const COLLAPSED_ARGS_CHARS = 100
 
 /**
- * Synthetic cards the session log produces without a registry definition
- * (local `!` shell runs, workflow bookkeeping). Same refinement mechanism as
- * {@linkcode TOOL_TITLES}; without them these cards fall into the generic row.
- */
-const SYNTHETIC_TITLES: Readonly<Record<string, string>> = {
-  shell: 'Shell',
-  subagent: 'Subagent',
-  workflow: 'Workflow',
-  'workflow-member': 'Workflow Agent',
-  error: 'Error',
-  interrupted: 'Interrupted',
-}
-
-/** Emoji per exact tool name, for cards without a registry entry. */
-const SYNTHETIC_EMOJIS: Readonly<Record<string, string>> = {
-  shell: '🖥️',
-  subagent: '🤖',
-  workflow: '🧵',
-  'workflow-member': '🤖',
-  error: '❌',
-  interrupted: '⏹️',
-}
-
-/**
- * Which argument key names the row's subject, in preference order.
- *
- * A tool row is useful only if it says *what it acted on*; `{"path":"a.ts"}` must
- * read as `Read a.ts`, not as raw JSON.
- */
-const SUMMARY_KEYS: Readonly<Record<ToolVariant, readonly string[]>> = {
-  bash: ['description', 'command'],
-  read: ['path', 'file_path', 'url'],
-  search: ['query', 'pattern', 'url'],
-  write: ['path', 'file_path'],
-  edit: ['path', 'file_path'],
-  code: ['description'],
-  others: [],
-}
-
-/** Classify a tool name into its variant; unknown names are `others`. */
-export function classifyTool(name: string): ToolVariant {
-  return TOOL_VARIANTS[name] ?? 'others'
-}
-
-/** The leading glyph for one tool name. */
-export function toolEmoji(name: string): string {
-  const exact = SYNTHETIC_EMOJIS[name]
-  if (exact !== undefined) return exact
-  if (name.startsWith('/')) return '🎛️'
-  return VARIANT_EMOJIS[classifyTool(name)]
-}
-
-/** The first line of a text. */
-export function firstLine(text: string): string {
-  const newline = text.indexOf('\n')
-  return newline === -1 ? text : text.slice(0, newline)
-}
-
-/** The last non-empty line of a text. */
-export function latestLine(text: string): string {
-  const visible = text.trimEnd()
-  const newline = visible.lastIndexOf('\n')
-  return newline === -1 ? visible : visible.slice(newline + 1)
-}
-
-/**
- * Strip the workspace root from a workspace-rooted path (display only).
- *
- * Absolute paths crowd the row and bury the part that distinguishes two files.
- * Only the root prefix is peeled — a path outside the workspace is unchanged, so
- * nothing becomes ambiguous.
- *
- * @param text - the path (or any text carrying one).
- * @param cwd - session workspace root; absent leaves the text unchanged.
- * @returns the text with the root prefix removed.
- */
-export function relativizeToCwd(text: string, cwd: string | undefined): string {
-  if (cwd === undefined || cwd === '') return text
-  const root = cwd.replace(/[/\\]+$/u, '')
-  if (text.startsWith(`${root}/`) || text.startsWith(`${root}\\`)) return text.slice(root.length + 1)
-  return text
-}
-
-/** Parse a tool call's raw argument JSON; absent on malformed input. */
-function parseArgs(raw: unknown): Record<string, unknown> | undefined {
-  if (typeof raw !== 'string') {
-    return typeof raw === 'object' && raw !== null ? raw as Record<string, unknown> : undefined
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** The first string value among `keys`, in preference order. */
-function pickString(args: Record<string, unknown>, keys: readonly string[]): string | undefined {
-  for (const key of keys) {
-    const value = args[key]
-    if (typeof value === 'string' && value !== '') return value
-  }
-  return undefined
-}
-
-/**
- * Derive the row's subject from its arguments.
- *
- * Preference: the variant's own key, then any string argument, then the raw text
- * — so an unfamiliar tool's row still names something the user recognises.
- *
- * @param variant - the tool's variant.
- * @param args - parsed arguments, or the raw value when parsing failed.
- * @returns one line of subject text.
- */
-export function deriveSummary(variant: ToolVariant, args: unknown): string {
-  const parsed = parseArgs(args)
-  if (parsed === undefined) return firstLine(typeof args === 'string' ? args : '')
-  const picked = pickString(parsed, SUMMARY_KEYS[variant])
-  if (picked !== undefined) return firstLine(picked)
-  for (const value of Object.values(parsed)) {
-    if (typeof value === 'string' && value !== '') return firstLine(value)
-  }
-  return firstLine(typeof args === 'string' ? args : '')
-}
-
-/** A tool row's header: what to call it and what it acted on. */
-export interface ToolHeader {
-  readonly title: string
-  readonly summary: string
-  readonly emoji: string
-}
-
-/**
- * Build the header for one tool call.
- *
- * Unknown variants carry the tool name alongside the summary, so a tool this
- * table has never seen is still identifiable instead of reading as a bare
- * `Tool call`.
- *
- * @param name - the tool name.
- * @param args - parsed arguments, or the raw argument value.
- * @param cwd - workspace root for relativization.
- * @returns title, summary and leading glyph.
- */
-export function toolHeader(name: string, args: unknown, cwd?: string): ToolHeader {
-  const variant = classifyTool(name)
-  const owned = TOOL_TITLES[name] ?? SYNTHETIC_TITLES[name]
-  const base = relativizeToCwd(deriveSummary(variant, args), cwd)
-  const summary = variant === 'others' && owned === undefined && base !== ''
-    ? `${name} · ${base}`
-    : base
-  // A slash command is a control action, not a tool: show it without the slash.
-  const title = owned ?? (name.startsWith('/') ? name.slice(1) : VARIANT_TITLES[variant])
-  return { title, summary, emoji: toolEmoji(name) }
-}
-
-/**
- * How many characters a folded row shows before truncating.
+ * Characters a folded non-tool row shows before truncating.
  *
  * Deliberately short: a folded transcript is meant to be *scanned*, and 20
- * characters is enough to tell two messages apart. Anything longer and the fold
- * no longer buys the vertical space that made it worth doing.
+ * characters is enough to tell two messages apart.
  */
 export const FOLDED_CHARS = 20
+
+/**
+ * Result lines shown on a folded tool card.
+ *
+ * pi's `FALLBACK_PREVIEW_LINES`. Module-private: it is a detail of
+ * {@linkcode toolOutputLines}, and callers ask that function rather than slicing
+ * the body themselves.
+ */
+const FOLDED_PREVIEW_LINES = 10
+
+/**
+ * Paints one theme token.
+ *
+ * Typed with the real token union so a caller's typed painter fits without an
+ * adapter, and a typo in a token name fails the build.
+ */
+export type Paint = (token: ThemeToken, text: string) => string
+
+/**
+ * Applies emphasis to a tool name.
+ *
+ * Injectable rather than hard-coded ANSI: `Theme.bold()` exists and styles with a
+ * terminal attribute, while a caller without a theme — a test, a dump — gets plain
+ * text instead of raw escape codes leaking into an assertion.
+ */
+export type Bold = (text: string) => string
+
+/**
+ * Emphasis for a caller that has no theme.
+ *
+ * Exported so the fallback lives in one place: `transcript-view` needs the same
+ * identity function when a caller supplies colour painting but no emphasis, and a
+ * second inline copy there would be the same concept with two definitions.
+ */
+export const NO_BOLD: Bold = (text) => text
+
+/**
+ * The argument pairs of a tool call, the way pi treats them.
+ *
+ * A non-object argument (a bare string, a number) is a single `args` pair, so a
+ * tool called with a primitive still shows what it was called with.
+ *
+ * @param args - the parsed tool arguments.
+ * @returns ordered `[key, value]` pairs; empty when there is nothing to show.
+ */
+function argumentPairs(args: unknown): readonly (readonly [string, unknown])[] {
+  if (args === undefined || args === null) return []
+  if (typeof args === 'object' && !Array.isArray(args)) {
+    return Object.entries(args as Record<string, unknown>)
+  }
+  return [['args', args]]
+}
+
+/**
+ * One `key=value` pair, JSON-encoded the way pi does it.
+ *
+ * `JSON.stringify` is what makes a string argument keep its quotes and an object
+ * argument stay readable; a bare `String(value)` would print `[object Object]`.
+ *
+ * @param value - the argument value.
+ * @returns the rendered value.
+ */
+function renderValue(value: unknown): string {
+  return JSON.stringify(value) ?? String(value)
+}
+
+/**
+ * The collapsed argument preview: `key=value` pairs, cut to
+ * {@linkcode COLLAPSED_ARGS_CHARS}.
+ *
+ * Module-private: it is one branch of {@linkcode formatToolHeader}, and a caller
+ * that rendered a preview without the name would be showing half a header.
+ *
+ * @param args - the parsed tool arguments.
+ * @returns the preview, or `''` when there are no arguments.
+ */
+function argsPreview(args: unknown): string {
+  const pairs = argumentPairs(args).map(([key, value]) => `${key}=${renderValue(value)}`).join(' ')
+  if (pairs.length <= COLLAPSED_ARGS_CHARS) return pairs
+  return `${pairs.slice(0, COLLAPSED_ARGS_CHARS - 3)}...`
+}
+
+/**
+ * The tool call header: a bold name, then either the argument preview (collapsed)
+ * or one `key: value` line per argument (expanded).
+ *
+ * @param name - the tool name as the model called it.
+ * @param args - the parsed tool arguments.
+ * @param paint - token painter.
+ * @param expanded - show the arguments as their own lines.
+ * @param bold - emphasis for the tool name; defaults to none.
+ * @returns one line when collapsed, several when expanded.
+ */
+export function formatToolHeader(
+  name: string,
+  args: unknown,
+  paint: Paint,
+  expanded = false,
+  bold: Bold = NO_BOLD,
+): string {
+  const header = paint('toolTitle', bold(name))
+  const pairs = argumentPairs(args)
+  if (pairs.length === 0) return header
+  if (!expanded) {
+    const preview = argsPreview(args)
+    return preview === '' ? header : `${header} ${paint('muted', preview)}`
+  }
+  const lines = pairs.map(([key, value]) => {
+    const text = typeof value === 'string' ? value : (JSON.stringify(value, null, 2) ?? String(value))
+    // Continuation lines are indented so a multi-line argument stays visibly
+    // one argument (pi does the same).
+    return `  ${key}: ${text.replace(/\r/gu, '').split('\n').join('\n    ')}`
+  })
+  return `${header}\n${paint('muted', lines.join('\n'))}`
+}
+
+/**
+ * The result body as card lines.
+ *
+ * Folded, the body is previewed and a marker names the key that opens the rest —
+ * without the marker a truncated body reads as the whole result.
+ *
+ * @param result - the tool result text.
+ * @param expanded - show every line.
+ * @param paint - token painter.
+ * @returns one line per rendered result row.
+ */
+export function toolOutputLines(result: string, expanded: boolean, paint: Paint): string[] {
+  if (result === '') return []
+  const lines = result.split('\n')
+  if (expanded) return lines.map((line) => paint('toolOutput', `  ${line}`))
+  const shown = lines.slice(0, FOLDED_PREVIEW_LINES)
+  const remaining = lines.length - shown.length
+  const painted = shown.map((line) => paint('toolOutput', `  ${line}`))
+  if (remaining === 0) return painted
+  painted.push(paint('muted', `  ... (${remaining} more lines, ctrl+o to expand)`))
+  return painted
+}
 
 /**
  * Collapse text to one bounded line, marking truncation.
@@ -259,15 +217,26 @@ export function foldText(text: string, limit = FOLDED_CHARS): string {
 }
 
 /**
- * Whether a tool result is just a document, whose path is all a folded row needs.
+ * The first non-empty line of a block.
  *
- * Reading a file produces pages of content; showing a slice of it tells the user
- * less than the filename does, because the *what* is more useful than the *some*.
- *
- * @param name - the tool name.
- * @returns true for file-oriented readers.
+ * @param text - the block.
+ * @returns that line, or `''`.
  */
-export function isFileRead(name: string): boolean {
-  return classifyTool(name) === 'read'
+export function firstLine(text: string): string {
+  return text.split('\n').find((line) => line.trim() !== '')?.trim() ?? ''
 }
 
+/**
+ * The last non-empty line of a block.
+ *
+ * @param text - the block.
+ * @returns that line, or `''`.
+ */
+export function latestLine(text: string): string {
+  const lines = text.split('\n')
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]
+    if (line !== undefined && line.trim() !== '') return line.trim()
+  }
+  return ''
+}

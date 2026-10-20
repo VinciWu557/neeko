@@ -20,7 +20,9 @@ import type { Component, MarkdownTheme } from '@earendil-works/pi-tui'
 import type { Theme, ThemeToken } from './theme.ts'
 import type { RowImage, TranscriptRow } from './transcript.ts'
 import type { FoldView } from './fold.ts'
-import { firstLine, foldText, isFileRead, latestLine, toolHeader } from './tool-present.ts'
+import { firstLine, foldText, formatToolHeader, latestLine, toolOutputLines } from './tool-present.ts'
+import { NO_BOLD } from './tool-present.ts'
+import type { Bold, Paint } from './tool-present.ts'
 
 /**
  * Characters of reasoning shown on a folded line.
@@ -63,8 +65,20 @@ const PLAIN_MARKDOWN_THEME: MarkdownTheme = {
 }
 
 /**
- * How one row renders: whether it is expanded, and the workspace root used to
- * shorten paths.
+ * What a row needs from a theme: colour tokens and emphasis.
+ *
+ * One parameter rather than two, because both are things the theme provides and
+ * both reach the same renderers. `bold` is optional so a caller that only paints
+ * colours (a test, a plain dump) still renders — unemphasised rather than broken.
+ */
+export interface ThemeCapabilities {
+  /** Colour painting, exactly what the renderers take (see {@linkcode Paint}). */
+  fg: Paint
+  bold?: Bold | undefined
+}
+
+/**
+ * How one row renders: whether it is expanded.
  */
 export interface RenderOptions {
   /**
@@ -74,8 +88,6 @@ export interface RenderOptions {
    * see the rest.
    */
   readonly fold?: FoldView | undefined
-  /** Workspace root, stripped from paths so a row shows the distinguishing part. */
-  readonly cwd?: string | undefined
   /**
    * Called when a tool card is clicked.
    *
@@ -140,7 +152,7 @@ export function isExpanded(row: TranscriptRow, options: RenderOptions): boolean 
  */
 export function renderRow(
   row: TranscriptRow,
-  theme?: { fg(token: ThemeToken, text: string): string },
+  theme?: ThemeCapabilities,
   markdownTheme: MarkdownTheme = PLAIN_MARKDOWN_THEME,
   options: RenderOptions = {},
 ): Component {
@@ -155,7 +167,7 @@ export function renderRow(
     case 'failure':
       return renderFailure(row, paint, options)
     case 'tool':
-      return clickable(renderTool(row, paint, options), row, options)
+      return clickable(renderTool(row, paint, theme?.bold ?? NO_BOLD, options), row, options)
   }
 }
 
@@ -173,7 +185,7 @@ export function renderRow(
  */
 function renderFailure(
   row: Extract<TranscriptRow, { kind: 'failure' }>,
-  paint: (token: ThemeToken, text: string) => string,
+  paint: Paint,
   options: RenderOptions,
 ): Component {
   void options
@@ -213,7 +225,7 @@ function clickable(component: Component, row: TranscriptRow, options: RenderOpti
  */
 function renderUser(
   row: Extract<TranscriptRow, { kind: 'user' }>,
-  paint: (token: ThemeToken, text: string) => string,
+  paint: Paint,
   options: RenderOptions,
 ): Component {
   const folded = !isExpanded(row, options)
@@ -234,11 +246,15 @@ function renderUser(
 /** One assistant bubble: a leading glyph, optional reasoning, then the text. */
 function renderAssistant(
   row: Extract<TranscriptRow, { kind: 'assistant' }>,
-  paint: (token: ThemeToken, text: string) => string,
+  paint: Paint,
   markdownTheme: MarkdownTheme,
   options: RenderOptions,
 ): Container {
   const card = new Container()
+  // pi opens every assistant message with a blank line (`hasVisibleContent →
+  // Spacer(1)`), which is what separates one reply from the previous row without
+  // padding each row internally.
+  if (row.thinking !== '' || row.text !== '') card.addChild(new Spacer(1))
   const thinkingBg = options.thinkingBackground
   if (row.thinking !== '') {
     // A live reasoning stream is *always* one line: it is still being written, so
@@ -267,9 +283,9 @@ function renderAssistant(
     }
   }
   if (row.text !== '') {
-    // Reasoning and answer are different things and must not read as one
-    // paragraph: a blank line keeps the reasoning a *label* on the answer. It is
-    // only added when reasoning exists — a plain answer stays one line tight.
+    // The leading spacer separates the message from the previous row; the
+    // reasoning/answer boundary still needs its own line, because a reasoning
+    // band directly against the answer reads as one paragraph.
     if (row.thinking !== '') card.addChild(new Spacer(1))
     card.addChild(new Markdown(row.text, OUTPUT_PAD, 0, markdownTheme))
   } else if (!row.done) {
@@ -280,70 +296,48 @@ function renderAssistant(
   return card
 }
 
-/** One tool card: `emoji Title summary [status]`, body only when expanded. */
+/**
+ * One tool call, rendered the way pi renders every tool.
+ *
+ * The header is `bold(name)` plus the arguments (see `formatToolHeader`); the
+ * body is the result, previewed while folded. Nothing here classifies the tool:
+ * pi has no per-tool styling, and the earlier emoji + title + summary + status
+ * pill made one row carry four labels for one call.
+ *
+ * Status is the card's background (`toolPendingBg` / `toolSuccessBg` /
+ * `toolErrorBg`) — that is what a colour is for, and it survives having no text
+ * to spare.
+ *
+ * @param row - the tool row.
+ * @param paint - token painter.
+ * @param options - expansion state, workspace root, card background.
+ */
 function renderTool(
   row: Extract<TranscriptRow, { kind: 'tool' }>,
-  paint: (token: ThemeToken, text: string) => string,
+  paint: Paint,
+  bold: Bold,
   options: RenderOptions,
 ): Component {
-  const header = toolHeader(row.name, row.args, options.cwd)
-  const summary = header.summary === '' ? '' : ` ${header.summary}`
-  const pill = row.status === 'running'
-    ? paint('muted', '[running]')
-    : row.status === 'failed'
-      ? paint('error', '[error]')
-      : paint('success', '[ok]')
-  const head = `${header.emoji} ${paint('toolTitle', header.title)}${paint('muted', summary)} ${pill}`
-
-  // `Box` fills its whole width with the background, so the card reads as a
-  // band rather than as coloured words.
+  const expanded = isExpanded(row, options)
+  // `Box` supplies the band *and* the inset, so it takes `OUTPUT_PAD` on both
+  // axes and the lines inside start at column 0 (pi's `Box(1, 1, bg)`).
   const bg = options.cardBackground?.(row.status)
-  // `Box` fills its whole width with the background, so the card reads as a
-  // band rather than as coloured words — and it supplies the left inset. Without
-  // a band the lines carry it themselves (see the `Text` calls below).
-  const card: Component & { addChild(c: Component): void } = bg === undefined ? new Container() : new Box(OUTPUT_PAD, 0, bg)
+  const card: Component & { addChild(c: Component): void } = bg === undefined
+    ? new Container()
+    : new Box(OUTPUT_PAD, 1, bg)
   const pad = bg === undefined ? OUTPUT_PAD : 0
-  if (!isExpanded(row, options)) {
-    // Folded: the head alone is the row. A file read adds nothing by quoting a
-    // slice of the file — its path (already in the head) is the useful part.
-    const short = row.result === undefined || row.result === '' || isFileRead(row.name)
-      ? ''
-      : ` — ${paint('dim', foldText(row.result))}`
-    card.addChild(new Text(`${head}${short}${hiddenLines(row)}`, pad, 0))
-    return card
-  }
-  card.addChild(new Text(head, pad, 0))
-  if (row.status === 'running') {
-    const raw = typeof row.args === 'string' ? row.args : JSON.stringify(row.args, null, 2)
-    if (raw !== undefined && raw !== '{}') card.addChild(new Text(paint('dim', indent(raw)), pad, 0))
-    return card
-  }
-  if (row.result !== undefined && row.result !== '') {
-    for (const line of row.result.split('\n')) {
-      card.addChild(new Text(paint('toolOutput', `  ${line}`), pad, 0))
+
+  card.addChild(new Text(
+    formatToolHeader(row.name, row.args, paint, expanded, bold),
+    pad, 0,
+  ))
+  if (row.status !== 'running' && row.result !== undefined) {
+    for (const line of toolOutputLines(row.result, expanded, paint)) {
+      card.addChild(new Text(line, pad, 0))
     }
   }
   for (const image of row.images ?? []) card.addChild(renderImage(image, paint, options))
   return card
-}
-
-/**
- * How much a folded card is hiding, in pi's wording.
- *
- * Without a count a folded card looks complete, so there is no reason to press
- * the key that opens it. A file read is excluded: the path already names what
- * was read, and a line count is noise next to it.
- *
- * @param row - the folded tool row.
- * @returns ` (+N lines, ctrl+o)` when lines are hidden, otherwise `''`.
- */
-function hiddenLines(row: Extract<TranscriptRow, { kind: 'tool' }>): string {
-  const result = row.result
-  if (result === undefined || result === '' || isFileRead(row.name)) return ''
-  const lines = result.split('\n').length
-  // A single line is already shown in full by the preview.
-  if (lines <= 1) return ''
-  return ` (+${lines} lines, ctrl+o)`
 }
 
 /**
@@ -361,7 +355,7 @@ function hiddenLines(row: Extract<TranscriptRow, { kind: 'tool' }>): string {
  */
 function renderImage(
   image: RowImage,
-  paint: (token: ThemeToken, text: string) => string,
+  paint: Paint,
   options: RenderOptions,
 ): Component {
   const data = options.imageData?.(image)
@@ -387,11 +381,6 @@ function wrapWithBackground(child: Component, bg: (text: string) => string): Com
   return box
 }
 
-/** Indent a multi-line block by two cells so it reads as body text. */
-function indent(text: string): string {
-  return text.split('\n').map((line) => `  ${line}`).join('\n')
-}
-
 /**
  * The background token for a tool card's status.
  *
@@ -413,8 +402,6 @@ export interface RenderContext {
   readonly theme: Theme
   /** The transcript's fold state (global switch + per-row overrides). */
   readonly fold: FoldView
-  /** Workspace root, stripped from displayed paths. */
-  readonly cwd: string
   /** Glyph for the current spinner frame. */
   readonly spinnerFrame: string
   /** Cached image bytes, keyed by attachment id. */
@@ -441,7 +428,6 @@ export function renderOptionsFor(context: RenderContext): RenderOptions {
     theme.has(token) ? (text: string) => theme.bg(token, text) : undefined
   return {
     fold: context.fold,
-    cwd: context.cwd,
     spinnerFrame: context.spinnerFrame,
     onToggle: context.onToggle,
     imageData: context.imageData,
