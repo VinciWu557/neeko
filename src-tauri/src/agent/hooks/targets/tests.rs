@@ -11,17 +11,46 @@ use super::entries::CLAUDE_COMPAT_ENTRIES;
 use super::shape::{HookEntry, InstallShape};
 use crate::agent::chat::notify::event_keys;
 
-/// 进程级 env 的成对还原（断言 panic 也必须恢复，否则污染同进程其他测试线程）。
+/// 进程级 env 的**互斥 + 成对还原**。
+///
+/// # 为什么必须互斥，而不是只用 RAII
+///
+/// `std::env::set_var` 改的是**整个进程**的环境。`cargo test` 默认多线程并行，
+/// 只做「设值 + 事后还原」仍会失败：
+///
+/// ```text
+/// 线程 A: set("XDG_CONFIG_HOME", tmpA) ──────────────── restore
+/// 线程 B:                    set("XDG_CONFIG_HOME", tmpB)   ← 覆盖 A
+/// 线程 A: 此刻读到 tmpB，断言炸（表现为偶发失败，重跑就绿）
+/// ```
+///
+/// 所以临界区必须是「从设值到读值完成」的整个测试体，而不是单个调用。
+/// `ScopedEnv` 持有全局锁直到 drop —— 调用方写 `let _scoped = ScopedEnv::set(..)`
+/// 时，锁的生命周期正好覆盖整个测试。
+///
+/// 这把锁只在本测试模块内生效；其他模块若也改进程 env，需共用同一个锁
+/// （见 [`ENV_LOCK`]）。
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct ScopedEnv {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
+    /// 持有到 drop —— 这就是临界区。
+    _guard: std::sync::MutexGuard<'static, ()>,
 }
 
 impl ScopedEnv {
     fn set(key: &'static str, value: &std::path::Path) -> Self {
+        // 锁中毒说明另一个测试在临界区内 panic 了。此时 env 已被 Drop 还原
+        // （panic 也会走 drop），继续执行是安全的 —— 取回中毒锁而不是级联 panic。
+        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os(key);
         std::env::set_var(key, value);
-        Self { key, previous }
+        Self {
+            key,
+            previous,
+            _guard: guard,
+        }
     }
 }
 
