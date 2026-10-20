@@ -1,27 +1,27 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 import type { AgentConfig } from '@/shared/types';
+import type { SessionConfigOption } from '@/shared/types/agentChat';
 import { getAgentIconSrc as getPresetIconSrc } from '@/shared/utils/agents';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 /** Information about a model supported by an agent. */
+/**
+ * 一个可选的模型条目 —— 与后端 `ModelInfo` 及 ACP `SessionConfigSelectOption` 一一对应。
+ *
+ * 早先这里还有 `provider_id` / `provider_name` / `context_window` /
+ * `supported_reasoning_efforts` / `default_reasoning_effort` / `is_free`，全部由
+ * opencode 的私有输出解析而来。它们不是模型条目的属性：ACP 用
+ * `category: "model_config"`（上下文大小等）与 `"thought_level"`（推理档位）的
+ * **会话配置项**表达，走 `configOptions` 而非模型列表。
+ */
 export interface ModelInfo {
-  /** Model identifier (slug), e.g. "anthropic/claude-sonnet-4-20250514". */
+  /** 模型标识。语义**不透明**：可能是 `provider/model` 复合串，也可能是 `default` 别名。 */
   id: string;
-  /** Human-readable model name. */
+  /** 展示名（opencode 的解析实现会把 provider 前缀并入这里）。 */
   name: string;
-  /** Upstream provider ID (e.g. "anthropic", "openai"). */
-  provider_id?: string;
-  /** Upstream provider name. */
-  provider_name?: string;
-  /** Supported reasoning efforts (e.g. "low", "medium", "high"). */
-  supported_reasoning_efforts: string[];
-  /** Default reasoning effort, if any. */
-  default_reasoning_effort?: string;
-  /** Context window in tokens, if known. */
-  context_window?: number;
-  /** Whether this model is free. */
-  is_free: boolean;
+  /** 可选说明。 */
+  description?: string;
 }
 
 export function listAgents(): Promise<AgentConfig[]> {
@@ -34,8 +34,35 @@ export function listChatAgents(): Promise<AgentConfig[]> {
 }
 
 /** List models an agent supports in Agent Chat. */
-export function listAgentModels(agentId: string): Promise<ModelInfo[]> {
-  return invoke<ModelInfo[]>('list_agent_models', { agentId });
+/**
+ * `list_agent_models` 的返回类型。
+ *
+ * 早先返回 `ModelInfo[]`，空数组同时表示三种处境 —— 不支持、执行失败、还没加载。
+ * UI 只能给出一个永久禁用的 "No models"，而三者对用户是完全不同的事实。
+ */
+export type ModelCatalogResult =
+  | { kind: 'available'; models: ModelInfo[] }
+  /** 支持模型选择，但列表只能在会话内取得（ACP 协议约束）。 */
+  | { kind: 'session-scoped' }
+  /** 该 agent 不支持选择模型。 */
+  | { kind: 'unsupported' };
+
+/**
+ * 渲染层需要的配置项形状：从协议类型派生，**不独立声明字段**。
+ *
+ * 之前这里与 `shared/types/agentChat.ts` 的 `SessionConfigOption` 各写一份，且字段名
+ * 不一致（`currentValue` vs `current_value`）—— 两份定义会各自漂移，而漂移不会报错。
+ * 现在只做「把协议形状规整成渲染可用」的映射：`options` 保证非空数组、`type` 给出
+ * 默认值，字段名沿用 `SessionConfigOption`（snake_case，与后端一致）。
+ */
+export type ModelConfigOption = Omit<SessionConfigOption, 'options' | 'category'> & {
+  /** 恒为数组（协议里可缺省，渲染层不希望处理 null）。 */
+  options: NonNullable<SessionConfigOption['options']>;
+};
+
+/** 拉取某 agent 的模型目录（结果形态见 {@link ModelCatalogResult}）。 */
+export function listAgentModels(agentId: string): Promise<ModelCatalogResult> {
+  return invoke<ModelCatalogResult>('list_agent_models', { agentId });
 }
 
 /** Discover OpenCode models dynamically. */

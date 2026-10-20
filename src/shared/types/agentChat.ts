@@ -17,6 +17,60 @@ export interface Capabilities {
   resume: boolean;
 }
 
+/**
+ * 一个 ACP 会话配置项（`configOptions`）。
+ *
+ * 模型列表就藏在这里：`category === 'model'` 的项的 `options` 即可选模型。
+ * 协议没有独立的「列模型」方法，`session/new` 响应是唯一来源。
+ */
+export interface SessionConfigOption {
+  /** 选项标识（`session/set_config_option` 的 `configId`）。 */
+  id: string;
+  /** 展示名。 */
+  name: string;
+  /** 可选说明。 */
+  description?: string | null;
+  /** 语义分类：`model` / `model_config` / `thought_level` / `mode`。可缺失。 */
+  category?: string | null;
+  /** `"select"` | `"boolean"`；缺省视为 select（协议规定）。 */
+  type?: string | null;
+  /**
+   * 当前值：select 为字符串，boolean 为布尔。
+   *
+   * 字段名是 **camelCase**（`currentValue`）—— 后端 `#[serde(rename)]` 同时作用于
+   * 读和写，所以线上两个方向都是 camelCase。写成 `current_value` 不会编译报错
+   * （两端独立声明），但运行时该字段恒为 `undefined`，于是「会话当前值优先」静默失效。
+   */
+  currentValue?: string | boolean | null;
+  /** select 形态的可选值（分组形态已由后端展平）。 */
+  options?: { value: string; name: string; description?: string | null }[] | null;
+}
+
+/** 从 `configOptions` 里取模型条目的可选值（`category === 'model'` 那一项）。 */
+export function modelsFromConfigOptions(options: SessionConfigOption[] | undefined) {
+  if (!options) return [];
+  // 与后端同为三级定位：category 优先，id 兜底。规范明说 category 只是 UX 提示、
+  // 不能据以判正确性，所以两者都要认。
+  const modelOption =
+    options.find((o) => o.category === 'model') ?? options.find((o) => o.id === 'model');
+  return (modelOption?.options ?? []).map((item) => ({
+    id: item.value,
+    name: item.name,
+    description: item.description ?? undefined,
+  }));
+}
+
+/** 会话当前的模型 ID（`configOptions` 里模型项的 `current_value`）。 */
+export function currentModelFromConfigOptions(
+  options: SessionConfigOption[] | undefined,
+): string | undefined {
+  if (!options) return undefined;
+  const modelOption =
+    options.find((o) => o.category === 'model') ?? options.find((o) => o.id === 'model');
+  const value = modelOption?.currentValue;
+  return typeof value === 'string' ? value : undefined;
+}
+
 /** 上下文清单（context_init / context_set）。 */
 export interface ContextManifest {
   /** 项目 ID。 */
@@ -69,6 +123,8 @@ export type StreamEvent =
       agent: string;
       model?: string | null;
       capabilities: Capabilities;
+      /** ACP 会话配置项；非 ACP 传输为空/缺失。 */
+      config_options?: SessionConfigOption[];
     }
   | ({
       type: 'context_init';
@@ -101,6 +157,12 @@ export type StreamEvent =
   | { type: 'proposed_plan'; session_id: string; plan: string }
   | { type: 'file_diff'; session_id: string; call_id: string; path: string; diff: string }
   | { type: 'meta'; session_id: string; model?: string | null; usage?: Usage | null }
+  | {
+      /** agent 主动推送的配置变更（全量替换）。 */
+      type: 'config_option_update';
+      session_id: string;
+      config_options: SessionConfigOption[];
+    }
   | { type: 'session_done'; session_id: string; reason: DoneReason }
   | { type: 'error'; session_id: string; kind: ErrorKind; code: string; message: string };
 

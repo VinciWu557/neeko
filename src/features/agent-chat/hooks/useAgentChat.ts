@@ -1,18 +1,16 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useAgentModels } from '@/features/agent';
-import { listChatAgents, listAgentModels } from '@/features/agent/api/agentApi';
+import { listAgentModels } from '@/features/agent/api/agentApi';
 import type { ModelInfo } from '@/features/agent/api/agentApi';
 import {
   getConversationMessages,
   listConversations,
 } from '@/features/conversation/api/conversationApi';
-import { AGENT_IDS } from '@/shared/constants/agentIds';
 import { AGENT_CHAT_EVENT } from '@/shared/events';
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
-import type { AgentConfig } from '@/shared/types/agent';
 import type { SequencedEvent } from '@/shared/types/agentChat';
 import type { ConversationMeta } from '@/shared/types/session';
 import type { AgentChatTabData } from '@/shared/types/tab';
@@ -44,9 +42,13 @@ import { matchModel } from '../utils/historyRestore';
 import { normalizeToolName } from '../utils/toolNames';
 
 import { appendBlock, appendCommandBlock, attachFileDiff, findToolBlock } from './streamReducers';
+import { useChatAgents } from './useChatAgents';
 import { useDeltaBatcher, type PendingDelta } from './useDeltaBatcher';
 import { useMessagesCacheSync } from './useMessagesCacheSync';
 import { useMockEventSchedule } from './useMockEventSchedule';
+import { useModelsForPicker } from './useModelsForPicker';
+import { useSelectedModelSync } from './useSelectedModelSync';
+import { useSessionConfigOptions } from './useSessionConfigOptions';
 import { useVisibleChatSession } from './useVisibleChatSession';
 
 export interface UseAgentChatParams {
@@ -85,8 +87,17 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [pendingUserInput, setPendingUserInput] = useState<PendingUserInput | null>(null);
   const [streaming, setStreaming] = useState(false);
-  const [chatAgents, setChatAgents] = useState<AgentConfig[]>([]);
+  // 可对话 agent 列表 + 选中项派生（只读，与消息流无关）。
+  const { chatAgents, selectedAgent } = useChatAgents(agentId);
   const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
+  // 会话配置项（模型列表 + model_config 控件来源）。抽成子 hook 是因为它与消息流
+  // 无耦合，且本文件已贴着组件规模 ratchet 线。
+  const {
+    options: sessionConfigOptions,
+    replace: replaceConfigOptions,
+    setOption: setConfigOption,
+    reset: resetConfigOptions,
+  } = useSessionConfigOptions(() => sessionIdRef.current);
   const [ctxInfo, setCtxInfo] = useState<{
     projectName: string;
     env: string;
@@ -114,7 +125,11 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     if (prevKey !== '' && prevKey !== key) {
       sessionIdRef.current = undefined;
       useEditorStore.getState().updateTab(tabKey, tabId, { sessionId: undefined });
+      // 会话已失效 → 配置项一并失效（否则上个 agent 的 model_config 控件会残留）。
+      resetConfigOptions();
     }
+    // resetConfigOptions 是稳定引用（useCallback([])），不参与触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, selectedModel?.id, tabKey, tabId]);
 
   // 消息缓存同步 / 通知可见性事实源上报（两个单职责小 hook，见各自文件头）。
@@ -129,48 +144,12 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   const approvalSeqRef = useRef(0);
   const autoApproveToolsRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    let disposed = false;
-    void listChatAgents()
-      .then((agents) => {
-        if (!disposed) setChatAgents(agents);
-      })
-      .catch(() => {
-        if (!disposed) setChatAgents([]);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, []);
+  // 两个来源合并：会话外快速路径（仅 opencode 有）+ 会话内 configOptions（权威）。
+  const { models: catalogModels } = useAgentModels(agentId);
+  const models = useModelsForPicker(sessionConfigOptions, catalogModels);
 
-  // 列表获取归共享 hook（防竞态 + 失败静默的语义只有一份）。
-  const { models } = useAgentModels(agentId);
-
-  /**
-   * chat 域自己的策略：agent 就绪后把选中项落到「默认模型」。
-   *
-   * 这条**不属于** `useAgentModels` —— 它是对列表的消费决策（谁该被选中），
-   * 而那个 hook 只回答「有哪些」。设置页要的是后者（用户自己选），
-   * 混在一起会让两边的语义互相牵制。
-   */
-  useEffect(() => {
-    if (models.length === 0) return;
-    // 已有选择且仍在列表里 → 保留用户选择，不覆盖
-    if (selectedModel && models.some((m) => m.id === selectedModel.id)) return;
-    const defaultModel = models.find((m) => m.default_reasoning_effort) ?? models[0];
-    setSelectedModel(defaultModel);
-    // selectedModel 只用于「是否保留」，不作为触发条件（否则选一次就再跑一轮）
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models]);
-
-  const selectedAgent = useMemo(() => {
-    const found = agentId ? chatAgents.find((a) => a.id === agentId) : undefined;
-    if (found) {
-      return { id: found.id, name: found.name, icon: found.icon };
-    }
-    const fallback = agentId ?? AGENT_IDS.mockAgent;
-    return { id: fallback, name: fallback, icon: null };
-  }, [chatAgents, agentId]);
+  // 「选哪个模型」的策略（会话当前值优先 → 保留用户选择 → 落到首个）。
+  useSelectedModelSync(models, sessionConfigOptions, selectedModel, setSelectedModel);
 
   const fileCount = attachments.filter((a) => a.type === 'FILE').length;
   const skillCount = attachments.filter((a) => a.type === 'SKILL').length;
@@ -180,7 +159,14 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
       const ev = seqEv;
       switch (ev.type) {
         case 'session_start':
-          // Session started - context will be set via context_init
+          // 会话配置项（模型列表来源）。非 ACP 传输不带该字段 → 空数组。
+          replaceConfigOptions(ev.config_options ?? []);
+          break;
+        case 'config_option_update':
+          // agent 主动变更（如 rate limit fallback 换模型）。协议要求视为**全量**：
+          // 整体替换，不做局部 patch —— 换模型可能连带改变 thought_level 的可选项，
+          // 局部更新会留下陈旧选项。
+          replaceConfigOptions(ev.config_options);
           break;
         case 'context_init':
           setCtxInfo({
@@ -437,7 +423,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
           break;
       }
     },
-    [flushDeltas, pushDelta],
+    [flushDeltas, pushDelta, replaceConfigOptions],
   );
 
   useEffect(() => {
@@ -687,8 +673,11 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
         let targetModel: ModelInfo | undefined;
         if (meta.model) {
           try {
-            const models = await listAgentModels(targetAgentId);
-            targetModel = matchModel(models, meta.model);
+            const result = await listAgentModels(targetAgentId);
+            // 只有拿到真实列表才能按 id 匹配；其余三种（会话内可选 / 不支持 / 失败）
+            // 都没有可匹配的条目 → 回落 agent 默认模型。
+            targetModel =
+              result.kind === 'available' ? matchModel(result.models, meta.model) : undefined;
           } catch {
             /* 模型匹配失败 → 回落 agent 默认模型 */
           }
@@ -803,6 +792,8 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     models,
     selectedModel,
     setSelectedModel,
+    sessionConfigOptions,
+    handleSetConfigOption: setConfigOption,
     selectedAgent,
     // actions
     handleSend,

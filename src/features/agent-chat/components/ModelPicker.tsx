@@ -1,10 +1,11 @@
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type { ModelInfo } from '@/features/agent/api/agentApi';
+import type { ModelConfigOption, ModelInfo } from '@/features/agent/api/agentApi';
 
 import { AgentBadge } from './AgentBadge';
 import { displayName } from './constants';
+import { ModelConfigSection } from './ModelConfigSection';
 
 // ─── 模型搜索 Hook ───
 // 高内聚：只负责搜索状态和过滤逻辑
@@ -15,12 +16,7 @@ function useModelSearch(models: ModelInfo[]) {
   const filteredModels = useMemo(() => {
     if (!search.trim()) return models;
     const q = search.toLowerCase().trim();
-    return models.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        (m.provider_name ?? m.provider_id ?? '').toLowerCase().includes(q) ||
-        m.id.toLowerCase().includes(q),
-    );
+    return models.filter((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
   }, [models, search]);
 
   const clearSearch = useCallback(() => setSearch(''), []);
@@ -105,11 +101,13 @@ function ModelList({
           </span>
           <span className="param-opt-info">
             <span className="param-opt-name">{displayName(m.name)}</span>
-            <span className="param-opt-desc">
-              {m.provider_name ?? m.provider_id ?? 'unknown'}
-              {m.context_window ? ` · ${(m.context_window / 1000).toFixed(0)}k ctx` : ''}
-              {m.is_free ? ' · free' : ''}
-            </span>
+            {/*
+              这里曾拼 `provider · 200k ctx · free`。三者都不是模型条目的属性：
+              provider 已并入 `name`（解析实现如此），上下文大小与免费标记在 ACP 里
+              是 `model_config` 配置项，规范要求渲染在模型选择器**附近**而不是挤进
+              同一行文本。改由下方 config 区呈现。
+            */}
+            {m.description ? <span className="param-opt-desc">{m.description}</span> : null}
           </span>
         </button>
       ))}
@@ -125,12 +123,25 @@ function ModelPicker({
   selected,
   onChange,
   agent,
+  configOptions = [],
+  onConfigChange,
+  disabled,
 }: {
   models: ModelInfo[];
   selected: ModelInfo | null;
   onChange: (model: ModelInfo) => void;
   /** 当前所选 agent（按钮与列表项图标展示）。 */
   agent: { id: string; name: string; icon?: string | null };
+  /**
+   * 模型相关配置项（`model_config` + `thought_level`）。
+   *
+   * 规范 SHOULD：渲染在模型选择器**附近**，因此放在同一个 popover 的下方，
+   * 而不是拼进模型名那一行文本。
+   */
+  configOptions?: ModelConfigOption[];
+  /** 配置项变更（下发 `session/set_config_option`）。 */
+  onConfigChange?: (configId: string, value: string | boolean) => void;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -189,11 +200,7 @@ function ModelPicker({
             handleClose();
           }
         }}
-        title={
-          current
-            ? `${current.id} (${current.provider_name ?? current.provider_id ?? 'unknown'})`
-            : 'Select model'
-        }
+        title={current ? current.id : 'Select model'}
       >
         <span className="param-icon">
           <AgentBadge icon={agent.icon} name={agent.name} id={agent.id} />
@@ -233,6 +240,17 @@ function ModelPicker({
               agent={agent}
               emptyMessage={models.length === 0 ? 'No models available' : 'No matching models'}
             />
+            {/*
+              模型相关配置项紧随模型列表：它们是「这个模型怎么跑」的参数，
+              不是模型的属性。无配置项时 `ModelConfigSection` 自身返回 null。
+            */}
+            {onConfigChange ? (
+              <ModelConfigSection
+                options={configOptions}
+                onChange={onConfigChange}
+                disabled={disabled}
+              />
+            ) : null}
           </div>
         </>
       )}

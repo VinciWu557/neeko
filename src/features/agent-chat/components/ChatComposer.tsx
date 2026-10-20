@@ -1,8 +1,9 @@
 import { ArrowUp, Paperclip, Square, X } from 'lucide-react';
 import type { ChangeEvent, KeyboardEvent } from 'react';
 
-import type { ModelInfo } from '@/features/agent/api/agentApi';
+import type { ModelConfigOption, ModelInfo } from '@/features/agent/api/agentApi';
 import type { AgentConfig } from '@/shared/types/agent';
+import type { SessionConfigOption } from '@/shared/types/agentChat';
 import { noAutocorrectProps } from '@/ui/inputDefaults';
 
 import { AGENT_MODES, THINKING_LEVELS } from './constants';
@@ -20,6 +21,8 @@ interface ChatComposerProps {
   thinkingLevel: string;
   chatAgents: AgentConfig[];
   models: ModelInfo[];
+  /** ACP 会话配置项（模型列表 + model_config 控件的来源）。 */
+  sessionConfigOptions?: SessionConfigOption[];
   selectedModel: ModelInfo | null;
   selectedAgent: { id: string; name: string; icon?: string | null };
   contextWindow: { used: number; total: number; model: string } | null;
@@ -34,6 +37,31 @@ interface ChatComposerProps {
   onAgentModeChange: (id: string) => void;
   onThinkingLevelChange: (id: string) => void;
   onModelChange: (model: ModelInfo) => void;
+  /** `model_config` / `thought_level` 变更（下发 session/set_config_option）。 */
+  onConfigChange?: (configId: string, value: string | boolean) => void;
+}
+
+/**
+ * 从 `configOptions` 里挑出与模型相关的配置项。
+ *
+ * 判定靠 `category`，**不靠 `id`** —— 规范明说 category 是 UX 提示但 id 没有
+ * 命名约束（实测 Codex 用 `reasoning_effort`、OpenCode 用 `effort`）。
+ * `thought_level` 一并纳入：RFD 说它是 `model_config` 的历史特例，同区渲染。
+ */
+export function modelConfigOptionsOf(
+  options: SessionConfigOption[] | undefined,
+): ModelConfigOption[] {
+  if (!options) return [];
+  return options
+    .filter((o) => o.category === 'model_config' || o.category === 'thought_level')
+    .map((o) => ({
+      id: o.id,
+      name: o.name,
+      description: o.description,
+      type: o.type ?? 'select',
+      currentValue: o.currentValue,
+      options: o.options ?? [],
+    }));
 }
 
 /** 底部输入区：附件 chips + textarea + 工具栏（模型/参数选择器/发送）。 */
@@ -45,6 +73,7 @@ export default function ChatComposer({
   thinkingLevel,
   chatAgents,
   models,
+  sessionConfigOptions,
   selectedModel,
   selectedAgent,
   contextWindow,
@@ -59,6 +88,7 @@ export default function ChatComposer({
   onAgentModeChange,
   onThinkingLevelChange,
   onModelChange,
+  onConfigChange,
 }: ChatComposerProps) {
   return (
     <div className="wa-composer">
@@ -112,6 +142,9 @@ export default function ChatComposer({
               selected={selectedModel}
               onChange={onModelChange}
               agent={selectedAgent}
+              configOptions={modelConfigOptionsOf(sessionConfigOptions)}
+              onConfigChange={onConfigChange}
+              disabled={streaming}
             />
             <div className="composer-divider" />
             <AgentModeSelector

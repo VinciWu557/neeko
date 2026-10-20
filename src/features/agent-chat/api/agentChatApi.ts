@@ -55,6 +55,15 @@ export function sendAgentInput(sessionId: string, turnId: string, prompt: string
   return invoke<void>('agent_input', { sessionId, turnId, prompt });
 }
 
+/** 设置一个会话配置项（session/set_config_option）。 */
+export function setAgentConfigOption(
+  sessionId: string,
+  configId: string,
+  value: string | boolean,
+): Promise<void> {
+  return invoke<void>('agent_set_config_option', { sessionId, configId, value });
+}
+
 /** 取消当前流（agent_stream_cancel）。 */
 export function cancelAgentStream(sessionId: string): Promise<void> {
   return invoke<void>('agent_stream_cancel', { sessionId });

@@ -19,11 +19,19 @@ const agent = {
 vi.mock('@/features/agent', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/agent')>()),
   useAgentModels: () => ({
+    state: {
+      kind: 'available' as const,
+      models: [
+        { id: 'm1', name: 'Model One' },
+        { id: 'm2', name: 'Model Two' },
+      ],
+    },
     models: [
       { id: 'm1', name: 'Model One' },
       { id: 'm2', name: 'Model Two' },
     ],
     loading: false,
+    reload: () => {},
   }),
 }));
 

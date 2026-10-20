@@ -47,6 +47,30 @@ const TRANSLATION_LANGUAGES: Array<{ value: string; label: string }> = [
   { value: '한국어', label: 'Korean' },
 ];
 
+/**
+ * 模型下拉在非 available 状态下的占位文案。
+ *
+ * 四种处境对用户是四种不同的事实，措辞必须分开：
+ * - `session-scoped`：协议限制（ACP 没有独立的列模型方法），不是故障；
+ * - `unsupported`：这个 agent 就是没有模型选择；
+ * - `error`：拉取失败 —— 唯一「可以再试一次」的一种；
+ * - `loading` / `idle`：等就有。
+ */
+export function modelPlaceholder(kind: string): string {
+  switch (kind) {
+    case 'session-scoped':
+      return 'Available inside a session';
+    case 'unsupported':
+      return 'This agent has no model selection';
+    case 'error':
+      return 'Could not load models';
+    case 'loading':
+      return 'Loading models…';
+    default:
+      return 'Select an agent first';
+  }
+}
+
 const selectClass =
   'bg-bg-tertiary border border-border rounded text-[0.86em] text-text-primary px-2 py-1 outline-none focus:border-accent-blue';
 
@@ -77,7 +101,7 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
 
   // 模型列表跟随所选 agent。空 agent（= Agent default）时没有模型可选 ——
   // 具体用哪个模型由 agent 自己决定，这里不该替它选。
-  const { models } = useAgentModels(translationAgentId || null);
+  const { state: modelsState, models } = useAgentModels(translationAgentId || null);
 
   /**
    * 配置里的 agent 已不可用（被删 / 失去 chat 能力 / 被停用）。
@@ -200,14 +224,23 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
               </option>
             ))}
           </select>
+          {/*
+            禁用判据是「有没有可用列表」，不是「数组空不空」。
+            旧写法 `models.length === 0` 把「还在加载」也一起禁用了，而且无法区分
+            下面前四种处境 —— 于是三种完全不同的情况呈现成同一个 "No models"。
+          */}
           <select
             className={selectClass}
             value={translationModelId ?? ''}
             onChange={(e) => onTranslationModelChange(e.target.value || null)}
             aria-label="Default translation model"
-            disabled={models.length === 0}
+            disabled={modelsState.kind !== 'available'}
           >
-            <option value="">{`${modelOwnerLabel} — default`}</option>
+            <option value="">
+              {modelsState.kind === 'available'
+                ? `${modelOwnerLabel} — default`
+                : modelPlaceholder(modelsState.kind)}
+            </option>
             {models.map((model) => (
               <option key={model.id} value={model.id}>
                 {model.name || model.id}

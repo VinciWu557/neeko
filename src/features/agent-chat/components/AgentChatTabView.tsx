@@ -62,6 +62,8 @@ export default function AgentChatTabView({
     models,
     selectedModel,
     setSelectedModel,
+    sessionConfigOptions,
+    handleSetConfigOption,
     selectedAgent,
     handleSend,
     handleApproval,
@@ -244,6 +246,7 @@ export default function AgentChatTabView({
         thinkingLevel={thinkingLevel}
         chatAgents={chatAgents}
         models={models}
+        sessionConfigOptions={sessionConfigOptions}
         selectedModel={selectedModel}
         selectedAgent={selectedAgent}
         contextWindow={contextWindow}
@@ -258,6 +261,7 @@ export default function AgentChatTabView({
         onAgentModeChange={setAgentMode}
         onThinkingLevelChange={setThinkingLevel}
         onModelChange={setSelectedModel}
+        onConfigChange={handleSetConfigOption}
       />
     </div>
   );
