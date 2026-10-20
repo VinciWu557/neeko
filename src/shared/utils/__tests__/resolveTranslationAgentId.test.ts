@@ -15,6 +15,7 @@ import {
   isTranslatableAgent,
   isTranslationAgentStale,
   resolveTranslationAgentId,
+  resolveTranslationSelection,
   translatableAgents,
 } from '../agents';
 
@@ -106,5 +107,50 @@ describe('isTranslationAgentStale', () => {
   it('should not report an unset value as stale', () => {
     expect(isTranslationAgentStale(undefined, agents)).toBe(false);
     expect(isTranslationAgentStale('', agents)).toBe(false);
+  });
+});
+
+/**
+ * `resolveTranslationSelection` —— agent 与 model 必须一起解析。
+ *
+ * 分开处理的失败是静默的：agent 因陈旧而回落到别的 agent 时，modelId 原样保留，
+ * 于是一次请求带着「A 的模型 + B 的 agent」下发，后端只能报「模型不存在」，
+ * 而用户看到的是一次无法解释的翻译失败。
+ */
+describe('resolveTranslationSelection', () => {
+  const models = {
+    'claude-code': [{ id: 'sonnet' }, { id: 'haiku' }],
+    opencode: [{ id: 'gpt-5' }],
+  } as const;
+  const modelsOf = (agentId: string) => models[agentId as keyof typeof models] ?? [];
+
+  it('should keep a model that belongs to the configured agent', () => {
+    expect(resolveTranslationSelection('opencode', 'gpt-5', agents, modelsOf)).toEqual({
+      agentId: 'opencode',
+      modelId: 'gpt-5',
+    });
+  });
+
+  /** 核心判据：agent 回落 ⟹ 旧模型必然不属于新 agent，必须丢弃而不是硬带过去。 */
+  it('should drop the model when the configured agent falls back', () => {
+    expect(resolveTranslationSelection('deleted-agent', 'sonnet', agents, modelsOf)).toEqual({
+      agentId: 'claude-code',
+      modelId: null,
+    });
+  });
+
+  /** 同一个 agent 下，模型被删掉 → 丢弃，不让请求带上不存在的模型。 */
+  it('should drop a model the agent no longer offers', () => {
+    expect(resolveTranslationSelection('opencode', 'sonnet', agents, modelsOf)).toEqual({
+      agentId: 'opencode',
+      modelId: null,
+    });
+  });
+
+  it('should return null when no model is configured', () => {
+    expect(resolveTranslationSelection('opencode', undefined, agents, modelsOf)).toEqual({
+      agentId: 'opencode',
+      modelId: null,
+    });
   });
 });

@@ -125,3 +125,47 @@ describe('useTranslationStore — tab 维度状态机', () => {
     expect(snapshotAt()).toBe(afterFail);
   });
 });
+
+/**
+ * `selectAgent` —— agent 与 model 的联动。
+ *
+ * modelId 只对所属 agentId 有意义。把它当作两个独立字段存储时，「换 agent 要清
+ * 模型」成了一条靠调用点各自记得的约定 —— 实测漏了一处（文档翻译工具条），
+ * 后果是请求带着「A 的模型 + B 的 agent」下发，得到一个不存在的模型。
+ * 所以它必须是 store 的一个**原子动作**，而不是调用方顺手做的两件事。
+ */
+describe('useTranslationStore — selectAgent 的联动语义', () => {
+  beforeEach(() => {
+    useTranslationStore.getState().clear('tab1');
+    act(() => useTranslationStore.getState().initSelectors('tab1', selectors));
+  });
+
+  it('should reset the model when the agent changes', () => {
+    act(() => useTranslationStore.getState().setSelectors('tab1', { modelId: 'm1' }));
+    expect(useTranslationStore.getState().byTab.tab1?.modelId).toBe('m1');
+
+    act(() => useTranslationStore.getState().selectAgent('tab1', 'claude-code'));
+
+    expect(useTranslationStore.getState().byTab.tab1?.agentId).toBe('claude-code');
+    // 核心判据：旧 agent 的模型不得残留
+    expect(useTranslationStore.getState().byTab.tab1?.modelId).toBeNull();
+  });
+
+  /** 重选同一个 agent 不应清掉用户的模型选择（下拉重开一次就丢失会很烦）。 */
+  it('should keep the model when the same agent is selected again', () => {
+    act(() => useTranslationStore.getState().setSelectors('tab1', { modelId: 'm1' }));
+    act(() => useTranslationStore.getState().selectAgent('tab1', 'opencode'));
+
+    expect(useTranslationStore.getState().byTab.tab1?.modelId).toBe('m1');
+  });
+
+  it('should not touch other selectors when the agent changes', () => {
+    act(() => useTranslationStore.getState().selectAgent('tab1', 'claude-code'));
+    expect(useTranslationStore.getState().byTab.tab1?.targetLanguage).toBe('简体中文');
+  });
+
+  it('should be a no-op for an unknown tab', () => {
+    expect(() => useTranslationStore.getState().selectAgent('missing', 'x')).not.toThrow();
+    expect(useTranslationStore.getState().byTab.missing).toBeUndefined();
+  });
+});

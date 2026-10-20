@@ -127,6 +127,50 @@ export function isTranslationAgentStale(
   return !translatableAgents(agents).some((agent) => agent.id === configured);
 }
 
+/**
+ * 翻译选择（agent + model）的**解析终态**。
+ *
+ * ## 为什么这两个字段必须一起解析
+ *
+ * 模型是 agent 的子集：`translation.modelId` 只对 `translation.agentId` 有意义。
+ * 分开处理会产生一类静默错误 —— agent 因陈旧而**回落到别的 agent** 时，modelId
+ * 原样保留，于是一次请求带着「A 的模型 + B 的 agent」下发，后端得到一个不存在的
+ * 模型，失败原因对用户不可解释。
+ *
+ * 所以「可用性」的判定必须同时覆盖两个字段，且只能有一处实现。
+ */
+export interface ResolvedTranslationSelection {
+  agentId: string;
+  /** `null` = 交给 agent 决定默认模型。 */
+  modelId: string | null;
+}
+
+/**
+ * 解析配置里的翻译选择，保证返回的 `(agentId, modelId)` 组合是**自洽**的。
+ *
+ * 不变量：`modelId` 非空 ⟹ 它属于返回的 `agentId`（由调用方提供的 `modelsOf` 判定）。
+ * 任一条不成立时丢弃 `modelId`，退回 agent 默认 —— 丢弃比猜测安全，代价只是用户
+ * 需要重选一次模型。
+ *
+ * `agentId` 回落时**一定**丢弃 `modelId`：旧模型不可能属于新 agent。
+ */
+export function resolveTranslationSelection(
+  configuredAgentId: string | undefined | null,
+  configuredModelId: string | undefined | null,
+  agents: readonly TranslatableAgentShape[],
+  modelsOf: (agentId: string) => readonly { id: string }[],
+): ResolvedTranslationSelection {
+  const agentId = resolveTranslationAgentId(configuredAgentId, agents);
+
+  // agent 发生过回落 → 配置里的模型属于上一个 agent，直接丢弃
+  if (configuredModelId && configuredAgentId === agentId) {
+    const stillAvailable = modelsOf(agentId).some((model) => model.id === configuredModelId);
+    if (stillAvailable) return { agentId, modelId: configuredModelId };
+  }
+
+  return { agentId, modelId: null };
+}
+
 export function getAgentIconSrc(icon: string | null | undefined): string | null {
   if (!icon) return null;
   return AGENT_ICONS[icon] ?? null;

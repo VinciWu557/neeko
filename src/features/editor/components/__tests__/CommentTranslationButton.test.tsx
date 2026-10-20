@@ -33,6 +33,13 @@ vi.mock('@/shared/contexts/AppContext', () => ({
   }),
 }));
 
+// 按钮现在会拉取当前 agent 的模型列表（agent 与 model 一起解析）。
+// 单测不关心模型发现，给一个固定空列表 —— 解析结果的 modelId 自然是 null。
+vi.mock('@/features/agent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/agent')>()),
+  useAgentModels: () => ({ models: [], loading: false }),
+}));
+
 vi.mock('../../hooks/useCommentTranslateActions', () => ({
   useCommentTranslateActions: () => ({
     state: mockState,

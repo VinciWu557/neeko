@@ -31,6 +31,17 @@ interface TranslationStore {
     tabKey: string,
     patch: Partial<{ targetLanguage: string; agentId: string; modelId: string | null }>,
   ) => void;
+  /**
+   * 切换 agent。
+   *
+   * 与 `setSelectors({ agentId })` 的区别：**modelId 一定被重置**。
+   * 模型是 agent 的子集，旧 agent 的模型 id 对新 agent 无意义；留着它会让请求带上
+   * 一个不存在的模型，症状是「翻译一直失败但看不出原因」。
+   *
+   * 单独一个动作而不是让调用方顺手清：这是一条**跨字段不变量**，靠每个调用点
+   * 各自记得清必然漏 —— 实测漏了一处（文档翻译工具条）。
+   */
+  selectAgent: (tabKey: string, agentId: string) => void;
   /** 用户点击翻译：写入文档快照并进入 running */
   start: (tabKey: string, payload: { source: string; blocks: SourceBlock[] }) => void;
   /** 每批完成回填 */
@@ -69,6 +80,14 @@ export const useTranslationStore = create<TranslationStore>((set) => ({
       const tab = state.byTab[tabKey];
       if (!tab) return state;
       return { byTab: { ...state.byTab, [tabKey]: { ...tab, ...patch } } };
+    }),
+  selectAgent: (tabKey, agentId) =>
+    set((state) => {
+      const tab = state.byTab[tabKey];
+      if (!tab) return state;
+      // 同一个 agent 重选 → 保留已选模型（避免「重新点开下拉」就把选择清掉）
+      if (tab.agentId === agentId) return state;
+      return { byTab: { ...state.byTab, [tabKey]: { ...tab, agentId, modelId: null } } };
     }),
   start: (tabKey, payload) =>
     set((state) => {

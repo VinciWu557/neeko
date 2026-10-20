@@ -1,9 +1,10 @@
 import type { EditorView } from '@codemirror/view';
 import React, { useEffect, useMemo, useRef } from 'react';
 
+import { useAgentModels } from '@/features/agent';
 import { Languages, Loader2 } from '@/shared/components/icons';
 import { useAppContext } from '@/shared/contexts/AppContext';
-import { resolveTranslationAgentId } from '@/shared/utils/agents';
+import { resolveTranslationAgentId, resolveTranslationSelection } from '@/shared/utils/agents';
 import { sameIdentity } from '@/shared/utils/fileRef';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
@@ -55,19 +56,26 @@ const CommentTranslationButton: React.FC<CommentTranslationButtonProps> = ({
   const { config, agents } = useAppContext();
   const defaults = config.translation;
 
-  // 配置里的 agentId 可能已经陈旧（agent 被删 / 失去 chat 能力 / 被停用）。
-  // 可用性判定归 `resolveTranslationAgentId` 所有 —— 调用方只传原始列表，
-  // 不自己过滤（否则「什么算可用」会随调用方漂移，实测已漂移过一次）。
-  const agentId = useMemo(
-    () => resolveTranslationAgentId(defaults?.agentId, agents),
-    [defaults?.agentId, agents],
+  // agent 与 model 必须**一起**解析：模型属于 agent，agent 因陈旧而回落时留着旧
+  // modelId 会下发一个不存在的模型（静默失败）。判定统一在
+  // `resolveTranslationSelection`，调用方不各自清理。
+  const configuredAgentId = defaults?.agentId;
+  const { models } = useAgentModels(
+    useMemo(
+      () => resolveTranslationAgentId(configuredAgentId, agents),
+      [configuredAgentId, agents],
+    ),
+  );
+  const { agentId, modelId } = useMemo(
+    () => resolveTranslationSelection(configuredAgentId, defaults?.modelId, agents, () => models),
+    [configuredAgentId, defaults?.modelId, agents, models],
   );
   const actions = useCommentTranslateActions({
     filePath,
     projectId,
     editorViewRef,
     agentId,
-    modelId: defaults?.modelId ?? null,
+    modelId,
     targetLanguage: defaults?.targetLanguage,
     defaultMode: defaults?.commentMode,
     content,

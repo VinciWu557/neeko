@@ -70,6 +70,7 @@ export function useDocumentTranslation({
   const snapshot = useTranslationStore((s) => s.byTab[tabKey]);
   const initSelectors = useTranslationStore((s) => s.initSelectors);
   const setSelectors = useTranslationStore((s) => s.setSelectors);
+  const selectAgent = useTranslationStore((s) => s.selectAgent);
   const startInStore = useTranslationStore((s) => s.start);
   const setTranslations = useTranslationStore((s) => s.setTranslations);
   const setFailed = useTranslationStore((s) => s.setFailed);
@@ -203,7 +204,9 @@ export function useDocumentTranslation({
     modelId: snapshot?.modelId ?? null,
     bilingual,
     setTargetLanguage: (v: string) => setSelectors(tabKey, { targetLanguage: v }),
-    setAgentId: (v: string) => setSelectors(tabKey, { agentId: v }),
+    // 走 `selectAgent`（而非 `setSelectors`）：换 agent 必须连带清掉 modelId ——
+    // 模型属于 agent，旧 id 对新 agent 无意义，下发会得到一个不存在的模型。
+    setAgentId: (v: string) => selectAgent(tabKey, v),
     setModelId: (v: string | null) => setSelectors(tabKey, { modelId: v }),
     setBilingual,
     start,

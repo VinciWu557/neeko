@@ -68,6 +68,13 @@ vi.mock('@/features/terminal', () => ({
   useTerminalTabs: () => ({ addTab: vi.fn(() => false) }),
 }));
 
+// 编辑器头的注释翻译按钮会拉取所选 agent 的模型列表；本测试是装配冒烟，
+// 不关心模型发现，也不 mock 整个 agent API —— 只钉住这一个 hook。
+vi.mock('@/features/agent', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/agent')>()),
+  useAgentModels: () => ({ models: [], loading: false }),
+}));
+
 vi.mock('../../hooks/useUnifiedGutter', () => ({
   useUnifiedGutterExtension: () => [],
 }));
