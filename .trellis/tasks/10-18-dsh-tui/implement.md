@@ -661,3 +661,37 @@ curl -s http://127.0.0.1:3197/neeko-health
       其中「不检查 status」首次 0 红，补了「rejected 但带 value」的用例才锁住
       （rejected 通常 value 为 undefined，会被后续判断顺带挡住，那不是契约）。
 - [x] 全量 **647** 测试，连跑 3 次稳定。
+
+### Step 29：整屏滚动（用户反馈）
+
+- [x] **pi 的结构**（从 dist 精确取出）：`createChatViewport` 把
+      **documentContainer（header + chat）** 放进 `ScrollView`，只有 dock
+      （pending/status/widgets/editor/footer）固定；root 是 `VStack([scroll(grow), dock(auto)])`。
+- [x] **我们的偏差**：`ScrollView(messages)` 只包转录 → banner 在滚动区外，
+      对话在静止的 banner 下方滑动。
+- [x] 修法：`header + transcript` 两个字段 → **一个 `document: Component`**
+      （拆成两个字段正是「只包转录」的成因）。`TuiApp.document = [banner, messages]`，
+      主屏/全屏/`printFinalDocument` 统一读它。布局对齐 pi 的
+      `[scroll(grow:1,shrink:1,minSize:1), aboveInput, input(minSize:3), footer]`。
+- [x] **不自己实现滚动**：沿用 `ScrollView` 的 follow/primary/overscroll/scrollbar，
+      键盘与滚轮由 `TuiAltScreen` 处理。
+- [x] 测试 +2（整屏滚动 / dock 固定）。变异：ScrollView 不含 banner → **26 条变红**。
+- [x] 真机 pty：PageUp 后 banner 仍在文档流、视口顶为 `LINE-3`；`prepublishOnly` 全绿 **649**。
+
+### Step 30：工具行改为原生 pi 呈现（用户需求，方案 B）
+
+- [x] **原生 pi 规则**（读 `render-utils.js`）：折叠 = `bold(name)` + `key=value`
+      裁到 100 字符；展开 = 每个参数一行 `key: value`；无 emoji / 无 variant / 无 pill；
+      状态靠背景色；结果折叠取前 10 行 + `... (N more lines, ctrl+o to expand)`；
+      卡片 `Box(1, 1, bg)`；助手消息前置 `Spacer(1)`。
+- [x] **删除 dsh-pi-tui 发明**：`TOOL_VARIANTS` / `classifyTool` / `VARIANT_TITLES` /
+      `VARIANT_EMOJIS` / `TOOL_TITLES` / `SYNTHETIC_TITLES` / `deriveSummary` /
+      `toolEmoji` / `toolHeader` / `isFileRead` / `hiddenLines` / status pill。
+      一行原本四个标签描述同一个调用，现在只说一次。
+- [x] 新增 `formatToolHeader` / `argsPreview` / `toolOutputLines`；`Theme.bold()`
+      （加粗是终端属性，`Theme` 才是所有者；`markdownThemeOf` 复用消除第二份实现）。
+- [x] **诚实记录**：变异「header 不显示参数」首次 0 红，实为**变异字符串没匹配上**
+      （只删了三元的一部分）。修正后 5 红。教训：变异后要 grep 确认真的改到了代码。
+- [x] 变异 3/3 有效（header 参数 5 / 折叠行数 6 / 前置空行 3）；单测 **637**。
+- [x] 真机：`bash command="echo TOOLCHECK" description="..."`，无 emoji、无 `[ok]`。
+- [x] `prepublishOnly` 全绿。

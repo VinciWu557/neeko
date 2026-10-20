@@ -892,6 +892,419 @@ ctx.sessionQuery.readTitleSnapshots(ids)   // 共享一次 corpus observation
 - [x] 打开延迟 1.95s。
 - [x] 单测 **642**；`prepublishOnly` 全绿。
 
+## Step 29 — 整屏滚动（用户反馈）
+
+用户原话：「当前滚动方式参考 pi-tui 的方式，当前是在内容部分滚动，需要的是整个屏幕的滚动，
+不需要自己实现滚动」。
+
+### pi 的结构（从 dist 精确取出，非推断）
+
+```js
+function createChatViewport(options) {
+  const transcript = new ScrollView(options.document, { follow:'end', primary:true, ... })
+  const dock = new VStack([ pendingMessages, status, widgets, editor, widgets, footer ])
+  return { transcript, root: new VStack([
+    { component: transcript, basis:0, grow:1, shrink:1, minSize:1 },
+    { component: dock,       basis:'auto', grow:0, shrink:1, minSize:1 },
+  ])}
+}
+// 且 documentContainer = Container[ headerContainer, loadedResourcesContainer, chatContainer ]
+```
+
+**ScrollView 包的是「document」= banner + 转录**，只有 dock（输入/状态/页脚）固定。
+
+### 我们的偏差
+
+`ScrollView(messages)` —— 只包转录。banner 在 ScrollView **之外**，所以滚动时
+对话在静止的 banner 下方滑动，而不是整屏滚动。
+
+### 修法
+
+- `FullscreenOptions.header + .transcript` → **`.document: Component`**（一个容器）。
+  拆成两个字段正是让人「只包转录」的原因；一个字段没有第二种解释。
+- `TuiApp` 新增 `document = Container[banner, messages]`，主屏与全屏都挂它：
+  - 主屏：`tui.addChild(document)`（原先两行）
+  - 全屏：`mountFullscreen({ document })`
+  - `printFinalDocument()` 也读它（原先是逐个枚举 banner/messages）
+- 布局对齐 pi：`[ {scroll, grow:1, shrink:1, minSize:1}, aboveInput, {input, minSize:3}, footer ]`。
+
+### 复用而非自造
+
+没有自己实现滚动：`ScrollView` 的 `follow:'end'` + `primary` + `overscroll:'chain'` +
+`scrollbar:'auto'` 全部沿用，键盘/滚轮/PageUp 由 `TuiAltScreen` 自己处理。
+
+### 变异验证
+
+| 变异 | 变红 |
+| --- | --- |
+| `ScrollView` 不含 banner（还原成只滚转录） | **26** |
+
+（另试「把输入区 grow 进滚动区」→ 0 红，但那是**我的变异假设错了**：`grow` 只影响
+VStack 内的高度分配，不会把组件移进 ScrollView。不是测试缺口。）
+
+### 验收
+
+- [x] 单测 +2：整屏滚动（`row 39` 可达、`row 0` 已滚出）与 dock 固定（input/footer 恒在）。
+- [x] 真机 pty：PageUp 后 banner 仍在文档流中、视口顶部是 `LINE-3` 而非 `LINE-1`，
+      证明整个文档在滚。
+- [x] `prepublishOnly` 全绿：**649 测试**。
+
+## Step 30 — 工具行改为原生 pi 的呈现（用户需求，方案 B）
+
+用户原话：「先抹除之前参考的 dsh-pi-tui，直接参考原生的 pi-tui 的界面内容数据显示，
+之前的 dsh-pi-tui 显示很乱」。选择方案 B（完整对齐原生 pi）。
+
+### 原生 pi 的实际规则（读 `render-utils.js` / `tool-execution.js`）
+
+`formatToolCallWithArgs(title, args, theme, expanded)`：
+
+- **折叠**：`bold(name)` + `key=value` 对，整行裁到 `COLLAPSED_ARGS_CHARS = 100`
+- **展开**：`bold(name)`，然后每个参数一行 `key: value`，续行缩进
+- **无 emoji、无 variant 分类、无 status pill**；状态靠背景色
+  （`toolPendingBg` / `toolSuccessBg` / `toolErrorBg`）
+- **结果体**：折叠取前 `FALLBACK_PREVIEW_LINES = 10` 行 +
+  `... (N more lines, ctrl+o to expand)`
+- 卡片是 `Box(1, 1, bg)` —— 上下各留 1 行
+- 助手消息前置 `Spacer(1)`（`hasVisibleContent → Spacer(1)`）
+
+### 删掉的东西（全部是 dsh-pi-tui 的发明）
+
+| 删除 | 原来是什么 |
+| --- | --- |
+| `TOOL_VARIANTS` / `classifyTool` | 七类伪分类（read/search/bash/write/edit/code/others） |
+| `VARIANT_TITLES` / `VARIANT_EMOJIS` | 每类一个标题 + 一个 emoji |
+| `TOOL_TITLES` / `SYNTHETIC_TITLES` | 按工具名覆盖标题 |
+| `deriveSummary` | 从 args 猜一段摘要 |
+| `toolEmoji` / `toolHeader` | 把上述拼成 `🖥️ Bash <summary>` |
+| `isFileRead` / `hiddenLines` | 折叠时按工具类型特殊处理 |
+| status pill | `[ok]` / `[error]` / `[running]` 文字标签（背景色已表达） |
+
+一行曾经长这样（**四个标签描述同一个调用**）：
+
+```
+🖥️ Bash Print TOOLCHECK [ok] — TOOLCHECK (+2 lines, ctrl+o)
+```
+
+现在是：
+
+```
+ bash command="echo TOOLCHECK" description="Print TOOLCHECK marker"
+   TOOLCHECK
+```
+
+### 新增
+
+- `formatToolHeader(name, args, paint, expanded, bold)` —— pi 的 header 规则
+- `argsPreview(args)` —— `key=value` 预览 + 100 字符裁剪（模块私有：它是
+  `formatToolHeader` 的一个分支，没有名字的 header 不算 header）
+- `toolOutputLines(result, expanded, paint)` —— 10 行预览 + `(N more lines, ctrl+o to expand)`
+- `Theme.bold()` —— 加粗是终端属性而非主题色，`Theme` 才是它的所有者；
+  `markdownThemeOf()` 的 `bold` 改为复用（消除第二份实现）
+- `RenderOptions.bold` 注入点（app 传 `theme => theme.bold`）
+
+### 一处诚实记录
+
+变异验证时我先写了「header 不显示参数」的变异，得到 **0 红**——一度以为测试有缺口。
+实际是**变异字符串没匹配上**（清掉了三元表达式的一部分而非整个分支）。修正后 5 条变红。
+教训：变异必须确认真的改到了代码；`grep` 一下变异后的行比相信 0 红更可靠。
+
+### 变异验证
+
+| 变异 | 变红 |
+| --- | --- |
+| header 不显示参数 | **5**（首次因变异未生效而假 0 红） |
+| 折叠不限行数 | 6 |
+| 去掉前置空行 | 3 |
+
+### 验收
+
+- [x] `tool-present.ts` 273 → 231 行；variant 表 200 行全部删除。
+- [x] 单测 **637**（`tui-tool-present.spec.ts` 15 条全新契约）。
+- [x] 真机 pty：`bash command="echo TOOLCHECK" description="..."`，
+      **无 emoji / 无 `[ok]` / 折叠提示为 pi 措辞**。
+- [x] `prepublishOnly` 全绿。
+
+## Step 31 — 命令回复从 dock 移入对话流（用户报的钉底 bug）
+
+用户报的现象（附截图）：`/compact` 的回复 `No compactable history yet.` **钉在输入框正上方**，
+不随对话滚动。用户原话：「当前工具执行结果持续在底部不跟随消息滚动」，确认是选项 C。
+
+### 排查过程（先说结论，再说弯路）
+
+**弯路一：怀疑工具卡在 dock。** 实测排除 —— 工具卡在 `messages` 里，逐帧重放确认它
+紧跟 reasoning、后面还有下一条 assistant 消息，都在同一条流里。
+
+**弯路二：怀疑 `follow: 'end'` 用错。** 读了 pi 的 `chat-viewport.js`，
+`new ScrollView(document, { follow: "end", primary: true, overscroll: "chain" })` ——
+与我们的 `fullscreen.ts` **逐项相同**。PageUp 也实测有效（第二帧输出空 = 已到顶）。
+
+**弯路三（假线索）：怀疑 repaint 风暴。** pty 探测收到 366 万帧，一度以为有死循环。
+实际是 `select` 在 pty EOF 后空转；修正探测逻辑后 197 帧，正常。
+
+**真正根因**：用户给截图后才定位 —— 回复来自 `addNotice()`，而 `notices` 容器挂在
+`aboveInput`（dock，`fullscreen.ts` 里 dock 是**不滚动**的固定行）。所有 `/` 命令的
+持久回复（`/help`、`/model`、错误、`/compact` 结果）都走这条路，全部钉底。
+
+### 改动
+
+`notices` 从 `aboveInput` 移入 `document`，紧跟 `messages` 之后：
+
+```
+TuiMainScreen
+ ├─ document          ← 滚动区
+ │   ├─ banner
+ │   ├─ messages      (transcript)
+ │   └─ notices        ← 移到这里（命令回复）
+ ├─ aboveInput        ← dock，不再含 notices
+ │   ├─ working
+ │   ├─ interaction / theme / thinking / resume
+ ├─ editor
+ └─ status
+```
+
+**保留独立容器**（不复用 `messages`）：`mountTranscript` 每次 flush 重建自己的容器，
+写进去的回复下一次 repaint 就没了。这个理由与位置无关，仍然成立。
+
+**dock 保留什么**：只有「滚动时仍需可见」的瞬态内容 —— 单行活动提示、审批面板、
+选择器面板、输入框、状态栏。与 pi 的 dock 语义一致。
+
+### 对照 pi
+
+pi 的 `/compact` 根本不往固定区写文本：`handleCompactCommand` 直接
+`await this.session.compact()`，结果通过会话事件变成一条 chat entry
+（`CompactionSummaryMessageComponent`）。命令回复是**对话内容**，不是 UI 提示。
+
+### 变异验证
+
+| 变异 | 变红 |
+| --- | --- |
+| `notices` 移回 `aboveInput` | **3** |
+
+### 真机验收
+
+历史为空时 `/compact`：
+
+```
+ / commands · ctrl+o expand · ctrl+c exit
+ No compactable history yet.          ← 在文档流里，不再钉在输入框上方
+```
+
+历史非空时（实际生效）：
+
+```
+ 16  MARKER-ONE
+ 17  ❯ This is an automatic…
+ 19  Compacted 4 history items (~4781 tokens).   ← 紧跟消息之后
+```
+
+- [x] 单测 **640**（`tui-app.spec.ts` 新增 3 条锁定容器归属与顺序）。
+- [x] `prepublishOnly` 全绿。
+
+## Step 32 — neeko-check 复审后的问题修复
+
+对 Step 30–31 的改动做了一次规范审核（增量，12 文件）。`packages/**` 的 15 条红线
+全部 N/A（根 `AGENTS.md:49`），审核聚焦架构原则 / 最佳实践 / TDD。共 6 项，全部修复。
+
+### Block 级
+
+**1. 死参数 `cwd` 整条链路**
+
+`RenderOptions.cwd` 与 `RenderContext.cwd` 已无任何读者 —— 删除 variant 表后，
+唯一消费者 `toolHeader(name, args, cwd)` 没了，`cwd` 成了「只写不读」的字段，
+而 `app.ts` 仍在每帧传 `cwd: this.cwd()`。
+
+按第一性原理确认它**不是被误删的能力**：pi 原生对路径工具确实用 `shortenPath()`
+折叠 home 前缀，但那是 `find`/`read` **各自 renderer** 的事，不是通用 header 的责任。
+通用 header 显示 `path="/work/src/a.ts"` 原样，与 pi 的 `formatToolCallWithArgs` 一致。
+所以删，不补（YAGNI）。
+
+**2. 死函数 `indent()`**
+
+原本服务 `renderTool` 的「运行中显示 args」分支，该分支已被 pi 的
+`formatToolHeader` 取代。零调用点。
+
+### Warning 级
+
+**3. `printFinalDocument()` 打印了错误的组件**（真实行为差异，有复现）
+
+它打印 `this.editor`，但编辑器现在住在 `inputSlot` 里。实测：**`/model` 面板
+打开时退出，最终文档不含面板内容** —— 打印了一个未挂载的组件。
+
+这与 Step 31 的 `/model` 卡住是**同一类错误**：修了读取路径（谁在槽里），
+漏了打印路径。改为打印 `this.inputSlot`。
+
+**4. 测试文件遮蔽 + 三份 `strip`**
+
+`tests/tui-fullscreen.spec.ts` 新增的 `describe` 内定义了局部 `function mount()`，
+遮蔽了模块级同名函数。同文件还有三份 `strip()`（最新那份少了 `_pi:` 规则，已漂移）。
+→ 局部函数改名 `mountScrollingDocument()`，`strip` 提到模块级唯一实现。
+
+### Nit 级
+
+**5. `Paint` 签名重复内联 5 次**
+
+`transcript-view.ts` 有 5 处 `paint: (token: ThemeToken, text: string) => string`。
+`tool-present.ts` 已导出 `Paint`，改为 `import type { Paint }` 复用。
+
+**6. `bold` 四层穿透 → 一层**
+
+原链路：`app` → `RenderContext.bold` → `RenderOptions.bold` → `formatToolHeader`。
+四层传递只为一次调用。
+
+第一性原理：`fg` 与 `bold` 都是**主题提供的能力**，且抵达同一批 renderer。
+`renderRow` 本来就有 `theme` 参数在派生 `paint`，`bold` 却另开一条通道 —— 这就是耦合。
+
+→ 引入 `ThemeCapabilities { fg; bold? }`，一个参数承载两者：
+
+```ts
+// 之前
+renderRow(row, { fg }, md, { bold, ... })
+// 之后
+renderRow(row, { fg, bold }, md, { ... })
+```
+
+`bold` 保持可选，所以只画颜色的调用方（测试、dump）仍能渲染，只是不加粗。
+
+**顺带修一处热路径开销**：合并没有把 `capabilities` 对象放进每行的 `map` 回调里
+（那样每帧 N 次分配），而是提到循环外，一帧一个。
+
+### 变异验证
+
+| 变异 | 变红 |
+| --- | --- |
+| `theme.bold` 被忽略 | **1** |
+| 退出时打印 editor 而非槽 | **1** |
+| header 不传 bold | **1** |
+
+### 验收
+
+- [x] 单测 **647**（新增：主题 bold 生效 / 无 bold 时降级 / 退出打印槽位占用者）。
+- [x] 死代码零残留（`cwd`、`indent` 均已无定义）。
+- [x] `prepublishOnly` 全绿（tests + tsc×2 + build + publint）。
+
+## Step 33 — 第二轮独立复核
+
+Step 32 修完后要求「再检查一遍」。这轮不重复上轮结论，从**未被检查过的维度**入手。
+
+### 发现一：`NO_BOLD` 与内联恒等函数重复（DRY）
+
+`tool-present.ts` 有 `NO_BOLD`，`transcript-view.ts:168` 又内联了一份
+`(text: string) => text`。同一个概念两处定义。
+
+→ 导出 `NO_BOLD` 与 `Bold` 类型，`renderTool` 的参数类型改为 `Bold`。
+（`PLAIN_MARKDOWN_THEME` 里那 16 个恒等函数**不算**重复：它们是刻意的空主题，
+每个字段语义不同。）
+
+### 发现二：`ThemeCapabilities.fg` 与 `Paint` 是同一签名
+
+前者写成方法形式 `fg(token, text): string`，后者是函数类型。结构兼容但不统一，
+导致 `app.ts` 写出 `Parameters<typeof theme.fg>[0]` 这种绕弯代码。
+
+→ `ThemeCapabilities.fg: Paint`（直接复用），`app.ts` 改用显式 `ThemeCapabilities`
+标注，`Parameters<...>` 消失。
+
+**同时修正一处措辞**：我最初写「`Theme` 已满足接口，无需 adapter」——验证后
+不成立：`Theme` 的成员是绑定到实例的方法，赋给裸函数类型仍需箭头包装。
+注释改为准确表述。
+
+### 发现三：三个导出没有外部读者（最小暴露面）
+
+对 `tool-present.ts` / `transcript-view.ts` / `theme.ts` 的全部 export 做了
+读者扫描（`src/` 内其他文件）：
+
+| 符号 | 外部读者 | 处置 |
+| --- | --- | --- |
+| `FOLDED_PREVIEW_LINES` | 0（仅自用） | 收回模块私有 |
+| `argsPreview` | 0（仅测试直接调） | 收回模块私有 |
+| `COLLAPSED_ARGS_CHARS` | 测试引用边界值 | 保留 export |
+| `FOLDED_CHARS` | 测试引用边界值 | 保留 export |
+
+`argsPreview` 在测试里只有一个 describe，断言「空输入返回空串」——而该行为已被
+`formatToolHeader('bash', {}, …)` 返回裸名字覆盖。**删除该 describe**：为一个已由
+公开 API 覆盖的内部函数单独写测试，是测试耦合实现。
+
+### 变异验证（本轮）
+
+| 变异 | 变红 |
+| --- | --- |
+| `NO_BOLD` 改成非恒等 | **5** |
+| header 丢 bold | **1** |
+| 折叠不截断 | **6** |
+
+### 验收
+
+- [x] 单测 **646**（净 −1：删掉测内部函数的冗余 describe）。
+- [x] 导出面收敛：`FOLDED_PREVIEW_LINES` / `argsPreview` 转私有。
+- [x] `prepublishOnly` 全绿。
+
+## Step 34 — 第三轮复核：测试夹层的 ANSI 剥离统一
+
+前两轮修的是 `src/` 的问题。这轮换到 `tests/`，按「最大化复用」找出**同类实现的散落**。
+
+### 根因：七份 ANSI 剥离，规则各自漂移
+
+| 文件 | 规则 |
+| --- | --- |
+| `tui-render-row` | `[0-9;]*m` |
+| `tui-status-bar` | `[a-z0-9;]*m` |
+| `tui-banner` | `[0-9;?]*[a-zA-Z]` |
+| `tui-interaction-glue` | `[0-9;]*m` + `_pi:` |
+
+后果是**测试之间的文字不可移植**：一条断言在 A 文件能过、在 B 文件会失败，因为剥掉的
+字符集不同。上一轮修的 `tui-fullscreen.spec.ts` 三份 `strip()` 漂移只是这个模式的局部。
+
+→ 新建 `tests/support/ansi.ts` 的 `stripAnsi()`，规则一次说清：
+
+- **SGR** `\x1b[…m`，含主题实际发出的 `38;2;r;g;b` 复合形式
+- **光标/屏幕控制** `\x1b[…H/J/K` 与私有模式 `\x1b[?25h/l`
+- **OSC** `\x1b]…\x07` 或 `\x1b]…\x1b\\`（超链接、剪贴板）
+- **pi-tui fake-cursor** `\x1b_pi:…\`
+
+7 个文件全部改为委托，本地实现清零。
+
+### 顺带暴露一个测试夹具造假问题
+
+`tui-status-bar.spec.ts` 的 paint 桩写成 `\x1b[${token}m${text}\x1b[0m` —— 把 **token 名**
+塞进 SGR 参数位。SGR 参数只能是数字、`;`、`?`，所以 `\x1b[route-magpie-autom`
+**不是任何终端或剥离器认识的序列**，宽度断言因此建立在假数据上。
+
+修法不是放宽剥离器迁就它，而是让桩回到真实形态：token 名改走 **OSC** 序列
+（`\x1b]8;;token\x07`）—— 真实的转义序列、真的零宽、真的能被 `visibleWidth` 忽略，
+同时测试仍能读到用了哪个 token。
+
+这是一次有意义的「测试先骗自己、再骗实现」的暴露：如果剥离器当初为了让它通过而放宽规则，
+真实主题的复合 SGR 就会被漏掉。
+
+### 一处刻意保留
+
+`tui-render-row` 的 `flat()` 与 `tui-interaction-glue` 的 `transcript()` 最初各自只去
+`_pi:` 保留颜色。核查后确认下游断言全是纯文本（`toContain('line 19')`、查找 `❯`），
+统一为 `stripAnsi` 无损。
+
+### 变异验证
+
+| 变异 | 变红 |
+| --- | --- |
+| 移除 SGR 规则 | **12** |
+| 移除 `_pi:` 规则 | **2** |
+
+12 红说明共享剥离器确实被整个 suite 使用，而不是「建了但没人用」。
+
+### 验收
+
+- [x] 单测 **653**（+7：`tests/support/ansi.spec.ts` 覆盖四条规则）。
+- [x] 本地剥离实现清零（`grep` 只剩 `support/ansi.ts`）。
+- [x] `prepublishOnly` 全绿。
+
+### 未做（记录理由）
+
+`app.ts` 1937 行、8 个职责块，是明显的内聚问题。但拆分它属于**架构重构**，会同时打散
+646 条测试的针对性，不适合与本次「问题清单修复」混在一起。已记录，另开任务处理。
+
+`assertNever` 只在 `app.ts` 私有定义，`transcript-view.ts` 的 `switch` 无 `default` 但靠
+TS 返回类型兜底（新增 variant 会因「函数可能不返回」编译失败）。为改善报错文案而新建
+一个 utils 模块，收益小于成本 —— 按 YAGNI 不做。
+
 ## 不在本轮范围
 
 - `ctrl+t`（pi 的独立 thinking 折叠键）：本轮只有一个折叠维度，不引入第二个键。
