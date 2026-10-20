@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderBanner, shortenSessionId, supportsLogo, wordmark } from '../src/tui/banner.ts'
 import type { BannerFacts } from '../src/tui/banner.ts'
 import { resolveTheme } from '../src/tui/theme.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The startup banner.
@@ -29,7 +30,7 @@ const facts: BannerFacts = {
 
 /** Strip ANSI so assertions read as plain text. */
 function plain(lines: readonly string[]): string[] {
-  return lines.map((line) => line.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, ''))
+  return lines.map((line) => stripAnsi(line))
 }
 
 describe('renderBanner', () => {

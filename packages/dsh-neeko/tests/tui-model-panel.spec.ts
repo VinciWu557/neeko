@@ -4,6 +4,7 @@ import {
   MODEL_PANEL_MAX_VISIBLE, buildModelPanel, handleModelPanelKey, modelPanelTheme, modelRowItem,
 } from '../src/tui/model-panel.ts'
 import { findBuiltin, resolveTheme } from '../src/tui/theme.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The `/model` panel: a header, a filter box, the catalogue, the highlighted
@@ -16,7 +17,7 @@ import { findBuiltin, resolveTheme } from '../src/tui/theme.ts'
 
 const theme = resolveTheme(findBuiltin('dark')!)
 const plain = (lines: readonly string[]): string =>
-  lines.join('\n').replace(/\x1b\[[0-9;]*m/gu, '')
+  stripAnsi(lines.join('\n'))
 
 const models = [
   { id: 'group/auto-a', name: 'Model A', provider: 'magpie', isCurrent: true },
@@ -49,7 +50,7 @@ describe('buildModelPanel', () => {
     const { panel } = make()
     // The filter box uses pi-tui's fake-cursor markers, which the real TUI
     // consumes; they are stripped here so assertions read the layout.
-    const text = plain(panel.component.render(90)).replace(/\x1b_pi:[^\\]*\\/gu, '')
+    const text = plain(panel.component.render(90))
     expect(text).toContain('Only showing models from configured providers. Use /login to add providers.')
     expect(text).toContain('group/auto-a')
     expect(text).toContain('ark/code')

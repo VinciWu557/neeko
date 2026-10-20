@@ -8,6 +8,7 @@ import {
   themeSearchPaths, themesDir,
 } from '../src/tui/theme.ts'
 import type { ThemeDocument } from '../src/tui/theme.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The theme system mirrors pi's: a theme is `{ vars, colors }` where `colors`
@@ -289,7 +290,7 @@ describe('pi theme compatibility', () => {
   it('renders list markers as bullets, not source dashes', () => {
     const dark = resolveTheme(findBuiltin('dark')!)
     const md = markdownThemeOf(dark)
-    const striped = (md.listBullet?.('- ') ?? '').replace(/\x1b\[[0-9;]*m/gu, '')
+    const striped = stripAnsi(md.listBullet?.('- ') ?? '')
     expect(striped).toBe('• ')
   })
 
@@ -297,7 +298,7 @@ describe('pi theme compatibility', () => {
     // A ``` fence is Markdown *source*; the reader wants a bordered region.
     const dark = resolveTheme(findBuiltin('dark')!)
     const md = markdownThemeOf(dark)
-    const strip = (text?: string): string => (text ?? '').replace(/\x1b\[[0-9;]*m/gu, '')
+    const strip = (text?: string): string => stripAnsi(text ?? '')
     expect(strip(md.codeBlockBorder?.('```'))).not.toContain('```')
     expect(strip(md.codeBlockBorder?.('```'))).toContain('─')
     // …and the language label survives: it explains the code.

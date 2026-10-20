@@ -4,6 +4,7 @@ import {
   ledgerLine, ledgerStats, renderStatusBar, routeLine,
 } from '../src/tui/status-bar.ts'
 import type { StatusFacts } from '../src/tui/status-bar.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The status bar's formatting rules, transcribed from pi's footer so the two
@@ -173,14 +174,20 @@ describe('foldUsage', () => {
 
 /** Strip the paint escapes this suite emits. */
 function plainLine(line: string): string {
-  return line.replace(/\x1b\[[a-z0-9;]*m/g, '')
+  return stripAnsi(line)
 }
 
 describe('renderStatusBar — layout', () => {
-  // Zero-width, ANSI-shaped tags: real paint() adds escape sequences that
-  // visibleWidth ignores. Emitting the same *shape* keeps every width
-  // assertion honest while still letting tests read which token was used.
-  const paint = (token: string, text: string): string => `\x1b[${token}m${text}\x1b[0m`
+  // Zero-width, ANSI-shaped tags. The token name rides in an **OSC** sequence,
+  // not in an SGR parameter: an SGR parameter can only be digits, `;` and `?`,
+  // so `\x1b[route-magpie-autom` is not a sequence any real terminal or stripper
+  // recognises — it inflated every width assertion until the suite shared one
+  // stripper (`tests/support/ansi.ts`).
+  //
+  // OSC is the correct home for a label: it is a real escape sequence, it is
+  // zero-width, and it survives `visibleWidth`, so the tests can still read which
+  // token was used.
+  const paint = (token: string, text: string): string => `\x1b]8;;${token}\x07${text}\x1b]8;;\x07`
   const wide = facts({
     ledger: { input: 2_400_000, output: 364_000, cacheRead: 395_000_000, cacheWrite: 0, cost: 4.259 },
     cacheHitRate: 99.9,
@@ -207,15 +214,15 @@ describe('renderStatusBar — layout', () => {
   it('colors only the context percentage, never the whole ledger', () => {
     const lines = renderStatusBar(wide, { width: 140, home: '/home/dev', paint })
     // 78.5% is above 70 → warning; the nearby counters stay `muted`.
-    expect(lines[1]).toContain('\x1b[warningm78.5%/1.0M')
-    expect(lines[1]).toContain('\x1b[mutedm↑2.4M')
+    expect(lines[1]).toContain('\x1b]8;;warning\x0778.5%/1.0M')
+    expect(lines[1]).toContain('\x1b]8;;muted\x07↑2.4M')
   })
 
   it('leaves the context uncolored below the warning threshold', () => {
     const calm = facts({ contextTokens: 100_000, contextWindow: 1_000_000 })
     const lines = renderStatusBar(calm, { width: 120, home: '/home/dev', paint })
-    expect(lines[1]).not.toContain('\x1b[warningm')
-    expect(lines[1]).toContain('\x1b[mutedm10.0%/1.0M')
+    expect(lines[1]).not.toContain('\x1b]8;;warning\x07')
+    expect(lines[1]).toContain('\x1b]8;;muted\x0710.0%/1.0M')
   })
 
   it('truncates the ledger, not the route, when space runs out', () => {

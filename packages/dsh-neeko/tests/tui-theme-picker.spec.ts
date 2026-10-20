@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderThemePicker, THEME_PICKER_MAX_VISIBLE } from '../src/tui/theme-picker.ts'
 import { resolveTheme, findBuiltin } from '../src/tui/theme.ts'
 import type { ThemePickerView } from '../src/tui/theme-controller.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * The theme picker's panel text.
@@ -21,7 +22,7 @@ const view: ThemePickerView = {
 }
 
 /** Strip ANSI so assertions read the layout, not the palette. */
-const plain = (text: string): string => text.replace(/\x1b\[[0-9;]*m/gu, '')
+const plain = (text: string): string => stripAnsi(text)
 
 const key = (name: string) => (candidate: string): boolean => candidate === name
 
