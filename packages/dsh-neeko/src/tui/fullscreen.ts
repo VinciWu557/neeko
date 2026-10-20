@@ -90,13 +90,22 @@ export function mountFullscreen(options: FullscreenOptions): Fullscreen {
     overscroll: 'chain',
   })
 
+  // Two entries, exactly as pi's `createChatViewport` builds them: the scroll
+  // region grows into whatever the dock does not take, and the dock is **one**
+  // `basis: "auto"` entry rather than a flat list.
+  //
+  // Flattening the dock into the root stack is not equivalent: each entry then
+  // carries its own `minSize`, and on a short terminal those minimums compete
+  // with the transcript's one row instead of with the dock's total. The dock also
+  // keeps its own internal order, so adding a panel cannot reorder anything.
+  const dock = new VStack([
+    ...(aboveInput === undefined ? [] : [{ component: aboveInput, shrink: 1, minSize: 0 }]),
+    { component: input, shrink: 1, minSize: 3 },
+    { component: footer, shrink: 1, minSize: 0 },
+  ])
   const children = [
-    // The scroll region takes every row the dock does not need.
     { component: scroll, basis: 0, grow: 1, shrink: 1, minSize: 1 },
-    // Fixed rows below it: the editor must not move while the document scrolls.
-    ...(aboveInput === undefined ? [] : [{ component: aboveInput, basis: 'auto' as const, shrink: 1, minSize: 0 }]),
-    { component: input, basis: 'auto' as const, shrink: 0, minSize: 3 },
-    { component: footer, basis: 'auto' as const, shrink: 0, minSize: 1 },
+    { component: dock, basis: 'auto' as const, grow: 0, shrink: 1, minSize: 1 },
   ]
 
   if (isViewportTUI(screen)) screen.setLayoutRoot(new VStack(children))

@@ -529,6 +529,59 @@ describe('panels are visible in fullscreen too', () => {
 })
 
 
+describe('the scroll region takes every row the dock does not need', () => {
+  /**
+   * pi's `createChatViewport` wraps the fixed rows in **one** dock `VStack` and
+   * gives it `basis: "auto"` as a single entry; the transcript gets `grow: 1`.
+   *
+   * Flattening the dock into the root stack instead — four entries at
+   * `basis: "auto"` with their own `minSize`s — made the transcripts collapse to
+   * one row on a short terminal: measured on a 10-row screen, the region showed a
+   * single row and the editor and footer took the rest.
+   */
+  function mountShortScreen(): { rows: () => string[] } {
+    const terminal = new FakeTerminal({ columns: 40, rows: 10 })
+    const document = new Container()
+    for (let i = 0; i < 30; i += 1) document.addChild(new Text(`row ${i}`, 0, 0))
+    const surface = mountFullscreen({
+      terminal,
+      document,
+      input: new Text('INPUT', 0, 0),
+      footer: new Text('FOOTER', 0, 0),
+      onInput: () => undefined,
+    })
+    return {
+      rows: () => {
+        surface.screen.renderNow(true)
+        return surface.screen.getScreenLines().map((line) => stripAnsi(line).trimEnd())
+      },
+    }
+  }
+
+  it('gives the transcript every row the dock does not need', () => {
+    // 10 rows total, and the dock is one editor row plus one footer row plus the
+    // padding each carries. The transcript must get the rest — measured 1 row
+    // before the dock became a single stack entry, which is what "the scroll
+    // region is tiny" looks like from the outside.
+    const rows = mountShortScreen().rows()
+    const documentRows = rows.filter((line) => line.startsWith('row '))
+    expect(documentRows.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('still keeps the editor and footer visible', () => {
+    // The point of the dock: fixed rows must survive any scroll position.
+    const rows = mountShortScreen().rows()
+    expect(rows).toContain('INPUT')
+    expect(rows).toContain('FOOTER')
+  })
+
+  it('puts the dock below the document, in order', () => {
+    const rows = mountShortScreen().rows().filter((line) => line.trim() !== '')
+    expect(rows.indexOf('INPUT')).toBeGreaterThan(rows.findIndex((line) => line.startsWith('row ')))
+    expect(rows.indexOf('FOOTER')).toBeGreaterThan(rows.indexOf('INPUT'))
+  })
+})
+
 describe('the whole document scrolls, not just the transcript', () => {
   /**
    * pi's viewport (`createChatViewport`) wraps the **document** — header plus
