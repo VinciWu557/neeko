@@ -1378,6 +1378,95 @@ TS 返回类型兜底（新增 variant 会因「函数可能不返回」编译�
 - [x] `prepublishOnly` 全绿；连跑 5 次无 flake。
 - [x] 真机 pty：`/help`、`/theme` 面板、工具卡 pi 形态、流式、正常退出全通过。
 
+## Step 36 — 屏幕模式改成三态（neeko-check 复审后的根因修复）
+
+上一轮把默认改成了 main screen，但 neeko-check 审出两个 Block：`DSH_NEEKO_MAIN_SCREEN`
+文档说「force the main screen」而代码完全忽略它；`app.ts` 两处注释互相矛盾。
+
+### 根因不是那两个 Block，是表示法
+
+真实域有**三态**：显式 main / 显式 fullscreen / **未表态**（第三态携带默认值）。
+它被写成 `mainScreen?: boolean`，而**每层对 `undefined` 的解释相反**：
+
+| 层 | `undefined` 的含义 |
+| --- | --- |
+| `startup` / `TuiConfig` | 未表态 |
+| `TuiApp.startOnMainScreen` | **fullscreen**（`!== true` 才进 alt screen） |
+
+两种极性并存，信息在层间必然丢失 —— 这才是「默认值不可达」和「env 被忽略」的共同原因。
+两个 Block 都是症状。
+
+### 修法：给第三态一个名字
+
+```ts
+export type ScreenMode = 'main' | 'fullscreen'   // 缺省 = 未表态
+```
+
+- `startup`：`--main-screen` / `--fullscreen` → `screen`，**无 flag 就不写这个键**
+- `cordis.patch.yml`：原样透传 `'main' | 'fullscreen' | undefined`
+  （不再 `=== true`，那一步把「未表态」和「false」压成同一个值）
+- `runner.screenModeOf()`：唯一的决策点（配置 > `DSH_NEEKO_SCREEN` > 两个旧变量 > 默认）
+- `TuiApp.screenMode`：**执行**决策，不再自带默认
+
+`TuiApp` 的字段名从 `startOnMainScreen`（布尔、负向、缺省=fullscreen）改为 `screenMode`
+（具名、正向、缺省=main）。方向反了两次的根源就此消失。
+
+### 顺带解决的
+
+- **`DSH_NEEKO_MAIN_SCREEN` 真正生效**（此前无读取点），并新增 `DSH_NEEKO_SCREEN`
+  统一两个旧变量；三者冲突时的规则与 flag 一致：**保守的 main 赢**
+- `app.ts:482` 的旧注释（「Alt screen by default」）被删，与新语义一致
+- `startup.ts` 的嵌套三元提为 `screenRequest()`，一个函数只回答「用户说了什么」
+
+### 为什么 `startup` 不 import 那个类型
+
+`ScreenMode` 定义在 `tui/fullscreen.ts`，但 `startup` 不依赖 `tui/*` —— 让 CLI 解析器
+为了描述一个 flag 而拉进 pi-tui 是不划算的。`startup` 里用字面量联合，两处重复的是
+两个 TypeScript 单词，不是业务规则；为此新建一个模块（YAGNI）反而更差。取舍写在类型注释里。
+
+### 附带修掉一个反复出现的测试缺陷
+
+`tui-fullscreen.spec.ts` **第三次**出现「局部 `function mount()` 遮蔽模块级同名函数」——
+不报错，只是让那个 describe 静默地测另一套夹具。
+
+Typescript 抓不到（两个函数互不相干、`noUnusedLocals` 也认为它被用了），所以加了一条
+文本扫描测试 `tests/support/no-shadowed-helpers.spec.ts`：扫全部 spec，禁止嵌套同名函数。
+用测试而不是引入 eslint —— 这个包刻意不带 lint 依赖，为一条规则装一整套工具不划算。
+
+### 变异验证（6/6 有效）
+
+| 变异 | 变红 |
+| --- | --- |
+| 默认改成 fullscreen | 2 |
+| 配置不再优先 | 2 |
+| 丢 `MAIN_SCREEN` 分支 | 1 |
+| 丢 `DSH_NEEKO_SCREEN` | 1 |
+| `app.ts` 默认改回 fullscreen | 2 |
+| `startup` 不认 `--main-screen` | 4 |
+
+「丢 `MAIN_SCREEN` 分支」**首次报 0 红**：默认本来就是 `main`，删掉那段结果不变 —— 说明它是
+**冗余分支**。查清后才发现它只在「两个旧变量同时设置」时有效，于是补了那条冲突测试，
+并顺势把优先级定成「保守的 main 赢」（与 flag 一致，此前是实现顺序的副作用）。
+
+### 真机（8 种组合全部正确）
+
+| 调用 | alt screen |
+| --- | --- |
+| 默认 | False |
+| `--fullscreen` | True |
+| `--main-screen` | False |
+| `DSH_NEEKO_SCREEN=fullscreen` | True |
+| `DSH_NEEKO_SCREEN=bogus`（应忽略） | False |
+| `DSH_NEEKO_FULLSCREEN=1`（旧） | True |
+| `DSH_NEEKO_MAIN_SCREEN=1`（旧） | False |
+| `--main-screen` + `FULLSCREEN=1`（flag 赢） | False |
+
+### 验收
+
+- [x] 单测 **756**（+51：屏幕模式 9 条 + 遮蔽检查 46 条 + 测试改写）
+- [x] `prepublishOnly` 全绿
+- [x] 真机 8 种组合验证
+
 ## 不在本轮范围
 
 - `ctrl+t`（pi 的独立 thinking 折叠键）：本轮只有一个折叠维度，不引入第二个键。
