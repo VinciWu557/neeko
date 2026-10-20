@@ -10,27 +10,15 @@ import { open } from '@tauri-apps/plugin-dialog';
 import React, { useCallback, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
-import type { AgentConfig, ChatStart } from '@/shared/types/agent';
+import type { AgentConfig } from '@/shared/types/agent';
+import { chatAcpArgsOf, chatTransportOf } from '@/shared/types/agent';
 import { PRESET_AGENT_ICONS } from '@/shared/utils/agents';
 import { Button } from '@/ui';
 
 import { addAgent, importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
 
+import { buildChatStart, CHAT_HINTS, CHAT_OPTIONS, type ChatTransport } from './agentFormChat';
 import CapabilityBadges from './CapabilityBadges';
-
-const CHAT_OPTIONS: { value: ChatStart; label: string; hint: string }[] = [
-  { value: 'acp', label: 'ACP', hint: 'JSON-RPC stdio subprocess' },
-  { value: 'serve', label: 'Serve', hint: 'opencode serve · HTTP+SSE' },
-  { value: 'jsonl', label: 'JSON-Lines', hint: 'Custom stdio protocol' },
-  { value: 'mock', label: 'Mock', hint: 'In-process mock (no subprocess)' },
-];
-
-const CHAT_HINTS: Record<ChatStart, string> = {
-  acp: 'Agent Client Protocol over JSON-RPC stdio (subprocess)',
-  serve: 'opencode serve HTTP + SSE transport',
-  jsonl: 'Custom JSON-Lines stdio protocol',
-  mock: 'In-process ACP mock, no command required',
-};
 
 interface AgentFormProps {
   /** 编辑已有 Agent（缺省 = 新建）。 */
@@ -81,7 +69,9 @@ interface FormTextState {
   argsText: string;
   icon: string;
   enabled: boolean;
-  chat: ChatStart | '';
+  chat: ChatTransport | '';
+  /** ACP 子命令参数（空格分隔）；仅 chat === 'acp' 时有意义。 */
+  acpArgsText: string;
   promptArgsText: string;
   postPromptArgsText: string;
   skillPath: string;
@@ -99,7 +89,8 @@ function toTextState(form: AgentConfig): FormTextState {
     argsText: form.args?.join(' ') ?? '',
     icon: form.icon ?? 'cli.svg',
     enabled: form.enabled,
-    chat: form.chat ?? '',
+    chat: (chatTransportOf(form.chat) ?? '') as ChatTransport | '',
+    acpArgsText: chatAcpArgsOf(form.chat).join(' '),
     promptArgsText: form.prompt_args?.join(', ') ?? '',
     postPromptArgsText: form.post_prompt_args?.join(', ') ?? '',
     skillPath: form.skill_path ?? '',
@@ -142,7 +133,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       command: t.command.trim(),
       args: splitArgs(t.argsText),
       env: initial?.env ?? {},
-      chat: t.chat || null,
+      chat: buildChatStart(t.chat, t.acpArgsText, splitArgs),
       prompt_args: promptArgs,
       post_prompt_args: t.postPromptArgsText.trim() ? splitCsv(t.postPromptArgsText) : null,
       skill_path: t.skillPath.trim() || null,
@@ -224,7 +215,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         <CapabilityBadges
           agent={{
             command: preview.cli ? t.command : '',
-            chat: (t.chat || null) as ChatStart | null,
+            chat: buildChatStart(t.chat, t.acpArgsText, splitArgs),
             prompt_args: preview.headless ? [] : null,
           }}
         />
@@ -346,7 +337,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
               <span className={labelCls}>CHAT Transport</span>
               <select
                 value={t.chat}
-                onChange={(e) => set('chat', e.target.value as ChatStart | '')}
+                onChange={(e) => set('chat', e.target.value as ChatTransport | '')}
                 className={cn(fieldCls, 'bg-bg-secondary')}
               >
                 <option value="">None (—)</option>
@@ -358,21 +349,23 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
               </select>
             </label>
             {t.chat === 'acp' ? (
-              <div className="flex items-end pb-1.5">
-                <span className="text-[0.7em] text-text-muted leading-snug">
-                  ACP launches a{' '}
-                  <span className="font-mono text-text-secondary">command + args</span> JSON-RPC
-                  subprocess (e.g. opencode needs the <span className="font-mono">acp</span>{' '}
-                  subcommand)
-                </span>
-              </div>
+              <label className={groupCls}>
+                <span className={labelCls}>ACP Args (space-separated)</span>
+                <input
+                  type="text"
+                  value={t.acpArgsText}
+                  onChange={(e) => set('acpArgsText', e.target.value)}
+                  placeholder="acp"
+                  className={cn(fieldCls, 'bg-bg-secondary font-mono')}
+                />
+              </label>
             ) : (
               <div className="hidden" />
             )}
           </div>
           {t.chat && (
             <div className="text-[0.7em] text-text-muted -mt-1">
-              {CHAT_HINTS[t.chat as ChatStart]}
+              {CHAT_HINTS[t.chat as ChatTransport]}
             </div>
           )}
           <div className="grid grid-cols-2 gap-2">

@@ -1,5 +1,25 @@
-/** CHAT 能力：传输协议 + 启动方式（与后端 `ChatStart` 对应）。 */
-export type ChatStart = 'acp' | 'serve' | 'jsonl' | 'mock';
+/**
+ * CHAT 能力：传输协议 + 启动方式（与后端 `ChatStart` 对应）。
+ *
+ * 两种形态与后端序列化一致：
+ * - 裸字符串（`'acp' | 'serve' | 'jsonl' | 'mock'`）—— 旧格式，ACP 无启动参数；
+ * - 对象 `{ transport: 'acp', args: string[] }` —— ACP 需要附加子命令时
+ *   （如 `opencode acp`、`claude --acp`）。`args` 挂在 `command` 之后。
+ *
+ * 只有 `acp` 接受对象形态：其余传输的启动方式由 `command` 决定，不需要额外参数。
+ */
+export type ChatStart = 'acp' | 'serve' | 'jsonl' | 'mock' | { transport: 'acp'; args: string[] };
+
+/** `ChatStart` 的传输标识（对象形态取其 `transport`），供 UI 判断与展示。 */
+export function chatTransportOf(chat: ChatStart | null | undefined): string | null {
+  if (!chat) return null;
+  return typeof chat === 'string' ? chat : chat.transport;
+}
+
+/** `ChatStart` 的 ACP 启动参数（非 ACP 或旧字符串格式 → 空数组）。 */
+export function chatAcpArgsOf(chat: ChatStart | null | undefined): string[] {
+  return typeof chat === 'object' && chat !== null && chat.transport === 'acp' ? chat.args : [];
+}
 
 /** 安装检测方式（后端 `Detection`，serde tag=type）。 */
 export type Detection = { type: 'command'; target: string } | { type: 'directory'; target: string };
