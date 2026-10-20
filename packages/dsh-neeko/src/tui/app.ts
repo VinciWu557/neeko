@@ -71,7 +71,7 @@ import { renderOptionsFor, renderRow } from './transcript-view.ts'
 import type { ThemeCapabilities } from './transcript-view.ts'
 import { TranscriptFold } from './fold.ts'
 import { mountFullscreen } from './fullscreen.ts'
-import type { Fullscreen } from './fullscreen.ts'
+import type { Fullscreen, ScreenMode } from './fullscreen.ts'
 import { InteractionManager, interactionIntent, renderInteractionPanel } from './interactions.ts'
 import { ThemeController } from './theme-controller.ts'
 import { StatusController } from './status-controller.ts'
@@ -213,18 +213,15 @@ export interface TuiAppOptions {
   /** Theme to start with; `/theme` switches it at runtime. */
   readonly initialTheme?: string
   /**
-   * Start on the main screen instead of the alt screen.
+   * Which screen to mount; absent takes the default, the main screen.
    *
-   * Fullscreen is the **default**, matching pi (`settings-defaults.js`:
-   * `tuiMode: 'fullscreen'`): it is where clicking a row works (the alt screen
-   * owns its own selection and copy, so reporting the pointer costs nothing
-   * native there) and where the whole viewport belongs to us.
-   *
-   * The cost of the alt screen is the terminal's own scrollback, so opting out
-   * is a single switch — `--main-screen` / `DSH_NEEKO_MAIN_SCREEN=1` — and
-   * `/fullscreen` still toggles it either way at runtime.
+   * The type is {@linkcode ScreenMode} rather than a boolean whose default this
+   * class gets to define: the default is a project-wide decision, and two layers
+   * disagreeing about what `undefined` means is exactly how the flag and the
+   * environment ended up inverted. The app performs the decision, it does not
+   * make it.
    */
-  readonly startOnMainScreen?: boolean
+  readonly screenMode?: ScreenMode
   /** Harness version shown in the startup banner. */
   readonly version: string
   /** Live status snapshot for the bar under the editor. */
@@ -479,9 +476,10 @@ export class TuiApp {
     // Fullscreen starts *instead of* the main screen, not on top of it: the two
     // renderers share one terminal, so whichever starts last owns the mode.
     //
-    // Alt screen by default (pi's `tuiMode: 'fullscreen'`); the main screen is
-    // the opt-out because it is the mode that keeps the terminal's scrollback.
-    if (this.options.startOnMainScreen !== true) {
+    // The default is the terminal-owned main screen: it needs no mount step at
+    // all, because `TuiMainScreen` simply appends to the terminal and the
+    // terminal keeps the scrollback. Only the alt screen has to be entered.
+    if ((this.options.screenMode ?? 'main') === 'fullscreen') {
       this.enterFullscreen()
       return
     }

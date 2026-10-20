@@ -232,8 +232,8 @@ describe('exit leaves the terminal usable', () => {
   })
 })
 
-describe('fullscreen can be the default', () => {
-  function bootWith(startOnMainScreen?: boolean): {
+describe('which screen a boot mounts', () => {
+  function bootWith(screenMode?: 'main' | 'fullscreen'): {
     terminal: FakeTerminal
     isFullscreen: () => boolean
     stop: () => void
@@ -250,7 +250,7 @@ describe('fullscreen can be the default', () => {
       statusFacts: () => ({ cwd: '/tmp/w' }),
       modelPicker: async () => ({ models: [], current: '' }),
       selectModel: () => {},
-      ...(startOnMainScreen === undefined ? {} : { startOnMainScreen }),
+      ...(screenMode === undefined ? {} : { screenMode }),
       terminal,
     })
     const seam = app as unknown as {
@@ -268,40 +268,38 @@ describe('fullscreen can be the default', () => {
     }
   }
 
-  it('enters the alt screen on start', () => {
+  it('stays on the terminal-owned main screen when nothing was asked for', () => {
+    // The default: the terminal keeps its scrollback and the app mounts no
+    // `ScrollView`, so PageUp/PageDown and the wheel behave as they always do.
     const app = bootWith(undefined)
-    expect(app.isFullscreen()).toBe(true)
-    expect(app.terminal.output).toContain('\x1b[?1049h')
-  })
-
-  it('starts in the alt screen by default', () => {
-    // pi's own default is `tuiMode: 'fullscreen'` (settings-defaults.js): the alt
-    // screen is the mode where clicking a card works and the whole viewport is
-    // ours, so it is what a user should get without asking.
-    const app = bootWith(undefined)
-    expect(app.isFullscreen()).toBe(true)
-    expect(app.terminal.output).toContain('\x1b[?1049h')
-  })
-
-  it('stays on the main screen when asked to', () => {
-    // The main screen keeps the terminal's scrollback: it is the opt-out.
-    const app = bootWith(true)
     expect(app.isFullscreen()).toBe(false)
     expect(app.terminal.output).not.toContain('\x1b[?1049h')
   })
 
-  it('still exits cleanly from a fullscreen boot', async () => {
+  it('enters the alt screen when fullscreen was asked for', () => {
+    const app = bootWith('fullscreen')
+    expect(app.isFullscreen()).toBe(true)
+    expect(app.terminal.output).toContain('\x1b[?1049h')
+  })
+
+  it('stays on the main screen when main was asked for', () => {
+    const app = bootWith('main')
+    expect(app.isFullscreen()).toBe(false)
+    expect(app.terminal.output).not.toContain('\x1b[?1049h')
+  })
+
+  it('exits cleanly from a fullscreen boot', () => {
     // The boot path and the `/fullscreen` path must leave the same state behind.
-    const app = bootWith(undefined)
+    const app = bootWith('fullscreen')
     app.stop()
     expect(app.terminal.output).toContain('\x1b[?1049l')
     expect(app.isFullscreen()).toBe(false)
   })
 
-  it('toggles back to the main screen on /fullscreen', async () => {
+  it('toggles into the alt screen on /fullscreen', async () => {
     const app = bootWith(undefined)
     await app.submit('/fullscreen')
-    expect(app.isFullscreen()).toBe(false)
+    expect(app.isFullscreen()).toBe(true)
   })
 })
 
@@ -318,8 +316,11 @@ describe('leaving the alt screen keeps the conversation in scrollback', () => {
    * screen, which lands in real scrollback.
    */
   it('prints the whole conversation onto the main screen on quit', async () => {
+    // Only a fullscreen boot has an alt screen to leave; the main screen is
+    // already the terminal's own buffer.
     const terminal = new FakeTerminal({ columns: 80, rows: 24 })
     const app = new TuiApp({
+      screenMode: 'fullscreen',
       getSelection: () => ({ provider: 'p', model: 'm' }),
       cwd: '/tmp/w',
       getSessionId: () => 's',
@@ -484,6 +485,9 @@ describe('panels are visible in fullscreen too', () => {
   } {
     const terminal = new FakeTerminal({ columns: 100, rows: 40 })
     const app = new TuiApp({
+      // Named, not implied: the main screen is the default now, and these tests
+      // are specifically about what the alt screen does with panels.
+      screenMode: 'fullscreen',
       getSelection: () => ({ provider: 'p', model: 'm' }),
       cwd: '/tmp/w',
       getSessionId: () => 's',

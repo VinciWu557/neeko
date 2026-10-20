@@ -196,11 +196,16 @@ To resume this session: dsh --profile neeko --tui --session <id>
 
 ### Screen modes
 
-Fullscreen (alt screen) is the **default**, matching pi's own default. It owns the
-viewport, enables click-to-expand cards, and copies through **OSC 52** (works over
-SSH, no `pbcopy`/`xclip`). It costs the terminal's own scrollback, so `--main-screen`
-(or `DSH_NEEKO_MAIN_SCREEN=1`) is the explicit opt-out. `/fullscreen` toggles at
-runtime either way.
+The **main screen is the default**: the terminal owns the scrollback, so
+PageUp/PageDown, the wheel and the scrollbar behave the way they already do in
+every other CLI, and the app keeps no scroll position of its own.
+
+`--fullscreen` opts into the alt screen. It owns the viewport, enables
+click-to-expand cards, and copies through **OSC 52** (works over SSH, no
+`pbcopy`/`xclip`), at the cost of the terminal's own scrollback.
+
+Three sources, most specific first: the flag, then `DSH_NEEKO_SCREEN`, then the
+older single-purpose variables. `/fullscreen` toggles at runtime either way.
 
 ### Slash commands
 
@@ -298,7 +303,9 @@ it as "provider default".
 | Variable | Purpose |
 |---|---|
 | `DSH_NEEKO_THEME` | initial theme name (default `dark`) |
-| `DSH_NEEKO_MAIN_SCREEN` | `1` → start on the main screen |
+| `DSH_NEEKO_SCREEN` | `main` or `fullscreen`; an unrecognised value is ignored |
+| `DSH_NEEKO_FULLSCREEN` | `1` → the alt screen (older spelling of `DSH_NEEKO_SCREEN=fullscreen`) |
+| `DSH_NEEKO_MAIN_SCREEN` | `1` → the main screen (older still; still honoured) |
 | `DSH_NEEKO_THEMES_DIR` | override the TUI's own theme directory |
 | `PI_AGENT_DIR` | pi's agent dir; its `themes/` is scanned too |
 | `COLORTERM` | `truecolor`/`24bit` → truecolor, else 256color |

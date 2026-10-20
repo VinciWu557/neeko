@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { planSession } from './session-plan.ts'
+import type { ScreenMode } from './fullscreen.ts'
 import { switchedSelection } from './model-switch.ts'
 import { withReasoningEffort } from './thinking.ts'
 import { titlesFromObservations } from './resume-list.ts'
@@ -96,14 +97,45 @@ export interface TuiConfig {
   sessionId?: string
   /** Set by the `--tui` flag; the patch row also conditions on it. */
   tui?: boolean
-  /** Set by `--main-screen` / `DSH_NEEKO_MAIN_SCREEN=1`: skip the alt screen. */
-  mainScreen?: boolean
+  /**
+   * The screen the user asked for, or absent to take the default (see
+   * {@linkcode screenModeOf}). One field with one polarity, so no layer has to
+   * guess what `undefined` means.
+   */
+  screen?: ScreenMode | undefined
 }
 
 /** Process-facing effects, replaced by tests. */
 export interface RunnerIo {
   readonly stderr: { write(chunk: string): unknown }
   readonly exit: (code: number) => void
+}
+
+/**
+ * The screen this run should mount.
+ *
+ * Precedence, most specific first: the resolved configuration, then the
+ * environment, then the default. A `--main-screen` on the command line is a more
+ * deliberate statement than a shell export, so it wins over one.
+ *
+ * The environment accepts the consolidated `DSH_NEEKO_SCREEN` and the two
+ * variables that shipped before it. Keeping them costs three lines and means a
+ * user's existing export cannot silently start choosing the other screen;
+ * `DSH_NEEKO_SCREEN` settles the case where both legacy variables are set.
+ *
+ * @param config - the resolved configuration; `screen` absent means "not stated".
+ * @returns the mode to mount.
+ */
+export function screenModeOf(config: { screen?: ScreenMode | undefined }): ScreenMode {
+  if (config.screen !== undefined) return config.screen
+  const selected = process.env['DSH_NEEKO_SCREEN']
+  if (selected === 'main' || selected === 'fullscreen') return selected
+  // `MAIN_SCREEN` is checked first on purpose: it is the older spelling and the
+  // more conservative screen (no alt screen, no mouse reporting), so when both
+  // legacy variables are set the quieter one wins. Same rule the flags follow.
+  if (process.env['DSH_NEEKO_MAIN_SCREEN'] === '1') return 'main'
+  if (process.env['DSH_NEEKO_FULLSCREEN'] === '1') return 'fullscreen'
+  return 'main'
 }
 
 export const internals: { io: RunnerIo | undefined } = {
@@ -435,14 +467,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
         },
         // `exactOptionalPropertyTypes`: omit the key rather than pass undefined.
         ...(process.env['DSH_NEEKO_THEME'] === undefined ? {} : { initialTheme: process.env['DSH_NEEKO_THEME'] }),
-        // Fullscreen is the **default** (pi: `tuiMode: 'fullscreen'` in
-        // `settings-defaults.js`): the alt screen is where clicking a card works
-        // and the whole viewport is ours. It costs the terminal's own scrollback,
-        // so the opt-out is explicit — `--main-screen` or the env var, which is
-        // what a user who wants their shell history back reaches for.
-        ...((config.mainScreen === true || process.env['DSH_NEEKO_MAIN_SCREEN'] === '1')
-          ? { startOnMainScreen: true }
-          : {}),
+        screenMode: screenModeOf(config),
         getSessionId: () => String(agent.session.id),
         onSubmit: (text) => {
           const trimmed = text.trim()

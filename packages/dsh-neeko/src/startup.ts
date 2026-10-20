@@ -51,12 +51,21 @@ export interface NeekoStartupValues {
   /** Run the interactive terminal UI instead of the Neeko bridge. */
   tui?: boolean
   /**
-   * Start the TUI on the terminal's main screen instead of the alt screen.
+   * Which TUI screen the user asked for.
    *
-   * Fullscreen is the default (pi's `tuiMode: 'fullscreen'`); this is the
-   * opt-out for anyone who wants their scrollback back.
+   * Absent means "said nothing", which is not the same as either value: the
+   * default lives in the TUI (the terminal-owned main screen), and this layer only
+   * reports what was requested. Spelling it `boolean | undefined` was ambiguous —
+   * the layers disagreed about what `undefined` meant and the default became
+   * unreachable.
+   *
+   * Spelled out rather than imported from `tui/fullscreen.ts` (where the same
+   * union is `ScreenMode`): `startup` must not depend on the TUI, or the CLI
+   * parser would pull in pi-tui to describe one flag. The duplication is two
+   * words of TypeScript, not a business rule; a shared module would exist only to
+   * hold them.
    */
-  mainScreen?: boolean
+  screen?: 'main' | 'fullscreen'
 }
 
 /** Flags as commander actually reports them. */
@@ -73,8 +82,10 @@ export interface StartupFlags {
   spawn?: string | false
   /** `--tui`: run the interactive TUI instead of the bridge. */
   tui?: boolean
-  /** `--main-screen`: keep the terminal's scrollback instead of entering the alt screen. */
+  /** `--main-screen`: keep the terminal's scrollback (this is the default). */
   mainScreen?: boolean
+  /** `--fullscreen`: opt into the alt screen, which owns the viewport. */
+  fullscreen?: boolean
 }
 
 /**
@@ -101,8 +112,25 @@ export function resolveStartupValues(flags: StartupFlags, positional?: string): 
     ...(flags.spawn === false ? { autoSpawn: false } : {}),
     ...(typeof flags.spawn === 'string' ? { spawnCommand: flags.spawn } : {}),
     ...(flags.tui === true ? { tui: true } : {}),
-    ...(flags.mainScreen === true ? { mainScreen: true } : {}),
+    ...screenRequest(flags),
   }
+}
+
+/**
+ * What the caller asked for, as one named value.
+ *
+ * Two flags can name the same decision, so they are folded here rather than in
+ * the value literal: a chain of nested ternaries inside an object spread is where
+ * the polarity last went wrong. `--main-screen` wins when both are given, because
+ * it is the more conservative screen (no alt screen, no mouse reporting).
+ *
+ * @param flags - the parsed command line.
+ * @returns `{}` when neither flag was given, otherwise the request.
+ */
+function screenRequest(flags: StartupFlags): { screen?: 'main' | 'fullscreen' } {
+  if (flags.mainScreen === true) return { screen: 'main' }
+  if (flags.fullscreen === true) return { screen: 'fullscreen' }
+  return {}
 }
 
 function neekoCommand(): Command {
@@ -117,7 +145,8 @@ function neekoCommand(): Command {
     .option('--spawn <command>', 'override the command used to launch Neeko (e.g. "open -a Neeko")')
     .option('--no-spawn', 'do not spawn Neeko even in CLI mode')
     .option('--tui', 'run the interactive terminal UI instead of the Neeko bridge')
-    .option('--main-screen', 'TUI: keep the terminal scrollback (fullscreen is the default)')
+    .option('--fullscreen', 'TUI: use the alt screen (application-owned scrolling; the default keeps the terminal scrollback)')
+    .option('--main-screen', 'TUI: keep the terminal scrollback (this is the default; kept for scripts)')
     .argument('[mode]', "'daemon' runs the bridge in pure-wait mode (alias of --daemon)")
     .addHelpText('after', `
 Examples:

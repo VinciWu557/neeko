@@ -24,6 +24,23 @@
 import { ScrollView, TuiAltScreen, VStack, isViewportTUI } from '@earendil-works/pi-tui'
 import type { Component, Terminal } from '@earendil-works/pi-tui'
 
+/**
+ * Which screen the TUI mounts.
+ *
+ * - `main` — the terminal owns the scrollback: PageUp/PageDown, the wheel and the
+ *   scrollbar behave the way they already do in every other CLI, and the app keeps
+ *   no scroll position of its own.
+ * - `fullscreen` — the alt screen owns the viewport (pi calls it `fullscreen`),
+ *   which is what makes a click on a card possible.
+ *
+ * A **three-state** domain: the third case is "the user said nothing", and that is
+ * the one carrying the default. Named rather than spelled `boolean | undefined`
+ * because the polarity of `undefined` differed between layers — `startup` and
+ * `TuiConfig` read it as "not stated" while `TuiApp` read it as "fullscreen" —
+ * and that is how the default became unreachable.
+ */
+export type ScreenMode = 'main' | 'fullscreen'
+
 /** What the fullscreen surface needs from the app. */
 export interface FullscreenOptions {
   readonly terminal: Terminal

@@ -125,19 +125,39 @@ describe('resolveStartupValues — tui flag', () => {
   })
 })
 
-describe('resolveStartupValues — main screen opt-out', () => {
-  it('propagates --main-screen into the values', () => {
-    // Fullscreen is the default (pi's `tuiMode: 'fullscreen'`), so the flag that
-    // exists is the one that turns it off; the main screen keeps scrollback.
-    expect(resolveStartupValues({ mainScreen: true }).mainScreen).toBe(true)
+describe('resolveStartupValues — main screen is the default', () => {
+  /**
+   * The terminal owns its scrollback on the main screen: no `ScrollView`, no
+   * `follow: 'end'`, no scroll position for the app to maintain. That is the
+   * behaviour a terminal user expects from PageUp/PageDown and the wheel, and it
+   * is what pi's `regular` mode does.
+   *
+   * Fullscreen is the opt-in: it buys click-to-expand and an application-owned
+   * viewport, at the cost of the terminal's own scrollback.
+   */
+  it('says nothing when no flag is given, so the default applies', () => {
+    // Absent, not `main`: this layer reports the request and the TUI owns the
+    // default. Writing `screen: 'main'` here would be a second place that decides.
+    expect(resolveStartupValues({})).not.toHaveProperty('screen')
   })
 
-  it('omits the key when the flag is absent (fullscreen stays the default)', () => {
-    expect(resolveStartupValues({})).not.toHaveProperty('mainScreen')
+  it('reports --fullscreen', () => {
+    expect(resolveStartupValues({ fullscreen: true }).screen).toBe('fullscreen')
+  })
+
+  it('reports --main-screen', () => {
+    // Kept so an alias or a script that already passes it keeps working.
+    expect(resolveStartupValues({ mainScreen: true }).screen).toBe('main')
+  })
+
+  it('prefers the conservative screen when both flags are given', () => {
+    // `--main-screen` means no alt screen and no mouse reporting; when the two
+    // contradict each other, the quieter one is the safer read.
+    expect(resolveStartupValues({ mainScreen: true, fullscreen: true }).screen).toBe('main')
   })
 
   it('is independent of --tui', () => {
-    const values = resolveStartupValues({ tui: true, mainScreen: true })
-    expect(values).toMatchObject({ tui: true, mainScreen: true })
+    expect(resolveStartupValues({ tui: true, fullscreen: true }))
+      .toMatchObject({ tui: true, screen: 'fullscreen' })
   })
 })
