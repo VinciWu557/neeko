@@ -135,6 +135,22 @@ describe('EditorPanel / 翻译设置', () => {
     expect(screen.queryByRole('option', { name: /unavailable/ })).not.toBeInTheDocument();
   });
 
+  /**
+   * agent 与 model 是一个选择，不是一个设置里的两个独立项。
+   * 判据：模型控件的标签写明它属于谁 —— 让联动在界面上可见，而不是靠用户知道
+   * 「换 agent 会清空模型」。
+   */
+  it('should label the model selector with the owning agent', () => {
+    render(<EditorPanel {...baseProps} translationAgentId="claude-code" />);
+    expect(screen.getByRole('option', { name: 'Claude Code — default' })).toBeInTheDocument();
+  });
+
+  /** 陈旧 agentId 时，模型下拉的归属标签必须说明它不可用，而不是谎报「Agent default」。 */
+  it('should mark the model owner as unavailable when the agent is stale', () => {
+    render(<EditorPanel {...baseProps} translationAgentId="deleted-agent" />);
+    expect(screen.getByRole('option', { name: 'Unavailable agent — default' })).toBeInTheDocument();
+  });
+
   it('should expose the comment display mode selector', () => {
     render(<EditorPanel {...baseProps} commentTranslationMode="below" />);
     expect(screen.getByLabelText('Comment translation display mode')).toBeInTheDocument();

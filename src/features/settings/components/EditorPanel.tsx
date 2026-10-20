@@ -89,6 +89,17 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
     ? translationAgentId
     : null;
 
+  /**
+   * 模型下拉的归属标签：让「模型属于哪个 agent」在界面上可见。
+   *
+   * 联动如果只体现在「换 agent 会清空模型」，用户看到的是一次莫名其妙的丢失；
+   * 写明归属后，同一次操作读起来是「换主人 → 模型跟着换」。
+   */
+  const selectedAgentName = chatAgents.find((agent) => agent.id === translationAgentId)?.name;
+  const modelOwnerLabel = staleAgentId
+    ? 'Unavailable agent'
+    : (selectedAgentName ?? 'Agent default');
+
   return (
     <>
       <h3 className="text-base font-semibold text-text-primary mb-4">Editor</h3>
@@ -158,56 +169,52 @@ const EditorPanel: React.FC<EditorPanelProps> = ({
         />
       </SettingRow>
       <WatcherExcludeSection excludes={watcherExclude} onExcludesChange={onWatcherExcludeChange} />
+      {/*
+        Agent 与模型是**一个选择**，不是一个设置里的两个独立项：模型属于 agent，
+        换 agent 后旧模型 id 无意义。所以它们同处一行、上下排列，模型控件的标签
+        直接写明所属 agent（"Model for Claude Code"），联动关系在界面上可见，
+        而不是靠用户知道「换 agent 会清空模型」。
+
+        陈旧 agentId 必须**显式可见**：HTML select 遇到不在 options 里的 value 会
+        回落显示第一项，于是「配置里存着一个已删除的 agent」在界面上表现为「没设置」
+        —— 用户改不动、也看不出问题，而翻译时照旧用那个坏 id。
+      */}
       <SettingRow
         title="Default Translation Agent"
-        description="Default agent used by the AI Translate view for Markdown / HTML / TXT documents."
+        description="Agent and model used by the AI Translate view. The model list follows the chosen agent; switching agents resets the model."
       >
-        <select
-          className={selectClass}
-          value={translationAgentId ?? ''}
-          onChange={(e) => onTranslationAgentChange(e.target.value)}
-          aria-label="Default translation agent"
-        >
-          <option value="">Agent default</option>
-          {/*
-            陈旧值必须**显式可见**。HTML select 遇到不在 options 里的 value 会回落显示
-            第一项（实测：显示成 "Agent default"），于是「配置里存着一个已删除的 agent」
-            在界面上表现为「没设置」—— 用户改不动、也看不出问题，而翻译时照旧用那个坏 id。
-          */}
-          {staleAgentId !== null && (
-            <option value={staleAgentId}>{staleAgentId} (unavailable — pick another)</option>
-          )}
-          {chatAgents.map((agent) => (
-            <option key={agent.id} value={agent.id}>
-              {agent.name}
-            </option>
-          ))}
-        </select>
-      </SettingRow>
-      <SettingRow
-        title="Default Translation Model"
-        description="Model used by the translation agent. Leave empty to let the agent pick its own default."
-      >
-        <select
-          className={selectClass}
-          value={translationModelId ?? ''}
-          onChange={(e) => onTranslationModelChange(e.target.value || null)}
-          aria-label="Default translation model"
-          disabled={models.length === 0}
-        >
-          <option value="">
-            {translationAgentId
-              ? models.length === 0
-                ? 'No models'
-                : 'Agent default'
-              : 'Agent default'}
-          </option>
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.name || model.id}
-            </option>
-          ))}
-        </select>
+        <div className="flex flex-col gap-2 min-w-[180px]">
+          <select
+            className={selectClass}
+            value={translationAgentId ?? ''}
+            onChange={(e) => onTranslationAgentChange(e.target.value)}
+            aria-label="Default translation agent"
+          >
+            <option value="">Agent default</option>
+            {staleAgentId !== null && (
+              <option value={staleAgentId}>{staleAgentId} (unavailable — pick another)</option>
+            )}
+            {chatAgents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
+          <select
+            className={selectClass}
+            value={translationModelId ?? ''}
+            onChange={(e) => onTranslationModelChange(e.target.value || null)}
+            aria-label="Default translation model"
+            disabled={models.length === 0}
+          >
+            <option value="">{`${modelOwnerLabel} — default`}</option>
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name || model.id}
+              </option>
+            ))}
+          </select>
+        </div>
       </SettingRow>
       <SettingRow
         title="Default Target Language"
