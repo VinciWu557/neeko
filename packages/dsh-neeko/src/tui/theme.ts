@@ -1,6 +1,5 @@
 /**
- * Theme system for the TUI, modeled on pi's
- * (`pi-coding-agent/dist/modes/interactive/theme/`).
+ * Theme system for the TUI, modeled on pi's.
  *
  * pi's design, reduced to this TUI's needs:
  *

@@ -24,20 +24,22 @@ SOFTWARE.
 
 ## Third-party notices
 
-This package contains code derived from pi, distributed under the MIT License:
-
   pi — https://github.com/earendil-works/pi
   Copyright (c) Mario Zechner
   Licensed under the MIT License
-  Affected packages: @earendil-works/pi-tui,
-                     @earendil-works/pi-coding-agent
 
-The pi components under `src/tui/` are transcribed rather than vendored: the
-behaviour is ported and the dependency is not (see `src/tui/message-view.ts` for
-the reasoning). The files concerned are the ones whose header says so —
-"transcribed from pi's own implementations", "transcribed from pi's", or "pi's
-shape". Files that merely mention pi without such a note describe pi's behaviour
-in prose and contain no ported code.
+Portions of this package are transcribed from pi's CLI application
+(`@earendil-works/pi-coding-agent`), whose components are not depended on:
+
+  src/tui/message-view.ts       AssistantMessage / UserMessage / ToolExecution
+  src/tui/status-indicator.ts   StatusIndicator wrapper and border composition
+  src/tui/theme-tokens.ts       the 56-token vocabulary
+  src/tui/theme-selector.ts     ThemeSelectorComponent
+  src/tui/thinking-selector.ts  ThinkingSelectorComponent
+
+`@earendil-works/pi-tui` is a dependency, not a source: no code is copied from
+it, so it carries no notice of its own. Files that mention pi in prose without
+one of the markers above describe its behaviour and contain no ported code.
 
 pi is distributed under the MIT License, which requires its copyright notice and
 permission notice to accompany copies of the software. The copyright notice is
