@@ -75,3 +75,45 @@ describe('chat transport options', () => {
     }
   });
 });
+
+/**
+ * `chat_command` / `chat_args` 的存在性护栏。
+ *
+ * 上一轮把 `adapter_for` 从 `cmd_vec()` 换成 `chat_cmd_vec()`，但前端表单没有
+ * 对应输入 —— 于是「chat 用 pi-acp、TUI 用 pi」这个需求无处表达。这组断言防止
+ * 字段再次从任一端消失：**任何一端缺失都是静默失效**（存了不生效 / 填了存不下）。
+ */
+describe('chat launch overrides', () => {
+  it('AgentConfig declares chat_command and chat_args', () => {
+    const src = readFileSync(resolve(__dirname, '../../../../shared/types/agent.ts'), 'utf8');
+    expect(src).toContain('chat_command?:');
+    expect(src).toContain('chat_args?:');
+  });
+
+  it('the form state carries both fields end to end', () => {
+    const src = readFileSync(resolve(__dirname, '../agentFormState.ts'), 'utf8');
+    // 文本态字段
+    expect(src).toContain('chatCommand: string;');
+    expect(src).toContain('chatArgsText: string;');
+    // 读方向
+    expect(src).toContain('form.chat_command');
+    expect(src).toContain('form.chat_args');
+  });
+
+  it('the backend entry point renders both inputs', () => {
+    const src = readFileSync(resolve(__dirname, '../ChatLaunchFields.tsx'), 'utf8');
+    expect(src).toContain('Chat Command');
+    expect(src).toContain('Chat Args');
+  });
+
+  /// 后端必须真的消费这两个字段，否则前端填了也没用。
+  it('the backend consumes them through chat_cmd_vec', () => {
+    const rust = readFileSync(
+      resolve(__dirname, '../../../../../src-tauri/src/common/agent/types.rs'),
+      'utf8',
+    );
+    expect(rust).toContain('pub fn chat_cmd_vec');
+    expect(rust).toContain('pub chat_command: Option<String>');
+    expect(rust).toContain('pub chat_args: Option<Vec<String>>');
+  });
+});

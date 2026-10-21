@@ -70,6 +70,64 @@ describe('useSelectedModelSync', () => {
     expect(setSelected).toHaveBeenCalledWith(models[1]);
   });
 
+  /**
+   * **切推理档位不得改模型**（真机缺陷）。
+   *
+   * 后端 `refresh_configs` 在切档位后会重拉整份 configOptions —— 因为档位的可选项
+   * 随模型变化，必须重拉。但模型项的 `current_value` 只是**原样重报**一次会话当前值，
+   * 那不是「agent 换了模型」。
+   *
+   * 旧实现把它当成权威，于是：用户选了模型 B（还没发消息）→ 切档位 → 一次无关的
+   * 刷新把模型打回会话当前值 A。表现就是「选完模型再选思考等级，模型自己变了」。
+   */
+  it('should not override the user selection when an unrelated refresh repeats the current value', () => {
+    const setSelected = vi.fn();
+    // 关键：`selectedModel` 必须是用户新选的 **B**，而会话当前值仍是 **A**。
+    // 若这里用 A，`alreadySelected` 会挡住覆盖，测试就抓不到缺陷（已实测确认）。
+    const { rerender } = renderHook(
+      ({ opts, sel }) => useSelectedModelSync(models, opts, sel, setSelected),
+      { initialProps: { opts: configWith('a'), sel: m('a') } },
+    );
+
+    // 1) 首帧建立「已知当前值 = a」
+    // 2) 用户选了 B（还没发消息）
+    rerender({ opts: configWith('a'), sel: m('b') });
+    setSelected.mockClear();
+
+    // 3) 切推理档位：configOptions 换了一份新数组，模型项 current_value 仍是 'a'
+    const afterLevelSwitch = [
+      ...configWith('a'),
+      {
+        id: 'thinking_level',
+        name: 'Thinking level',
+        category: 'thought_level',
+        currentValue: 'low',
+        options: [
+          { value: 'low', name: 'low' },
+          { value: 'high', name: 'high' },
+        ],
+      },
+    ];
+    rerender({ opts: afterLevelSwitch, sel: m('b') });
+
+    // 会话当前模型没变（仍是 a）→ **不得**把用户选的 B 打回去
+    expect(setSelected).not.toHaveBeenCalled();
+  });
+
+  /** agent 主动换模型（current_value 真的变了）→ 必须跟上。 */
+  it('should follow when the agent actually switches the model', () => {
+    const setSelected = vi.fn();
+    const { rerender } = renderHook(
+      ({ opts }) => useSelectedModelSync(models, opts, m('a'), setSelected),
+      { initialProps: { opts: configWith('a') } },
+    );
+    setSelected.mockClear();
+
+    // rate-limit fallback：会话当前值从 a 变成 b
+    rerender({ opts: configWith('b') });
+    expect(setSelected).toHaveBeenCalledWith(models[1]);
+  });
+
   /** 列表为空时不动作（避免 setSelected(undefined)）。 */
   it('should do nothing when there are no models', () => {
     const setSelected = vi.fn();

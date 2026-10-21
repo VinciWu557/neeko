@@ -33,6 +33,17 @@ export function startAgentChat(req: StreamChatRequest): Promise<string> {
 }
 
 /**
+ * 打开一个**静默会话**：建会话拿 `configOptions`，但不发 prompt。
+ *
+ * 用于「选中 agent 就先把工具条填满」—— 模型 / 推理档位 / 模式都只在会话的
+ * `configOptions` 里，等发第一条消息才建会话会让这些选择器先缺席再出现。
+ * 之后 `startAgentChat` 会走续聊分支复用同一会话。
+ */
+export function openAgentChat(req: StreamChatRequest): Promise<string> {
+  return invoke<string>('agent_chat_open', { req });
+}
+
+/**
  * 从 agent 原生会话恢复一个流式 Agent Chat（会话静默启动，历史由前端
  * `getConversationMessages` 渲染）。仅支持 `supports_chat_resume` 的 adapter。
  */

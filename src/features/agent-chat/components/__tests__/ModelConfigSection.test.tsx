@@ -8,7 +8,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { modelConfigOptionsOf } from '../ChatComposer';
+import { modeOptionOf, modelConfigOptionsOf, thoughtLevelOptionOf } from '../ChatComposer';
 import { ModelConfigSection } from '../ModelConfigSection';
 
 const selectOption = (id: string, name: string, current: string) => ({
@@ -90,7 +90,11 @@ describe('modelConfigOptionsOf', () => {
    * 判定靠 `category`，不靠 `id`：规范明说 category 是 UX 提示，没有 id 命名约束
    * （实测 Codex 用 `reasoning_effort`、OpenCode 用 `effort`）。
    */
-  it('should pick model_config and thought_level by category', () => {
+  /**
+   * 只收 `model_config`。`thought_level` 归输入框的选择器 ——
+   * 两处都渲染会出现两个控件指向同一个 `configId`，改一处另一处不动。
+   */
+  it('should pick only model_config by category', () => {
     const picked = modelConfigOptionsOf([
       { id: 'model', name: 'Model', category: 'model', options: [] },
       { id: 'context', name: 'Context', category: 'model_config', options: [] },
@@ -98,7 +102,65 @@ describe('modelConfigOptionsOf', () => {
       { id: 'mode', name: 'Mode', category: 'mode', options: [] },
     ]);
 
-    expect(picked.map((o) => o.id)).toEqual(['context', 'reasoning_effort']);
+    expect(picked.map((o) => o.id)).toEqual(['context']);
+  });
+
+  /// `thought_level` 由专用入口取出，供输入框工具条使用。
+  it('should expose the thought_level option separately', () => {
+    const option = thoughtLevelOptionOf([
+      { id: 'model', name: 'Model', category: 'model', options: [] },
+      {
+        id: 'thinking_level',
+        name: 'Thinking level',
+        category: 'thought_level',
+        currentValue: 'high',
+        options: [
+          { value: 'low', name: 'low' },
+          { value: 'high', name: 'high' },
+        ],
+      },
+    ]);
+    expect(option?.id).toBe('thinking_level');
+    expect(option?.currentValue).toBe('high');
+    expect(option?.options.map((o) => o.value)).toEqual(['low', 'high']);
+  });
+
+  /// 没有该项时返回 null —— 调用方据此隐藏选择器。
+  it('should return null when thought_level is absent', () => {
+    expect(thoughtLevelOptionOf([{ id: 'model', name: 'M', category: 'model' }])).toBeNull();
+    expect(thoughtLevelOptionOf(undefined)).toBeNull();
+  });
+
+  /**
+   * 模式（plan / build）同样只认会话下发的 `category: "mode"`。
+   *
+   * **当前没有任何内置 agent 下发它**（Pi 的 rpc 没有这个概念，opencode serve
+   * 也不发），所以线上表现是选择器一直不出现 —— 这是正确行为。这组断言守的是
+   * 「一旦某个 agent 下发，UI 自动接上；一旦撤回，UI 自动消失」。
+   */
+  it('should expose the mode option when the session provides one', () => {
+    const option = modeOptionOf([
+      { id: 'model', name: 'Model', category: 'model', options: [] },
+      {
+        id: 'session_mode',
+        name: 'Mode',
+        category: 'mode',
+        currentValue: 'plan',
+        options: [
+          { value: 'build', name: 'Build' },
+          { value: 'plan', name: 'Plan' },
+        ],
+      },
+    ]);
+    expect(option?.id).toBe('session_mode');
+    expect(option?.currentValue).toBe('plan');
+    expect(option?.options.map((o) => o.value)).toEqual(['build', 'plan']);
+  });
+
+  /// agent 不支持模式 → null → 选择器不渲染。
+  it('should return null when the session has no mode option', () => {
+    expect(modeOptionOf([{ id: 'model', name: 'M', category: 'model' }])).toBeNull();
+    expect(modeOptionOf(undefined)).toBeNull();
   });
 
   /** 没有 options 时返回空数组，而不是抛错。 */

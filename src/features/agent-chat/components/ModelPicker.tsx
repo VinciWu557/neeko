@@ -2,9 +2,11 @@ import { ChevronDown, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ModelConfigOption, ModelInfo } from '@/features/agent/api/agentApi';
+import { noAutocorrectProps } from '@/ui/inputDefaults';
 
 import { AgentBadge } from './AgentBadge';
 import { displayName } from './constants';
+import { ModelBadge } from './ModelBadge';
 import { ModelConfigSection } from './ModelConfigSection';
 
 // ─── 模型搜索 Hook ───
@@ -16,7 +18,16 @@ function useModelSearch(models: ModelInfo[]) {
   const filteredModels = useMemo(() => {
     if (!search.trim()) return models;
     const q = search.toLowerCase().trim();
-    return models.filter((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
+    // 也匹配 `description`：Pi 把 provider 放在那里（它是列表里**唯一**能区分
+    // 同名模型的信息 —— `deepseek-v4-pro` 会出现在 4 个 provider 下）。
+    // 不匹配它，用户输入 provider 名时会看到「明明显示着却搜不到」。
+    return models.filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.id.toLowerCase().includes(q) ||
+        (m.group ?? '').toLowerCase().includes(q) ||
+        (m.description ?? '').toLowerCase().includes(q),
+    );
   }, [models, search]);
 
   const clearSearch = useCallback(() => setSearch(''), []);
@@ -46,6 +57,10 @@ function ModelSearchInput({ value, onChange, onClear, onEscape, inputRef }: Mode
         placeholder="Search models..."
         value={value}
         maxLength={100}
+        // WebKit 默认 `autocapitalize="sentences"` → 首字母被强制大写，
+        // 用户输入 "deepseek" 得到 "Deepseek"。搜索是技术标识符匹配，
+        // 必须关掉大写/纠错/拼写检查（与 ui/Input 同一常量）。
+        {...noAutocorrectProps}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Escape') onEscape();
@@ -70,18 +85,16 @@ function ModelSearchInput({ value, onChange, onClear, onEscape, inputRef }: Mode
 // 低耦合：通过 props 接收数据和回调，不关心搜索逻辑
 interface ModelListProps {
   models: ModelInfo[];
-  selectedId: string | undefined;
+  /** 选中项的**组合键**（`id|provider`）。不能用裸 id —— 同一 id 会出现在多个 provider 下。 */
+  selectedKey: string | undefined;
   onSelect: (model: ModelInfo) => void;
-  /** 当前所选 agent（用于列表项图标展示）。 */
-  agent: { id: string; name: string; icon?: string | null };
   emptyMessage?: string;
 }
 
 function ModelList({
   models,
-  selectedId,
+  selectedKey,
   onSelect,
-  agent,
   emptyMessage = 'No models available',
 }: ModelListProps) {
   if (models.length === 0) {
@@ -92,12 +105,12 @@ function ModelList({
     <>
       {models.map((m) => (
         <button
-          key={m.id}
-          className={`param-option${selectedId === m.id ? ' selected' : ''}`}
+          key={`${m.id}|${m.group ?? ''}`}
+          className={`param-option${selectedKey === `${m.id}|${m.group ?? ''}` ? ' selected' : ''}`}
           onClick={() => onSelect(m)}
         >
           <span className="param-opt-icon">
-            <AgentBadge icon={agent.icon} name={agent.name} id={agent.id} />
+            <ModelBadge modelId={m.id} modelName={m.name} />
           </span>
           <span className="param-opt-info">
             <span className="param-opt-name">{displayName(m.name)}</span>
@@ -107,7 +120,9 @@ function ModelList({
               是 `model_config` 配置项，规范要求渲染在模型选择器**附近**而不是挤进
               同一行文本。改由下方 config 区呈现。
             */}
-            {m.description ? <span className="param-opt-desc">{m.description}</span> : null}
+            {(m.group ?? m.description) ? (
+              <span className="param-opt-desc">{m.group ?? m.description}</span>
+            ) : null}
           </span>
         </button>
       ))}
@@ -203,7 +218,12 @@ function ModelPicker({
         title={current ? current.id : 'Select model'}
       >
         <span className="param-icon">
-          <AgentBadge icon={agent.icon} name={agent.name} id={agent.id} />
+          {current ? (
+            <ModelBadge modelId={current.id} modelName={current.name} />
+          ) : (
+            // 还没选模型（会话未建）→ 用 agent 图标，它此时是唯一有意义的身份
+            <AgentBadge icon={agent.icon} name={agent.name} id={agent.id} />
+          )}
         </span>
         <span className="param-name">{displayNameLabel}</span>
         <span className="param-chevron">
@@ -235,9 +255,8 @@ function ModelPicker({
             />
             <ModelList
               models={filteredModels}
-              selectedId={current?.id}
+              selectedKey={current ? `${current.id}|${current.group ?? ''}` : undefined}
               onSelect={handleSelect}
-              agent={agent}
               emptyMessage={
                 models.length > 0
                   ? 'No matching models'

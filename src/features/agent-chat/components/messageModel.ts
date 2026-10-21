@@ -143,3 +143,18 @@ export function clipToolOutput(existing: string | undefined, delta: string): str
   const alreadyMarked = (existing ?? '').includes(TOOL_OUTPUT_TRUNCATED_MARK);
   return (alreadyMarked ? '' : TOOL_OUTPUT_TRUNCATED_MARK) + tail;
 }
+
+/** 会话上下文（`context_init` 事件）—— 组合根与视图共用。 */
+export interface CtxInfo {
+  projectName: string;
+  env: string;
+  /** 工作目录：后端 `AgentContext.project_id` 即项目绝对路径（cwd）。 */
+  projectPath?: string;
+}
+
+/** 上下文用量条的数据。 */
+export interface ContextWindow {
+  used: number;
+  total: number;
+  model: string;
+}
