@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/10-20-unify-acp-model-selection/research/acp-model-selection.md", "reason": "一手协议取证：SessionConfigOption 形状、category 语义、set_config_option 响应全量语义、各 agent 支持矩阵、旧 models API 删除历史。所有 ACP 实现决策的直接依据。"}
+{"file": ".trellis/tasks/10-20-unify-acp-model-selection/design.md", "reason": "技术设计：能力挂在协议层的抽象、ModelInfo 精简理由、三级 category 探测、兼容性分层、执行顺序与风险。"}
+{"file": ".trellis/tasks/10-20-unify-acp-model-selection/implement.md", "reason": "分阶段执行清单、每阶段验证命令、变异验证清单、阶段依赖关系。"}
+{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "AgentAdapter / AgentSession 的既有约定与扩展方式，阶段 5 扩展 trait 前必读。"}
+{"file": ".trellis/spec/backend/type-safety.md", "reason": "Rust 类型驱动分派与枚举设计约定，影响 ChatStart 序列化演进与 ModelCatalogResult 形状。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 分类与 ? 传导约定，模型发现失败需要区分 Unsupported 与 Io。"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "瘦命令层约定；AC1 要求 list_agent_models 内无业务分支。"}
+{"file": ".trellis/spec/frontend/api-layer.md", "reason": "API wrapper 约定；list_agent_models 返回类型变更涉及前端 api 层。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "ModelInfo / ModelCatalogResult 联合类型的前端落地约定。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "useAgentModels 的状态派生约定（既有实现已按此写）。"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "静态护栏测试范式（entryWiring 模式），AC1 的护栏用例按此写。"}
