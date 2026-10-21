@@ -92,13 +92,36 @@ fn cli_agents_default_to_no_interactive_form() {
 }
 
 #[test]
-fn chat_agents_are_exactly_two() {
+fn chat_agents_are_exactly_these() {
+    // 这个清单是刻意的：每加一个 chat agent 都要在这里显式登记。
+    // 它防止「某个 agent 意外获得了 chat 能力」——那种变化会悄悄改变
+    // Chat 页面的 agent 选择器内容，而没有任何测试会察觉。
     let chat: Vec<String> = builtin_configs()
         .into_iter()
         .filter(|c| c.is_chat_agent())
         .map(|c| c.id)
         .collect();
-    assert_eq!(chat, vec!["opencode".to_string(), "mockAgent".to_string()]);
+    assert_eq!(
+        chat,
+        vec![
+            "opencode".to_string(),
+            "pi".to_string(),
+            "mockAgent".to_string()
+        ]
+    );
+}
+
+/// Pi 走**私有 rpc 协议**，不是 ACP —— 它是单进程直连，不依赖 `pi-acp` 中间层。
+#[test]
+fn pi_uses_the_private_rpc_transport() {
+    let c = config_map();
+    let pi = c.get("pi").expect("pi config");
+    assert_eq!(pi.chat, Some(crate::common::agent::types::ChatStart::PiRpc));
+    // 会话外的模型列表命令仍在（打开 Chat 即可选模型，无需先发消息）
+    assert_eq!(
+        pi.model_list_args.as_deref(),
+        Some(["--list-models".to_string()].as_slice())
+    );
 }
 
 #[test]
