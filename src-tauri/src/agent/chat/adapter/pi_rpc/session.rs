@@ -37,6 +37,11 @@ pub struct PiSession {
     session_id: String,
     /// 会话配置项状态（模型列表 + 档位 + 当前值）。
     configs: ConfigOptionsState,
+    /// pi 自己的会话 id（`get_state.sessionId`）。
+    ///
+    /// 用于 `resume_id()` —— `conversation/adapters/pi.rs` 的 `resume_command`
+    /// 已经能把它拼成 `pi --session <id>`，缺的只是 chat 侧把它暴露出来。
+    native_session_id: Option<String>,
     /// 待回答的审批：`extension_ui_request.id` → 它的回答形状。
     ///
     /// 存在的理由：`Approve { call_id, allow }` 只有一个布尔，而要回写的字段名
@@ -92,9 +97,14 @@ impl PiSession {
                 .await?;
             levels_from_response(&data)
         };
-        let current = {
+        let (current, native_session_id) = {
             let data = proc.request(json!({"type": "get_state"}), None).await?;
-            CurrentSelection::from_state(&data)
+            (
+                CurrentSelection::from_state(&data),
+                data.get("sessionId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            )
         };
 
         let configs =
@@ -113,7 +123,8 @@ impl PiSession {
                 // Bash 工具的增量输出走 ToolOutput，不是 CommandRun。
                 command_echo: false,
                 diff: false,
-                resume: false,
+                // `get_state.sessionId` → `resume_id()` → `pi --session <id>`。
+                resume: true,
             },
         });
         pending.push_back(StreamEvent::ContextInit {
@@ -132,6 +143,7 @@ impl PiSession {
             proc,
             session_id: ctx.session_id.clone(),
             configs,
+            native_session_id,
             pending_approvals: std::collections::HashMap::new(),
             pending,
         })
@@ -347,8 +359,12 @@ impl AgentSession for PiSession {
         self.proc.dispose();
     }
 
+    /// pi 的 native session id（来自握手时的 `get_state`）。
+    ///
+    /// 消费方是 `conversation/adapters/pi.rs::resume_command`，它拼成
+    /// `pi --session <id>`。返回 `None` 会让「历史会话 → 继续聊」这条入口消失。
     fn resume_id(&self) -> Option<String> {
-        None
+        self.native_session_id.clone()
     }
 }
 
@@ -409,7 +425,8 @@ mod tests {
                     "get_available_thinking_levels" => json!({"levels": ["low", "high", "max"]}),
                     "get_state" => json!({
                         "model": {"id": "auto/deepseek-v4.1-flash"},
-                        "thinkingLevel": "high"
+                        "thinkingLevel": "high",
+                        "sessionId": "01a15cec-9454-7596-9016-6069189d7d4e"
                     }),
                     _ => json!({}),
                 };
@@ -695,6 +712,39 @@ mod tests {
                 Some("extension_ui_response"),
                 "unknown approval must not be answered"
             );
+        }
+    }
+
+    /// `resume_id()` 必须给出 pi 的 native session id。
+    ///
+    /// 这条不是锦上添花：`conversation/adapters/pi.rs::resume_command` 已能把它
+    /// 拼成 `pi --session <id>`，返回 `None` 会让「历史会话 → 继续聊」整条入口消失，
+    /// 且没有任何报错。
+    #[tokio::test]
+    async fn resume_id_comes_from_the_handshake() {
+        let (proc, _fake) = fake_pi();
+        let session = PiSession::start_with(proc, &ctx()).await.expect("start");
+        assert_eq!(
+            session.resume_id().as_deref(),
+            Some("01a15cec-9454-7596-9016-6069189d7d4e")
+        );
+    }
+
+    /// `resume` 能力位必须与 `resume_id()` 一致 —— 声明 false 会让前端隐藏入口，
+    /// 而实现其实可用。
+    #[tokio::test]
+    async fn capabilities_declare_resume_because_it_works() {
+        let (proc, _fake) = fake_pi();
+        let mut session = PiSession::start_with(proc, &ctx()).await.expect("start");
+        match session.next().await.expect("event").expect("ok") {
+            StreamEvent::SessionStart { capabilities, .. } => {
+                assert!(
+                    capabilities.resume,
+                    "resume_id() is implemented, declare it"
+                );
+                assert!(capabilities.approvals, "approvals are mapped, declare it");
+            }
+            other => panic!("first event must be SessionStart, got {other:?}"),
         }
     }
 
