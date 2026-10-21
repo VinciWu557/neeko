@@ -22,6 +22,8 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             args: vec![],
             env: HashMap::new(),
             chat: None,
+            chat_command: None,
+            chat_args: None,
             prompt_args: Some(vec!["--bare".into(), "-p".into()]),
             interactive_prompt_args: None,
             post_prompt_args: Some(vec!["--dangerously-skip-permissions".into()]),
@@ -157,6 +159,8 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             args: vec![],
             env: HashMap::new(),
             chat: Some(ChatStart::Mock),
+            chat_command: None,
+            chat_args: None,
             prompt_args: None,
             interactive_prompt_args: None,
             post_prompt_args: None,
@@ -220,6 +224,9 @@ fn shell_agent(
         args: vec![],
         env: HashMap::new(),
         chat,
+        // 内置定义不拆分 chat 可执行文件/参数（需要时由调用方后置覆盖）。
+        chat_command: None,
+        chat_args: None,
         prompt_args: prompt_args.map(|a| a.iter().map(|s| (*s).into()).collect()),
         interactive_prompt_args: interactive_prompt_args
             .map(|a| a.iter().map(|s| (*s).into()).collect()),

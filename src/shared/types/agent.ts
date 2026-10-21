@@ -53,6 +53,21 @@ export interface AgentConfig {
   env: Record<string, string>;
   /** CHAT 能力（None = 无 CHAT 能力）。 */
   chat?: ChatStart | null;
+  /**
+   * CHAT 会话进程的**可执行文件**覆盖（None = 沿用 `command`）。
+   *
+   * 同一个 agent 的 TUI 与 chat 可能不是同一个二进制：`pi` 跑自己的 rpc，
+   * `pi-acp` 是把它包成 ACP 的独立入口。
+   *
+   * **一旦设置，`args` 不再被 chat 继承** —— 那些参数描述的是终端 TUI 进程。
+   */
+  chat_command?: string | null;
+  /**
+   * CHAT 会话进程的附加参数，追加在可执行文件之后。
+   *
+   * 与 `args` 分开：后者是终端 TUI 的启动参数，两者要的往往不是同一组。
+   */
+  chat_args?: string[] | null;
   /** prompt 前置参数（Headless 能力；None = 无）。 */
   prompt_args?: string[] | null;
   /** 交互式（TUI）prompt 前置参数（如 opencode `--prompt`：打开 CLI 并预填 prompt）；None = 无交互形态，回落 headless prompt_args。 */

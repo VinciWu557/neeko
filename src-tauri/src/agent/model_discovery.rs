@@ -194,6 +194,8 @@ pub fn parse_opencode_model_json(
         id: slug.unwrap_or(id).to_string(),
         name,
         description: None,
+        // OpenCode 把 provider 拼进了 `name`（见上），不需要独立分组维度。
+        group: None,
     }))
 }
 
@@ -260,6 +262,7 @@ fn parse_plain_model_lines(stdout: &str) -> Vec<ModelInfo> {
             id: line.to_string(),
             name: line.to_string(),
             description: None,
+            group: None,
         })
         .collect()
 }
@@ -355,9 +358,13 @@ pub fn parse_pi_models_output(output: &str) -> Vec<ModelInfo> {
                 return None;
             }
             Some(ModelInfo {
+                // 这条路径的 id 是 `provider/model` 复合串，本身已唯一。
+                // （与 rpc 的 `get_available_models` 不同 —— 那边 id 是裸名，
+                // 同名项靠 `group` 区分。见 `pi_rpc/config.rs`。）
                 id: format!("{provider}/{model}"),
                 name: format!("{provider}/{model}"),
                 description: None,
+                group: Some(provider.to_string()),
             })
         })
         .collect()

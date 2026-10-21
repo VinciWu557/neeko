@@ -11,80 +11,22 @@ import React, { useCallback, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { AgentConfig } from '@/shared/types/agent';
-import { chatAcpArgsOf, chatTransportOf } from '@/shared/types/agent';
 import { PRESET_AGENT_ICONS } from '@/shared/utils/agents';
 import { Button } from '@/ui';
 
 import { addAgent, importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
 
-import { argsFromText, argsTextOf, splitArgs, splitCsv } from './agentFormArgs';
+import { argsFromText, splitArgs, splitCsv } from './agentFormArgs';
 import { buildChatStart, CHAT_HINTS, CHAT_OPTIONS, type ChatTransport } from './agentFormChat';
+import { emptyForm, toTextState, type FormTextState } from './agentFormState';
 import CapabilityBadges from './CapabilityBadges';
+import ChatLaunchFields from './ChatLaunchFields';
 
 interface AgentFormProps {
   /** 编辑已有 Agent（缺省 = 新建）。 */
   initial?: AgentConfig | null;
   onSaved?: (agent: AgentConfig) => void;
   onCancel?: () => void;
-}
-
-function emptyForm(): AgentConfig {
-  return {
-    id: '',
-    name: '',
-    icon: 'cli.svg',
-    enabled: true,
-    command: '',
-    args: [],
-    env: {},
-    chat: null,
-    prompt_args: null,
-    post_prompt_args: null,
-    model_list_args: null,
-    skill_path: null,
-    detection: null,
-    deploy: { skills: '{{projectPath}}/.agent/skills', commands: null, mcp_config: null },
-  };
-}
-
-/** 表单的文本态字段（数组字段以可编辑字符串承载）。 */
-interface FormTextState {
-  id: string;
-  name: string;
-  command: string;
-  argsText: string;
-  icon: string;
-  enabled: boolean;
-  chat: ChatTransport | '';
-  /** ACP 子命令参数（空格分隔）；仅 chat === 'acp' 时有意义。 */
-  acpArgsText: string;
-  promptArgsText: string;
-  postPromptArgsText: string;
-  modelListArgsText: string;
-  skillPath: string;
-  detectionCmd: string;
-  deploySkills: string;
-  deployCommands: string;
-  deployMcp: string;
-}
-
-function toTextState(form: AgentConfig): FormTextState {
-  return {
-    id: form.id,
-    name: form.name,
-    command: form.command,
-    argsText: form.args?.join(' ') ?? '',
-    icon: form.icon ?? 'cli.svg',
-    enabled: form.enabled,
-    chat: (chatTransportOf(form.chat) ?? '') as ChatTransport | '',
-    acpArgsText: chatAcpArgsOf(form.chat).join(' '),
-    ...argsTextOf(form),
-    skillPath: form.skill_path ?? '',
-    detectionCmd: form.detection?.type === 'command' ? form.detection.target : '',
-    deploySkills: form.deploy?.skills ?? '{{projectPath}}/.agent/skills',
-    deployCommands: form.deploy?.commands ?? '',
-    deployMcp: form.deploy?.mcp_config ?? '',
-  };
 }
 
 const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => {
@@ -120,6 +62,9 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       args: splitArgs(t.argsText),
       env: initial?.env ?? {},
       chat: buildChatStart(t.chat, t.acpArgsText, splitArgs),
+      // 只在写了值时写入，避免给所有 agent 制造 `null` 噪音（与后端 skip_serializing_if 对齐）。
+      chat_command: t.chatCommand.trim() || null,
+      chat_args: t.chatArgsText.trim() ? splitArgs(t.chatArgsText) : null,
       prompt_args: promptArgs,
       ...argsFromText(t),
       skill_path: t.skillPath.trim() || null,
@@ -353,6 +298,19 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
             <div className="text-[0.7em] text-text-muted -mt-1">
               {CHAT_HINTS[t.chat as ChatTransport]}
             </div>
+          )}
+          {/* chat 专用启动配置：只在有 CHAT 能力时才有意义。 */}
+          {t.chat && (
+            <ChatLaunchFields
+              cliCommand={t.command}
+              chatCommand={t.chatCommand}
+              chatArgsText={t.chatArgsText}
+              onChatCommandChange={(v) => set('chatCommand', v)}
+              onChatArgsChange={(v) => set('chatArgsText', v)}
+              fieldCls={fieldCls}
+              labelCls={labelCls}
+              groupCls={groupCls}
+            />
           )}
           <div className="grid grid-cols-2 gap-2">
             <label className={groupCls}>

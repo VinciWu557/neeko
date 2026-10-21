@@ -205,6 +205,17 @@ pub struct ModelInfo {
     /// 可选说明。
     #[serde(default)]
     pub description: Option<String>,
+    /// 可选**分组标识** —— 当 `id` 在列表内不唯一时，与它一起构成主键。
+    ///
+    /// 真实场景：Pi 的 `get_available_models` 里 `deepseek-v4-pro` 会同时出现在
+    /// `deepseek` / `opencode` / `ark-coding-plan` 等 provider 下（实测 224 条
+    /// 只有 194 个唯一 id）。用裸 `id` 当 React key 会重复、当选中判定会让
+    /// 多行同时高亮。
+    ///
+    /// 语义保持**不透明**：Pi 填 provider 名，别的 agent 可以填任何能把同名项
+    /// 区分开的字符串（或 `None` = 无分组需求）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// Agent 配置 —— 唯一数据结构（内置 + 自定义同构，设置页编辑/持久化的对象）。
@@ -232,6 +243,23 @@ pub struct AgentConfig {
     /// CHAT 能力：传输协议 + 启动方式（`None` = 无 CHAT 能力）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<ChatStart>,
+    /// CHAT 会话进程的**可执行文件**覆盖（`None` = 沿用 [`Self::command`]）。
+    ///
+    /// 真实需求：同一个 agent 的 TUI 与 chat 可能不是同一个二进制 ——
+    /// `pi` 走自己的 rpc，而 `pi-acp` 是把它包成 ACP 的独立入口。
+    ///
+    /// **一旦设置，CLI 的 [`Self::args`] 不再被 chat 继承**：那些参数描述的是
+    /// 另一个进程（如 TUI 的 `--approve`），套到别的二进制上轻则报错重则改行为。
+    /// 需要给 chat 传参请用 [`Self::chat_args`]。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_command: Option<String>,
+    /// CHAT 会话进程的附加参数，追加在可执行文件之后。
+    ///
+    /// 与 [`Self::args`] 分开的理由：后者是**终端 TUI 的启动参数**
+    ///（`terminalCache.ts` 用它起 TUI），两者要的是不同参数。
+    /// 共用一份会让「TUI 要 `--approve`、chat 要 `--provider x`」无解。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_args: Option<Vec<String>>,
     /// prompt 前置参数（Headless 能力），如 `["--bare", "-p"]` 表示
     /// `command --bare -p "<prompt>" [post_prompt_args]`。None = 无 Headless 能力。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -292,6 +320,37 @@ impl AgentConfig {
         let mut v = Vec::with_capacity(1 + self.args.len());
         v.push(self.command.clone());
         v.extend(self.args.iter().cloned());
+        v
+    }
+
+    /// 拼装 **chat 会话进程**的启动参数。
+    ///
+    /// 与 [`Self::cmd_vec`] 的区别：这里服务的是 chat 传输，不是终端 TUI。
+    ///
+    /// | 配置 | 结果 |
+    /// | --- | --- |
+    /// | 无覆盖 | `command + args`（旧行为，向后兼容） |
+    /// | 有 `chat_command` | `chat_command + chat_args`（**不继承** `args`） |
+    /// | 只有 `chat_args` | `command + args + chat_args` |
+    ///
+    /// 空白 `chat_command` 视为未设置 —— 否则 `argv[0]` 是空串，
+    /// spawn 会在难以定位的地方失败。
+    #[must_use]
+    pub fn chat_cmd_vec(&self) -> Vec<String> {
+        let override_cmd = self
+            .chat_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        let mut v = match override_cmd {
+            // 覆盖了可执行文件 → 它是另一个进程，不继承 CLI 的 args。
+            Some(cmd) => vec![cmd.to_string()],
+            None => self.cmd_vec(),
+        };
+        if let Some(extra) = &self.chat_args {
+            v.extend(extra.iter().filter(|a| !a.is_empty()).cloned());
+        }
         v
     }
 
@@ -406,5 +465,83 @@ mod chat_start_serde_tests {
         let json = serde_json::to_string(&ChatStart::PiRpc).unwrap();
         let back: ChatStart = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ChatStart::PiRpc);
+    }
+}
+
+#[cfg(test)]
+mod chat_launch_tests {
+    use super::*;
+
+    fn base() -> AgentConfig {
+        AgentConfig {
+            id: "pi".into(),
+            name: "Pi".into(),
+            command: "pi".into(),
+            args: vec!["--approve".into()],
+            ..Default::default()
+        }
+    }
+
+    /// 没有 chat 专用覆盖时，chat 启动沿用 `command + args`（旧行为不变）。
+    #[test]
+    fn chat_launch_falls_back_to_the_cli_command() {
+        let cfg = base();
+        assert_eq!(cfg.chat_cmd_vec(), vec!["pi", "--approve"]);
+    }
+
+    /// `chat_command` 覆盖可执行文件 —— `pi` 走 TUI、`pi-acp` 走 ACP 是真实需求。
+    #[test]
+    fn chat_command_overrides_the_executable() {
+        let cfg = AgentConfig {
+            chat_command: Some("pi-acp".into()),
+            ..base()
+        };
+        // 覆盖后不再继承 CLI 的 args：它们描述的是另一个进程。
+        assert_eq!(cfg.chat_cmd_vec(), vec!["pi-acp"]);
+    }
+
+    /// `chat_args` 追加在 chat 启动命令之后。
+    #[test]
+    fn chat_args_are_appended_to_the_chat_command() {
+        let cfg = AgentConfig {
+            chat_args: Some(vec!["--provider".into(), "x".into()]),
+            ..base()
+        };
+        assert_eq!(
+            cfg.chat_cmd_vec(),
+            vec!["pi", "--approve", "--provider", "x"]
+        );
+    }
+
+    /// 两者同时存在：覆盖可执行文件 + 自己的参数，互不污染。
+    #[test]
+    fn chat_command_and_args_compose() {
+        let cfg = AgentConfig {
+            chat_command: Some("pi-acp".into()),
+            chat_args: Some(vec!["--verbose".into()]),
+            ..base()
+        };
+        assert_eq!(cfg.chat_cmd_vec(), vec!["pi-acp", "--verbose"]);
+    }
+
+    /// 空 `chat_command` 视为「没写」，而不是「可执行文件叫空串」。
+    /// 否则构造出的 argv[0] 是 `""`，spawn 会失败在难以定位的地方。
+    #[test]
+    fn empty_chat_command_is_ignored() {
+        let cfg = AgentConfig {
+            chat_command: Some("   ".into()),
+            ..base()
+        };
+        assert_eq!(cfg.chat_cmd_vec(), vec!["pi", "--approve"]);
+    }
+
+    /// `chat_args` 为空数组时不产生痕迹。
+    #[test]
+    fn empty_chat_args_are_a_no_op() {
+        let cfg = AgentConfig {
+            chat_args: Some(vec![]),
+            ..base()
+        };
+        assert_eq!(cfg.chat_cmd_vec(), vec!["pi", "--approve"]);
     }
 }

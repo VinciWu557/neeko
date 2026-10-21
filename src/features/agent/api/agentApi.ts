@@ -22,6 +22,14 @@ export interface ModelInfo {
   name: string;
   /** 可选说明。 */
   description?: string;
+  /**
+   * 可选**分组标识** —— 当 `id` 在列表内不唯一时，与它一起构成主键。
+   *
+   * Pi 的 rpc 列表里 `deepseek-v4-pro` 会同时出现在多个 provider 下
+   * （实测 224 条 / 194 唯一 id）。React key 与选中判定都必须用
+   * `id|group` 组合，否则会重复 key、多行同时高亮。
+   */
+  group?: string | null;
 }
 
 export function listAgents(): Promise<AgentConfig[]> {
