@@ -247,3 +247,113 @@ uuid，工具卡在等回答上，表现为「点了允许没反应」。现在�
 会话文件只在发过消息后写入。`resume_id` 因此是「保存用的句柄」而非立即可用的句柄；
 对空会话立即恢复会失败，那是 `conversation` 域该加的防护。
 
+## 10. 新传输的会话配置检查清单（2026-08-24）
+
+> 这一节是 `08-24-agent-config-unify` 的产物。它把「新接一个 agent 会把同一批坑
+> 重踩一遍」这件事变可检查 —— 下面 5 条都是**实际发生过**的缺陷，不是假想。
+
+### 10.1 能力位是唯一判据
+
+`AgentAdapter::chat_capabilities()` 返回 `ChatCapabilities { config, approvals, commands, resume }`。
+
+```rust
+match caps.config {
+    ConfigCapability::SessionConfig => { /* set_config_option + 全量回推 */ }
+    ConfigCapability::PerTurn      => { /* 每轮请求参数，无回推 */ }
+    ConfigCapability::None         => { /* 无会话配置 */ }
+}
+```
+
+**三条强制规则**：
+
+1. **`SessionConfig` 是三条承诺的合取**：① 握手带 `config_options` ② 接受
+   `SetConfigOption` 并真的下发 ③ 变更后产生 `ConfigOptionUpdate`（全量）。
+   缺一条即违约 —— 声明 `true` 而握手不带配置项，前端的控件区会**永远空白**。
+2. **`SessionStart.capabilities` 必须由 `chat_capabilities()` 派生**
+   （`Capabilities::from_chat_capabilities`），不得在手写的事件构造里逐字段填。
+   历史上四个 adapter 全填 `approvals: true`，包括 `deepseek`（495 行里没有
+   任何审批实现）—— 前端因此给它渲染了审批面板，而 agent 永远不发
+   `RequestApproval`。
+3. **默认值不存在**。`chat_capabilities()` 没有默认实现：新增 adapter 必须表态，
+   新增**能力字段**时所有既有 adapter 的构造点编译失败。
+
+### 10.2 五个已知断点与对应护栏
+
+每一条都在 `10-21-pi-rpc-adapter` 里真实发生过，表现都是「看起来实现了、实际没接上」。
+**只有静态护栏或真实日志能抓住它们** —— 组件测试全绿也不代表链路通了。
+
+| # | 断点 | 为什么单元测试抓不到 | 护栏 |
+| --- | --- | --- | --- |
+| 1 | `SessionStart` 不带 `config_options` | 纯函数测了投影，没测「真的推给前端没有」 | `capability_probe::mock_agent_satisfies_its_own_declaration` |
+| 2 | `request_channel()` 返回 `None` → 会话从未注册 | 测了 `session.send`，没测 manager 路由 | `exposes_a_request_channel_so_turns_can_be_routed` |
+| 3 | `ctx.prompt` 从未被消费 → 首轮消息丢失 | 测了 `send(Turn)`，绕过了 `create` | `create_sends_the_first_prompt_from_the_context` |
+| 4 | 静默会话的暂存事件从未被应用 | 两条路径各自实现，只测了其中一条 | `should drain buffered events after the silent session is opened` |
+| 5 | 点选模型只改本地 state → 档位不刷新 | 没有「写路径必须下发」的判据 | `should wire the composer to the pushing handler` + `sessionOptionsWiring.test.ts` |
+
+### 10.3 契约探针：声明 vs 行为
+
+`agent/chat/capability_probe.rs::assert_capabilities_hold(adapter, ctx)` 建一个**真会话**，
+观察 `SessionStart` 到底带了什么。这是唯一能验证「声明 == 行为」的手段
+（照搬根 `AGENTS.md` 红线 14 的判据）。
+
+**MockAgent 优先**（本设计的核心策略）：
+
+- MockAgent 是**进程内**的 ACP 实现，反馈周期毫秒级；真实 adapter 需要外部进程，
+  分钟级。
+- 契约先在 MockAgent 上改到对，再拿去校验真实 adapter —— 那时失败的一定是
+  adapter 而不是契约本身。
+- MockAgent 必须**刻意比现实更严格**：模型项 `id` 不叫 `"model"`（钉住按
+  `category` 定位）、响应必须全量、`set_config_option` 对未知 id 报错。
+
+### 10.4 前端三态，不是二态
+
+```ts
+type SessionConfigPhase = 'unsupported' | 'loading' | 'ready';
+```
+
+**「会话未建立」不能渲染成「不支持」**：前者该显示加载态/禁用，后者该隐藏控件。
+`useSessionConfigOptions` 的初值是 `loading`，`reset()` 回到 `loading` 而非
+`unsupported` —— 否则切换 agent 时控件会先消失再出现。
+
+**模型选择器的判据与配置类控件不同**：
+
+| 控件 | 判据 | 理由 |
+| --- | --- | --- |
+| 模型选择器 | `capability !== 'none'` | `per_turn`（serve）走每轮请求参数，模型选择仍有意义 |
+| 模式 / 档位 / model_config | `supported && phase === 'ready'` | 这些只能走 `set_config_option` |
+
+压成一个布尔会让「serve 能选模型但不能改档位」这个事实无法表达。
+
+### 10.5 禁止的写法
+
+```rust
+// ❌ 手填派生字段 —— 两份真相必然漂移
+capabilities: Capabilities { approvals: true, command_echo: false, diff: false, resume: true }
+```
+
+```tsx
+// ❌ 凭数据非空推断能力 —— 无法区分「不支持」与「会话未建立」
+{mode && <AgentModeSelector />}
+```
+
+```rust
+// ❌ 静默吞掉不支持的请求 —— 调用方无法区分「已处理」与「没实现」
+_ => Ok(Vec::new())
+```
+
+**判据**：控件的可见性必须能追溯到一个能力位；写路径被拒绝时必须有一个测试
+说明为什么拒绝（而不是 `if (configId)` 恰好为空）。
+
+### 10.6 静态护栏只能防「整段删除」，防不住「条件被短路」
+
+第一版的能力位护栏读源码做字符串匹配（`expect(CHAT).toContain('configWritable')`）。
+变异验证把定义改成 `const configWritable = true` 后**8 条断言全绿** —— 名字还在，
+门控已经没了。
+
+**结论**：涉及「某条件必须成立才渲染」的护栏，必须**渲染组件并断言 DOM**，
+不能只断言源码里出现过某个标识符。参照
+`components/__tests__/ComposerCapabilityGate.test.tsx`（3 条，3/3 变异全抓）。
+
+补充一条同类陷阱：判据选错会让变异漏抓。第一版用「agent 名文案」判断模型
+选择器是否存在，而旁边的 agent 切换器渲染同一个名字 → 变异漏抓。改用
+`queryByTitle('Select model')`（只有 `ModelPicker` 有这个 title）后才有效。
