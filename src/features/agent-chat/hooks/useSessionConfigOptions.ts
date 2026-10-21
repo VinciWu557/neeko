@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 
-import type { SessionConfigOption } from '@/shared/types/agentChat';
+import type { ConfigCapability, SessionConfigOption } from '@/shared/types/agentChat';
 
 import { setAgentConfigOption } from '../api/agentChatApi';
 
@@ -19,11 +19,50 @@ import { setAgentConfigOption } from '../api/agentChatApi';
  * 推送 `config_option_update`（典型场景：rate limit 时 fallback 换模型）。本地先改
  * 会让 UI 短暂显示一个 agent 并未接受的选项；等事件回来再更新则始终与真实状态一致。
  */
+/// 会话配置项的**三态**。
+///
+/// 三态而非「空数组 = 不支持」，因为两者在 UI 上完全不同：
+///
+/// | 真实处境 | 正确渲染 | 旧的二态实现 |
+/// | --- | --- | --- |
+/// | 传输不支持（`per_turn` / `none`） | 隐藏控件 | 隐藏（碰巧对了） |
+/// | 支持但会话还没建立 | 加载态 | **隐藏** —— 把「等一下」误报成「不支持」 |
+/// | 有配置项 | 正常渲染 | 正常 |
+export type SessionConfigPhase =
+  /** 传输不提供会话配置项（`ConfigCapability::None` / `PerTurn`）。 */
+  | 'unsupported'
+  /** 能力有，但 `session_start` 还没到（会话建立中）。 */
+  | 'loading'
+  /** 有配置项。 */
+  | 'ready';
+
+/** 前端渲染需要的三态视图（打包成一个对象，减少调用方的解构噪音）。 */
+export interface SessionConfigView {
+  phase: SessionConfigPhase;
+  supported: boolean;
+  capability: ConfigCapability;
+}
+
 export interface SessionConfigState {
-  /** 当前会话的配置项（含模型列表）。 */
+  /** 当前会话的配置项（含模型列表）。非 `ready` 时为空数组。 */
   options: SessionConfigOption[];
+  /** 三态视图（打包成对象，调用方少解构几行）。 */
+  view: SessionConfigView;
   /** 整体替换（`session_start` / `config_option_update` 都是全量语义）。 */
   replace: (options: SessionConfigOption[]) => void;
+  /** 由 `SessionStart.capabilities.config` 设置（会话建立时调用一次）。 */
+  setCapability: (next: ConfigCapability) => void;
+  /**
+   * 消费 `session_start` 的配置相关字段（能力位 + 选项）。
+   *
+   * 为什么收成一个动作：两者的**顺序是契约**（先能力后选项，否则会闪一下
+   * loading 态）。分两次调用让调用方有机会写反，而写反不会报错、只表现为
+   * 一次多余渲染。
+   */
+  applySessionStart: (
+    capability: ConfigCapability | undefined,
+    options: SessionConfigOption[] | undefined,
+  ) => void;
   /** 下发一个配置项变更。 */
   setOption: (configId: string, value: string | boolean) => void;
   /**
@@ -40,12 +79,45 @@ export function useSessionConfigOptions(
   getSessionId: () => string | null | undefined,
 ): SessionConfigState {
   const [options, setOptions] = useState<SessionConfigOption[]>([]);
+  /**
+   * 能力位取自 `SessionStart.capabilities.config`。
+   *
+   * 初值是 `session_config` 而非 `none`：**会话还没建立时不该断言「不支持」**。
+   * 真正的判定发生在 `setCapability` 被调用时（`SessionStart` 到达）；
+   * 在那之前 `phase` 是 `loading`，UI 显示加载态而不是隐藏控件。
+   */
+  const [capability, setCapabilityState] = useState<ConfigCapability>('session_config');
 
   const replace = useCallback((next: SessionConfigOption[]) => {
     // 协议要求整体替换：换模型可能连带改变 thought_level 的可选项，
     // 局部合并会留下与真实状态不符的陈旧选项。
     setOptions(next);
   }, []);
+
+  /**
+   * 由 `SessionStart.capabilities.config` 调用。
+   *
+   * **顺序要紧**：先设能力再设选项（`replace`）。反过来会让「有选项但能力
+   * 未定」的瞬间被渲染成 `loading`，闪一下加载态。
+   */
+  const setCapability = useCallback((next: ConfigCapability) => {
+    setCapabilityState(next);
+  }, []);
+
+  const applySessionStart = useCallback(
+    (
+      nextCapability: ConfigCapability | undefined,
+      nextOptions: SessionConfigOption[] | undefined,
+    ) => {
+      // `config` 缺失 = 旧后端事件形状。按 `session_config` 处理：既有行为
+      // （ACP 是主力传输）不能因一次字段新增而全部消失。
+      setCapabilityState(nextCapability ?? 'session_config');
+      // 协议要求整体替换：换模型可能连带改变 thought_level 的可选项，
+      // 局部合并会留下与真实状态不符的陈旧选项。
+      setOptions(nextOptions ?? []);
+    },
+    [],
+  );
 
   const setOption = useCallback(
     (configId: string, value: string | boolean) => {
@@ -56,7 +128,29 @@ export function useSessionConfigOptions(
     [getSessionId],
   );
 
-  const reset = useCallback(() => setOptions([]), []);
+  const reset = useCallback(() => {
+    setOptions([]);
+    // 回到「未知」而不是「不支持」—— `reset` 的语义是「换会话了」，
+    // 新会话的能力还没到，此时断言 `none` 会让控件瞬间消失再出现。
+    setCapabilityState('session_config');
+  }, []);
 
-  return { options, replace, setOption, reset };
+  // 三态推导：**只看能力位 + 是否已有选项**，不从选项非空反推能力。
+  const supported = capability === 'session_config';
+  const phase: SessionConfigPhase = !supported
+    ? 'unsupported'
+    : options.length > 0
+      ? 'ready'
+      : 'loading';
+
+  return {
+    options,
+    // 三态打包：`useAgentChat` 贴着 ratchet 线，逐字段解构会白占行数。
+    view: { phase, supported, capability } satisfies SessionConfigView,
+    replace,
+    setCapability,
+    applySessionStart,
+    setOption,
+    reset,
+  };
 }

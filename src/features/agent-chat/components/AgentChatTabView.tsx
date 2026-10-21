@@ -13,6 +13,7 @@ import { useAgentInputRegistration } from '../hooks/useAgentInputRegistration';
 import { useOpenAgentFile } from '../hooks/useOpenAgentFile';
 
 import ApprovalPanel from './ApprovalPanel';
+import AttachFilePicker from './AttachFilePicker';
 import ChatComposer from './ChatComposer';
 import MessageList from './MessageList';
 import ProposedPlanCard from './ProposedPlanCard';
@@ -52,17 +53,15 @@ export default function AgentChatTabView({
     setInput,
     attachments,
     removeAttachment,
-    agentMode,
-    setAgentMode,
-    thinkingLevel,
-    setThinkingLevel,
+    addAttachment,
     fileCount,
     skillCount,
     chatAgents,
     models,
     selectedModel,
-    setSelectedModel,
+    selectModel,
     sessionConfigOptions,
+    sessionConfigView,
     handleSetConfigOption,
     selectedAgent,
     handleSend,
@@ -83,6 +82,7 @@ export default function AgentChatTabView({
   );
   const [attachFiles, setAttachFiles] = useState<FileNode[]>([]);
   const [attachFilesLoading, setAttachFilesLoading] = useState(false);
+  const [attachPickerOpen, setAttachPickerOpen] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   /// 滚动容器（.wa-chat）—— MessageList 虚拟器据此计算可见窗口
@@ -151,7 +151,14 @@ export default function AgentChatTabView({
     [setInput],
   );
 
+  /**
+   * 「Attach files」按钮：读项目文件树并**打开选择弹窗**。
+   *
+   * 旧实现只把树读进 state、从不渲染，于是按钮点完毫无反应 —— 整条附件链路
+   *（chips / 移除 / 随 prompt 发送）都在，唯独缺「选哪个文件」这一步。
+   */
   const openAttachDrop = useCallback(() => {
+    setAttachPickerOpen(true);
     if (attachFiles.length === 0 && !attachFilesLoading) {
       setAttachFilesLoading(true);
       void readDirTree(activeWorkspaceSession(projectId), null, 3)
@@ -160,6 +167,14 @@ export default function AgentChatTabView({
         .finally(() => setAttachFilesLoading(false));
     }
   }, [projectId, attachFiles.length, attachFilesLoading]);
+
+  const handlePickFile = useCallback(
+    (file: FileNode) => {
+      addAttachment(file.path, file.name);
+      setAttachPickerOpen(false);
+    },
+    [addAttachment],
+  );
 
   return (
     <div className="wa-root" data-testid="agent-chat-tab">
@@ -242,11 +257,10 @@ export default function AgentChatTabView({
         input={input}
         attachments={attachments}
         streaming={streaming}
-        agentMode={agentMode}
-        thinkingLevel={thinkingLevel}
         chatAgents={chatAgents}
         models={models}
         sessionConfigOptions={sessionConfigOptions}
+        sessionConfigView={sessionConfigView}
         selectedModel={selectedModel}
         selectedAgent={selectedAgent}
         contextWindow={contextWindow}
@@ -258,11 +272,18 @@ export default function AgentChatTabView({
         onStop={handleStop}
         onRemoveAttachment={removeAttachment}
         onOpenAttachDrop={openAttachDrop}
-        onAgentModeChange={setAgentMode}
-        onThinkingLevelChange={setThinkingLevel}
-        onModelChange={setSelectedModel}
+        onModelChange={selectModel}
         onConfigChange={handleSetConfigOption}
       />
+      {attachPickerOpen && (
+        <AttachFilePicker
+          files={attachFiles}
+          loading={attachFilesLoading}
+          attached={attachments.filter((a) => a.type === 'FILE').map((a) => a.id)}
+          onPick={handlePickFile}
+          onClose={() => setAttachPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }

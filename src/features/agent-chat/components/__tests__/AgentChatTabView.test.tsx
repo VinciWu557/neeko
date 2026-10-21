@@ -186,9 +186,12 @@ describe('AgentChatTabView', () => {
     await waitFor(() => {
       expect(screen.getByText('OpenCode')).toBeInTheDocument();
     });
-    expect(screen.getByText('Build')).toBeInTheDocument();
-    expect(screen.getByText('High')).toBeInTheDocument();
     expect(screen.getByTitle('Send')).toBeInTheDocument();
+    // 模式与档位选择器**不**从硬编码常量渲染：会话没有下发
+    // `category: "mode"` / `"thought_level"` 时它们整个消失，
+    // 而不是显示一组与 agent 无关的 `build/plan` 与 `low/medium/high/max`。
+    expect(screen.queryByText('Build')).not.toBeInTheDocument();
+    expect(screen.queryByText('High')).not.toBeInTheDocument();
   });
 
   it('composer 仅保留有功能的附件按钮，死按钮不渲染', async () => {
@@ -202,17 +205,14 @@ describe('AgentChatTabView', () => {
     expect(screen.queryByTitle('Voice note')).not.toBeInTheDocument();
   });
 
-  it('composer-meta 不渲染假数据与重复的上下文计量', async () => {
-    const { container } = await renderView();
+  it('composer 不渲染假数据与未实现的快捷键提示', async () => {
+    await renderView();
 
     // 硬编码假成本与未实现的快捷键提示不得出现
     expect(screen.queryByText('$0.024')).not.toBeInTheDocument();
     expect(screen.queryByText(/⌘⇧M/)).not.toBeInTheDocument();
-    // 上下文用量仅 footer 的 ContextWindowMeter（真实 total 计算，事件驱动渲染），meta 区不重复
-    // eslint-disable-next-line testing-library/no-node-access, testing-library/no-container -- 结构关系断言（DOM 层级）必须用 closest/querySelector
-    expect(container.querySelector('.composer-meta .ctx-meter')).toBeNull();
-    // 快捷键提示与实际行为一致（Enter 发送 / Shift+Enter 换行）
-    expect(screen.getByText(/Enter 发送/)).toBeInTheDocument();
+    // 快捷键提示已移除（由输入框自身的 placeholder 与行为承载，不再占一行）
+    expect(screen.queryByText(/Enter 发送/)).not.toBeInTheDocument();
   });
 
   it('发送后渲染右对齐用户气泡与时间戳', async () => {

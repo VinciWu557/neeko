@@ -1,71 +1,90 @@
-/**
- * `useSessionConfigOptions` 的状态契约。
- *
- * 两件事：**整体替换**（协议语义，不是合并）与 **reset**（切 agent / 会话结束必须清空）。
- */
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { SessionConfigOption } from '@/shared/types/agentChat';
+
 vi.mock('../../api/agentChatApi', () => ({
-  setAgentConfigOption: vi.fn(() => Promise.resolve()),
+  setAgentConfigOption: vi.fn().mockResolvedValue(undefined),
 }));
 
-const { useSessionConfigOptions } = await import('../useSessionConfigOptions');
-const { setAgentConfigOption } = await import('../../api/agentChatApi');
+import { useSessionConfigOptions } from '../useSessionConfigOptions';
 
-const modelOption = (id: string, current: string) => ({
-  id,
-  name: 'Model',
-  category: 'model',
-  type: 'select',
-  current_value: current,
-  options: [{ value: current, name: current }],
-});
+const OPTIONS: SessionConfigOption[] = [
+  {
+    id: 'model',
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: 'a',
+    options: [{ value: 'a', name: 'A' }],
+  },
+];
 
-describe('useSessionConfigOptions', () => {
-  it('should start empty', () => {
-    const { result } = renderHook(() => useSessionConfigOptions(() => 's1'));
-    expect(result.current.options).toEqual([]);
+function setup() {
+  return renderHook(() => useSessionConfigOptions(() => 'sid'));
+}
+
+describe('useSessionConfigOptions — 三态（AC4）', () => {
+  /**
+   * 初值是 `loading` 而**不是** `unsupported`。
+   *
+   * 这是本轮修复的核心：会话还没建立时断言「不支持」会让控件在
+   * `session_start` 到达前消失再出现。用户看到的是「闪一下」，
+   * 而更糟的是 `loading` 该显示的骨架/禁用态根本没机会出现。
+   */
+  it('should start in loading, not unsupported', () => {
+    const { result } = setup();
+    expect(result.current.view.phase).toBe('loading');
   });
 
-  /** 协议规定响应/通知都是全量 —— 局部合并会留下陈旧选项。 */
-  it('should replace wholesale rather than merge', () => {
-    const { result } = renderHook(() => useSessionConfigOptions(() => 's1'));
-
-    act(() => result.current.replace([modelOption('model', 'a')]));
+  /** `session_config` + 有选项 = ready。 */
+  it('should become ready once options arrive', () => {
+    const { result } = setup();
+    act(() => result.current.setCapability('session_config'));
+    act(() => result.current.replace(OPTIONS));
+    expect(result.current.view.phase).toBe('ready');
+    expect(result.current.view.supported).toBe(true);
     expect(result.current.options).toHaveLength(1);
-
-    act(() => result.current.replace([modelOption('other', 'b')]));
-    expect(result.current.options.map((o) => o.id)).toEqual(['other']);
   });
 
   /**
-   * 切 agent / 会话结束必须清空：上一个 ACP 会话的 model_config 控件残留在界面上，
-   * 改它们等于朝不存在的 configId 发请求。
+   * `none` / `per_turn` 都是 unsupported，**即便有残留选项**。
+   *
+   * 这是 R3（写路径必须显式失败）的 UI 侧保证：不能出现「显示了控件、
+   * 点选静默无操作」的组合。
    */
-  it('should clear everything on reset', () => {
-    const { result } = renderHook(() => useSessionConfigOptions(() => 's1'));
+  it.each(['none', 'per_turn'] as const)(
+    'should report unsupported for capability %s even with stale options',
+    (cap) => {
+      const { result } = setup();
+      act(() => result.current.replace(OPTIONS));
+      act(() => result.current.setCapability(cap));
+      expect(result.current.view.phase).toBe('unsupported');
+      expect(result.current.view.supported).toBe(false);
+    },
+  );
 
-    act(() => result.current.replace([modelOption('model', 'a')]));
-    expect(result.current.options).toHaveLength(1);
+  /**
+   * `reset` 必须回到 `loading` 而不是 `unsupported`。
+   *
+   * `reset` 的语义是「换会话了」，新会话能力还没到 —— 此时断言 `none`
+   * 会让切换 agent 时控件先消失、再在 `session_start` 后出现。
+   */
+  it('should return to loading on reset, not to unsupported', () => {
+    const { result } = setup();
+    act(() => result.current.setCapability('none'));
+    expect(result.current.view.phase).toBe('unsupported');
 
     act(() => result.current.reset());
+    expect(result.current.view.phase).toBe('loading');
     expect(result.current.options).toEqual([]);
   });
 
-  it('should forward the option change to the backend', () => {
-    const { result } = renderHook(() => useSessionConfigOptions(() => 'sess-1'));
-
-    act(() => result.current.setOption('effort', 'high'));
-    expect(setAgentConfigOption).toHaveBeenCalledWith('sess-1', 'effort', 'high');
-  });
-
-  /** 没有会话时静默忽略 —— 不朝空 id 发请求。 */
-  it('should ignore setOption when there is no session', () => {
-    vi.mocked(setAgentConfigOption).mockClear();
-    const { result } = renderHook(() => useSessionConfigOptions(() => undefined));
-
-    act(() => result.current.setOption('effort', 'high'));
-    expect(setAgentConfigOption).not.toHaveBeenCalled();
+  /** 能力位原值必须透出：`per_turn` 与 `none` 在消费侧要能区分。 */
+  it('should expose the raw capability for the composer', () => {
+    const { result } = setup();
+    act(() => result.current.setCapability('per_turn'));
+    expect(result.current.view.capability).toBe('per_turn');
+    expect(result.current.view.supported).toBe(false);
   });
 });

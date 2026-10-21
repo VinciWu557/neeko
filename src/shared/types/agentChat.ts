@@ -5,7 +5,14 @@
  * 保持同步（serde tag="type" + rename_all="snake_case"）。禁止两端各自漂移。
  */
 
-/** 会话能力声明（session_start 携带）。 */
+/** 配置项的**写入机制**（与后端 `ConfigCapability` 同源，`snake_case`）。 */
+export type ConfigCapability = 'session_config' | 'per_turn' | 'none';
+
+/** 会话能力声明（session_start 携带）。
+ *
+ * 镜像 `src-tauri/src/agent/chat/events.rs::Capabilities`。两侧字段必须同步 ——
+ * 这里缺字段不会编译报错，只会让消费方静默拿到 `undefined`。
+ */
 export interface Capabilities {
   /** 是否支持审批 Gate（A2）。 */
   approvals: boolean;
@@ -15,6 +22,15 @@ export interface Capabilities {
   diff: boolean;
   /** 是否支持 resume_id 会话恢复。 */
   resume: boolean;
+  /**
+   * 会话配置项的读写机制。
+   *
+   * `session_config` = 可发 `set_config_option`；`per_turn` = 只能随每轮请求带
+   * （如 serve 的 `Turn { model_id }`）；`none` = 不支持。
+   *
+   * 缺省视为 `none`（旧后端不传该字段时不能凭空假定支持）。
+   */
+  config?: ConfigCapability;
 }
 
 /**
@@ -43,7 +59,20 @@ export interface SessionConfigOption {
    */
   currentValue?: string | boolean | null;
   /** select 形态的可选值（分组形态已由后端展平）。 */
-  options?: { value: string; name: string; description?: string | null }[] | null;
+  options?:
+    | {
+        value: string;
+        name: string;
+        description?: string | null;
+        /**
+         * 可选分组标识 —— `value` 不唯一时与它一起构成主键。
+         *
+         * Pi 的模型里 `deepseek-v4-pro` 会出现在多个 provider 下（实测
+         * 224 条 / 194 唯一）。丢掉它 → React key 重复 + 搜不到 provider。
+         */
+        group?: string | null;
+      }[]
+    | null;
 }
 
 /** 从 `configOptions` 里取模型条目的可选值（`category === 'model'` 那一项）。 */
@@ -57,6 +86,7 @@ export function modelsFromConfigOptions(options: SessionConfigOption[] | undefin
     id: item.value,
     name: item.name,
     description: item.description ?? undefined,
+    group: item.group ?? null,
   }));
 }
 
@@ -69,6 +99,19 @@ export function currentModelFromConfigOptions(
     options.find((o) => o.category === 'model') ?? options.find((o) => o.id === 'model');
   const value = modelOption?.currentValue;
   return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * 模型项的 `configId`（写 `set_config_option` 时要用的真实标识）。
+ *
+ * 与 `currentModelFromConfigOptions` 同源定位（category 优先、id 兜底）——
+ * 读和写必须用同一套判据，否则会出现「列得出来但切不动」。
+ */
+export function modelConfigIdFrom(options: SessionConfigOption[] | undefined): string | undefined {
+  if (!options) return undefined;
+  const modelOption =
+    options.find((o) => o.category === 'model') ?? options.find((o) => o.id === 'model');
+  return modelOption?.id;
 }
 
 /** 上下文清单（context_init / context_set）。 */
