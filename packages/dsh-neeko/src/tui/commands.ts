@@ -61,6 +61,10 @@ export const TUI_COMMANDS: readonly TuiCommand[] = [
   { name: 'resume', description: 'Switch to another session', argumentHint: '[session]' },
   { name: 'theme', description: 'Switch the color theme', argumentHint: '[dark|light]' },
   { name: 'fullscreen', description: 'Toggle fullscreen (click to expand, own selection)' },
+  // pi's `/hotkeys`: the live binding table, resolved from the installed
+  // registry. The command exists so an override can be verified without reading
+  // the source — the README table used to be the only record and it drifted.
+  { name: 'hotkeys', description: 'Show the active keyboard shortcuts' },
   { name: 'exit', description: 'Quit the terminal UI' },
 ]
 
@@ -83,6 +87,8 @@ export type CommandOutcome =
     { readonly kind: 'resume'; readonly argument: string }
   | /** Enter or leave the alt-screen viewport. */
     { readonly kind: 'toggle-fullscreen' }
+  | /** `/hotkeys` — print the live binding table. */
+    { readonly kind: 'hotkeys' }
   | /**
    * A slash line this module does not own.
    *
@@ -121,7 +127,10 @@ export function runCommand(line: string): CommandOutcome {
     case 'help':
       return {
         kind: 'message',
-        text: ['Commands:', ...TUI_COMMANDS.map((command) => `  /${command.name} — ${command.description}`), '', 'Keys: enter send · / commands · tab or ↑/↓ + enter to complete · ctrl+o expand all · ctrl+c exit'].join('\n'),
+        // The key list is deliberately NOT repeated here: it is resolved live by
+        // `/hotkeys`, and a hard-coded copy in this string drifted from the code
+        // every time a binding changed (that is why `/hotkeys` exists).
+        text: ['Commands:', ...TUI_COMMANDS.map((command) => `  /${command.name} — ${command.description}`), '', 'Type /hotkeys for the active key bindings.'].join('\n'),
       }
     case 'clear':
       return { kind: 'clear' }
@@ -145,6 +154,8 @@ export function runCommand(line: string): CommandOutcome {
     }
     case 'fullscreen':
       return { kind: 'toggle-fullscreen' }
+    case 'hotkeys':
+      return { kind: 'hotkeys' }
     case 'exit':
       return { kind: 'exit' }
     default:

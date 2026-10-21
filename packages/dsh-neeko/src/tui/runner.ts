@@ -22,7 +22,9 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { planSession } from './session-plan.ts'
-import type { ScreenMode } from './fullscreen.ts'
+import { loadKeybindingOverrides } from './keymap.ts'
+import { resolveScreen } from './screen.ts'
+import type { ScreenMode } from './screen.ts'
 import { switchedSelection } from './model-switch.ts'
 import { withReasoningEffort } from './thinking.ts'
 import { titlesFromObservations } from './resume-list.ts'
@@ -99,8 +101,8 @@ export interface TuiConfig {
   tui?: boolean
   /**
    * The screen the user asked for, or absent to take the default (see
-   * {@linkcode screenModeOf}). One field with one polarity, so no layer has to
-   * guess what `undefined` means.
+   * `screen.ts`). One field with one polarity, so no layer has to guess what
+   * `undefined` means.
    */
   screen?: ScreenMode | undefined
 }
@@ -114,28 +116,20 @@ export interface RunnerIo {
 /**
  * The screen this run should mount.
  *
- * Precedence, most specific first: the resolved configuration, then the
- * environment, then the default. A `--main-screen` on the command line is a more
- * deliberate statement than a shell export, so it wins over one.
+ * A named alias, not a second implementation: `resolveScreen` in `screen.ts` owns
+ * the whole decision (configuration, then `DSH_NEEKO_SCREEN`, then the two legacy
+ * variables, then the default). This function used to carry its own copy of that
+ * logic *and* its own `'main'` default, which is how the flag and the environment
+ * ended up inverted and why the default was unreachable from one layer.
  *
- * The environment accepts the consolidated `DSH_NEEKO_SCREEN` and the two
- * variables that shipped before it. Keeping them costs three lines and means a
- * user's existing export cannot silently start choosing the other screen;
- * `DSH_NEEKO_SCREEN` settles the case where both legacy variables are set.
+ * Kept as a named export because the runner reads better with it and because
+ * existing call sites are in the boot path.
  *
  * @param config - the resolved configuration; `screen` absent means "not stated".
- * @returns the mode to mount.
+ * @returns the mode to mount; never `undefined`.
  */
-export function screenModeOf(config: { screen?: ScreenMode | undefined }): ScreenMode {
-  if (config.screen !== undefined) return config.screen
-  const selected = process.env['DSH_NEEKO_SCREEN']
-  if (selected === 'main' || selected === 'fullscreen') return selected
-  // `MAIN_SCREEN` is checked first on purpose: it is the older spelling and the
-  // more conservative screen (no alt screen, no mouse reporting), so when both
-  // legacy variables are set the quieter one wins. Same rule the flags follow.
-  if (process.env['DSH_NEEKO_MAIN_SCREEN'] === '1') return 'main'
-  if (process.env['DSH_NEEKO_FULLSCREEN'] === '1') return 'fullscreen'
-  return 'main'
+export function screenModeOf(config: { readonly screen?: ScreenMode | undefined }): ScreenMode {
+  return resolveScreen(config)
 }
 
 export const internals: { io: RunnerIo | undefined } = {
@@ -194,10 +188,23 @@ export function composeSetup(agentCtx: AgentEventSource & Context, selection: Mo
   }
 }
 
-/** Stop the screen and settle any pending interaction (idempotent). */
-function stopApp(app: { stop(): void; interactions: { cancelAll(): void } }): void {
+/**
+ * Stop the screen, settle pending interactions, and flush the input queue.
+ *
+ * The drain is awaited by the caller: a Kitty key-release sequence still in stdin
+ * when the process exits gets echoed by the shell as literal text (`9;5:3u`).
+ *
+ * @param app - the running app.
+ * @returns a promise that resolves once stdin is quiet.
+ */
+async function stopApp(app: {
+  stop(): void
+  interactions: { cancelAll(): void }
+  drainTerminalInput(): Promise<void>
+}): Promise<void> {
   app.stop()
   app.interactions.cancelAll()
+  await app.drainTerminalInput()
 }
 
 /** The slice of a writable stream {@linkcode exitAfterFlush} needs. */
@@ -468,6 +475,10 @@ export function apply(ctx: Context, config: TuiConfig): void {
         // `exactOptionalPropertyTypes`: omit the key rather than pass undefined.
         ...(process.env['DSH_NEEKO_THEME'] === undefined ? {} : { initialTheme: process.env['DSH_NEEKO_THEME'] }),
         screenMode: screenModeOf(config),
+        // pi's `keybindings.json`, read once at boot. The app owns *applying*
+        // them (via `installKeymap`); reading the file is a runner concern, which
+        // is why `TuiApp` takes the parsed overrides rather than a path.
+        keybindingOverrides: loadKeybindingOverrides(),
         getSessionId: () => String(agent.session.id),
         onSubmit: (text) => {
           const trimmed = text.trim()
@@ -619,13 +630,16 @@ export function apply(ctx: Context, config: TuiConfig): void {
           // back to scrollback when it leaves the alt screen, and
           // `process.exit()` right after it truncated that document (measured
           // on a real pty: banner only, no conversation).
-          stopApp(app!)
-          void exitAfterFlush({
+          //
+          // The drain is awaited before the flush barrier: a Kitty key-release
+          // sequence still in stdin when the process ends is echoed by the shell
+          // as literal text (`9;5:3u`), and `drainInput` is what removes it.
+          void stopApp(app!).then(() => exitAfterFlush({
             stream: process.stdout,
             exit: (code) => { void Promise.resolve(exit(code)).finally(() => process.exit(code)) },
             // `stop()` already wrote; this is the flush barrier, not a new write.
             write: (done) => { process.stdout.write('', done) },
-          })
+          }))
         },
       })
       /**

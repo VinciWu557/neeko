@@ -313,3 +313,72 @@ describe('TuiApp input slot', () => {
     expect(anyApp(app).inputSlot.children).toEqual([anyApp(app).editor])
   })
 })
+
+describe('a selector takes the dock and gives it back', () => {
+  /**
+   * Three selectors (`/thinking`, `/theme`, `/resume`) each carried their own copy
+   * of the same two moves: `aboveInput.clear()` then `addChild(selector)`, and on
+   * close `clear()` then re-add the permanent rows.
+   *
+   * Three copies of one policy is how the dock was left empty the first time a
+   * selector closed early: `clear()` removed the rows, and only the constructor
+   * ever put them back. One pair of methods means a fourth selector gets the
+   * behaviour for free.
+   *
+   * The assertion is the invariant, not the plumbing: **after a selector closes,
+   * the dock holds its four permanent rows again**.
+   */
+  // Three, not four: `/resume` used to carry a `Text` row that nothing ever
+  // wrote to — its feedback is the transcript. The row was removed with it.
+  const PERMANENT = 3
+  const dockRows = (app: TuiApp): number =>
+    (app as unknown as { aboveInput: { children: unknown[] } }).aboveInput.children.length
+
+  /** An app whose model advertises reasoning levels and that knows some themes. */
+  function appWithSelectors(): { app: TuiApp; press: (data: string) => unknown } {
+    const { app } = makeApp({
+      reasoningSupport: async () => ({
+        efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+      }),
+      selectReasoningEffort: () => {},
+    } as never)
+    return { app, press: inputListener(app) }
+  }
+
+  it('starts with the permanent rows mounted', () => {
+    expect(dockRows(appWithSelectors().app)).toBe(PERMANENT)
+  })
+
+  it('mounts the theme selector over the dock', async () => {
+    const { app } = appWithSelectors()
+    await submit(app, '/theme')
+    // The selector plus nothing else: `clear()` ran.
+    expect(dockRows(app)).toBe(1)
+  })
+
+  it('restores the dock when the theme selector is cancelled', async () => {
+    const { app, press } = appWithSelectors()
+    await submit(app, '/theme')
+    press('\x1b')
+    expect(dockRows(app)).toBe(PERMANENT)
+  })
+
+  it('restores the dock when the thinking selector is cancelled', async () => {
+    const { app, press } = appWithSelectors()
+    await submit(app, '/thinking')
+    expect(dockRows(app)).toBe(1)
+    press('\x1b')
+    expect(dockRows(app)).toBe(PERMANENT)
+  })
+
+  it('survives opening one selector right after another', async () => {
+    // The pairing that broke when each selector owned its own copy: the second
+    // `clear()` ran on a dock the first selector had already emptied, and whichever
+    // close ran last decided how many rows came back.
+    const { app, press } = appWithSelectors()
+    await submit(app, '/theme')
+    await submit(app, '/thinking')
+    press('\x1b')
+    expect(dockRows(app)).toBe(PERMANENT)
+  })
+})

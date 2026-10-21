@@ -59,7 +59,7 @@ export interface NeekoStartupValues {
    * the layers disagreed about what `undefined` meant and the default became
    * unreachable.
    *
-   * Spelled out rather than imported from `tui/fullscreen.ts` (where the same
+   * Spelled out rather than imported from `tui/screen.ts` (where the same
    * union is `ScreenMode`): `startup` must not depend on the TUI, or the CLI
    * parser would pull in pi-tui to describe one flag. The duplication is two
    * words of TypeScript, not a business rule; a shared module would exist only to
@@ -82,9 +82,9 @@ export interface StartupFlags {
   spawn?: string | false
   /** `--tui`: run the interactive TUI instead of the bridge. */
   tui?: boolean
-  /** `--main-screen`: keep the terminal's scrollback (this is the default). */
+  /** `--main-screen`: name the terminal-owned screen explicitly (it is already the default). */
   mainScreen?: boolean
-  /** `--fullscreen`: opt into the alt screen, which owns the viewport. */
+  /** `--fullscreen`: opt in to the alt screen, which owns the viewport. */
   fullscreen?: boolean
 }
 
@@ -145,7 +145,7 @@ function neekoCommand(): Command {
     .option('--spawn <command>', 'override the command used to launch Neeko (e.g. "open -a Neeko")')
     .option('--no-spawn', 'do not spawn Neeko even in CLI mode')
     .option('--tui', 'run the interactive terminal UI instead of the Neeko bridge')
-    .option('--fullscreen', 'TUI: use the alt screen (application-owned scrolling; the default keeps the terminal scrollback)')
+    .option('--fullscreen', 'TUI: use the alt screen (application-owned scrolling; the terminal-owned main screen is the default)')
     .option('--main-screen', 'TUI: keep the terminal scrollback (this is the default; kept for scripts)')
     .argument('[mode]', "'daemon' runs the bridge in pure-wait mode (alias of --daemon)")
     .addHelpText('after', `

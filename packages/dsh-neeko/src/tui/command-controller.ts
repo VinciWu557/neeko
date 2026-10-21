@@ -45,6 +45,8 @@ export type CommandAction =
   | { readonly kind: 'theme-picker' }
   | /** Enter or leave the alt-screen viewport. */
     { readonly kind: 'toggle-fullscreen' }
+  | /** `/hotkeys` — print the live binding table. */
+    { readonly kind: 'hotkeys' }
   | { readonly kind: 'apply-theme'; readonly name: string }
   | { readonly kind: 'host'; readonly line: string; readonly name: string }
 
@@ -113,6 +115,8 @@ export class CommandController {
         return { kind: 'apply-theme', name: outcome.name }
       case 'toggle-fullscreen':
         return { kind: 'toggle-fullscreen' }
+      case 'hotkeys':
+        return { kind: 'hotkeys' }
       case 'thinking':
         return { kind: 'thinking', argument: outcome.argument }
       case 'resume':

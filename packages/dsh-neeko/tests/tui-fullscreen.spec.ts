@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Container, Text } from '@earendil-works/pi-tui'
 import type { TuiAltScreen } from '@earendil-works/pi-tui'
-import { mountFullscreen } from '../src/tui/fullscreen.ts'
+import type { MountedScreen } from '../src/tui/screen.ts'
+import { mountScreen } from '../src/tui/screen.ts'
 import { TuiApp } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
 import { stripAnsi } from './support/ansi.ts'
@@ -30,7 +31,10 @@ function strip(text: string): string {
 }
 
 function mount(onInput = vi.fn()): {
-  screen: ReturnType<typeof mountFullscreen>['screen']
+  // Named, not inferred: `ReturnType` of an overloaded function takes the last
+  // overload, which is the screen-agnostic one. The alt-screen extras this file
+  // exercises (`getScreenLines`) only exist on the concrete type.
+  screen: MountedScreen<TuiAltScreen>['screen']
   dispose: () => void
   terminal: FakeTerminal
   text: () => string
@@ -39,13 +43,18 @@ function mount(onInput = vi.fn()): {
   const document = new Container()
   document.addChild(new Text('HEADER'))
   document.addChild(new Text('TRANSCRIPT ROW'))
-  const surface = mountFullscreen({
-    terminal,
+  const surface = mountScreen(terminal, 'fullscreen', {
     document,
+    // The alt screen always receives a dock container; an empty one keeps this
+    // fixture about layout rather than about panels.
+    aboveInput: new Container(),
     input: new Text('INPUT'),
     footer: new Text('FOOTER'),
     onInput,
   })
+  // Mounting composes the tree; starting is what enters the alt screen and arms
+  // raw mode. A layout fixture is meaningless without the start.
+  surface.start()
   return {
     screen: surface.screen,
     dispose: () => { surface.dispose() },
@@ -59,7 +68,7 @@ function mount(onInput = vi.fn()): {
   }
 }
 
-describe('mountFullscreen', () => {
+describe('mountScreen — fullscreen', () => {
   it('lays out header, transcript, input and footer', () => {
     const { text } = mount()
     const rendered = text()
@@ -269,8 +278,10 @@ describe('which screen a boot mounts', () => {
   }
 
   it('stays on the terminal-owned main screen when nothing was asked for', () => {
-    // The default: the terminal keeps its scrollback and the app mounts no
-    // `ScrollView`, so PageUp/PageDown and the wheel behave as they always do.
+    // The default, and it is what pi actually runs: the terminal owns the
+    // scrollback, so its own scrollbar is there, `PageUp` and the wheel work as in
+    // any other CLI, and history survives. Measured cost is comparable to pi's own
+    // regular mode (25 KB vs 59 KB for one turn on a 24x100 pty).
     const app = bootWith(undefined)
     expect(app.isFullscreen()).toBe(false)
     expect(app.terminal.output).not.toContain('\x1b[?1049h')
@@ -297,6 +308,7 @@ describe('which screen a boot mounts', () => {
   })
 
   it('toggles into the alt screen on /fullscreen', async () => {
+    // The toggle starts from the main screen, which is the default.
     const app = bootWith(undefined)
     await app.submit('/fullscreen')
     expect(app.isFullscreen()).toBe(true)
@@ -474,9 +486,11 @@ describe('panels are visible in fullscreen too', () => {
    * enter still applied a level — the panel was mounted into the *main* screen's
    * tree, which is stopped while the alt screen owns the terminal.
    *
-   * The cause is the layout: `mountFullscreen()` takes an explicit component
-   * list, so every panel added to `TuiApp` afterwards is silently absent until
-   * someone remembers to thread it through here.
+   * The cause is the layout: `mountFullscreen()` **used to** take an explicit
+   * component list, so every panel added to `TuiApp` afterwards was silently
+   * absent until someone remembered to thread it through there. `mountScreen()`
+   * now takes aggregates (`aboveInput`, `input`), so a panel rides along with
+   * the container it lives in and cannot be forgotten.
    */
   function bootInFullscreen(): {
     app: TuiApp
@@ -519,7 +533,9 @@ describe('panels are visible in fullscreen too', () => {
     await settle()
     // The panel must be painted by the renderer that is actually on screen.
     const painted = strip(terminal.output.slice(before))
-    expect(painted).toContain('Thinking level')
+    // pi's `ThinkingSelectorComponent` titles the panel `Thinking Level` (capital
+    // L); the previous hand-rolled panel wrote `Thinking level`.
+    expect(painted).toContain('Thinking Level')
     expect(painted).toContain('High')
   })
 
@@ -528,7 +544,14 @@ describe('panels are visible in fullscreen too', () => {
     const before = terminal.output.length
     await submit('/theme')
     await settle()
-    expect(strip(terminal.output.slice(before))).toContain('Theme')
+    const painted = strip(terminal.output.slice(before))
+    // pi's `ThemeSelectorComponent` has **no title**: two rules around a
+    // `SelectList`, and the active theme is marked in the description column
+    // (`(current)`). The previous panel had a `Theme` heading; asserting on it
+    // would pin the old shape rather than pi's.
+    expect(painted).toContain('(current)')
+    expect(painted).toContain('dark')
+    expect(painted).toContain('[light]')
   })
 })
 
@@ -547,13 +570,14 @@ describe('the scroll region takes every row the dock does not need', () => {
     const terminal = new FakeTerminal({ columns: 40, rows: 10 })
     const document = new Container()
     for (let i = 0; i < 30; i += 1) document.addChild(new Text(`row ${i}`, 0, 0))
-    const surface = mountFullscreen({
-      terminal,
+    const surface = mountScreen(terminal, 'fullscreen', {
       document,
+      aboveInput: new Container(),
       input: new Text('INPUT', 0, 0),
       footer: new Text('FOOTER', 0, 0),
       onInput: () => undefined,
     })
+    surface.start()
     return {
       rows: () => {
         surface.screen.renderNow(true)
@@ -605,7 +629,14 @@ describe('the whole document scrolls, not just the transcript', () => {
     for (let i = 0; i < 40; i += 1) document.addChild(new Text(`row ${i}`, 0, 0))
     const input = new Text('input', 0, 0)
     const footer = new Text('footer', 0, 0)
-    const surface = mountFullscreen({ terminal, document, input, footer, onInput: () => undefined })
+    const surface = mountScreen(terminal, 'fullscreen', {
+      document,
+      aboveInput: new Container(),
+      input,
+      footer,
+      onInput: () => undefined,
+    })
+    surface.start()
     return {
       screen: surface.screen,
       document,
@@ -634,5 +665,78 @@ describe('the whole document scrolls, not just the transcript', () => {
     const { lines } = mountScrollingDocument()
     expect(lines()).toContain('input')
     expect(lines()).toContain('footer')
+  })
+})
+
+describe('quitting drains pending terminal input', () => {
+  /**
+   * The third variant of one defect class.
+   *
+   * While the Kitty keyboard protocol is on, the terminal reports **key releases**
+   * as CSI-u sequences (`9;5:3u` = ctrl+tab released). A release that lands between
+   * the last render and `process.exit` sits in stdin until the shell takes over,
+   * and the shell echoes it literally — the user sees `9;5:3u9;` after the
+   * transcript.
+   *
+   * `drainInput` is the supported fix: it disables the protocol first (so no
+   * further releases are generated), waits for the queue to go quiet, and discards
+   * what arrived. It must be called **and awaited** before exiting, or the process
+   * ends with bytes still queued.
+   */
+  it('calls drainInput as the last step of stopping', async () => {
+    const terminal = new FakeTerminal({ columns: 80, rows: 24 })
+    const drained: number[] = []
+    const original = terminal.drainInput.bind(terminal)
+    terminal.drainInput = (): Promise<void> => {
+      drained.push(Date.now())
+      return original()
+    }
+    const app = new TuiApp({
+      screenMode: 'fullscreen',
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal,
+    })
+    const seam = app as unknown as { start(): void }
+    seam.start.call(app)
+    const before = terminal.output.length
+
+    await app.drainTerminalInput()
+    expect(drained).toHaveLength(1)
+    // Draining is not a write: the document was already printed by `stop()`.
+    expect(terminal.output.length).toBe(before)
+  })
+
+  it('exposes the drain as a promise so the owner can wait for it', async () => {
+    // A fire-and-forget drain would leave the process exiting mid-drain, which is
+    // exactly the race that produces the stray bytes.
+    const terminal = new FakeTerminal({ columns: 80, rows: 24 })
+    let settled = false
+    const original = terminal.drainInput.bind(terminal)
+    terminal.drainInput = (): Promise<void> => original().then(() => { settled = true })
+    const app = new TuiApp({
+      screenMode: 'fullscreen',
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal,
+    })
+    const pending = app.drainTerminalInput()
+    expect(pending).toBeInstanceOf(Promise)
+    await pending
+    expect(settled).toBe(true)
   })
 })
