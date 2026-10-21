@@ -1,0 +1,10 @@
+{"file": ".trellis/tasks/10-20-opencode-2x-serve-dual-stack/research/opencode-2x-protocol.md", "reason": "一手协议取证：两版 serve 启动行逐字样本、端点对照表、事件面差异、探测判据、confirm 字段静默丢弃、session_v2 迁移单向。所有实现的直接依据。"}
+{"file": ".trellis/tasks/10-20-opencode-2x-serve-dual-stack/design.md", "reason": "技术设计：serve/ 目录拆分方案、ServeProtocol 枚举与探测、密码注入策略、端点表、v2 事件映射表、影响面与回滚。"}
+{"file": ".trellis/tasks/10-20-opencode-2x-serve-dual-stack/implement.md", "reason": "分阶段执行清单、每阶段 TDD 红绿判据与验证命令、变异验证清单、阶段依赖。"}
+{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "AgentAdapter / AgentSession trait 的既有约定与扩展方式（本任务只改传输层，trait 不变）。"}
+{"file": ".trellis/spec/backend/command-execution.md", "reason": "执行 vs 编排边界、spawn 与 env 注入的正确落点（新增 spawn_with_env 必须走 core::exec facade，红线 1）。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 分类约定：resume 不存在必须 NotFound 而非挂起，传输失败用 Io，协议拒绝用 Agent。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "禁止模式（unwrap / 三层 if let / glob 导入）与平台差异集中化，拆分 serve.rs 时逐条对齐。"}
+{"file": ".trellis/spec/backend/type-safety.md", "reason": "Enum + match 编译期穷尽约定：ServeProtocol 分派与 StreamEvent 联合类型落地。"}
+{"file": ".trellis/spec/backend/agent-acp-model-selection.md", "reason": "模型能力归属协议层的既有决策：本任务不得引入 agent_id 特判，也不得让 ModelInfo 重新长出私有字段。"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "Rust 单测与夹具约定（tempdir 推导路径、注入式 fetcher 使协议探测可测而不启真进程）。"}

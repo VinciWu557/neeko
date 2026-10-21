@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "组件规模 ratchet（ChatComposer 已贴 300 行线）与质量门禁判据"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "弹层状态归 hook 还是组件、与 zustand 的边界"}
+{"file": "src/AGENTS.md", "reason": "前端红线 12（FileRef 路径身份）与导入防火墙：@ 的路径必须走 FileRef"}
+{"file": ".trellis/spec/backend/agent-chat-transports.md", "reason": "§9.4 slash 命令取证结论：get_commands 是权威来源、执行走 prompt"}
+{"file": ".trellis/spec/backend/agent-acp-model-selection.md", "reason": "list_models 的『默认 Unsupported + 各适配器 opt-in』形状，list_commands 照此设计"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "新增 Tauri 命令的注册与极薄委派约定（红线 6）"}
