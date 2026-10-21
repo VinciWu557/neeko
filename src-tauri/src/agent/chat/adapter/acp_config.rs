@@ -29,6 +29,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::common::agent::types::ModelInfo;
+
 /// `category` 取值：模型选择器。
 pub const CATEGORY_MODEL: &str = "model";
 /// `category` 取值：模型相关配置参数。
@@ -318,6 +320,28 @@ impl ModelSwitch {
             Self::AlreadySet | Self::Unsupported => None,
         }
     }
+}
+
+/// 模型条目列表（供 UI 下拉 / 端到端断言）。
+///
+/// 注意：**前端并不依赖它** —— 前端从同一份 `configOptions` 自行派生（见
+/// `shared/types/agentChat.ts::modelsFromConfigOptions`）。这里保留是因为端到端测试
+/// 需要在 Rust 侧断言「会话给出的模型列表是什么」。
+#[must_use]
+pub fn models_from_config(options: &[SessionConfigOption]) -> Vec<ModelInfo> {
+    find_model_option(options)
+        .map(|option| {
+            option
+                .select_options()
+                .into_iter()
+                .map(|item| ModelInfo {
+                    id: item.value,
+                    name: item.name,
+                    description: item.description,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// 当前模型 ID。

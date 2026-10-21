@@ -443,8 +443,11 @@ impl AcpAdapter {
 #[async_trait]
 impl AgentAdapter for AcpAdapter {
     /// ACP 支持模型选择，但**只在会话内**：模型列表来自 `session/new` 响应的
-    /// `configOptions`，协议没有独立的「列模型」方法（见 research 第 7 节）。
-    /// 因此不实现 `model_catalog` —— 返回 `SessionScoped` 才是诚实的回答。
+    /// `configOptions`，协议没有独立的「列模型」方法（见
+    /// `.trellis/spec/backend/agent-acp-model-selection.md` §7）。
+    ///
+    /// 所以 `list_models` 用默认实现（返回 Unsupported），命令层据此回
+    /// `SessionScoped` —— 那是诚实的回答，不是错误。
     fn supports_model_selection(&self) -> bool {
         true
     }
@@ -914,6 +917,153 @@ impl AgentSession for AcpSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── 端到端：mockAgent 走真实 ACP 路径（AC5）────────────────────────────
+
+    fn e2e_ctx(model_id: Option<&str>) -> AgentContext {
+        AgentContext {
+            agent_id: "mockAgent".into(),
+            session_id: "ac_e2e".into(),
+            project_id: "/tmp/demo".into(),
+            project_name: "demo".into(),
+            env: "local".into(),
+            skills: vec![],
+            files: vec![],
+            mode: "auto".into(),
+            prompt: String::new(),
+            model_id: model_id.map(str::to_string),
+        }
+    }
+
+    /// 等待某个事件，最多 `timeout`。
+    ///
+    /// 被测代码有缺陷时（例如切换请求根本没发出），等 `ConfigOptionUpdate` 会永远
+    /// 挂着 —— 那会让 `cargo test` 挂死而不是失败，比不测还糟。这里统一加超时，
+    /// 让缺陷表现为 panic。
+    async fn next_event_within(
+        session: &mut Box<dyn crate::agent::chat::adapter::AgentSession>,
+        budget: std::time::Duration,
+    ) -> Option<Result<StreamEvent, crate::common::error::AppError>> {
+        // 超时 → `None`，与「流结束」同形；调用方把 `None` 当失败即可。
+        tokio::time::timeout(budget, session.next())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// 从事件流里取出**第一个** `SessionStart` 的 configOptions。
+    async fn collect_session_config(
+        session: &mut Box<dyn crate::agent::chat::adapter::AgentSession>,
+    ) -> Vec<acp_config::SessionConfigOption> {
+        // SessionStart / ContextInit 是握手后立即由适配器发出的（生命周期契约），
+        // 所以前几个事件里必定出现，不需要等 agent 自己输出。
+        for _ in 0..4 {
+            match next_event_within(session, std::time::Duration::from_secs(5)).await {
+                Some(Ok(StreamEvent::SessionStart { config_options, .. })) => {
+                    return config_options;
+                }
+                Some(Ok(_)) => continue,
+                other => panic!("unexpected event before SessionStart: {other:?}"),
+            }
+        }
+        panic!("SessionStart with configOptions not observed");
+    }
+
+    /// **AC5 端到端**：mockAgent 的模型列表来自会话 `configOptions`，且用户选择
+    /// 会真的作为 `session/set_config_option` 下发并改变会话状态。
+    ///
+    /// 这条走的是生产的 `AcpAdapter::create_with_io`，不是纯函数：
+    /// 进程内 duplex 管道 → 真实握手（initialize / session/new）→ 真实请求通道。
+    ///
+    /// mock 的模型项 `id` **故意不叫 `"model"`**，因此这条同时钉住「按 `category`
+    /// 定位而不是按 `id`」—— 退回按 `id` 查找会立刻失败。
+    #[tokio::test]
+    async fn mock_agent_exposes_models_and_applies_switches_end_to_end() {
+        // 1. 无初始模型：拿到的列表来自 session/new 的 configOptions
+        let adapter = AcpAdapter::mock();
+        let mut session = adapter
+            .create(&e2e_ctx(None))
+            .await
+            .expect("create session");
+        let configs = collect_session_config(&mut session).await;
+
+        let models = acp_config::models_from_config(&configs);
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["mock-fast", "mock-thorough"],
+            "model list must come from the session configOptions"
+        );
+        assert_eq!(
+            acp_config::current_model_from_config(&configs).as_deref(),
+            Some("mock-fast"),
+            "initial model comes from the agent"
+        );
+
+        // 2. 应用切换：Turn 带 model_id → 适配器应先发 set_config_option
+        session
+            .send(SessionRequest::Turn {
+                prompt: "hello".into(),
+                model_id: Some("mock-thorough".into()),
+            })
+            .await
+            .expect("send turn");
+
+        // 3. 权威状态由 agent 回推（set_config_option 响应 → ConfigOptionUpdate）
+        let mut switched_to = None;
+        for _ in 0..12 {
+            match next_event_within(&mut session, std::time::Duration::from_secs(5)).await {
+                Some(Ok(StreamEvent::ConfigOptionUpdate { config_options, .. })) => {
+                    switched_to = acp_config::current_model_from_config(&config_options);
+                    break;
+                }
+                Some(Ok(_)) => continue,
+                other => panic!("unexpected event while awaiting config update: {other:?}"),
+            }
+        }
+        assert_eq!(
+            switched_to.as_deref(),
+            Some("mock-thorough"),
+            "agent must confirm the switch back to the client"
+        );
+
+        session.cancel().await;
+    }
+
+    /// 新会话首轮就带 `model_id` 时，必须在**首轮 prompt 之前**切模型。
+    ///
+    /// 这是最容易被漏掉的一条路径：`build_context` 把 model_id 放进了 ctx，但握手后
+    /// 直接发 prompt 的话，用户在打开 Chat 时选的模型不生效 —— 要等第二轮才切。
+    #[tokio::test]
+    async fn create_swithces_model_before_the_first_prompt() {
+        let adapter = AcpAdapter::mock();
+        let mut session = adapter
+            .create(&e2e_ctx(Some("mock-thorough")))
+            .await
+            .expect("create session");
+
+        // SessionStart 携带的 configOptions 是**握手时**解析出来的快照（还是初始值），
+        // 但 agent 侧已经收到切换请求，随后的 ConfigOptionUpdate 会反映新值。
+        let _ = collect_session_config(&mut session).await;
+
+        let mut observed = None;
+        for _ in 0..12 {
+            match next_event_within(&mut session, std::time::Duration::from_secs(5)).await {
+                Some(Ok(StreamEvent::ConfigOptionUpdate { config_options, .. })) => {
+                    observed = acp_config::current_model_from_config(&config_options);
+                    break;
+                }
+                Some(Ok(_)) => continue,
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert_eq!(
+            observed.as_deref(),
+            Some("mock-thorough"),
+            "model chosen when opening a chat must take effect before the first prompt"
+        );
+
+        session.cancel().await;
+    }
 
     #[test]
     fn frame_roundtrip_content_length() {

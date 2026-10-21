@@ -8,11 +8,89 @@
 //! (Gate), the approval reply, turn end, and cancel handling.
 //!
 //! Frame format (LSP-style): `Content-Length: <n>\r\n\r\n<json body>`.
+//!
+//! # 也模拟 ACP 的会话配置项（模型选择）
+//!
+//! `session/new` 返回一个 `category: "model"` 的 `configOptions` 项，`session/set_config_option`
+//! 会更新当前模型并回全量配置。这让「模型列表 → 用户选择 → 真正下发」这条链路能在
+//! **进程内**端到端跑通，无需任何外部 agent —— 见 `adapter/acp.rs` 的
+//! `mock_agent_switches_model_end_to_end`。
+//!
+//! 刻意保留了真实 agent 的几处特性，避免 mock 比现实宽松：
+//! - 模型项的 `id` **不叫** `"model"`（规范说 `category` 才是判据，`id` 无约束）；
+//! - 响应返回**全量** `configOptions`（协议强制）；
+//! - 同时提供一个 `model_config` 项与一个 `thought_level` 项。
 
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 const SESSION_ID: &str = "mock-s1";
+
+/// 模型配置项的 `id`。**故意不叫 `"model"`** —— 规范只说 `category` 是语义判据，
+/// `id` 没有命名约束。用它当 mock 的标识，可以钉住「按 category 定位」这条契约：
+/// 若实现退回按 `id == "model"` 查找，这里立刻失败。
+const MODEL_CONFIG_ID: &str = "mock-primary-model";
+
+/// mock 提供的可选模型。
+const MOCK_MODELS: &[(&str, &str)] = &[
+    ("mock-fast", "Mock Fast"),
+    ("mock-thorough", "Mock Thorough"),
+];
+
+/// 初始模型。
+const DEFAULT_MODEL: &str = "mock-fast";
+
+/// 构造 `configOptions` 全量数组（`session/new` 与 `set_config_option` 共用）。
+///
+/// 真实 agent 的响应是**全量**状态，不是增量 —— mock 保持同样语义，否则客户端
+/// 「整体替换」的实现会被测成「局部合并也能过」。
+fn config_options(current_model: &str, fast_mode: bool) -> Value {
+    let model_options: Vec<Value> = MOCK_MODELS
+        .iter()
+        .map(|(value, name)| json!({ "value": value, "name": name }))
+        .collect();
+
+    json!([
+        {
+            "id": MODEL_CONFIG_ID,
+            "name": "Model",
+            "description": "Model used for this session",
+            "category": "model",
+            "type": "select",
+            "currentValue": current_model,
+            "options": model_options
+        },
+        {
+            "id": "context-size",
+            "name": "Context size",
+            "category": "model_config",
+            "type": "select",
+            "currentValue": "200k",
+            "options": [
+                { "value": "100k", "name": "100k" },
+                { "value": "200k", "name": "200k" }
+            ]
+        },
+        {
+            "id": "reasoning-effort",
+            "name": "Reasoning effort",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "medium",
+            "options": [
+                { "value": "low", "name": "Low" },
+                { "value": "medium", "name": "Medium" }
+            ]
+        },
+        {
+            "id": "fast-mode",
+            "name": "Fast mode",
+            "category": "model_config",
+            "type": "boolean",
+            "currentValue": fast_mode
+        }
+    ])
+}
 
 /// Drive the mock ACP server over `reader` / `writer` until EOF or cancel.
 pub async fn run_mock_loop<R, W>(reader: R, writer: W)
@@ -22,11 +100,12 @@ where
 {
     let mut reader = BufReader::new(reader);
     let mut writer = writer;
+    let mut state = MockState::default();
     while let Some(body) = read_frame(&mut reader).await {
         let Ok(msg) = serde_json::from_str::<Value>(&body) else {
             continue;
         };
-        if !handle_request(&msg, &mut reader, &mut writer).await {
+        if !handle_request(&msg, &mut reader, &mut writer, &mut state).await {
             break;
         }
     }
@@ -62,8 +141,35 @@ async fn send<W: AsyncWrite + Unpin>(writer: &mut W, v: &Value) {
     let _ = writer.flush().await;
 }
 
+/// mock 会话的可变状态。
+///
+/// 真实 agent 的配置项是**会话级**的：`set_config_option` 改变它，后续 `session/new`
+/// 之外的读取都反映新值。mock 保持同样语义，否则「切换后状态是否更新」测不出来。
+#[derive(Debug)]
+struct MockState {
+    current_model: String,
+    fast_mode: bool,
+    /// 收到过的模型切换请求（按顺序）。端到端测试据此断言「客户端确实下发了」。
+    model_switches: Vec<String>,
+}
+
+impl Default for MockState {
+    fn default() -> Self {
+        Self {
+            current_model: DEFAULT_MODEL.to_string(),
+            fast_mode: false,
+            model_switches: Vec::new(),
+        }
+    }
+}
+
 /// Handle one client request. Returns `false` when the session should exit.
-async fn handle_request<R, W>(msg: &Value, reader: &mut BufReader<R>, writer: &mut W) -> bool
+async fn handle_request<R, W>(
+    msg: &Value,
+    reader: &mut BufReader<R>,
+    writer: &mut W,
+    state: &mut MockState,
+) -> bool
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -92,7 +198,48 @@ where
         "session/new" => {
             send(
                 writer,
-                &json!({ "jsonrpc": "2.0", "id": id, "result": { "sessionId": SESSION_ID } }),
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "sessionId": SESSION_ID,
+                        "configOptions": config_options(&state.current_model, state.fast_mode)
+                    }
+                }),
+            )
+            .await;
+        }
+        // 模型切换与其它配置项走同一个协议方法。响应必须回**全量** configOptions
+        // （协议强制），客户端据此整体替换本地状态。
+        "session/set_config_option" => {
+            let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+            let config_id = params
+                .get("configId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let value = params.get("value").cloned().unwrap_or(Value::Null);
+
+            if config_id == MODEL_CONFIG_ID {
+                if let Some(model) = value.as_str() {
+                    state.current_model = model.to_string();
+                    state.model_switches.push(model.to_string());
+                }
+            } else if config_id == "fast-mode" {
+                if let Some(flag) = value.as_bool() {
+                    state.fast_mode = flag;
+                }
+            }
+            // 其余 select 项（context-size / reasoning-effort）mock 只回显，不改行为。
+
+            send(
+                writer,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "result": {
+                        "configOptions": config_options(&state.current_model, state.fast_mode)
+                    }
+                }),
             )
             .await;
         }
