@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 315
-- **Last Active**: 2026-10-20
+- **Total Sessions**: 316
+- **Last Active**: 2026-10-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~53 | Active |
+| `journal-7.md` | ~102 | Active |
 | `journal-6.md` | ~1955 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 316 | 2026-10-21 | ACP 模型选择收敛：从 5 处判据漂移到端到端验证 | `8673517b`, `5c80b3d8`, `9a6bfbcc`, `ecf07aa5`, `a8161636`, `0c02f0b8`, `fb032fb4`, `0f71e871` | `main` |
 | 315 | 2026-10-20 | 翻译设置补 agent/模型选择：判据收口与陈旧 agentId 可见化 | `eab8d5d6`, `ffa659b1`, `df8c08de`, `2e040512`, `fd61f933` | `main` |
 | 314 | 2026-10-19 | 通用本地缓存：SQLite KV + 连接池 + 迁移链归一 | `dfc5850a`, `ee3a16d4`, `74ef8a5f`, `ab96ba9e`, `72161d6e`, `1b37a57d`, `656ac4f3`, `038b48e9`, `22ee1a29` | `main` |
 | 313 | 2026-10-19 | 代码编辑器注释翻译：三层抽象全链路实现 + 22 条 AC 达成 | - | `main` |
