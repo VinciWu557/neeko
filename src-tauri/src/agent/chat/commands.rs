@@ -122,6 +122,37 @@ fn build_context(req: &StreamRequest, project_path: &str, session_id: &str) -> A
     }
 }
 
+/// 解析 agent + 项目上下文，生成会话 id 与 `AgentContext`。
+///
+/// # 为什么抽出来
+///
+/// `agent_stream`（新建）、`agent_chat_resume`、`agent_chat_open` 三个入口的前置
+/// 序列完全相同：`resolve_agent_config` → `resolve_project_ctx` → `new_session_id`
+/// → `build_context` → 补 `project_name` / `env`。已到 DRY 门槛（第 3 次），
+/// 而且任何一处新增校验（如「该 agent 能不能静默开会话」）都必须同步三次 ——
+/// 那是不必要的耦合。
+///
+/// `silent` = 清空 `prompt`（不自动发首轮）。它与「哪个入口」无关，是会话的**启动
+/// 形态**，所以放在这里而不是让三个调用方各自覆盖。
+fn resolve_session_context(
+    state: &State<'_, AppStateWrapper>,
+    req: &StreamRequest,
+    silent: bool,
+) -> Result<(AgentConfig, String, AgentContext), AppError> {
+    let agent = resolve_agent_config(state, &req.agent_id)?;
+    let (project_name, env, project_path) = resolve_project_ctx(state, &req.project_id)?;
+    let session_id = new_session_id(&req.project_id);
+
+    let mut context = build_context(req, &project_path, &session_id);
+    context.project_name = project_name;
+    context.env = env;
+    if silent {
+        context.prompt = String::new();
+    }
+
+    Ok((agent, session_id, context))
+}
+
 /// Start a streamed session. Events arrive on the `agent-chat://event` channel.
 ///
 /// If `req.session_id` is set, the prompt is sent as a new turn to that existing
@@ -168,21 +199,12 @@ pub async fn agent_stream(
     }
 
     // Resolve agent config（数据对象：command + chat_transport 等）。
-    let agent = resolve_agent_config(&state, &req.agent_id)?;
+    let (agent, session_id, context) = resolve_session_context(&state, &req, false)?;
     log::info!(
         "[agent_stream] Agent: command={}, chat={:?}",
         agent.command,
         agent.chat
     );
-
-    // Resolve project display name + environment + path.
-    let (project_name, env, project_path) = resolve_project_ctx(&state, &req.project_id)?;
-
-    let session_id = new_session_id(&req.project_id);
-
-    let mut context = build_context(&req, &project_path, &session_id);
-    context.project_name = project_name;
-    context.env = env;
 
     // Create adapter + session via the factory (IO shape chosen inside the
     // adapter: Spawn / Connect / SSE / ACP — not bound to stdout/JSON-Lines).
@@ -227,25 +249,13 @@ pub async fn agent_chat_resume(
         req.project_id
     );
 
-    // Resolve agent config（数据对象）。
-    let agent = resolve_agent_config(&state, &req.agent_id)?;
+    // Resolve agent config（数据对象）与静默上下文（不发首轮 prompt）。
+    let (agent, session_id, context) = resolve_session_context(&state, &req, true)?;
     log::info!(
         "[agent_chat_resume] Agent: command={}, chat={:?}",
         agent.command,
         agent.chat
     );
-
-    // Resolve project display name + environment + path.
-    let (project_name, env, project_path) = resolve_project_ctx(&state, &req.project_id)?;
-
-    let session_id = new_session_id(&req.project_id);
-
-    // Silent start: resume never auto-sends a prompt; history comes from the
-    // conversation store and the next user turn flows via agent_stream.
-    let mut context = build_context(&req, &project_path, &session_id);
-    context.project_name = project_name;
-    context.env = env;
-    context.prompt = String::new();
 
     let adapter = adapter_for(&agent)?;
     if !adapter.supports_chat_resume() {
@@ -255,6 +265,52 @@ pub async fn agent_chat_resume(
         )));
     }
     let session = adapter.resume(&context, &native_session_id).await?;
+    let cursor = build_resume_cursor(&req, &session_id);
+    spawn_session_pipeline(
+        &state,
+        &app_handle,
+        &req,
+        session_id.clone(),
+        session,
+        AGENT_CHAT_EVENT,
+        Some(cursor),
+    );
+
+    Ok(session_id)
+}
+
+/// 打开一个**静默会话**：建会话、拿 `configOptions`，但不发任何 prompt。
+///
+/// # 为什么需要它
+///
+/// 模型 / 推理档位 / 模式都只存在于会话的 `configOptions` 里（ACP 没有独立的
+/// 「列档位」方法；Pi 虽然能会话外查，但模式与当前值仍要会话）。若等到用户
+/// 发第一条消息才建会话，这几项选择器会在「选 agent → 发消息」之间缺席，
+/// 用户看到的是一个残缺的工具条，然后发完消息它们才冒出来 —— 体验割裂。
+///
+/// 本命令让「选中 agent」这一步就把会话建好，于是选择器立刻可用，且后续
+/// `agent_stream` 会走续聊分支复用同一个会话（`manager.owns` 命中）。
+///
+/// # 与 `agent_chat_resume` 的区别
+///
+/// 后者接一个**已存在**的 native 会话（读它的历史）；这里开一个**全新**会话。
+/// 两者都静默（`context.prompt` 为空），共用同一条 pipeline。
+#[tauri::command]
+pub async fn agent_chat_open(
+    req: StreamRequest,
+    state: State<'_, AppStateWrapper>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, AppError> {
+    log::info!(
+        "[agent_chat_open] Opening silent session for agent {} project {}",
+        req.agent_id,
+        req.project_id
+    );
+
+    let (agent, session_id, context) = resolve_session_context(&state, &req, true)?;
+
+    let adapter = adapter_for(&agent)?;
+    let session = adapter.create(&context).await?;
     let cursor = build_resume_cursor(&req, &session_id);
     spawn_session_pipeline(
         &state,

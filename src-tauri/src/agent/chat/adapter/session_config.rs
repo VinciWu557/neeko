@@ -39,6 +39,11 @@ pub const CATEGORY_MODEL: &str = "model";
 pub const CATEGORY_MODEL_CONFIG: &str = "model_config";
 /// `category` 取值：推理档位（`model_config` 的历史特例，保留向后兼容）。
 pub const CATEGORY_THOUGHT_LEVEL: &str = "thought_level";
+// 注：`category: "mode"`（plan / build）**故意不在这层定义**。
+// 本期没有任何传输下发它（Pi 的 rpc 没这个语义，opencode serve 也不发），
+// 而先建一个零消费常量会变成「协议已支持 mode」的误导。前端 `modeOptionOf`
+// 已按字符串读它（传输侧一旦下发 UI 自动出现）；如果真要把它提升为共享常量，
+// 请把「哪个 adapter 下发」和「谁消费」写进同一个 diff。
 
 /// 规范里的惯例 `id`，仅在 `category` 缺失时作为兜底判据；
 /// 也是 `session/set_config_option` 的 `configId`（各家实测都用它）。
@@ -86,6 +91,14 @@ pub struct SessionConfigSelectOption {
     /// 可选说明。
     #[serde(default)]
     pub description: Option<String>,
+    /// 可选**分组标识** —— 当 `value` 在列表内不唯一时，与它一起构成主键。
+    ///
+    /// Pi 的模型列表里 `deepseek-v4-pro` 会同时出现在多个 provider 下
+    /// （实测 224 条 / 194 唯一）。这个字段是**唯一**能把它们区分开的信息，
+    /// 也是搜索 provider 名时唯一的匹配源 —— 丢了它就会出现「列表里明明
+    /// 显示着 provider，却搜不到」以及「React key 重复」。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 /// 分组形态的选项（schema 允许扁平数组或分组数组，同一数组中不可混用）。
@@ -229,6 +242,9 @@ pub fn models_from_config(options: &[SessionConfigOption]) -> Vec<ModelInfo> {
                     id: item.value,
                     name: item.name,
                     description: item.description,
+                    // 配置项里的模型列表没有独立的分组维度（ACP select 的
+                    // `value` 本身就是唯一的）。
+                    group: None,
                 })
                 .collect()
         })

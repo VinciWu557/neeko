@@ -34,8 +34,15 @@ pub struct PiRpcProcess {
     stdin: Arc<Mutex<crate::common::executor::BoxAsyncWrite>>,
     /// 响应等待者：id → 一次性发送端。
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
-    /// 事件出口。
-    events: mpsc::Receiver<Value>,
+    /// 事件出口（**一次取走**）。
+    ///
+    /// 不留在本结构里长期持有：`PiRpcProcess` 是 `Arc` 共享给请求 pump 的（它需要
+    /// `&self` 发命令），但事件流的是**单消费者**语义（只有 `AgentSession::next` 读）。
+    /// 把单消费者资源放在多所有者容器里，就必然要用锁跨 `await` 或依赖「调用方
+    /// 恰好不并发」的隐式约定 —— 两者都是把正确性寄望于外部。
+    ///
+    /// 所以连接只做「交出一次」：[`Self::take_events`]，之后由 `PiSession` 独占。
+    events: std::sync::Mutex<Option<mpsc::Receiver<Value>>>,
     /// 强制终止（`KillFn` 本身可重复调用；这里仍加一个布尔避免重复投递）。
     killed: std::sync::atomic::AtomicBool,
     kill_fn: crate::common::executor::KillFn,
@@ -47,15 +54,22 @@ impl PiRpcProcess {
     /// `extra` 是用户在 agent 配置里写的 `args`（如 `--provider foo`），原样透传 ——
     /// 忽略等于用户的配置静默不生效，与 `AcpAdapter` / `DeepSeekHarnessAdapter` 一致。
     ///
-    /// 顺序：`--mode rpc` 在前。pi 的用法是 `pi [options] …`，options 之间不敏感，
-    /// 但我们自己那三个是**适配器契约**，必须压过用户可能写的同名项。
+    /// # 顺序：适配器参数放**最后**
+    ///
+    /// pi 解析重复选项是**后写者胜**（实测：`--mode json --mode rpc` → rpc；
+    /// `--mode rpc --mode json` → json）。用户在 `chat_args` 里写 `--mode json`
+    /// 就会把整条通道从 rpc 切成 json，协议层直接失效且没有任何报错。
+    /// 所以我们自己的 `--mode rpc` 必须压在用户参数**之后**。
+    ///
+    /// 其余参数不受影响（pi 的 `[options]` 之间不敏感），用户照常能传
+    /// `--provider` 之类。
     ///
     /// `--no-themes`：rpc 模式拿不到主题，加载它只是拖慢启动。
     pub async fn spawn(command: &str, cwd: &str, extra: &[&str]) -> Result<Self, AppError> {
-        let mut args: Vec<&str> = vec!["--mode", "rpc", "--no-themes"];
-        args.extend(extra);
+        let args = launch_args(extra);
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
-        let child = exec::spawn_with(&ExecTarget::Local, command, &args, Some(cwd))
+        let child = exec::spawn_with(&ExecTarget::Local, command, &arg_refs, Some(cwd))
             .await
             .map_err(|e| {
                 // ENOENT 时给可操作的提示，而不是让后面某次写 stdin 报 EPIPE。
@@ -87,7 +101,7 @@ impl PiRpcProcess {
         Ok(Self {
             stdin: Arc::new(Mutex::new(stdin)),
             pending,
-            events,
+            events: std::sync::Mutex::new(Some(events)),
             killed: std::sync::atomic::AtomicBool::new(false),
             kill_fn,
         })
@@ -108,15 +122,21 @@ impl PiRpcProcess {
                 Box::pin(stdin) as crate::common::executor::BoxAsyncWrite
             )),
             pending,
-            events,
+            events: std::sync::Mutex::new(Some(events)),
             killed: std::sync::atomic::AtomicBool::new(false),
             kill_fn: Arc::new(|| Box::pin(async { Ok(()) }) as crate::common::executor::KillFuture),
         }
     }
 
-    /// 取下一条**事件**（响应已被读循环摘走）。
-    pub async fn next_event(&mut self) -> Option<Value> {
-        self.events.recv().await
+    /// 取走事件流的所有权（**只能成功一次**）。
+    ///
+    /// 调用方（`PiSession`）之后用 `&mut` 独占消费，因此 `next()` 不需要任何锁。
+    /// 第二次调用返回 `None` —— 那意味着有人在重复取同一个流，属编程错误。
+    pub fn take_events(&self) -> Option<mpsc::Receiver<Value>> {
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     /// 发一条命令并等它的响应。
@@ -220,6 +240,22 @@ impl PiRpcProcess {
     }
 }
 
+/// 拼装 `pi` 的启动参数：用户参数在前，适配器契约在后。
+///
+/// 抽成纯函数是为了能直测顺序 —— `spawn` 要起真进程，在它内部拼装的话
+/// 测试只能复制一遍逻辑，实现被改坏时测试仍绿（本项目踩过这个坑）。
+#[must_use]
+fn launch_args(user_args: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = user_args.iter().map(|s| (*s).to_string()).collect();
+    // 后写者胜：这两项必须在用户参数之后，见 `spawn` 的文档。
+    args.extend([
+        "--mode".to_string(),
+        "rpc".to_string(),
+        "--no-themes".to_string(),
+    ]);
+    args
+}
+
 /// 读循环：按行解析，响应进 pending，其余进事件通道。
 fn spawn_reader(
     stdout: crate::common::executor::BoxAsyncRead,
@@ -275,6 +311,51 @@ mod tests {
         mpsc::Receiver<Value>,
         Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
     );
+
+    /// **顺序护栏**：适配器参数必须排在用户参数之后。
+    ///
+    /// pi 对重复选项是后写者胜。用户在 `chat_args` 里写了 `--mode json` 时，
+    /// 若 `--mode rpc` 排在它前面就会被覆盖 —— 通道切成 json，整个 rpc 协议
+    /// 失效且没有任何报错（表现为「Pi 连上了但永远没有回复」）。
+    ///
+    /// 变异验证：把 `spawn` 里的顺序换回来 → 本用例红。
+    #[test]
+    fn adapter_flags_come_after_user_args() {
+        let extra = ["--provider", "x", "--mode", "json"];
+        let args = launch_args(&extra);
+
+        let mode_positions: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| **a == "--mode")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(mode_positions.len(), 2, "user + adapter each provide one");
+        // 最后一个 --mode 必须是 rpc
+        let last = *mode_positions.last().unwrap();
+        assert_eq!(
+            args[last + 1],
+            "rpc",
+            "adapter --mode must be the last one so it wins"
+        );
+    }
+
+    /// 用户参数原样出现在前面，不被丢弃也不被改写。
+    #[test]
+    fn user_args_are_preserved_verbatim() {
+        let args = launch_args(&["--provider", "foo", "--session", "abc"]);
+        assert_eq!(
+            &args[..4],
+            &["--provider", "foo", "--session", "abc"],
+            "user args must survive"
+        );
+    }
+
+    /// 空用户参数 → 只有适配器契约。
+    #[test]
+    fn empty_user_args_yield_only_adapter_flags() {
+        assert_eq!(launch_args(&[]), vec!["--mode", "rpc", "--no-themes"]);
+    }
 
     /// 用 duplex 管道驱动读循环，不起真进程。
     fn make_harness() -> Harness {

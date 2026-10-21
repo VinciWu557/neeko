@@ -195,6 +195,7 @@ macro_rules! neeko_invoke_handler {
             $crate::conversation::commands::export_conversation,
             // ── agent chat ───────────────────────────────────────────────────
             $crate::agent::chat::commands::agent_stream,
+            $crate::agent::chat::commands::agent_chat_open,
             $crate::agent::chat::commands::agent_chat_resume,
             $crate::agent::chat::commands::agent_chat_supports_resume,
             $crate::agent::chat::commands::agent_stream_cancel,

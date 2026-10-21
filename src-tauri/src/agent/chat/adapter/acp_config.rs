@@ -178,6 +178,7 @@ mod tests {
             current_value: Some(SessionConfigValue::Text("a".into())),
             options: Some(SessionConfigSelectOptions::Ungrouped(vec![
                 SessionConfigSelectOption {
+                    group: None,
                     value: "a".into(),
                     name: "Model A".into(),
                     description: None,
@@ -473,6 +474,7 @@ mod tests {
             current_value: None,
             options: Some(SessionConfigSelectOptions::Ungrouped(vec![
                 SessionConfigSelectOption {
+                    group: None,
                     value: "claude-sonnet".into(),
                     name: "Claude Sonnet".into(),
                     description: None,

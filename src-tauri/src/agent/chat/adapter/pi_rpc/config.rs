@@ -53,9 +53,12 @@ pub fn models_from_response(data: &Value) -> Vec<ModelInfo> {
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_string(),
-                        // `ModelInfo` 只有三个字段。provider 是 Pi 的必要信息
-                        //（切模型要分开传），放这里既可见又不污染通用契约。
-                        description: m
+                        // provider 是 Pi 的必要信息：切模型要分开传，且同一个
+                        // `id` 会出现在多个 provider 下（实测 224 条 / 194 唯一）。
+                        // 放 `group` 而不是 `description` —— 后者是「可选说明」，
+                        // 拿它充当主键的一部分是滥用。
+                        description: None,
+                        group: m
                             .get("provider")
                             .and_then(Value::as_str)
                             .map(str::to_string),
@@ -95,6 +98,9 @@ pub fn project_config_options(
                         value: m.id.clone(),
                         name: m.name.clone(),
                         description: m.description.clone(),
+                        // provider 必须原样带下去：会话内列表是前端真正渲染的
+                        // 那一份，丢掉它 → React key 重复 + 搜不到 provider。
+                        group: m.group.clone(),
                     })
                     .collect(),
             )),
@@ -119,6 +125,8 @@ pub fn project_config_options(
                         value: l.clone(),
                         name: l.clone(),
                         description: None,
+                        // 档位在列表内唯一，没有分组维度。
+                        group: None,
                     })
                     .collect(),
             )),
@@ -188,7 +196,76 @@ mod tests {
         assert_eq!(models.len(), 2);
         // provider 是独立字段，id 里带 `/` 也不拆
         assert_eq!(models[1].id, "auto/x");
-        assert_eq!(models[1].description.as_deref(), Some("magpie"));
+        // provider 落 `group`（它是区分同名模型的主键分量），不是 `description`
+        assert_eq!(models[1].group.as_deref(), Some("magpie"));
+        assert_eq!(models[1].description, None);
+    }
+
+    /// **`id` 不唯一是常态**：同名模型会出现在多个 provider 下（实测 224 条
+    /// 只有 194 个唯一 id）。`(id, group)` 才是标识 —— 前端拿 `id` 当 React key
+    /// 会重复、当选中判定会让多行同时高亮。
+    #[test]
+    fn duplicate_ids_are_disambiguated_by_group() {
+        let data = json!({"models": [
+            {"id": "deepseek-v4-pro", "name": "V4 Pro", "provider": "deepseek"},
+            {"id": "deepseek-v4-pro", "name": "V4 Pro", "provider": "opencode"},
+            {"id": "deepseek-v4-pro", "name": "V4 Pro", "provider": "ark-coding-plan"}
+        ]});
+        let models = models_from_response(&data);
+        assert_eq!(models.len(), 3);
+
+        // 裸 id 全部相同
+        assert!(models.iter().all(|m| m.id == "deepseek-v4-pro"));
+        // group 把它们区分开
+        let groups: Vec<&str> = models.iter().filter_map(|m| m.group.as_deref()).collect();
+        assert_eq!(groups, ["deepseek", "opencode", "ark-coding-plan"]);
+        // 组合键唯一
+        let keys: std::collections::HashSet<String> = models
+            .iter()
+            .map(|m| format!("{}|{}", m.id, m.group.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(keys.len(), 3);
+    }
+
+    /// **provider 必须穿过 `project_config_options`**。
+    ///
+    /// 会话内的模型列表才是前端真正渲染的那一份（`useModelsForPicker` 会话内优先）。
+    /// 投影时丢掉 `group` 会让：
+    /// - React key 退化回裸 id → 重复（实测 224 条 / 194 唯一）
+    /// - 搜索 provider 名全部落空 → 「列表里明明显示着却搜不到」
+    #[test]
+    fn projection_preserves_the_group_through_config_options() {
+        let models = models_from_response(&json!({"models": [
+            {"id": "deepseek-v4-pro", "name": "V4 Pro", "provider": "deepseek"},
+            {"id": "deepseek-v4-pro", "name": "V4 Pro", "provider": "opencode"}
+        ]}));
+        let options = project_config_options(&models, &[], None);
+        let model = crate::agent::chat::adapter::session_config::find_model_option(&options)
+            .expect("model option");
+        let items = model.select_options();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].group.as_deref(), Some("deepseek"));
+        assert_eq!(items[1].group.as_deref(), Some("opencode"));
+        // 组合键唯一（前端 key / 选中判定都靠它）
+        let keys: std::collections::HashSet<String> = items
+            .iter()
+            .map(|o| format!("{}|{}", o.value, o.group.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(keys.len(), 2);
+    }
+
+    /// 档位项没有分组维度（值在列表内唯一）。
+    #[test]
+    fn thinking_level_options_have_no_group() {
+        let levels = levels_from_response(&json!({"levels": ["low", "high"]}));
+        let options = project_config_options(&[], &levels, None);
+        let level = crate::agent::chat::adapter::session_config::find_by_category(
+            &options,
+            CATEGORY_THOUGHT_LEVEL,
+        )
+        .expect("thought_level");
+        assert!(level.select_options().iter().all(|o| o.group.is_none()));
     }
 
     #[test]

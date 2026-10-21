@@ -71,7 +71,9 @@ fn list_agent_models_asks_the_adapter_for_capability() {
 
     assert!(
         body.contains("supports_model_selection()"),
-        "必须经 supports_model_selection() 区分 SessionScoped / Unsupported"
+        "必须经 supports_model_selection() 区分 SessionScoped / Unsupported\n\
+         该判据已改为由 `chat_capabilities().config.shows_controls()` 派生 —— \
+         不要再给 adapter 开单独的 override（那会造出可与能力快照矛盾的真相）"
     );
     assert!(
         body.contains("try_list_via_command"),
