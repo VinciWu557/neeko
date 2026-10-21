@@ -325,12 +325,21 @@ export function renderStatusBar(
   // truncated to the full width) never emits trailing columns.
   const padding = ' '.repeat(Math.max(0, width - plainLeftWidth - routeWidth))
 
-  const paintedStats = shownStats === '' ? '' : paint('muted', shownStats)
+  // The whole second line is `dim`, pi's choice (`footer.js`: `theme.fg("dim",
+  // statsLeft)`), except the context figure once it crosses a threshold. `dim` is
+  // a step below `muted`: the footer is reference information, and at `muted` it
+  // competed with the editor for attention.
+  //
+  // The severity colour is applied to the context figure alone — dimming the
+  // whole line and then colouring one segment would work too, but the painted
+  // string is what a caller's `paint` returns, so wrapping it again would nest
+  // two escapes around the same text.
+  const paintedStats = shownStats === '' ? '' : paint('dim', shownStats)
   const paintedContext = shownContext === ''
     ? ''
-    : severity === undefined ? paint('muted', shownContext) : paint(severity, shownContext)
+    : severity === undefined ? paint('dim', shownContext) : paint(severity, shownContext)
   const leftText = [paintedStats, paintedContext].filter((part) => part !== '').join(' ')
-  const second = `${leftText}${padding}${paint('muted', shownRoute)}`
+  const second = `${leftText}${padding}${paint('dim', shownRoute)}`
 
   return [paint('dim', context), second]
 }

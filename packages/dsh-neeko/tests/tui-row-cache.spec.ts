@@ -32,7 +32,6 @@ const SIGN = (row: TranscriptRow, over: Partial<Parameters<typeof rowSignature>[
     row,
     themeName: 'dark',
     fold,
-    spinnerFrame: '⠋',
     attachTime: 0,
     ...over,
   })
@@ -58,10 +57,13 @@ describe('rowSignature — changes that must rebuild the row', () => {
     expect(SIGN(assistant({ thinking: 'a' }))).not.toBe(SIGN(assistant({ thinking: 'ab' })))
   })
 
-  it('differs when the spinner frame moves', () => {
-    // The frame is drawn inside the row, so a new frame is a new row.
-    expect(SIGN(assistant({ text: 'x' }), { spinnerFrame: '⠙' }))
-      .not.toBe(SIGN(assistant({ text: 'x' })))
+  it('does NOT differ for an animation frame', () => {
+    // The frame used to be an input, so every 80 ms tick rebuilt the streaming row
+    // — a fresh `Markdown`, a fresh parse, five times a second. The glyph is gone
+    // now and the one animation owner is `Loader` in the composer's border, so
+    // there is nothing left to tick.
+    expect(SIGN(assistant({ text: 'x' }), { themeName: 'dark' }))
+      .toBe(SIGN(assistant({ text: 'x' }), { themeName: 'dark' }))
   })
 
   it('differs when a tool result arrives', () => {

@@ -34,8 +34,6 @@ export interface RowSignatureInput {
   readonly themeName: string
   /** Expansion is per row, and changes how much text is shown. */
   readonly fold: FoldView
-  /** The spinner glyph is drawn inside an unfinished row. */
-  readonly spinnerFrame: string
   /** A restore re-uses row objects with a new attach time. */
   readonly attachTime: number
 }
@@ -47,16 +45,25 @@ export interface RowSignatureInput {
  * guards. Row content mutates in place (streaming appends to `text`), so the
  * mutable fields go in **by value** while identity comes from the row object.
  *
+ * ## What is deliberately absent
+ *
+ * The animation frame. It used to be an input, which meant every 80 ms tick
+ * changed the signature of the row that was streaming and forced a full rebuild of
+ * it — a fresh `Markdown`, a fresh parse, a fresh tree, five times a second for as
+ * long as the answer took. The glyph is decoration: the row is already visibly
+ * live because its text is arriving, and the one animation owner is `Loader` in the
+ * composer's border.
+ *
  * @param input - the row and the global state it depends on.
  * @returns a string that differs whenever the output would differ.
  */
 export function rowSignature(input: RowSignatureInput): string {
-  const { row, themeName, fold, spinnerFrame, attachTime } = input
+  const { row, themeName, fold, attachTime } = input
   const expanded = fold.isExpanded(row) ? '1' : '0'
   if (row.kind === 'assistant') {
     // `thinking.length`/`text.length` change on every streamed token, which is
     // exactly when this row must be rebuilt.
-    return `a|${themeName}|${expanded}|${row.done ? '1' : '0'}|${spinnerFrame}|` +
+    return `a|${themeName}|${expanded}|${row.done ? '1' : '0'}|` +
       `${row.text.length}|${row.thinking.length}`
   }
   if (row.kind === 'tool') {

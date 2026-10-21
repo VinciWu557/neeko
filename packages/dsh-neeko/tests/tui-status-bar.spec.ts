@@ -202,6 +202,14 @@ describe('renderStatusBar — layout', () => {
     expect(lines[1]).toContain('↑2.4M')
   })
 
+  it('dims the route, like the rest of the footer', () => {
+    // pi paints the model half `dim` too (`footer.js`: `theme.fg("dim", remainder)`).
+    // A brighter route would make the footer's right edge the most prominent thing
+    // on screen, which is the opposite of what a reference line should do.
+    const lines = renderStatusBar(wide, { width: 120, home: '/home/dev', paint })
+    expect(lines[1]).toContain('\x1b]8;;dim\x07(magpie)')
+  })
+
   it('flushes the route to the right edge', () => {
     const lines = renderStatusBar(wide, { width: 120, home: '/home/dev', paint })
     const second = plainLine(lines[1]!)
@@ -213,16 +221,19 @@ describe('renderStatusBar — layout', () => {
 
   it('colors only the context percentage, never the whole ledger', () => {
     const lines = renderStatusBar(wide, { width: 140, home: '/home/dev', paint })
-    // 78.5% is above 70 → warning; the nearby counters stay `muted`.
+    // 78.5% is above 70 → warning; the nearby counters stay in the footer's own
+    // tone. pi paints the whole stats line `dim` (`footer.js`: `theme.fg("dim",
+    // statsLeft)`), so this build does too — the counters used to be `muted`,
+    // which is a step brighter and made the footer compete with the editor.
     expect(lines[1]).toContain('\x1b]8;;warning\x0778.5%/1.0M')
-    expect(lines[1]).toContain('\x1b]8;;muted\x07↑2.4M')
+    expect(lines[1]).toContain('\x1b]8;;dim\x07↑2.4M')
   })
 
   it('leaves the context uncolored below the warning threshold', () => {
     const calm = facts({ contextTokens: 100_000, contextWindow: 1_000_000 })
     const lines = renderStatusBar(calm, { width: 120, home: '/home/dev', paint })
     expect(lines[1]).not.toContain('\x1b]8;;warning\x07')
-    expect(lines[1]).toContain('\x1b]8;;muted\x0710.0%/1.0M')
+    expect(lines[1]).toContain('\x1b]8;;dim\x0710.0%/1.0M')
   })
 
   it('truncates the ledger, not the route, when space runs out', () => {

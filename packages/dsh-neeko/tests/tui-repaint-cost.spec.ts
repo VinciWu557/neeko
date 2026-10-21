@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { TuiApp } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
+import { rowSignature } from '../src/tui/row-cache.ts'
 import type { TranscriptState, TranscriptRow } from '../src/tui/transcript.ts'
 
 /**
@@ -96,28 +97,33 @@ describe('repaint is incremental', () => {
     expect(children(app)).toHaveLength(0)
   })
 
-  it('lets unchanged rows reuse their own render cache', async () => {
-    // `Text.render()` returns the same array while its content is unchanged, so
-    // keeping the child's identity is what makes a repaint cheap. Clearing the
-    // container would build a fresh component and throw that cache away.
+  it('reuses each unchanged row component by identity', async () => {
+    // What a repaint must avoid is *rebuilding* a row: constructing a
+    // `Markdown`, re-parsing it and re-allocating its tree is the expensive half.
+    // `app.ts` caches one component per row object and `syncChildren` keeps it in
+    // place, so an unchanged row is the same object across a repaint.
+    //
+    // This asserts **component identity**, not rendered-array identity. The
+    // ported pi components have a `Container` or `MouseRegion` root, and neither
+    // memoises its output array (`pi-tui` caches inside `Markdown`/`Text`/`Box`
+    // instead), so array identity would be a test of pi-tui's internals rather
+    // than of this app's caching. Measured cost of the array work: ~0.03 ms per
+    // frame for 60 rows.
     const { app, state } = makeApp()
     state.rows.push(...rows(20))
     app.mountTranscript(state)
     await new Promise((resolve) => setTimeout(resolve, 80))
-    const first = [...children(app)] as unknown as { render(w: number): string[] }[]
-    const rendered = first.map((component) => component.render(100))
+    const first = [...children(app)]
 
     state.rows.push({ kind: 'user', messageId: 'more', content: 'one more' })
     ;(app as unknown as { scheduleRender(): void }).scheduleRender()
     await new Promise((resolve) => setTimeout(resolve, 120))
 
-    const after = [...children(app)] as unknown as { render(w: number): string[] }[]
-    const again = after.map((component) => component.render(100))
-    // Same array instance ⇒ the component served its cache instead of re-rendering.
-    const cached = first.filter((_, index) => again[index] === rendered[index]).length
-    // Card wrappers (`MouseRegion`/`Box`) have no line cache of their own; the
-    // text components inside them do. Assert the majority keeps its identity.
-    expect(cached).toBeGreaterThanOrEqual(first.length / 2)
+    const after = [...children(app)]
+    // Every pre-existing row is still the same component; only the new one is new.
+    const reused = first.filter((component, index) => after[index] === component).length
+    expect(reused).toBe(first.length)
+    expect(after.length).toBe(first.length + 1)
   })
 
   it('does not reschedule itself while idle', async () => {
@@ -151,5 +157,47 @@ describe('repaint is incremental', () => {
     }
     const perFlush = (performance.now() - start) / 10 - 55
     expect(perFlush).toBeLessThan(5)
+  })
+})
+
+describe('the streaming spinner does not invalidate the streaming row', () => {
+  /**
+   * `spinnerFrame` used to be part of `rowSignature`, so every animation tick
+   * (80 ms) changed the signature of the row that was streaming and forced a full
+   * rebuild of it — a fresh `Markdown`, a fresh parse, a fresh tree, five times a
+   * second for as long as the answer took.
+   *
+   * The fix was to delete the transcript's animation entirely, which is pi's shape:
+   * the one animation owner is `Loader` in the composer's border, and the streaming
+   * row is already visibly live because its text is arriving.
+   *
+   * These assertions pin what the signature still *must* track, since removing an
+   * input is only safe as long as the remaining ones cover what changes.
+   */
+  const streaming = {
+    kind: 'assistant', turn: 1, step: 1, attemptId: 'a',
+    text: 'partial answer', thinking: 'reasoning', done: false,
+  } as const
+  const fold = { isExpanded: () => false } as never
+  const sign = (row: unknown = streaming): string =>
+    rowSignature({ row: row as never, themeName: 'dark', fold, attachTime: 0 })
+
+  it('produces the same signature for the same content, however often it is read', () => {
+    // A signature that drifted on its own would rebuild the row forever.
+    expect(sign()).toBe(sign())
+  })
+
+  it('still changes when the streamed text grows', () => {
+    // The signature must keep tracking the thing that actually changes, or the
+    // reply would freeze mid-stream.
+    expect(sign({ ...streaming, text: 'partial answer, longer' })).not.toBe(sign())
+  })
+
+  it('still changes when the streamed reasoning grows', () => {
+    expect(sign({ ...streaming, thinking: 'reasoning, longer' })).not.toBe(sign())
+  })
+
+  it('still changes when the attempt settles', () => {
+    expect(sign({ ...streaming, done: true })).not.toBe(sign())
   })
 })
