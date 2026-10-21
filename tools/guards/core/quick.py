@@ -60,7 +60,8 @@ NO_RELATED_TESTS = "No test files found"
 # Rust：无 import 图，测试粒度是整个 crate。
 RUST_TEST_GAP = (
     "改动含 .rs：本命令**不跑 `cargo test`** —— Rust 无 import 图，测试粒度是整个 crate，"
-    "从改动文件反推不出该跑哪些测试。测试判据请跑 `pnpm check`。"
+    "从改动文件反推不出该跑哪些测试。这条缺口由 pre-push hook 与 CI 的 test_rust 覆盖；"
+    "需要本地直测时跑 `pnpm test:rust`。"
 )
 
 # Java host：`tools/java-host/**` 的**唯一**门禁就是 test_host / build_host（都是重量级，
