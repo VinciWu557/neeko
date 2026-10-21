@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/10-21-pi-rpc-adapter/prd.md", "reason": "Pi rpc 协议一手事实：启动命令、NDJSON 三通道判别、18 条命令、13 种事件、三个必踩的坑（agent_settled / 前导行 / --no-themes）。全部实现决策的直接依据。"}
+{"file": ".trellis/tasks/10-21-pi-rpc-adapter/design.md", "reason": "技术设计：模块划分、请求响应配对、事件翻译状态机、复用点（ConfigOptionsState / model_slug_split / conversation 域）、跨平台与 slash 命令决策。"}
+{"file": ".trellis/tasks/10-21-pi-rpc-adapter/implement.md", "reason": "分阶段执行清单、每阶段验证命令、变异验证清单、依赖关系。"}
+{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "AgentSessionAdapter 契约；第 4.3.2 节已记录 Pi 的会话存储格式，第 7 节的 Pi adapter 是 OQ3 复用的对象。"}
+{"file": ".trellis/spec/backend/agent-acp-model-selection.md", "reason": "模型选择契约：category 定位、configOptions 全量替换、ModelCatalogResult 三态。Pi 的模型/档位要接同一套。"}
+{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "阻塞 I/O 隔离（红线 3）：PTY/子进程读写必须 spawn_blocking；AsyncRead 行解析的线程语义。"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "AppError 分类；spawn 失败（ENOENT）要给可操作提示而非 EPIPE 噪音。"}
+{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "瘦命令层；新增压缩/会话管理命令时的落点与注册方式。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "mod.rs 极薄（红线 9）；pi_rpc/ 目录下各文件的职责边界。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "平台差异集中化（红线 10）：Windows pi.cmd 判定必须落 platform/，不通用文件平铺 #[cfg]。"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "测试夹具路径平台无关（红线 13）：slash 命令扫描的夹具必须 tempdir() 推导。"}

@@ -188,3 +188,62 @@ Pi 的 `set_model` 只回**被设置的那个模型对象**，`set_thinking_leve
 `Capabilities.approvals` 在接通 `extension_ui_request` → `RequestApproval` 之前
 必须声明 `false`。声明 `true` 而没实现，前端会等一个永不到来的审批弹窗。
 
+## 9. Pi 的工具调用与审批
+
+### 9.1 三件套按 `toolCallId` 关联
+
+```text
+tool_execution_start  { toolCallId, toolName, args }
+tool_execution_update { toolCallId, partialResult }
+tool_execution_end    { toolCallId, result, isError }
+```
+
+没有 `toolCallId` 的事件直接丢弃 —— 发出去只会是孤儿，前端无法更新对应那一行。
+
+**`ToolEnd` 的交付顺序是硬约束**：`tool_execution_end` 的 `result` 是最终输出，
+必须先 `ToolOutput` 再 `ToolEnd`。反过来会让前端先关掉那一行再收到内容，
+表现出来就是「输出丢了」。护栏：`tool_end_delivers_final_output_before_status`。
+
+结果形状不统一（`content[]` / `details.stdout` / `stdout` / 结构化 `diff`），
+按**信息量从高到低**取第一个非空的，不要拼接 —— `details.stdout` 往往就是
+`stdout` 的副本，拼起来会产生重复内容。
+
+### 9.2 审批：`method` 决定一切，且 pi 没有统一的审批信封
+
+`extension_ui_request` 一个 `type` 承载两种东西：启动时的扩展 UI
+（`notify` / `setWidget` / `setStatus`）与真正的用户交互（`select` / `confirm`）。
+
+| 请求 method | 是否审批 | 回写形状 |
+| --- | --- | --- |
+| `confirm` | ✅ | `{confirmed: bool}`，**拒绝是 `false` 不是 `cancelled`** |
+| `select` | ✅ | `{value: "<首项>"}`；拒绝用 `{cancelled: true}` |
+| `notify` / `setWidget` / `setStatus` | ❌ | 启动时就来，不是审批 |
+| `input` / `editor` | ❌ | 需要文本输入，`RequestApproval` 表达不了 |
+
+`cancelled` 的语义是「用户关掉了弹窗、没做选择」，与「明确拒绝」是两种状态。
+把 `confirm` 的拒绝写成 `cancelled` 会让 pi 侧语义偏移（pi-acp 的实现同样回
+`confirmed: false`）。
+
+### 9.3 回写 id 必须是 pi 发的那个
+
+`extension_ui_response` 的 `id` 必须回携带 `extension_ui_request.id`。
+`PiRpcProcess::send` 曾无条件覆盖 `id` —— 于是每条审批回写都带一个 pi 不认识的
+uuid，工具卡在等回答上，表现为「点了允许没反应」。现在只在**缺省时**补 uuid。
+
+### 9.4 slash 命令：`get_commands` 是权威来源，不要扫目录
+
+原计划扫 `~/.pi/agent/prompts/**/*.md` + `<cwd>/.pi/prompts/`。实测 `get_commands`
+返回 **157 条**（`source ∈ prompt / skill / extension`），扫目录只能看到 prompt
+这一类（3 条），漏掉 skill 与 extension 共 154 条。
+
+执行侧也不需要新命令：`prompt` 里带 `/name` 会被 pi 自己展开（实测触发）。
+
+### 9.5 会话恢复：`sessionId` 有，但文件要发过消息才落盘
+
+`get_state.sessionId` 在握手时就有，可作为 `resume_id()` 返回给
+`conversation/adapters/pi.rs::resume_command`（拼成 `pi --session <id>`）。
+
+**边界**：空会话的 id 用 `--session` 启动会得到 `No session found matching '…'` ——
+会话文件只在发过消息后写入。`resume_id` 因此是「保存用的句柄」而非立即可用的句柄；
+对空会话立即恢复会失败，那是 `conversation` 域该加的防护。
+

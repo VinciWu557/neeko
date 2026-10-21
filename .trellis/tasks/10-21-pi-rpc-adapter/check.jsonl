@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/10-21-pi-rpc-adapter/prd.md", "reason": "核对实现是否守住了 12 条 AC，尤其 AC4（agent_settled 判据）与 AC11（单进程）。"}
+{"file": ".trellis/tasks/10-21-pi-rpc-adapter/design.md", "reason": "核对实现是否符合设计：是否复用了既有抽象而非新造、是否守住了三个协议坑。"}
+{"file": ".trellis/tasks/10-21-pi-rpc-adapter/implement.md", "reason": "核对阶段完整性与变异验证清单是否全部执行。"}
+{"file": ".trellis/spec/backend/agent-acp-model-selection.md", "reason": "检查模型/档位是否接上了同一套 configOptions 契约，有无另起一套。"}
+{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "检查是否真的复用了 conversation 域，而不是复制一份会话解析。"}
+{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "检查子进程 I/O 是否违反红线 3（阻塞 I/O 未隔离）。"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查平台差异是否落在 platform/（红线 10），通用文件有无平铺 #[cfg]。"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "检查 mod.rs 是否超过红线 9 的极薄要求。"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "检查测试夹具路径是否平台无关（红线 13）。"}
