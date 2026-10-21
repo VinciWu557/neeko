@@ -427,4 +427,9 @@ terminal so tests never write ANSI into the reporter.
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
+
+The TUI components under `src/tui/` are transcribed from
+[pi](https://github.com/earendil-works/pi) rather than vendored: the behaviour is
+ported and the dependency is not. pi is MIT-licensed, and its copyright notice is
+reproduced in [`LICENSE`](LICENSE) as that licence requires.

@@ -19,3 +19,27 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Third-party notices
+
+This package contains code derived from pi, distributed under the MIT License:
+
+  pi — https://github.com/earendil-works/pi
+  Copyright (c) Mario Zechner
+  Licensed under the MIT License
+  Affected packages: @earendil-works/pi-tui,
+                     @earendil-works/pi-coding-agent
+
+The pi components under `src/tui/` are transcribed rather than vendored: the
+behaviour is ported and the dependency is not (see `src/tui/message-view.ts` for
+the reasoning). The files concerned are the ones whose header says so —
+"transcribed from pi's own implementations", "transcribed from pi's", or "pi's
+shape". Files that merely mention pi without such a note describe pi's behaviour
+in prose and contain no ported code.
+
+pi is distributed under the MIT License, which requires its copyright notice and
+permission notice to accompany copies of the software. The copyright notice is
+stated above; the permission notice is the MIT text at the top of this file —
+the same terms, applied to this package's own copyright line as well.
