@@ -24,8 +24,6 @@ import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 // Shared selector chrome and cursor rule: every panel in this TUI answers the
 // same keys and moves the same way, so those halves are not restated here.
-import { renderPanel } from './picker.ts'
-import type { PanelTheme } from './picker.ts'
 
 /**
  * What the adapter says about one route's reasoning support.
@@ -139,43 +137,4 @@ export function withReasoningEffort(
   const { reasoningEffort: _previous, ...rest } = route
   void _previous
   return effort === undefined ? rest : { ...rest, reasoningEffort: effort as never }
-}
-
-/**
- * The selector's view: which choices exist and where the cursor sits.
- *
- * A plain projection — the cursor lives with the app (which owns the key mode),
- * the chrome and the cursor rule live in `picker.ts`, and this module only knows
- * what a reasoning level is.
- */
-export interface ThinkingPickerView {
-  readonly choices: readonly ThinkingChoice[]
-  readonly index: number
-}
-
-/**
- * Render the `/thinking` selector.
- *
- * Rows carry the display name, the opaque id (what completion inserts) and the
- * adapter's description. When neither the selection nor the adapter names a
- * default, no row can be `✓` — the panel says so instead of looking broken,
- * because in that case the wire really does send no effort.
- *
- * @param view - the picker's current view.
- * @param theme - the active theme (colors the chrome).
- * @returns the panel text.
- */
-export function renderThinkingPicker(view: ThinkingPickerView, theme: PanelTheme): string {
-  const marked = view.choices.some((choice) => choice.current)
-  return renderPanel({
-    title: 'Thinking level',
-    rows: view.choices.map((choice) => ({
-      text: `${choice.name}${theme.fg('muted', ` [${choice.id}]`)}${
-        choice.description === undefined ? '' : theme.fg('dim', ` · ${choice.description}`)}`,
-      active: choice.current,
-    })),
-    index: view.index,
-    theme,
-    ...(marked ? {} : { notes: ['  (provider default — no level pinned)'] }),
-  })
 }

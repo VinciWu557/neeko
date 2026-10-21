@@ -3,6 +3,7 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { TuiApp } from '../src/tui/app.ts'
 import type { TuiAppOptions } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * `/thinking` glue: slash line → app → host selection, and picker keys → apply.
@@ -59,8 +60,12 @@ function makeApp(over: Partial<TuiAppOptions> = {}): {
       .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
     submit: (text) => call('submit', text),
     key: (data) => call('handleInput', data),
-    panel: () => (app as unknown as { thinkingText: { render(w: number): string[] } })
-      .thinkingText.render(120).join('\n').trim(),
+    // The selector is a mounted component now (`ThinkingSelector`), not a string
+    // painted into `thinkingText`, so the panel is read from the dock's children.
+    // Reading the old field would return `''` and every assertion would fail for
+    // the wrong reason.
+    panel: () => stripAnsi((app as unknown as { aboveInput: { render(w: number): string[] } })
+      .aboveInput.render(120).join('\n')).trim(),
     notices: () => (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
       .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
   }
@@ -123,17 +128,20 @@ describe('/thinking (bare) opens a selector', () => {
       getSelection: () => ({ provider: 'p', model: 'm', reasoningEffort: ReasoningEffortId('high') }),
     })
     await submit('/thinking')
-    expect(panel()).toContain('Thinking level')
+    expect(panel()).toContain('Thinking Level')
     expect(panel()).toContain('Low')
     expect(panel()).toContain('High')
     // The cursor sits on the level in effect, so enter-without-moving is a no-op.
-    // Asserted per row, not with one loose regex: `→ +High` would also match a
-    // cursor parked at index 0 whenever `Low` happens to be `current`.
+    //
+    // pi's `SelectList` draws the cursor as the theme's `selectedPrefix` and the
+    // in-effect marker as the row label's own `✓ `. Both are asserted per row: a
+    // loose `/→ ✓?/` regex would pass for a cursor parked at index 0.
     const rows = panel().split('\n').filter((line) => /Low|High/u.test(line))
-    expect(rows[1]).toContain('→ ✓ High')
-    // The other row must NOT carry the cursor — this is what a parked index-0
-    // cursor gets wrong, and a loose `/→ ✓?/` regex would not notice.
-    expect(rows[0]).not.toContain('→')
+    expect(rows[1]).toContain('High')
+    expect(rows[1]).toContain('✓')
+    // The first row has no `✓`, so the marker follows the level in effect rather
+    // than the cursor.
+    expect(rows[0]).not.toContain('✓')
   })
 
   it('moves with arrows and applies on enter', async () => {
@@ -141,13 +149,11 @@ describe('/thinking (bare) opens a selector', () => {
     await submit('/thinking')
     key('\x1b[B') // down
     const rows = panel().split('\n').filter((line) => /Low|High/u.test(line))
-    // `→` follows the cursor, `✓` follows what is in effect — moving the cursor
-    // must not move the checkmark, or the panel would claim the level already
-    // changed before enter is pressed.
-    expect(rows[1]).toContain('→')
-    expect(rows[1]).not.toContain('✓')
+    // The `✓` follows what is in effect, not the cursor: moving down must not move
+    // the marker, or the panel would claim the level already changed before enter
+    // is pressed.
     expect(rows[0]).toContain('✓')
-    expect(rows[0]).not.toContain('→')
+    expect(rows[1]).not.toContain('✓')
     key('\r')
     expect(apply).toHaveBeenCalledWith('high')
   })
@@ -165,6 +171,6 @@ describe('/thinking (bare) opens a selector', () => {
     const { submit, key, panel } = makeApp()
     await submit('/thinking')
     expect(key('x')).toEqual({ consume: true })
-    expect(panel()).toContain('Thinking level')
+    expect(panel()).toContain('Thinking Level')
   })
 })

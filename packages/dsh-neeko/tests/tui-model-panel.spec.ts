@@ -157,6 +157,49 @@ describe('fuzzy search', () => {
     expect(text).toContain('group/auto-qfmodel')
   })
 
+  it('keeps the highlighted model across a re-filter', () => {
+    // The list is rebuilt on every keystroke (pi's `filterModels` replaces its
+    // child rather than mutating `items`), and a fresh `SelectList` starts at
+    // index 0 — so without an explicit preselect the highlight would jump back to
+    // the top on every character typed.
+    //
+    // The cursor is moved with the real `matchesKey` predicate, because the
+    // selector only forwards arrow keys it recognises: a hand-written predicate
+    // comparing the raw bytes silently moves nothing, and the assertion then
+    // passes for the wrong reason (it did, on the first attempt).
+    const panel = buildModelPanel({ models: catalogue, theme, onSelect: () => {}, onCancel: () => {} })
+    handleModelPanelKey(panel, '\x1b[B', key('\x1b[B'))
+    handleModelPanelKey(panel, '\x1b[B', key('\x1b[B'))
+    const before = panel.list.getSelectedItem()?.value
+    // Moved to the third row, and the filter below keeps two rows ahead of it —
+    // otherwise "keep the cursor" and "reset to index 0" produce the same answer,
+    // which is how this assertion passed on the first two attempts.
+    expect(before).toBe(catalogue[2]?.id)
+    // `a` ranks `auto-step-5-preview` first and `auto-qfmodel` second (measured:
+    // `fuzzyFilter(['…step-5…','…deepseek…','…qfmodel'], 'a')`). So the highlighted
+    // row is *not* the first match, and "reset to index 0" would land on
+    // `auto-step-5-preview` — a different row, which is what makes this assertion
+    // able to fail.
+    type(panel, 'a')
+    expect(panel.list.getSelectedItem()?.value).toBe(before)
+    const first = panel.list.getSelectedItem()
+    expect(first?.value).not.toBe(catalogue[0]?.id)
+  })
+
+  it('exposes the list that is mounted now, not the one from construction', () => {
+    // `applyFilter` replaces the `SelectList` (pi's `filterModels` does the same),
+    // so `panel.list` has to be a getter: a field captured at construction would
+    // keep pointing at the pre-filter list, and everything that reads the
+    // highlighted model — `selectedModel`, the detail line, the app's ctrl+s —
+    // would answer from a list nobody is looking at.
+    const panel = buildModelPanel({ models: catalogue, theme, onSelect: () => {}, onCancel: () => {} })
+    const before = panel.list
+    type(panel, 'a')
+    expect(panel.list).not.toBe(before)
+    // And it is the one actually mounted in the panel.
+    expect(panel.component.children).toContain(panel.list)
+  })
+
   it('ranks the best match first so Enter picks it', () => {
     const picked = vi.fn()
     const panel = buildModelPanel({ models: catalogue, theme, onSelect: picked, onCancel: () => {} })

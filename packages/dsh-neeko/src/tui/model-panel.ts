@@ -104,7 +104,15 @@ export interface ModelPanelOptions {
 export interface ModelPanel {
   /** The component to hand to `showOverlay`. */
   readonly component: Container
-  /** The list, so the owner can drive it (focus, filtering). */
+  /**
+   * The list, so the owner can drive it (focus, filtering).
+   *
+   * A **getter**, not a field: `applyFilter` replaces the `SelectList` (pi's
+   * `filterModels` does the same), so a field captured at construction would keep
+   * pointing at the list from before the first keystroke. Everything that reads
+   * the highlighted model — `selectedModel`, the detail line, the app's
+   * `ctrl+s` — goes through this.
+   */
   readonly list: SelectList
   /** The filter box; keeps focus so typing narrows the list. */
   readonly filter: Input
@@ -141,7 +149,7 @@ export function buildModelPanel(options: ModelPanelOptions): ModelPanel {
   const header = new Text(theme.fg('warning',
     'Only showing models from configured providers. Use /login to add providers.'))
   const filter = new Input({ prompt: '> ' })
-  const list = new SelectList(models.map(modelRowItem), maxVisible, modelPanelTheme(theme), {
+  let list = new SelectList(models.map(modelRowItem), maxVisible, modelPanelTheme(theme), {
     // Default is 32 columns, which truncates real model ids
     // (`workbuddy-ai/deepseek-v4.1-flash` is 33). Let the id claim what it needs.
     maxPrimaryColumnWidth: 48,
@@ -151,26 +159,42 @@ export function buildModelPanel(options: ModelPanelOptions): ModelPanel {
   const hint = new Text(theme.fg('dim',
     'Enter to select · Ctrl+S to set as default · Escape/Ctrl+C to cancel'))
 
+  /** Where the list sits in `root.children`, so a re-filter can replace it. */
+  let listIndex = 0
   const byId = new Map(models.map((model) => [model.id, model]))
   const allRows = models.map(modelRowItem)
 
   /**
    * Narrow the list with pi-tui's fuzzy matcher.
    *
-   * `SelectList.setFilter` compares with `startsWith`, which cannot express what
-   * a model picker needs: `step5` should find `group/auto-step-5-preview` and
-   * `wbds` should find `workbuddy-ai/deepseek-v4.1-flash`. `fuzzyFilter` also
-   * ranks, so the best match is the row the cursor lands on.
+   * `SelectList.setFilter` compares with `startsWith`, which cannot express what a
+   * model picker needs: `step5` should find `group/auto-step-5-preview` and `wbds`
+   * should find `workbuddy-ai/deepseek-v4.1-flash`. `fuzzyFilter` also ranks, so
+   * the best match is the row the cursor lands on.
    *
-   * `items` is a runtime field on the vendored class (no `setItems` exists), so
-   * it is replaced wholesale and `setFilter('')` resets the filtered view.
+   * pi rebuilds the `SelectList` for this (`ModelSelectorComponent.filterModels`
+   * replaces its child); the previous code wrote the private `items` field
+   * directly, which is a cast into another package's internals — it happens to
+   * work today and would break silently on any pi-tui change.
+   *
+   * The replacement is put at the same child index, so the panel's layout and the
+   * detail line below it stay where they are.
    */
   const applyFilter = (query: string): void => {
-    const matched = fuzzyFilter(allRows, query, (item) => item.value)
-    // Keep the list's own state in sync: it filters `items` by prefix, so the
-    // already-fuzzy-filtered set is handed over with an empty query.
-    ;(list as unknown as { items: typeof allRows }).items = matched
-    list.setFilter('')
+    const matched = fuzzyFilter([...allRows], query, (item) => item.value)
+    const previous = list.getSelectedItem()?.value
+    const next = new SelectList(matched, maxVisible, modelPanelTheme(theme), {
+      maxPrimaryColumnWidth: 48,
+    })
+    // Keep the cursor on the row it was on; a fresh list starts at index 0, which
+    // would jump the highlight back to the top on every keystroke.
+    const at = previous === undefined ? -1 : matched.findIndex((item) => item.value === previous)
+    if (at !== -1) next.setSelectedIndex(at)
+    next.onSelect = (item) => { onSelect(item.value) }
+    next.onCancel = () => { onCancel() }
+    listIndex = root.children.indexOf(list)
+    root.children[listIndex] = next
+    list = next
     refreshDetail()
   }
 
@@ -210,7 +234,7 @@ export function buildModelPanel(options: ModelPanelOptions): ModelPanel {
 
   return {
     component: root,
-    list,
+    get list(): SelectList { return list },
     filter,
     overlay,
     refreshDetail,

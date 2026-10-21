@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { TuiApp } from '../src/tui/app.ts'
 import type { TuiAppOptions } from '../src/tui/app.ts'
 import { FakeTerminal } from './support/fake-terminal.ts'
+import { stripAnsi } from './support/ansi.ts'
 
 /**
  * `/resume` glue: slash line → app → host, and picker keys → resume.
@@ -24,6 +25,8 @@ function makeApp(over: Partial<TuiAppOptions> = {}): {
   key: (data: string) => { consume?: boolean } | undefined
   resume: ReturnType<typeof vi.fn>
   panel: () => string
+  raw: () => string
+  selected: () => string | undefined
   notices: () => string
 } {
   const resume = vi.fn()
@@ -50,13 +53,31 @@ function makeApp(over: Partial<TuiAppOptions> = {}): {
     if (fn === undefined) throw new Error(`TuiApp has no method ${name}`)
     return fn.apply(app, args)
   }
+  // The picker is a mounted `SelectList` now (`resume-selector.ts`), not a string
+  // painted into `resumeText`, so the panel is read from the dock.
+  //
+  // Two readers: `panel` strips ANSI (row text), `raw` keeps it because
+  // `SelectList` marks the cursor by *colour* — stripping it would make a
+  // selected row indistinguishable from any other.
+  const frame = (): string => (app as unknown as { aboveInput: { render(w: number): string[] } })
+    .aboveInput.render(120).join('\n')
   return {
     app,
     resume,
     submit: (text) => call('submit', text),
     key: (data) => call('handleInput', data),
-    panel: () => (app as unknown as { resumeText: { render(w: number): string[] } })
-      .resumeText.render(120).join('\n').trim(),
+    panel: () => stripAnsi(frame()),
+    raw: frame,
+    // The `SelectList`'s own answer, not a colour read out of the frame: this is
+    // what `enter` acts on, so it is the value a cursor assertion has to compare.
+    // Read through the host, not a field on the app: the dock has one occupant and
+    // `panel-host.ts` is where that fact lives now.
+    selected: () => {
+      const host = (app as unknown as {
+        panels?: { current?: { getSelectList(): { getSelectedItem(): { value: string } | null } } }
+      }).panels
+      return host?.current?.getSelectList().getSelectedItem()?.value
+    },
     notices: () => (app as unknown as { noticeLog: { container: { children: { render(w: number): string[] }[] } } })
       .noticeLog.container.children.map((child) => child.render(200).join('\n')).join('\n'),
   }
@@ -83,25 +104,32 @@ describe('/resume (bare) opens the session list', () => {
   it('lists the sessions with the live one marked', async () => {
     const { submit, panel } = makeApp()
     await submit('/resume')
-    expect(panel()).toContain('Resume session')
+    // No title: the picker is a `SelectList` between two rules, and the current
+    // session is marked in the row text (`[current]`) rather than with a `✓`.
+    expect(panel()).toMatch(/^─+$/mu)
     expect(panel()).toContain('current work')
     expect(panel()).toContain('older work')
-    expect(panel()).toMatch(/→ ✓ current work/u)
+    expect(panel()).toContain('[current]')
   })
 
   it('starts the cursor on the session in use, wherever it sits', async () => {
     // The live session is deliberately NOT the first row: with it first, an
     // implementation that always returns index 0 would pass this test too.
-    const { submit, panel } = makeApp({
+    const { submit, raw } = makeApp({
       listSessions: async () => [
         record({ id: 'session-newest', title: 'newest work' }),
         record({ id: 'session-current', live: true, title: 'current work' }),
       ],
     })
     await submit('/resume')
-    const rows = panel().split('\n').filter((line) => /work/u.test(line))
-    expect(rows[0]).not.toContain('→')
-    expect(rows[1]).toContain('→ ✓')
+    // `SelectList` marks the cursor by colouring the row (the theme's
+    // `selectedPrefix` / `selectedText`), so this has to read the raw frame: the
+    // stripped panel cannot tell a selected row from an unselected one.
+    const rows = raw().split('\n').filter((line) => /work/u.test(line))
+    const selected = rows.filter((line) => line.includes('\x1b[38;'))
+    expect(selected).toHaveLength(1)
+    expect(stripAnsi(selected[0] ?? '')).toContain('current work')
+    expect(stripAnsi(rows[0] ?? '')).toContain('newest work')
   })
 
   it('resumes the highlighted session on enter', async () => {
@@ -124,7 +152,7 @@ describe('/resume (bare) opens the session list', () => {
     const { submit, key, panel } = makeApp()
     await submit('/resume')
     expect(key('x')).toEqual({ consume: true })
-    expect(panel()).toContain('Resume session')
+    expect(panel()).toMatch(/^─+$/mu)
   })
 
   it('says so when there is nothing to resume', async () => {
@@ -271,7 +299,7 @@ describe('titles load by page, not all at once', () => {
     })
     await submit('/resume')
     await settle(() => notices().includes('title service down'))
-    expect(panel()).toContain('Resume session')
+    expect(panel()).toMatch(/^─+$/mu)
     expect(notices()).toContain('title service down')
   })
 
@@ -299,7 +327,7 @@ describe('titles load by page, not all at once', () => {
     // Answer ONLY the stale page.
     releases[0]?.({ 'session-00000000': 'STALE-FROM-OLD-PICKER' })
     await settle(() => false, 80)
-    expect(panel()).toContain('Resume session')
+    expect(panel()).toMatch(/^─+$/mu)
     expect(panel()).not.toContain('STALE-FROM-OLD-PICKER')
   })
 })
@@ -398,5 +426,57 @@ describe('empty sessions do not bury the useful ones', () => {
     await settle(() => !panel().includes('09876543'))
     expect(panel()).toContain('[current]')
     expect(panel()).not.toContain('09876543')
+  })
+})
+
+describe('the highlight follows the controller, not a stale copy', () => {
+  /**
+   * The controller owns `view.index`; the `SelectList` owns the highlight. Two
+   * copies of one fact means the app has to hand the index over on every repaint,
+   * and nothing asserted that it did — the mutation that dropped
+   * `setChoices(…, view.index)` left every test in this file green.
+   *
+   * What it breaks is severe and silent: after two `↓`, `enter` resumed the third
+   * session while the first row was highlighted. The user picks one thing and gets
+   * another.
+   */
+  function four(over: Partial<TuiAppOptions> = {}): ReturnType<typeof makeApp> {
+    return makeApp({
+      listSessions: async () => [
+        record({ id: 's0', live: true, title: 'zero' }),
+        record({ id: 's1', title: 'one' }),
+        record({ id: 's2', title: 'two' }),
+        record({ id: 's3', title: 'three' }),
+      ],
+      sessionTitles: async () => ({ s0: 'zero', s1: 'one', s2: 'two', s3: 'three' }),
+      ...over,
+    })
+  }
+
+  it('opens on the session in use', async () => {
+    const { submit, selected } = four()
+    await submit('/resume')
+    expect(selected()).toBe('s0')
+  })
+
+  it('moves the highlight with every keystroke', async () => {
+    const { submit, key, selected } = four()
+    await submit('/resume')
+    key('\x1b[B')
+    expect(selected()).toBe('s1')
+    key('\x1b[B')
+    expect(selected()).toBe('s2')
+  })
+
+  it('resumes the row that is highlighted', async () => {
+    // The end-to-end statement of the bug: what `enter` does must be what is on
+    // screen.
+    const { submit, key, resume, selected } = four()
+    await submit('/resume')
+    key('\x1b[B')
+    key('\x1b[B')
+    const highlighted = selected()
+    key('\r')
+    expect(resume).toHaveBeenCalledWith(highlighted)
   })
 })

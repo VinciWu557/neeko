@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  renderThinkingPicker,
   thinkingChoices,
   thinkingOutcome,
   withReasoningEffort,
@@ -128,28 +127,39 @@ describe('withReasoningEffort', () => {
   })
 })
 
-describe('renderThinkingPicker without a pinned level', () => {
-  const plain = (token: string, text: string): string => text
-
-  it('says the provider default applies when nothing is marked', () => {
-    // Real dsh answers `reasoning.efforts` with no `defaultEffort`, and a fresh
-    // selection has no effort — so no row can carry `✓`. Silence there reads as
-    // a broken panel rather than as "no level is pinned".
-    const text = renderThinkingPicker({
-      choices: [
-        { id: ReasoningEffortId('low'), name: 'Low', current: false },
-        { id: ReasoningEffortId('high'), name: 'High', current: false },
-      ],
-      index: 0,
-    }, { fg: plain })
-    expect(text).toContain('provider default')
+describe('the selector marks what is in effect, and only that', () => {
+  /**
+   * The rendering moved to `ThinkingSelector` (pi's component shape), so the
+   * `✓` marker and the "no level pinned" story are asserted there
+   * (`tui-thinking-selector.spec.ts`) and through the app seam
+   * (`tui-thinking-glue.spec.ts`).
+   *
+   * What stays here is the decision those two consume: which choice is `current`.
+   * That is this module's job, and it is the half a rendering change must not
+   * alter — a model with no `defaultEffort` and a selection with no effort must
+   * produce **no** `current` row, or the menu would claim a level is pinned when
+   * the wire sends none.
+   */
+  it('marks nothing when the adapter names no default and nothing is selected', () => {
+    const choices = thinkingChoices({ efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }] } as never, undefined)
+    expect(choices.some((choice) => choice.current)).toBe(false)
   })
 
-  it('stays quiet when a level is marked', () => {
-    const text = renderThinkingPicker({
-      choices: [{ id: ReasoningEffortId('low'), name: 'Low', current: true }],
-      index: 0,
-    }, { fg: plain })
-    expect(text).not.toContain('provider default')
+  it('marks the selected level', () => {
+    const choices = thinkingChoices(
+      { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }, { id: ReasoningEffortId('high'), name: 'High' }] } as never,
+      'high',
+    )
+    expect(choices.filter((choice) => choice.current).map((choice) => choice.id)).toEqual(['high'])
+  })
+
+  it('marks the adapter default when the selection is silent', () => {
+    // An absent selection means "provider default" on the wire, so showing the
+    // adapter's default as current is honest: that is what gets sent.
+    const choices = thinkingChoices(
+      { efforts: [{ id: ReasoningEffortId('low'), name: 'Low' }], defaultEffort: ReasoningEffortId('low') } as never,
+      undefined,
+    )
+    expect(choices[0]?.current).toBe(true)
   })
 })
