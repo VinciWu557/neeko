@@ -51,7 +51,16 @@ export class FakeTerminal implements Terminal {
   showCursor(): void {}
   clearLine(): void {}
   clearFromCursor(): void {}
-  clearScreen(): void {}
+  /**
+   * Record the clear sequence the real terminal writes.
+   *
+   * The real `Terminal.clearScreen()` writes `ESC[2J ESC[H`; recording it here lets a
+   * test assert *that the screen was cleared* without reaching into pi-tui, and
+   * without the ordering assertions becoming impossible.
+   */
+  clearScreen(): void {
+    this.output += '\x1b[2J\x1b[H'
+  }
   setTitle(): void {}
   setProgress(): void {}
   setProgramStatus(_status: ProgramStatus): void {}

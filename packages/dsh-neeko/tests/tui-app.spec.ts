@@ -63,11 +63,16 @@ function noticeText(app: TuiApp): string {
 }
 
 describe('TuiApp key routing', () => {
-  it('ctrl+c invokes onExit and consumes the key', () => {
+  it('ctrl+c clears the draft first and exits only on a second press', () => {
+    // pi's rule (`exit-keys.ts`): the first press wipes the draft, the second one
+    // inside 500 ms leaves. Asserting an immediate exit here is what made this key
+    // throw away a half-typed message.
     const { app, onExit } = makeApp()
-    const result = inputListener(app)('\x03')
+    const press = inputListener(app)
+    expect(press('\x03')).toEqual({ consume: true })
+    expect(onExit).not.toHaveBeenCalled()
+    expect(press('\x03')).toEqual({ consume: true })
     expect(onExit).toHaveBeenCalledTimes(1)
-    expect(result).toEqual({ consume: true })
   })
 
   it('ctrl+d invokes onExit and consumes the key', () => {

@@ -22,6 +22,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { planSession } from './session-plan.ts'
+import { runStateOfStatus } from './program-status.ts'
 import { loadKeybindingOverrides } from './keymap.ts'
 import { resolveScreen } from './screen.ts'
 import type { ScreenMode } from './screen.ts'
@@ -711,6 +712,10 @@ export function apply(ctx: Context, config: TuiConfig): void {
           onToolEnd(timing, now)
         }
         feedEvent(transcript, { kind: 'event', event })
+        // The turn's end is the only place a run's **outcome** exists. Without this,
+        // `done` and `error` were declared on the run state and never set: the
+        // terminal showed the same thing for a finished turn and a failed one.
+        app.reportSessionEvent(event)
         // A session event is a real state change: fold the facts (expensive) and
         // apply the timing segment in the SAME repaint.
         app.refreshStatus(timingLine(timing, now))
@@ -734,7 +739,7 @@ export function apply(ctx: Context, config: TuiConfig): void {
       })
       ctx.on('agent/status', ({ agent: owner, status }) => {
         if (owner !== agent) return
-        app.setWorking(status === 'running' ? 'working…' : '')
+        app.setWorking(runStateOfStatus(status))
       })
 
       app.start()

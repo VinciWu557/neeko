@@ -67,3 +67,83 @@ describe('TranscriptFold', () => {
     expect(fold.toggleAll()).toBe(false)
   })
 })
+
+describe('thinking folds independently of tool output', () => {
+  /**
+   * pi binds these to two different keys and two different actions:
+   *
+   * | key | action | governs |
+   * | --- | --- | --- |
+   * | `ctrl+o` | `app.tools.expand` | tool output |
+   * | `ctrl+t` | `app.thinking.toggle` | thinking blocks |
+   *
+   * They were one switch here, which forced a choice that has no good answer: make
+   * `ctrl+o` also collapse reasoning and a user loses the answer along with the
+   * logs, or leave it alone and `ctrl+t` does nothing. Two switches is the only
+   * shape where both keys mean what their names say.
+   *
+   * The rows that *contain* thinking are the assistant ones — `thinking` is a field
+   * on that row, not a row of its own — so the thinking switch must be consulted
+   * per row kind, not applied as a second global broadcast.
+   */
+  const assistant = (thinking: string): TranscriptRow => ({
+    kind: 'assistant', turn: 1, step: 1, attemptId: 'a', text: 'answer', thinking, done: true,
+  })
+  const tool: TranscriptRow = {
+    kind: 'tool', taskId: 'c', name: 'bash', status: 'success', args: {}, result: 'out', turn: 1,
+  }
+
+  it('shows reasoning on the first toggle, without expanding tool output', () => {
+    // Reasoning starts folded like everything else, so `ctrl+t` opens it. The
+    // direction that matters: a user who wants to read the reasoning should not get
+    // every tool result dumped into the transcript as a side effect.
+    const fold = new TranscriptFold()
+    const reasoning = assistant('why')
+    expect(fold.isExpanded(reasoning)).toBe(false)
+    fold.toggleThinking()
+    expect(fold.isExpanded(reasoning)).toBe(true)
+    expect(fold.isExpanded(tool)).toBe(false)
+  })
+
+  it('hides reasoning again on the second toggle', () => {
+    const fold = new TranscriptFold()
+    fold.toggleThinking()
+    fold.toggleThinking()
+    expect(fold.isExpanded(assistant('why'))).toBe(false)
+    expect(fold.thinkingVisible).toBe(false)
+  })
+
+  it('neither key can undo the other', () => {
+    // Orthogonal, exactly as pi keeps them: `ctrl+o` walks the expandable children
+    // and an assistant message is not one of them, so it cannot open reasoning; and
+    // `ctrl+t` only touches reasoning, so it cannot close tools.
+    const fold = new TranscriptFold()
+    fold.toggleAll() // ctrl+o → tools open
+    expect(fold.isExpanded(tool)).toBe(true)
+    expect(fold.isExpanded(assistant('why'))).toBe(false) // reasoning untouched
+    fold.toggleThinking() // ctrl+t → reasoning open, tools still open
+    expect(fold.isExpanded(assistant('why'))).toBe(true)
+    expect(fold.isExpanded(tool)).toBe(true)
+  })
+
+  it('still folds an assistant row with no reasoning via ctrl+o', () => {
+    // No thinking to show means the tools switch governs, or the message body would
+    // be permanently folded with no key able to open it.
+    const fold = new TranscriptFold()
+    const plain = assistant('')
+    expect(fold.isExpanded(plain)).toBe(false)
+    fold.toggleAll()
+    expect(fold.isExpanded(plain)).toBe(true)
+  })
+
+  it('still lets a click flip one row against both switches', () => {
+    // Overrides are per row and invert whatever the global state says; two
+    // switches must not break that.
+    const fold = new TranscriptFold()
+    fold.toggleThinking() // thinking now shown
+    const row = assistant('why')
+    expect(fold.isExpanded(row)).toBe(true)
+    fold.toggle(row)
+    expect(fold.isExpanded(row)).toBe(false)
+  })
+})

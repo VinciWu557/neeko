@@ -6,12 +6,13 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   APP_KEYBINDINGS,
+  actionKeys,
+  installKeymap,
   HOTKEY_GROUPS,
   actionScope,
   formatHotkeys,
   formatKeyText,
   defaultKeybindingsPath,
-  installKeymap,
   loadKeybindingOverrides,
   normaliseKeyId,
   routeKey,
@@ -73,7 +74,14 @@ describe('APP_KEYBINDINGS — the actions this build routes', () => {
     // is worse than not listing it.
     expect(Object.keys(APP_KEYBINDINGS).sort()).toEqual([
       'app.clear',
+      'app.clipboard.pasteImage',
       'app.exit',
+      'app.model.cycleBackward',
+      'app.model.cycleForward',
+      'app.model.select',
+      'app.suspend',
+      'app.thinking.cycle',
+      'app.thinking.toggle',
       'app.tools.expand',
     ])
   })
@@ -371,9 +379,13 @@ describe('TuiApp routes through the stack (glue)', () => {
     return { app, press: (data) => route.call(app, data), onExit }
   }
 
-  it('quits on ctrl+c, which is `app.clear`', () => {
+  it('routes ctrl+c to `app.clear`, which clears before it exits', () => {
+    // The binding did not change; what it *does* did (`exit-keys.ts`). One press
+    // clears, two exit — so a single press must not call `onExit`.
     const { press, onExit } = boot()
     expect(press('\x03')).toEqual({ consume: true })
+    expect(onExit).not.toHaveBeenCalled()
+    press('\x03')
     expect(onExit).toHaveBeenCalledTimes(1)
   })
 
@@ -389,6 +401,9 @@ describe('TuiApp routes through the stack (glue)', () => {
     const { press, onExit } = boot({ keybindingOverrides: { 'app.clear': 'ctrl+q' } })
     expect(press('\x03')).toBeUndefined()
     expect(onExit).not.toHaveBeenCalled()
+    // Rebound to `ctrl+q`, which now needs the same two presses as the default.
+    expect(press('\x11')).toEqual({ consume: true })
+    expect(onExit).not.toHaveBeenCalled()
     expect(press('\x11')).toEqual({ consume: true })
     expect(onExit).toHaveBeenCalledTimes(1)
   })
@@ -398,9 +413,10 @@ describe('TuiApp routes through the stack (glue)', () => {
     // the release frame is a real bug (a held key exits repeatedly).
     const { press, onExit } = boot()
     press('\x03')
-    expect(onExit).toHaveBeenCalledTimes(1)
-    // A CSI-u release encoding for ctrl+c.
+    // A CSI-u release encoding for ctrl+c must not count as the second press.
     press('\x1b[99;5:3u')
+    expect(onExit).not.toHaveBeenCalled()
+    press('\x03')
     expect(onExit).toHaveBeenCalledTimes(1)
   })
 
@@ -450,14 +466,18 @@ describe('TuiApp routes through the stack (glue)', () => {
   })
 })
 
-describe('TuiApp — exit stays reachable from every surface', () => {
+describe('TuiApp — a modal panel must not trap the user', () => {
   /**
-   * A modal panel must not be able to trap the user.
+   * A panel must not be able to hold the keyboard hostage.
    *
-   * The old cascade checked the exit keys **before** the model panel, so `ctrl+c`
-   * worked from anywhere. A naive scope stack that puts the modal first reverses
-   * that: the panel consumes every key, and the one action a stuck user reaches
-   * for stops working. These pin the escape hatch.
+   * The mechanism changed with `ctrl+c`: the exit scope now **yields** to an open
+   * panel (see `exit-keys.ts`), so `ctrl+c` no longer exits from inside one. The
+   * guarantee it used to provide is kept by the panel itself — pi-tui's
+   * `tui.select.cancel` defaults to `['escape', 'ctrl+c']`, so the key still gets
+   * the user out, it just closes the picker instead of the program.
+   *
+   * That is the right ladder: the first press backs out one level, and a second
+   * press (with no panel left) reaches the exit rule.
    */
   function boot(): {
     app: TuiApp
@@ -481,21 +501,33 @@ describe('TuiApp — exit stays reachable from every surface', () => {
     return { app, press: (data) => route.call(app, data), onExit }
   }
 
-  it('quits even with the model panel open', async () => {
+  it('closes the model panel on ctrl+c instead of quitting', async () => {
     const { app, press, onExit } = boot()
     await (app as unknown as { openModelPanel(): Promise<void> }).openModelPanel()
-    expect((app as unknown as { modelPanel?: unknown }).modelPanel).toBeDefined()
+    const panelOf = (): unknown => (app as unknown as { modelPanel?: unknown }).modelPanel
+    expect(panelOf()).toBeDefined()
 
     press('\x03')
-    expect(onExit).toHaveBeenCalledTimes(1)
+    expect(panelOf()).toBeUndefined()
+    expect(onExit).not.toHaveBeenCalled()
   })
 
-  it('quits even with a theme picker open', async () => {
+  it('closes a theme picker on ctrl+c instead of quitting', async () => {
     const { app, press, onExit } = boot()
     const submit = (app as unknown as { submit(t: string): Promise<void> }).submit
     await submit.call(app, '/theme')
-
     press('\x03')
+    expect(onExit).not.toHaveBeenCalled()
+  })
+
+  it('still quits once the panel is closed', async () => {
+    // The escape hatch is deferred, not removed.
+    const { app, press, onExit } = boot()
+    await (app as unknown as { openModelPanel(): Promise<void> }).openModelPanel()
+    press('\x03') // closes the panel
+    press('\x03') // clear
+    expect(onExit).not.toHaveBeenCalled()
+    press('\x03') // second press inside the window → exit
     expect(onExit).toHaveBeenCalledTimes(1)
   })
 
@@ -600,5 +632,202 @@ describe('formatHotkeys — literal keys', () => {
     const text = formatHotkeys(manager()).join('\n')
     expect(text).toContain('Slash commands')
     expect(text).not.toContain('//  ')
+  })
+})
+
+describe('app-level keys that reach an existing capability', () => {
+  /**
+   * These are the `docs/keybindings.md` actions whose *effect* this build already
+   * had and whose *key* it never bound. That is the cheapest kind of gap to close
+   * and the most confusing to leave open: the feature works if you know the slash
+   * command, and the key a pi user reaches for does nothing.
+   */
+  function boot(overrides: Record<string, unknown> = {}): {
+    app: TuiApp
+    press: (data: string) => unknown
+  } {
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({
+        models: [
+          { id: 'm1', name: 'M1', provider: 'p' },
+          { id: 'm2', name: 'M2', provider: 'p' },
+        ],
+        current: 'm1',
+      }),
+      selectModel: () => {},
+      terminal: new FakeTerminal(),
+      ...overrides,
+    })
+    const route = (app as unknown as { handleInput(d: string): unknown }).handleInput
+    return { app, press: (data) => route.call(app, data) }
+  }
+
+  it('ctrl+l opens the model selector', async () => {
+    // pi's `app.model.select`. The panel exists and `/model` opens it; the key was
+    // simply never bound, so a pi user's reflex did nothing.
+    //
+    // Awaited: opening reads the catalogue first, so the panel exists only after
+    // that promise settles. Asserting synchronously would fail for the right
+    // reason and the wrong one at the same time.
+    const { app, press } = boot()
+    expect(press('\x0c')).toEqual({ consume: true }) // ctrl+l
+    await vi.waitFor(() => {
+      expect((app as unknown as { modelPanel?: unknown }).modelPanel).toBeDefined()
+    })
+  })
+
+  it('ctrl+v is bound to the clipboard action', () => {
+    // The binding itself is all that can be checked without a real clipboard; the
+    // three branches are the decision table in tui-clipboard.spec.ts.
+    const { press } = boot()
+    // Consumed even when the platform has no clipboard: the action reports that
+    // rather than letting the control character reach the editor as a raw `\x16`.
+    expect(press('\x16')).toEqual({ consume: true })
+  })
+
+  it('still consumes ctrl+l when the model list is empty', () => {
+    // A panel over an empty catalogue is a no-op, but the key must still be
+    // consumed — otherwise it leaks into the editor as a form feed.
+    const { press } = boot({ modelPicker: async () => ({ models: [], current: '' }) })
+    expect(press('\x0c')).toEqual({ consume: true })
+  })
+})
+
+describe('ctrl+t repaints the transcript, not the chrome', () => {
+  /**
+   * `ctrl+t` changes fold state, which is read **while rows render** — so the whole
+   * effect is a transcript repaint. The first version called `repaintChrome()`,
+   * which re-paints the banner and the status bar and was probably incidental: the
+   * transcript would only have updated because its own next flush happened to land.
+   *
+   * `toggleFold` (`ctrl+o`) already used `scheduleRender`, and two keys with the same
+   * kind of effect drifting onto different repaint paths is exactly the class of
+   * defect this round is fixing elsewhere.
+   */
+  it('toggles the fold state and reports it', () => {
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm' }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      terminal: new FakeTerminal(),
+    })
+    const fold = (app as unknown as { fold: { thinkingVisible: boolean } }).fold
+    expect(fold.thinkingVisible).toBe(false)
+    const route = (app as unknown as { handleInput(d: string): unknown }).handleInput
+    route.call(app, '\x14') // ctrl+t
+    expect(fold.thinkingVisible).toBe(true)
+  })
+})
+
+describe('platform keybindings match pi', () => {
+  /**
+   * pi binds two actions differently where the usual chord is unavailable:
+   *
+   * | action | Unix | Windows / WSL |
+   * | --- | --- | --- |
+   * | `app.model.cycleBackward` | `shift+ctrl+p` | `alt+p` |
+   * | `app.clipboard.pasteImage` | `ctrl+v` | `alt+v` |
+   *
+   * `ctrl+shift+p` vs `shift+ctrl+p` is the same chord written the other way round
+   * (the matcher folds modifier order), but the Windows split is real: `ctrl+v` is
+   * the paste chord a Windows terminal may intercept, and `ctrl+p`/`ctrl+shift+p`
+   * collide with line editing.
+   *
+   * pi decides this with `platform === 'win32' || (linux && WSL_DISTRO_NAME ||
+   * WSL_INTEROP)`. Copied rather than invented, because a WSL terminal is a Linux
+   * process with Windows' key conventions — the one case a plain `platform` check
+   * gets wrong.
+   */
+  it('uses the Unix chords by default', () => {
+    expect(actionKeys('app.model.cycleBackward', 'darwin', {})).toEqual(['shift+ctrl+p'])
+    expect(actionKeys('app.clipboard.pasteImage', 'darwin', {})).toEqual(['ctrl+v'])
+    expect(actionKeys('app.clipboard.pasteImage', 'linux', {})).toEqual(['ctrl+v'])
+  })
+
+  it('uses the Windows chords on win32', () => {
+    expect(actionKeys('app.model.cycleBackward', 'win32', {})).toEqual(['alt+p'])
+    expect(actionKeys('app.clipboard.pasteImage', 'win32', {})).toEqual(['alt+v'])
+  })
+
+  it('treats a WSL terminal as Windows', () => {
+    // A Linux process, but the terminal is Windows': `ctrl+v` is intercepted there.
+    expect(actionKeys('app.clipboard.pasteImage', 'linux', { WSL_DISTRO_NAME: 'Ubuntu' })).toEqual(['alt+v'])
+    expect(actionKeys('app.model.cycleBackward', 'linux', { WSL_INTEROP: '/run/WSL/1' })).toEqual(['alt+p'])
+  })
+
+  it('leaves the platform-independent chords alone', () => {
+    // Only two actions differ; everything else must not drift with the platform.
+    for (const platform of ['darwin', 'win32', 'linux']) {
+      expect(actionKeys('app.thinking.toggle', platform, {})).toEqual(['ctrl+t'])
+      expect(actionKeys('app.thinking.cycle', platform, {})).toEqual(['shift+tab'])
+      expect(actionKeys('app.model.select', platform, {})).toEqual(['ctrl+l'])
+      expect(actionKeys('app.model.cycleForward', platform, {})).toEqual(['ctrl+p'])
+    }
+  })
+
+  it('has no default for suspend on Windows', () => {
+    // pi: "None on Windows" — there is no Unix job control to suspend into.
+    expect(actionKeys('app.suspend', 'win32', {})).toEqual([])
+    expect(actionKeys('app.suspend', 'darwin', {})).toEqual(['ctrl+z'])
+  })
+})
+
+describe('installKeymap installs the platform chords', () => {
+  /**
+   * `actionKeys` being correct is not enough: `installKeymap` has to route the app's
+   * defaults through it. Spreading the static `APP_KEYBINDINGS` table instead would
+   * install `ctrl+v` on Windows too, and the tests for `actionKeys` would still pass.
+   */
+  it('installs alt+v as the paste chord on Windows', () => {
+    const manager = installKeymap({}, 'win32', {})
+    expect(manager.getKeys('app.clipboard.pasteImage' as never)).toEqual(['alt+v'])
+    expect(manager.matches('\x16', 'app.clipboard.pasteImage' as never)).toBe(false)
+  })
+
+  it('installs ctrl+v as the paste chord elsewhere', () => {
+    const manager = installKeymap({}, 'linux', {})
+    expect(manager.getKeys('app.clipboard.pasteImage' as never)).toEqual(['ctrl+v'])
+    expect(manager.matches('\x16', 'app.clipboard.pasteImage' as never)).toBe(true)
+  })
+
+  it('leaves suspend unbound on Windows', () => {
+    const manager = installKeymap({}, 'win32', {})
+    expect(manager.getKeys('app.suspend' as never)).toEqual([])
+  })
+
+  it('still lets a user override a platform default', () => {
+    // The override is the point of having the registry at all; a platform default
+    // must not be sticky.
+    const manager = installKeymap({ 'app.clipboard.pasteImage': 'ctrl+y' }, 'win32', {})
+    expect(manager.getKeys('app.clipboard.pasteImage' as never)).toEqual(['ctrl+y'])
+  })
+})
+
+describe('an unbound action does not break routing', () => {
+  /**
+   * With no default keys, `actionScope` can never match `app.suspend`, so `ctrl+z`
+   * falls through to the editor — which is what should happen on Windows, where the
+   * key means undo in some terminals and nothing here. What must **not** happen is a
+   * throw from an empty `defaultKeys` array.
+   */
+  it('routes ctrl+z to the editor when suspend has no keys', () => {
+    const manager = installKeymap({}, 'win32', {})
+    expect(manager.matches('\x1a', 'app.suspend' as never)).toBe(false)
+    // The other suspend path — the handler is still callable, so the Windows refusal
+    // message is reachable if a user binds the action themselves.
+    expect(typeof manager.getDefinition('app.suspend' as never)).toBe('object')
   })
 })

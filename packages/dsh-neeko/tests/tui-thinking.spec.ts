@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   thinkingChoices,
   thinkingOutcome,
   withReasoningEffort,
+  cycleThinking,
 } from '../src/tui/thinking.ts'
+import type { ReasoningSupport } from '../src/tui/thinking.ts'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { TuiApp } from '../src/tui/app.ts'
+import { FakeTerminal } from './support/fake-terminal.ts'
 
 /**
  * `/thinking` — the model's reasoning effort.
@@ -161,5 +165,101 @@ describe('the selector marks what is in effect, and only that', () => {
       undefined,
     )
     expect(choices[0]?.current).toBe(true)
+  })
+})
+
+describe('cycling the thinking level with shift+tab', () => {
+  /**
+   * pi binds `shift+tab` to `app.thinking.cycle`. It is not a selector: it advances
+   * to the next level in place, so a user can step through levels while looking at
+   * the transcript.
+   *
+   * The list comes from the adapter (`reasoning.efforts`), never from a hard-coded
+   * `low|medium|high` — offering a level the model cannot run is a rejection, and
+   * `resolveCallConfig` refuses it before any provider I/O.
+   */
+  const support: ReasoningSupport = {
+    efforts: [
+      { id: ReasoningEffortId('low'), name: 'Low' },
+      { id: ReasoningEffortId('medium'), name: 'Medium' },
+      { id: ReasoningEffortId('high'), name: 'High' },
+    ],
+    defaultEffort: ReasoningEffortId('medium'),
+  }
+
+  it('advances to the next level', () => {
+    expect(cycleThinking('low', support)).toBe('medium')
+    expect(cycleThinking('medium', support)).toBe('high')
+  })
+
+  it('wraps from the last level back to the first', () => {
+    // A cycle that stops at the end is a list. pi wraps.
+    expect(cycleThinking('high', support)).toBe('low')
+  })
+
+  it('starts from the adapter default when nothing is selected', () => {
+    // An absent selection means "provider default"; the first step should be the one
+    // after that, not the one after a level that is not in effect.
+    expect(cycleThinking(undefined, support)).toBe('high')
+  })
+
+  it('returns undefined when the model has no reasoning levels', () => {
+    // The caller reports "this model has no thinking levels" rather than silently
+    // applying an invented one.
+    expect(cycleThinking(undefined, undefined)).toBeUndefined()
+    expect(cycleThinking('low', { efforts: [] })).toBeUndefined()
+  })
+
+})
+
+describe('a failed level change never reports success', () => {
+  /**
+   * `commitThinking` used to `showStatus` on success and **return silently** on
+   * failure, while its callers printed the level unconditionally. Measured: with
+   * `selectReasoningEffort` throwing `provider rejected`, the app emitted both
+   * "thinking level not applied: provider rejected" *and* "thinking level: high" —
+   * the status bar claiming the change the notice had just said failed.
+   *
+   * The fix is a return value, not a second check: one place decides whether it
+   * worked, and the caller has nothing left to infer.
+   */
+  function appThatFails(): { failed: string[]; succeeded: string[] } {
+    const notices: string[] = []
+    const statuses: string[] = []
+    const app = new TuiApp({
+      getSelection: () => ({ provider: 'p', model: 'm', reasoningEffort: ReasoningEffortId('low') }),
+      cwd: '/tmp/w',
+      getSessionId: () => 's',
+      onSubmit: () => {},
+      onExit: () => {},
+      version: '0',
+      statusFacts: () => ({ cwd: '/tmp/w' }),
+      modelPicker: async () => ({ models: [], current: '' }),
+      selectModel: () => {},
+      reasoningSupport: async () => ({
+        efforts: [
+          { id: ReasoningEffortId('low'), name: 'L' },
+          { id: ReasoningEffortId('high'), name: 'H' },
+        ],
+      }),
+      selectReasoningEffort: () => { throw new Error('provider rejected') },
+      terminal: new FakeTerminal(),
+    })
+    const internal = app as unknown as {
+      showStatus(text: string): void
+      addNotice(text: string): void
+      cycleThinkingLevel(): Promise<void>
+    }
+    internal.showStatus = (text) => { statuses.push(text) }
+    internal.addNotice = (text) => { notices.push(text) }
+    void internal.cycleThinkingLevel()
+    return { failed: notices, succeeded: statuses }
+  }
+
+  it('reports the failure and no success line', async () => {
+    const { failed, succeeded } = appThatFails()
+    await vi.waitFor(() => { expect(failed.length).toBeGreaterThan(0) })
+    expect(failed.join('\n')).toMatch(/provider rejected/u)
+    expect(succeeded).toEqual([])
   })
 })

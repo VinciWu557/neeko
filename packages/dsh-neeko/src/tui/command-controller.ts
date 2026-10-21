@@ -70,11 +70,6 @@ export interface HostResult {
  * screen must change arrives as a {@linkcode CommandAction}.
  */
 export class CommandController {
-  private models: readonly ModelChoice[] = []
-  private modelsLoaded = false
-
-  constructor(private readonly options: CommandControllerOptions) {}
-
   /**
    * The catalogue as currently known, without triggering a load.
    *
@@ -82,6 +77,35 @@ export class CommandController {
    * they can only read what is cached; the app asks for a reload when this is
    * empty and the next keystroke sees the rows.
    */
+  private models: readonly ModelChoice[] = []
+  private modelsLoaded = false
+
+  constructor(private readonly options: CommandControllerOptions) {}
+
+  /**
+   * The next model in the catalogue, for `app.model.cycleForward` / `cycleBackward`.
+   *
+   * Wraps at both ends: a "cycle" that stops at the last entry is a list, and
+   * stopping there is the one behaviour a user would not expect from the name.
+   *
+   * A current id that is **not** in the catalogue yields the first entry rather
+   * than the second — the live route can name a model this provider no longer
+   * lists, and the honest answer is "here is a real one", not "here is the one
+   * after a thing that is not there".
+   *
+   * @param currentId - the model id in effect.
+   * @param delta - `1` forward, `-1` backward.
+   * @returns the id to switch to, or `undefined` when the catalogue is empty.
+   */
+  cycleModel(currentId: string, delta: 1 | -1): string | undefined {
+    // No empty-catalogue guard: `findIndex` yields -1 and both branches return
+    // `models[…]?.id`, which is `undefined` for an empty list anyway.
+    const at = this.models.findIndex((model) => model.id === currentId)
+    if (at === -1) return this.models[0]?.id
+    const next = (at + delta + this.models.length) % this.models.length
+    return this.models[next]?.id
+  }
+
   /**
    * Classify one submission.
    *

@@ -59,6 +59,66 @@ export type Action =
   | 'app.clear'
   | 'app.exit'
   | 'app.tools.expand'
+  | 'app.model.select'
+  | 'app.model.cycleForward'
+  | 'app.model.cycleBackward'
+  | 'app.clipboard.pasteImage'
+  | 'app.thinking.toggle'
+  | 'app.thinking.cycle'
+  | 'app.suspend'
+
+/**
+ * Whether this process is running under Windows key conventions.
+ *
+ * pi's own rule: native Windows, **or** a Linux process inside WSL. The second half
+ * matters because a WSL terminal is a Windows terminal — `ctrl+v` is intercepted by
+ * it, and `ctrl+p` collides with line editing there — while `process.platform` still
+ * says `linux`.
+ *
+ * @param platform - the platform, defaulting to `process.platform`.
+ * @param env - the environment, defaulting to `process.env`.
+ * @returns whether the Windows chords apply.
+ */
+export function usesWindowsKeys(
+  platform: string = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  if (platform === 'win32') return true
+  return platform === 'linux' && Boolean(env['WSL_DISTRO_NAME'] ?? env['WSL_INTEROP'])
+}
+
+/**
+ * The default keys for one action on a given platform.
+ *
+ * Two of pi's actions differ where the usual chord is unavailable, and copying the
+ * split is the point of this round:
+ *
+ * | action | Unix | Windows / WSL |
+ * | --- | --- | --- |
+ * | `app.model.cycleBackward` | `shift+ctrl+p` | `alt+p` |
+ * | `app.clipboard.pasteImage` | `ctrl+v` | `alt+v` |
+ * | `app.suspend` | `ctrl+z` | none |
+ *
+ * An empty array means "no default", which is pi's convention and what the registry
+ * expects (a user can still assign one).
+ *
+ * @param action - the action id.
+ * @param platform - the platform, defaulting to `process.platform`.
+ * @param env - the environment, defaulting to `process.env`.
+ * @returns the key or keys; `[]` when this platform has none.
+ */
+export function actionKeys(
+  action: Action,
+  platform: string = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): readonly KeyId[] {
+  const windows = usesWindowsKeys(platform, env)
+  if (action === 'app.suspend') return windows ? [] : ['ctrl+z']
+  if (action === 'app.model.cycleBackward') return [windows ? 'alt+p' : 'shift+ctrl+p']
+  if (action === 'app.clipboard.pasteImage') return [windows ? 'alt+v' : 'ctrl+v']
+  const declared = APP_KEYBINDINGS[action].defaultKeys
+  return typeof declared === 'string' ? [declared] : declared
+}
 
 /**
  * Teach pi-tui's registry about this app's action ids.
@@ -73,6 +133,13 @@ declare module '@earendil-works/pi-tui' {
     'app.clear': true
     'app.exit': true
     'app.tools.expand': true
+    'app.model.select': true
+    'app.model.cycleForward': true
+    'app.model.cycleBackward': true
+    'app.clipboard.pasteImage': true
+    'app.thinking.toggle': true
+    'app.thinking.cycle': true
+    'app.suspend': true
   }
 }
 
@@ -86,16 +153,62 @@ export const APP_KEYBINDINGS: Readonly<
   Record<Action, { readonly defaultKeys: KeyId | readonly KeyId[]; readonly description: string }>
 > = {
   'app.clear': {
+    // pi's `app.clear`: the first press clears the draft, a second press within
+    // 500 ms exits. Not "quit" — that was what made `ctrl+c` throw away a half-typed
+    // message, and it is the one keystroke every terminal user reaches for to
+    // abandon one.
     defaultKeys: 'ctrl+c',
-    description: 'Quit the terminal UI',
+    description: 'Clear the draft (twice to exit)',
   },
   'app.exit': {
+    // pi's `app.exit` is `ctrl+d` "to exit (empty)"; the empty-editor condition is
+    // enforced by the app, because a keybinding cannot see the text.
     defaultKeys: 'ctrl+d',
-    description: 'Quit the terminal UI (same as ctrl+c)',
+    description: 'Quit the terminal UI (only with an empty draft)',
   },
   'app.tools.expand': {
     defaultKeys: 'ctrl+o',
-    description: 'Collapse or expand tool output and thinking',
+    // Not "and thinking": `ctrl+t` owns reasoning (see `fold.ts`), and a `/hotkeys`
+    // list that claims this key does both would send users to the wrong key.
+    description: 'Collapse or expand tool output',
+  },
+  'app.model.select': {
+    // pi's `app.model.select`. `/model` already opened this panel; only the key
+    // was missing, so a pi user's reflex did nothing.
+    defaultKeys: 'ctrl+l',
+    description: 'Open the model selector',
+  },
+  'app.model.cycleForward': {
+    defaultKeys: 'ctrl+p',
+    description: 'Switch to the next model',
+  },
+  'app.model.cycleBackward': {
+    // Platform-dependent; see {@linkcode actionKeys}.
+    defaultKeys: 'shift+ctrl+p',
+    description: 'Switch to the previous model',
+  },
+  'app.thinking.toggle': {
+    // `ctrl+o` governs tool output, `ctrl+t` governs reasoning. Separate keys,
+    // separate state — see `fold.ts` for why `or` was wrong.
+    defaultKeys: 'ctrl+t',
+    description: 'Collapse or expand thinking blocks',
+  },
+  'app.thinking.cycle': {
+    defaultKeys: 'shift+tab',
+    description: 'Cycle the thinking level',
+  },
+  'app.suspend': {
+    // None on native Windows: Windows terminals have no Unix job control, and pi
+    // shows a status message there instead of suspending.
+    defaultKeys: 'ctrl+z',
+    description: 'Suspend to background',
+  },
+  'app.clipboard.pasteImage': {
+    // Same name and same key as pi's; the name says "image" but the action pastes
+    // files, an image, or text — whichever the clipboard has, in that order.
+    // Platform-dependent; see {@linkcode actionKeys}.
+    defaultKeys: 'ctrl+v',
+    description: 'Paste from the clipboard',
   },
 }
 
@@ -123,15 +236,27 @@ export const APP_KEYBINDINGS: Readonly<
  *   An empty array disables the action, which is pi's own convention.
  * @returns the manager now installed globally.
  */
-export function installKeymap(overrides: KeybindingsConfig = {}): KeybindingsManager {
-  // `KeybindingDefinitions` is `Record<string, KeybindingDefinition>`, so the
-  // merge is a plain spread: pi's 47 actions plus the app's own. `APP_KEYBINDINGS`
-  // declares `defaultKeys` as `readonly KeyId[]` in places, which the definition
-  // type accepts.
-  const definitions: Record<string, KeybindingDefinition> = {
-    ...TUI_KEYBINDINGS,
-    ...(APP_KEYBINDINGS as unknown as Record<string, KeybindingDefinition>),
+export function installKeymap(
+  overrides: KeybindingsConfig = {},
+  platform: string = process.platform,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): KeybindingsManager {
+  // `KeybindingDefinitions` is `Record<string, KeybindingDefinition>`, so the merge
+  // is a spread: pi's 47 actions plus the app's own.
+  //
+  // The app's defaults go through {@linkcode actionKeys} rather than using
+  // `APP_KEYBINDINGS` directly: three of them differ by platform (see that
+  // function), and spreading the static table would silently install the Unix chord
+  // everywhere — the exact defect that made `ctrl+v` unusable on a Windows terminal.
+  const appDefinitions: Record<string, KeybindingDefinition> = {}
+  for (const action of Object.keys(APP_KEYBINDINGS) as Action[]) {
+    const definition = APP_KEYBINDINGS[action]
+    appDefinitions[action] = {
+      defaultKeys: actionKeys(action, platform, env) as KeyId | KeyId[],
+      description: definition.description,
+    }
   }
+  const definitions: Record<string, KeybindingDefinition> = { ...TUI_KEYBINDINGS, ...appDefinitions }
   // Overrides go in through the manager rather than by mutating the definitions:
   // `[]` has to keep meaning "disabled", and that is the manager's job.
   const manager = new KeybindingsManager(definitions, sanitiseOverrides(overrides))
@@ -364,12 +489,20 @@ export const HOTKEY_GROUPS: readonly HotkeyGroup[] = [
   {
     title: 'Other',
     entries: [
-      { actions: ['app.clear'], description: 'Quit the terminal UI' },
+      { actions: ['app.clear'], description: 'Clear the draft (press twice to exit)' },
       // Not pi's wording: pi's `app.exit` fires only on an empty editor, while
       // this app exits unconditionally. A `/hotkeys` table must describe this
-      // build, so pi's "(when editor empty)" parenthetical is deliberately absent.
-      { actions: ['app.exit'], description: 'Quit the terminal UI (same as ctrl+c)' },
+      // The empty-draft condition is real here (see `exit-keys.ts`), so the
+      // parenthetical pi uses is kept rather than dropped.
+      { actions: ['app.exit'], description: 'Quit the terminal UI (only with an empty draft)' },
       { actions: ['app.tools.expand'], description: 'Collapse or expand tool output' },
+      { actions: ['app.model.select'], description: 'Open the model selector' },
+      { actions: ['app.model.cycleForward'], description: 'Switch to the next model' },
+      { actions: ['app.model.cycleBackward'], description: 'Switch to the previous model' },
+      { actions: ['app.clipboard.pasteImage'], description: 'Paste an image, file, or text' },
+      { actions: ['app.thinking.toggle'], description: 'Collapse or expand thinking blocks' },
+      { actions: ['app.thinking.cycle'], description: 'Cycle the thinking level' },
+      { actions: ['app.suspend'], description: 'Suspend to background' },
       { actions: ['tui.input.submit'], description: 'Send the message' },
       { actions: ['tui.input.newLine'], description: 'Insert a new line' },
       { actions: ['tui.input.tab'], description: 'Path completion / accept autocomplete' },

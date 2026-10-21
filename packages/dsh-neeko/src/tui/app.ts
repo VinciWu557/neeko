@@ -67,6 +67,13 @@ import { renderRow, setKeyReader } from './message-view.ts'
 import { Composer, composerTheme } from './composer.ts'
 import { StatusIndicator } from './status-indicator.ts'
 import { PanelHost } from './panel-host.ts'
+import { basename } from 'node:path'
+import { tmpdir } from 'node:os'
+import { pasteClipboard, platformClipboard } from './clipboard.ts'
+import { suspendToBackground } from './suspend.ts'
+import { onEndOfInput, onInterrupt } from './exit-keys.ts'
+import { ProgramStatusReporter, applySessionEvent } from './program-status.ts'
+import type { RunState } from './program-status.ts'
 import { buildViewTree } from './view-tree.ts'
 import { createSubsystems } from './subsystems.ts'
 import type { RenderOptions } from './message-view.ts'
@@ -82,7 +89,7 @@ import type { LiveStatusFacts } from './status-controller.ts'
 import { CommandController } from './command-controller.ts'
 import type { ModelChoice } from './command-controller.ts'
 import { resumeHint } from './resume-hint.ts'
-import { thinkingChoices, thinkingOutcome } from './thinking.ts'
+import { cycleThinking, thinkingChoices, thinkingOutcome } from './thinking.ts'
 import type { ReasoningSupport } from './thinking.ts'
 import { ThinkingSelector } from './thinking-selector.ts'
 import { ThemeSelector } from './theme-selector.ts'
@@ -302,14 +309,6 @@ export class TuiApp {
   /** Its own panel line: a picker that renders into another's slot is a trap. */
   private readonly thinkingText: Text
   /**
-   * The open `/thinking` selector, if any.
-   *
-   * A panel rather than a full-height list: adapter effort sets are a handful of
-   * entries, so a `SelectList` with search would be more chrome than content.
-   * It owns the keyboard while open (checked in key arbitration alongside the
-   * theme picker).
-   */
-  /**
    * The dock's single occupant, and the only place "a panel is open" is recorded.
    *
    * Three parallel `Selector | undefined` fields used to answer that question, and
@@ -342,6 +341,8 @@ export class TuiApp {
   private readonly keybindings: KeybindingsManager
 
   private exited = false
+  /** When `ctrl+c` was last pressed, for the double-press window (`exit-keys.ts`). */
+  private lastInterrupt: number | undefined
   private scheduleRender: (() => void) | undefined
   /**
    * Index of the first transcript row the view may paint (see
@@ -353,14 +354,15 @@ export class TuiApp {
   private transcript: TranscriptState | undefined
   /** The open model panel, if any (it owns the keyboard while visible). */
   private modelPanel: ModelPanel | undefined
-  /**
-   * The single status line, or `undefined` when nothing is reporting.
-   *
-   * A view concern like {@linkcode fold}: the flush rebuilds row components, so
-   * this cannot live in the notices container's contents or it would be lost.
-   */
-  /** Countdown that hides {@linkcode statusLine}; one at a time. */
   private readonly terminal: Terminal
+  /**
+   * The terminal's own status channels (title, tab spinner, OSC 7501).
+   *
+   * One owner, and it *derives* the status from the run state plus the open
+   * dialogs rather than being told the answer — two writers of "should the spinner
+   * be on" is one writer too many (see `program-status.ts`).
+   */
+  private readonly programStatus: ProgramStatusReporter
   /**
    * The alt-screen surface, while fullscreen is on.
    *
@@ -394,6 +396,7 @@ export class TuiApp {
 
   constructor(private readonly options: TuiAppOptions) {
     this.terminal = options.terminal ?? new ProcessTerminal()
+    this.programStatus = new ProgramStatusReporter(this.terminal)
     // Before anything reads it: `Editor` and `TuiAltScreen` resolve bindings
     // through pi-tui's global registry on every keystroke, so a late install
     // leaves them on defaults while the app thinks it is configured.
@@ -473,7 +476,12 @@ export class TuiApp {
     this.editor.onSubmit = (text: string) => { void this.submit(text) }
     this.installAutocomplete()
 
-    this.interactions.onChange = () => this.refreshInteraction()
+    this.interactions.onChange = () => {
+      this.refreshInteraction()
+      // A pending approval is the one state a user must see from outside the
+      // window: `working` says "wait", `blocked` says "it needs you".
+      this.syncBlockedStatus()
+    }
     this.themes.onChange = () => this.repaintChrome()
     this.status.onChange = () => this.requestRender()
     // Warm the catalogue so `/model ` completes without a round trip.
@@ -523,8 +531,31 @@ export class TuiApp {
 
   /** Enter raw mode and start rendering. */
   start(): void {
+    // Clear first, then draw: the TUI should own the screen it opens on.
+    //
+    // pi does not do this — measured, it issues no clear sequence at all, and looks
+    // clean on a 30-row terminal only because its startup header is 26 lines. On a
+    // 50- or 70-row terminal the same `pi` leaves the previous shell session visible
+    // below its output. So "match pi" and "open on a clean screen" are different
+    // requirements; this build takes the second, using pi-tui's own
+    // `Terminal.clearScreen()`.
+    //
+    // The cost, stated rather than hidden: scrollback from before the launch is
+    // gone. That is what "only the TUI" means, and the resume hint printed on exit is
+    // how the conversation is found again.
+    //
+    // Once only — `requestRender` runs many times a second and must not clear, or the
+    // transcript accumulated since startup would be wiped on every frame.
+    this.terminal.clearScreen()
     this.paintBanner()
     this.status.refresh()
+    // The terminal's own channels, before the first frame: a window that opens
+    // untitled is indistinguishable from every other one in a tab bar.
+    this.programStatus.setSession({
+      directory: basename(this.cwd()),
+      sessionId: this.options.getSessionId(),
+    })
+    this.programStatus.report()
     // Fullscreen starts *instead of* the main screen, not on top of it: the two
     // renderers share one terminal, so whichever starts last owns the mode.
     //
@@ -567,11 +598,15 @@ export class TuiApp {
     //    prints the bytes literally: `7u 62;22;52c 34;16t`.
     //
     // So: leave the alt screen, then write the document ourselves.
+    // Fullscreen owns its own buffer, so the conversation has to be written back to
+    // the terminal's one on the way out — nothing else will put it there.
+    const leavingAltScreen = this.fullscreen !== undefined
     this.resumeMainScreenQuietly()
     // A live timer keeps the event loop alive and would fire into a stopped
     // screen; clear the status line on the way out.
     this.noticeLog.clearStatus()
-    this.printFinalDocument()
+    if (leavingAltScreen) this.printFinalDocument()
+    else this.printResumeHint()
   }
 
   /**
@@ -597,11 +632,12 @@ export class TuiApp {
   }
 
   /**
-   * Write the transcript to the terminal's normal buffer, then stop.
+   * Write the whole document to the main screen — the fullscreen exit path.
    *
-   * Rendered straight from this app's own containers (document, dock, input slot,
-   * status) rather than through `TuiMainScreen.start()` — see {@linkcode stop}
-   * for why that path is unusable on quit.
+   * Reached only when leaving the alt screen: that buffer is discarded by the
+   * terminal, so without this the conversation is gone. Rendered straight from this
+   * app's own containers rather than through `TuiMainScreen.start()`, because that
+   * path yields one line for a `VStack` root (see {@linkcode stop}).
    */
   private printFinalDocument(): void {
     const width = Math.max(1, this.terminal.columns)
@@ -620,15 +656,31 @@ export class TuiApp {
       // pi-tui's fake-cursor markers are render-time protocol, not text.
       .map((line) => line.replaceAll(CURSOR_MARKER, ''))
     if (document.length === 0) return
-    // pi closes its TUI with a one-line "how do I get back in" (§`resume-hint`),
-    // and so do we — as the last row of the printed document, so it stays in the
-    // terminal's scrollback next to the conversation it refers to.
     const hint = resumeHint({ sessionId: this.options.getSessionId() })
     if (hint !== undefined) document.push('', this.themes.current.fg('muted', hint))
     // `\n`, not `\r\n`: the terminal is in cooked mode by now, so its ONLCR
     // translation turns `\n` into `\r\n` for us. Writing `\r\n` produced `\r\r\n`
     // (a blank line between every row) on a real pty.
     this.terminal.write(`${document.join('\n')}\n`)
+  }
+
+  /**
+   * Leave one line in the scrollback saying how to come back — and nothing else.
+   *
+   * This is the main-screen exit path. The transcript is already in the terminal's
+   * own scrollback, so printing it again only stacks old headers above the next
+   * launch. pi prints exactly this hint and nothing more — verified against the real
+   * binary: `pi` then `ctrl+d` writes `<u \r\r\nbash-3.2$ `.
+   *
+   * @returns nothing.
+   */
+  private printResumeHint(): void {
+    const hint = resumeHint({ sessionId: this.options.getSessionId() })
+    if (hint === undefined) return
+    // `\n`, not `\r\n`: the terminal is in cooked mode by now, so its ONLCR
+    // translation turns `\n` into `\r\n` for us. Writing `\r\n` produced `\r\r\n`
+    // (a blank line between every row) on a real pty.
+    this.terminal.write(`${this.themes.current.fg('muted', hint)}\n`)
   }
 
   /**
@@ -773,6 +825,187 @@ export class TuiApp {
         // missing case was silently ignored — the command simply did nothing.
         return assertNever(action, 'unhandled command action')
     }
+  }
+
+  /**
+   * `ctrl+v` — put the clipboard into the editor.
+   *
+   * Reports every non-success outcome, because silence is indistinguishable from a
+   * broken key: a user who presses `ctrl+v` on an empty clipboard must be told the
+   * clipboard is empty, not left wondering whether the binding works.
+   */
+  private async pasteFromClipboard(): Promise<void> {
+    const result = await pasteClipboard({
+      clipboard: platformClipboard(),
+      directory: tmpdir(),
+    })
+    switch (result.kind) {
+      case 'files':
+      case 'image':
+      case 'text':
+        // Same call pi uses: insert at the caret, so a paste in the middle of a
+        // sentence does not jump to the end.
+        this.editor.insertTextAtCursor(result.text)
+        this.requestRender()
+        return
+      case 'empty':
+        this.addNotice('the clipboard has nothing to paste', 'error')
+        return
+      case 'unavailable':
+        this.addNotice('this platform has no readable clipboard', 'error')
+        return
+      case 'error':
+        this.addNotice(`clipboard paste failed: ${result.message}`, 'error')
+    }
+  }
+
+  /**
+   * `ctrl+t` — show or hide reasoning blocks.
+   *
+   * Reports the new state: a toggle whose only effect is on rows the user may not be
+   * looking at is otherwise indistinguishable from a dead key.
+   */
+  private toggleThinking(): void {
+    const visible = this.fold.toggleThinking()
+    // Fold state is read while rows render, so a transcript repaint is the whole
+    // effect. `scheduleRender` (what `toggleFold` uses) is that repaint; the banner
+    // and the status bar are untouched by a fold change.
+    this.showStatus(`thinking: ${visible ? 'visible' : 'hidden'}`)
+    this.scheduleRender?.()
+  }
+
+  /**
+   * `shift+tab` — advance the thinking level in place.
+   *
+   * The levels come from the adapter's `reasoning.efforts` for the current route; a
+   * model with none gets a notice rather than an invented level.
+   */
+  private async cycleThinkingLevel(): Promise<void> {
+    const read = this.options.reasoningSupport
+    if (read === undefined) {
+      this.addNotice('this build cannot read the model\'s reasoning settings', 'error')
+      return
+    }
+    let support: ReasoningSupport | undefined
+    try {
+      support = await read()
+    } catch (error: unknown) {
+      this.addNotice(
+        `could not read reasoning settings: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      )
+      return
+    }
+    const next = cycleThinking(this.options.getSelection().reasoningEffort, support)
+    if (next === undefined) {
+      this.addNotice(`model ${this.options.getSelection().model} has no reasoning levels`, 'error')
+      return
+    }
+    // Reuses the `/thinking <level>` path so both routes validate the same way; a
+    // second copy of "apply an effort" would drift. The status line is reported
+    // **after** success only — `commitThinking` reports its own failure, and printing
+    // the level anyway told the user it worked when it had not.
+    if (this.commitThinking(next)) this.showStatus(`thinking level: ${next}`)
+  }
+
+  /**
+   * Whether a panel is covering the input row.
+   *
+   * The exit keys care because pi binds `app.clear` on the editor, so a picker
+   * unfocuses it and the key never arrives. Here the exit scope sits above the
+   * pickers (so `ctrl+c` works from anywhere), which means the rule has to ask
+   * explicitly instead.
+   *
+   * @returns whether any panel owns the keyboard.
+   */
+  private panelOpen(): boolean {
+    return this.modelPanel !== undefined || this.panels.isOpen
+  }
+
+  /**
+   * `ctrl+c` — clear the draft, or leave if pressed twice quickly.
+   *
+   * `pi`'s exact rule (see `exit-keys.ts`): answering the first press with a
+   * shutdown throws away a half-typed message, and this key is the one every
+   * terminal user reaches for to abandon one.
+   */
+  private handleInterrupt(): void {
+    const { action, remember } = onInterrupt(this.now(), this.lastInterrupt)
+    this.lastInterrupt = remember
+    switch (action.kind) {
+      case 'exit':
+        this.options.onExit()
+        return
+      case 'clear':
+        // The draft only: an open panel closes on `escape`, and pi's own
+        // `clearEditor` does not touch panels either.
+        this.editor.setText('')
+        this.requestRender()
+    }
+  }
+
+  /**
+   * `ctrl+d` — leave, but only from an empty editor.
+   *
+   * A binding cannot see the text, so the condition lives here rather than in
+   * `keymap.ts` (pi enforces it inside its `CustomEditor`, which pi-tui's plain
+   * `Editor` has no equivalent of).
+   */
+  private handleEndOfInput(): void {
+    if (onEndOfInput(this.editor.getText() !== '').kind === 'exit') this.options.onExit()
+  }
+
+  /**
+   * The clock, isolated so the double-press window is testable.
+   *
+   * @returns milliseconds.
+   */
+  private now(): number {
+    return Date.now()
+  }
+
+  /**
+   * `ctrl+z` — suspend to the background.
+   *
+   * Sends `SIGTSTP` to this process, which is what the shell's job control expects;
+   * `fg` then brings the TUI back and `resume()` repaints, because the terminal was
+   * resized or written to while we were stopped.
+   *
+   * Windows has no Unix job control, so pi shows a status message there instead of
+   * pretending to suspend. Refusing loudly is better than a keystroke that appears to
+   * work and leaves the user staring at an unchanged screen.
+   */
+  private handleSuspend(): void {
+    suspendToBackground({
+      stopRendering: () => { this.activeTui.stop() },
+      startRendering: () => { this.activeTui.start() },
+      requestRender: () => { this.requestRender() },
+      notify: (message, level) => { this.addNotice(message, level) },
+    })
+  }
+
+  /**
+   * Switch to the next or previous model without opening the picker.
+   *
+   * pi's `app.model.cycleForward`. Reads the catalogue through the same
+   * `ensureModels` the picker uses, so a cycle before the first `/model` still
+   * works.
+   *
+   * @param delta - `1` forward, `-1` backward.
+   */
+  private async cycleModel(delta: 1 | -1): Promise<void> {
+    const models = await this.commands.ensureModels()
+    const next = this.commands.cycleModel(this.options.getSelection().model, delta)
+    if (next === undefined) {
+      this.addNotice(
+        models.length === 0 ? 'models are not available from this provider yet' : 'no other model to switch to',
+        'error',
+      )
+      return
+    }
+    this.options.selectModel(next)
+    this.repaintChrome()
+    this.showStatus(`model → ${next}`)
   }
 
   /**
@@ -994,7 +1227,9 @@ export class TuiApp {
         this.openThinkingPicker(resolved, current)
         return
       case 'apply':
-        this.commitThinking(outcome.effort)
+        if (this.commitThinking(outcome.effort)) {
+          this.showStatus(`thinking level: ${outcome.effort ?? 'default'}`)
+        }
         return
     }
   }
@@ -1002,16 +1237,14 @@ export class TuiApp {
   /**
    * Apply one effort to the live selection.
    *
-   * `undefined` clears it, which the DSH contract reads as "provider default" —
-   * the same rule `switchedSelection` follows when changing models.
-   *
    * @param effort - the effort to apply, or `undefined` to clear.
+   * @returns whether it was applied; the caller must not report success otherwise.
    */
-  private commitThinking(effort: string | undefined): void {
+  private commitThinking(effort: string | undefined): boolean {
     const apply = this.options.selectReasoningEffort
     if (apply === undefined) {
       this.addNotice('this build cannot change the reasoning level', 'error')
-      return
+      return false
     }
     try {
       apply(effort)
@@ -1020,12 +1253,12 @@ export class TuiApp {
         `thinking level not applied: ${error instanceof Error ? error.message : String(error)}`,
         'error',
       )
-      return
+      return false
     }
     // The status bar carries the effort; repaint it so the change is visible
     // without waiting for the next session event.
     this.repaintChrome()
-    this.showStatus(`thinking level: ${effort ?? 'default'}`)
+    return true
   }
 
   /**
@@ -1064,7 +1297,7 @@ export class TuiApp {
       selectListThemeOf(theme),
       (id) => {
         this.closeThinkingPicker()
-        this.commitThinking(id)
+        if (this.commitThinking(id)) this.showStatus(`thinking level: ${id ?? 'default'}`)
       },
       () => { this.closeThinkingPicker() },
       support?.defaultEffort,
@@ -1455,14 +1688,45 @@ export class TuiApp {
    *
    * @param text - the label, or `''` to detach the indicator.
    */
-  setWorking(text: string): void {
-    if (text === '') {
-      this.editor.setIndicator(undefined)
-      this.requestRender()
+  setWorking(state: RunState): void {
+    // The in-window indicator and the terminal's own channels answer the same
+    // question, so this is where the one state fans out to both — but only the
+    // indicator is decided here. `ProgramStatusReporter` owns the terminal side
+    // (spinner, OSC 7501), because three channels derived in two places is how
+    // they come to disagree.
+    const text = state.state === 'working' ? state.message ?? 'working…' : ''
+    if (text === '') this.editor.setIndicator(undefined)
+    else this.editor.setIndicator(new StatusIndicator(this.activeTui, this.themes.current, text))
+    this.programStatus.setRunState(state)
+    this.requestRender()
+  }
+
+  /**
+   * Feed one session event to the terminal status reporter.
+   *
+   * Most events carry no outcome; `turn/end` does. The rule lives in
+   * `applySessionEvent` so it is testable — the runner is end-to-end glue and an
+   * `if` there can be deleted with no test noticing.
+   *
+   * @param event - one session event.
+   */
+  reportSessionEvent(event: { type: string; data?: unknown }): void {
+    applySessionEvent(this.programStatus, event)
+  }
+
+  /**
+   * Mirror the pending-dialog state onto the terminal.
+   *
+   * Called whenever the interaction state changes: a pending approval is the one
+   * transition a user must see from **outside** the window, because that is the
+   * only channel that can bring them back to it.
+   */
+  private syncBlockedStatus(): void {
+    if (this.interactions.busy) {
+      this.programStatus.setBlocked('interaction', { message: 'waiting for your answer' })
       return
     }
-    this.editor.setIndicator(new StatusIndicator(this.activeTui, this.themes.current, text))
-    this.requestRender()
+    this.programStatus.clearBlocked('interaction')
   }
 
   /** Refresh the inline interaction panel from the manager's current view. */
@@ -1553,10 +1817,24 @@ export class TuiApp {
     return [
       // Exit is universal: it must work from inside any modal surface, which is
       // where a user reaches for it. See the ordering note above.
-      actionScope('exit', {
-        'app.clear': () => { this.options.onExit() },
-        'app.exit': () => { this.options.onExit() },
+      // Suspend sits above even exit: it is the one action that must work from a
+      // modal panel too. A user who wants to step away from a pending approval
+      // should not have to answer it first, and the alternative (ctrl+c) discards
+      // the session.
+      actionScope('suspend', {
+        'app.suspend': () => { this.handleSuspend() },
       }, this.keybindings),
+      // A modal panel owns `ctrl+c`, exactly as pi's `app.clear` never fires while a
+      // picker holds focus. Yielding rather than swallowing keeps the scope's answer
+      // truthful: it consumed the key only if it acted on it, so the panel below gets
+      // it and the double-press window is not armed by a press the user cannot see
+      // the effect of.
+      this.panelOpen()
+        ? { name: 'exit', handle: () => false }
+        : actionScope('exit', {
+            'app.clear': () => { this.handleInterrupt() },
+            'app.exit': () => { this.handleEndOfInput() },
+          }, this.keybindings),
       { name: 'model-panel', handle: (data) => this.scopeModelPanel(data) },
       { name: 'pickers', handle: (data) => this.scopePickers(data) },
       { name: 'interaction', handle: (data) => this.handleInteractionKey(data) !== undefined },
@@ -1569,9 +1847,25 @@ export class TuiApp {
       // the key then vanishes instead of falling through to whoever else might
       // want it. Declining keeps a scope's answer truthful: it consumed this key
       // only if it acted on it.
+      // Clipboard is deliberately outside the `busy` guard below. Pasting while an
+      // approval is pending is a plausible thing to want (the user is composing a
+      // reply *about* the approval), and unlike fold it does not compete for the
+      // transcript's attention — it writes into the editor, which the approval
+      // panel does not cover.
+      actionScope('clipboard', {
+        'app.clipboard.pasteImage': () => { void this.pasteFromClipboard() },
+      }, this.keybindings),
       this.interactions.busy
         ? { name: 'view', handle: () => false }
-        : actionScope('view', { 'app.tools.expand': () => { this.toggleFold() } }, this.keybindings),
+        : actionScope('view', {
+            'app.tools.expand': () => { this.toggleFold() },
+            // `/model` already did this; the key was the only thing missing.
+            'app.model.select': () => { void this.openModelPanel() },
+            'app.model.cycleForward': () => { void this.cycleModel(1) },
+            'app.model.cycleBackward': () => { void this.cycleModel(-1) },
+            'app.thinking.toggle': () => { this.toggleThinking() },
+            'app.thinking.cycle': () => { void this.cycleThinkingLevel() },
+          }, this.keybindings),
     ]
   }
 

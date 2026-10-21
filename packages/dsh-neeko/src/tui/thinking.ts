@@ -119,6 +119,36 @@ export function thinkingOutcome(
 }
 
 /**
+ * The next level in the cycle — the `shift+tab` action (`app.thinking.cycle`).
+ *
+ * pi advances in place rather than opening a selector, so a user can step through
+ * levels while still looking at the transcript.
+ *
+ * Wraps, and starts from the level actually in effect: an absent selection means
+ * "provider default" on the wire, so the first step is the one after that default
+ * rather than the one after a level nobody chose.
+ *
+ * @param selected - the effort in effect, or `undefined` for the provider default.
+ * @param support - what the adapter advertises for this route.
+ * @returns the effort to apply, or `undefined` when there is nothing to cycle.
+ */
+export function cycleThinking(
+  selected: string | undefined,
+  support: ReasoningSupport | undefined,
+): string | undefined {
+  if (support === undefined || support.efforts.length === 0) return undefined
+  const ids = support.efforts.map((effort) => effort.id)
+  const first = ids[0]
+  if (first === undefined) return undefined
+  const inEffect = selected ?? support.defaultEffort ?? first
+  const at = (ids as readonly string[]).indexOf(inEffect)
+  // An unknown current level starts the cycle at the first entry: the live route can
+  // name one this model no longer offers, and cycling must still land somewhere real.
+  if (at === -1) return first
+  return ids[(at + 1) % ids.length] ?? first
+}
+
+/**
  * The selection with one effort applied, or **removed** when clearing.
  *
  * Removal (not `reasoningEffort: undefined`) matters twice over: the DSH

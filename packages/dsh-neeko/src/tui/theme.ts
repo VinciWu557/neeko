@@ -492,6 +492,15 @@ export function resolveThemeByName(name: string, userThemes: readonly UserTheme[
 }
 
 /**
+ * Width of the rule that replaces a code fence.
+ *
+ * pi-tui passes the fence string to `codeBlockBorder` without a width, so the
+ * rule cannot match the viewport; a fixed short rule reads as a separator
+ * without pretending to be a full-width frame.
+ */
+const CODE_RULE_WIDTH = 40
+
+/**
  * Build pi-tui's `MarkdownTheme` from this theme's `md*` tokens.
  *
  * pi exposes the same mapping, which is why its Markdown blocks look identical
@@ -501,15 +510,6 @@ export function resolveThemeByName(name: string, userThemes: readonly UserTheme[
  * @param theme - the active theme.
  * @returns a Markdown theme for `Markdown` components.
  */
-/**
- * Width of the rule that replaces a code fence.
- *
- * pi-tui passes the fence string to `codeBlockBorder` without a width, so the
- * rule cannot match the viewport; a fixed short rule reads as a separator
- * without pretending to be a full-width frame.
- */
-const CODE_RULE_WIDTH = 40
-
 export function markdownThemeOf(theme: Theme): MarkdownTheme {
   const paint = (token: ThemeToken, text: string): string =>
     theme.spec.colors[token] === undefined ? text : theme.fg(token, text)

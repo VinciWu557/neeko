@@ -471,6 +471,31 @@ describe('the printed document ends with the resume hint', () => {
     expect(lines.at(-1)).toContain('To resume this session:')
   })
 
+  it('prints the hint and nothing else', () => {
+    // This is what keeps the terminal readable across runs. Printing the whole
+    // document left a full banner + status block in the scrollback every time, so
+    // starting the TUI three times put three banners above it — which is exactly
+    // what the user saw. pi prints **only** the hint (verified: `pi` then `ctrl+d`
+    // emits `<u \r\r\nbash-3.2$ ` and nothing else).
+    const app = boot('abc-123')
+    const before = app.terminal.output.length
+    app.stop()
+    const written = strip(app.terminal.output.slice(before))
+    const lines = written.split('\n').filter((line) => line.trim() !== '')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('To resume this session:')
+  })
+
+  it('never reprints the banner', () => {
+    // The banner is a startup surface. Leaving it in the scrollback after every run
+    // is what made the next launch open underneath a stack of old ones.
+    const app = boot('abc-123')
+    const before = app.terminal.output.length
+    app.stop()
+    const written = strip(app.terminal.output.slice(before))
+    expect(written).not.toContain('█')
+  })
+
   it('prints nothing when the session has no id', () => {
     const app = boot('')
     const before = app.terminal.output.length

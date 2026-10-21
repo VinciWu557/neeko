@@ -4,6 +4,7 @@ import {
   MODEL_PANEL_MAX_VISIBLE, buildModelPanel, handleModelPanelKey, modelPanelTheme, modelRowItem,
 } from '../src/tui/model-panel.ts'
 import { findBuiltin, resolveTheme } from '../src/tui/theme.ts'
+import { CommandController } from '../src/tui/command-controller.ts'
 import { stripAnsi } from './support/ansi.ts'
 
 /**
@@ -284,5 +285,53 @@ describe('modelPanelTheme', () => {
     for (const fn of [t.selectedPrefix, t.selectedText, t.description, t.scrollInfo, t.noMatch]) {
       expect(typeof fn('x')).toBe('string')
     }
+  })
+})
+
+describe('cycling the model without opening the picker', () => {
+  /**
+   * pi binds `app.model.cycleForward` / `cycleBackward`. The catalogue is already
+   * loaded (the picker and the `/model` completion both use it), so cycling is a
+   * index move over it — no panel, no catalogue read.
+   *
+   * The two properties that matter: it **wraps** (a cycle that stops at the end is
+   * a list, not a cycle) and it is a **no-op on an empty catalogue** rather than
+   * returning `undefined` to a caller that then sets the model to nothing.
+   */
+  function controller(models: readonly { id: string; name: string; provider: string }[]): CommandController {
+    return new CommandController({ loadModels: async () => models })
+  }
+
+  const three = [
+    { id: 'm0', name: 'M0', provider: 'p' },
+    { id: 'm1', name: 'M1', provider: 'p' },
+    { id: 'm2', name: 'M2', provider: 'p' },
+  ]
+
+  it('moves forward past the end', async () => {
+    const c = controller(three)
+    await c.ensureModels()
+    expect(c.cycleModel('m0', 1)).toBe('m1')
+    expect(c.cycleModel('m2', 1)).toBe('m0')
+  })
+
+  it('moves backward past the start', async () => {
+    const c = controller(three)
+    await c.ensureModels()
+    expect(c.cycleModel('m0', -1)).toBe('m2')
+  })
+
+  it('starts at the first model when the current one is not in the catalogue', async () => {
+    // The live route can name a model this provider no longer lists; cycling must
+    // still land somewhere real.
+    const c = controller(three)
+    await c.ensureModels()
+    expect(c.cycleModel('gone', 1)).toBe('m0')
+  })
+
+  it('returns undefined for an empty catalogue', async () => {
+    const c = controller([])
+    await c.ensureModels()
+    expect(c.cycleModel('m0', 1)).toBeUndefined()
   })
 })

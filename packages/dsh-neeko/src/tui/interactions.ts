@@ -258,7 +258,7 @@ export function renderInteractionPanel(view: InteractionView | undefined): strin
  *
  * @param view - the pending view, or `undefined` when idle.
  * @param isKey - predicate: does this key data match a named key?
- * @param digits - `1`-`9` extracted from the input, or `undefined`.
+ * @param digit - `1`-`9` extracted from the input, or `undefined`.
  * @returns the intent; `pass-through` when no interaction is pending.
  */
 export function interactionIntent(

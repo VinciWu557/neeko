@@ -41,11 +41,12 @@
   ],
   "scripts": {
     "build": "tsdown",
-    "check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json && node scripts/check-docs.mjs",
     "lint:package": "publint --strict --pack=false",
     "test": "vitest run",
     "prepublishOnly": "pnpm run check && pnpm test && pnpm run build && pnpm run lint:package",
-    "prepare": "pnpm run build"
+    "prepare": "pnpm run build",
+    "lint:docs": "node scripts/check-docs.mjs"
   },
   "dsh": {
     "bundle": {

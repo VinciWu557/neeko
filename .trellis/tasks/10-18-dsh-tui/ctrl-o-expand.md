@@ -1765,3 +1765,559 @@ PanelHost.show 不清 dock / view-tree 无永久行 —— 全部有效。
 - **896 passed / 51 files**（删 21 条死测试，加 26 条断言）
 - `prepublishOnly` 全绿 + `sync-profiles`
 - 本轮引入的死代码清零（`--noUnusedLocals` 只剩 `index.ts` 两条既有问题）
+
+## Step 43 — P3 终端能力与键位补齐
+
+### B8 终端三通道
+
+| 通道 | 实测序列 | 说明 |
+| --- | --- | --- |
+| `setTitle` | `OSC 0` | `cwd-basename — sessionId`，两个同名窗口可区分 |
+| `setProgress` | `OSC 9;4;3` → `9;4;0` | 驱动标签栏/任务栏转圈，切走窗口后仍可见 |
+| `setProgramStatus` | `OSC 7501` | 空闲 `clear`、工作 `working`、审批 `blocked` |
+
+`setWorking(text: string)` 改为 `setWorking(activity: AgentActivity)`。字符串无法区分「忙，等」
+与「需要你」，而后者才是终端会高亮、把用户拉回来的状态。四态：`idle` / `working` / `blocked` / `error`。
+`idle` 映射为 OSC 7501 的 `clear`（而非 `idle`）——取消状态比留一行「空闲」更准确。
+
+### B9 键位
+
+| 键 | action | 实现要点 |
+| --- | --- | --- |
+| `ctrl+l` | `app.model.select` | 面板本已存在，只缺键 |
+| `ctrl+p` / `ctrl+shift+p` | `app.model.cycleForward/Backward` | `CommandController.cycleModel` 环绕；当前 id 不在目录时给第一条 |
+| `ctrl+o` | `app.tools.expand` | 既有 |
+| `ctrl+t` | `app.thinking.toggle` | **独立开关**，见下 |
+| `shift+tab` | `app.thinking.cycle` | `cycleThinking` 复用 adapter 的 `reasoning.efforts` |
+| `ctrl+v` | `app.clipboard.pasteImage` | 见下 |
+| `ctrl+z` | `app.suspend` | 见下 |
+
+### `ctrl+t` 与 `ctrl+o` 是正交的（踩坑记录）
+
+第一版写成 `or`（「任一开关说展开就展开」），被自己的测试推翻：`ctrl+o` 全展开后
+`ctrl+t` 再也收不回思考内容。
+
+pi 的做法：`toolOutputExpanded` 走 `isExpandable(child)` 遍历聊天容器，
+而 `AssistantMessageComponent` 不在其中；思考内容由独立的 `hideThinkingBlock` 字段控制。
+两者互不干涉。
+
+落地：`isExpanded` 按行类型分派——有 `thinking` 的 assistant 行归思考开关管，
+其余归工具开关管。空 `thinking` 的 assistant 行仍归工具开关，否则正文永远打不开。
+
+### `ctrl+v`：图片落成临时文件，不做附件上传
+
+pi 的 `handleClipboardPaste` 三分支按序：file paths → image → text。
+图片**写到临时文件，插入路径**，不是作为 attachment 上传。
+
+不做附件上传的理由：
+- `runner.ts` 的 `onSubmit` 只发文本，上传要扩消息形状 + pending 模型 + wire 格式，
+  为一个按键改协议。
+- agent 有文件工具，路径和附件一样可用，且不需要 adapter 配合。
+- 与 pi 完全一致。
+
+代价（pi 同样承担）：临时文件不在会话里，恢复的 transcript 不含它。
+
+剪贴板返回的是**裸字节**（`getImage(): Uint8Array`），媒体类型靠 magic bytes 恢复；
+无法识别就打不开扩展名，一律拒绝而不是猜 png。
+
+### `ctrl+z`：Node 进程无法自我挂起（重要）
+
+三个必须同时成立的条件，每一个都是实测出来的：
+
+1. **信号发给进程组**（`kill(0, ...)`）而非 `process.pid`。Node 里自我 `SIGTSTP`
+   是 no-op —— 裸 Node 脚本在 pty 里，raw mode 开与关都实测过，装了 handler 也只是
+   调用回调、不挂起。
+2. **挂起期间保活事件循环**，否则 Node 可能没有 ref'd handle，`fg` 时在 `SIGCONT`
+   恢复终端之前就退出了。
+3. **挂起期间忽略 `SIGINT`**，否则 shell 里按 `ctrl+c` 会杀掉后台作业。
+
+真机验收必须在**带父 shell 的 pty** 里做：裸 pty 里 dsh 自成进程组，没有 shell 的 job control
+去识别 stopped 状态。带 shell 时得到 `[1]+ Stopped dsh --profile neeko --tui` + 提示符。
+
+### 变异验证
+
+`activity-status` / `command-controller` / `fold` / `thinking` / `clipboard` / `suspend`
+共 22 个变异，最终全部有效。3 次首次 0 红，逐条查明：
+- 「空目录不提前返回」→ **冗余守卫**（`models[0]?.id` 本就返回 `undefined`），删除。
+- 「空字符串当成功粘贴」→ 测试太松（只测了 `null`），补 `''` 用例。
+- 「PNG 误判 JPEG」→ 测试用 `makeName` 固定扩展名，绕过了签名检测；改为四种签名逐一断言。
+- 「不留 keep-alive」→ 只断言了信号注册，补 `intervals.created` / `cleared` 断言。
+
+## Step 44 — neeko-check 审核整改
+
+审核结论：3 Block + 5 Warning/Nit。全部修复。
+
+### 第一性原理：终端状态是一个推导，不是一个被写入的值
+
+原实现有两个写出口（`setWorking` 与 `syncBlockedStatus`），各自计算并写入
+`setProgress`/`setProgramStatus`。它们**已经不一致**：
+
+```ts
+// setWorking
+setProgress(activity.state === 'working' || activity.state === 'blocked')
+// syncBlockedStatus
+setProgress(blocked || this.workingActivity.state === 'working')
+```
+
+后者漏了「activity 自己是 blocked」——一旦 runner 报 blocked，进度条会被关掉。
+更本质的缺陷：**「该不该转圈」有两份实现**。
+
+pi 的 `ProgramStatusReporter` 给出了正确形态：两个输入（run state + 按源记录的
+open dialogs），状态是它们的**函数**，每次调用重新推导，而不是修改上一次的结果。
+于是「blocked 压过 working」「settle 后恢复 run 的结局」自然成立，不需要额外维护。
+
+于是新建 `program-status.ts`（移植 pi 的 reporter），删掉 `activity-status.ts`：
+
+- `setRunState(RunState)` / `setBlocked(source, dialog)` / `clearBlocked(source)` / `reset()`
+- `report()` 里推导 + **去重**（`JSON.stringify` 比对），避免每次按键发一串转义序列
+- blocked 用 `Map` 按源记录：问题是「最近打开的那个」，关掉一个露出前一个
+
+`app.ts` 侧从「两个写出口」收敛成一个 `ProgramStatusReporter` 实例。
+
+### Block 3：`error` 态曾是死分支
+
+原 `AgentActivity` 声明了 `error` 但**无生产者、无测试**——变异实测：改成 `'clear'` 后
+953 条全绿。注释写着「终端报 done 等于说谎」，代码却没有路径走到它。
+
+修法不是删掉，而是接上真实来源：`turn/end` 的 `reason` 已经由 `turnEndFailure()` 产出
+`failure` 行，`RunState.done` / `RunState.error` 成为可区分的事实。测试补了
+`error` / `done` 两侧断言（只断言 `state` 会让 `error→done` 漏过）。
+
+### progress 判谁：runState 而非 status
+
+`setProgress` 跟随 **run**，不跟随上报的 status。理由：spinner 的语义是「这个程序在忙」，
+而 run 已 settle、只是还有个 dialog 开着时，它**不忙**了；`blocked` 是通过 OSC 7501
+交给终端处理的另一条信息。这条正是原 bug 的镜像——原实现把 blocked 当忙。
+
+### 其余
+
+- **Block 1**：3 处孤儿 JSDoc（`thinking.ts` / `command-controller.ts` / `app.ts` 三连）。
+  我插入新函数时定位到旧注释块之后，把原函数的文档挤走了。全部归位。
+- **Warning 4**：`SuspendHooks` 7 个钩子 → 5 个别名 + 一个 `ProcessSignals` 分组对象。
+  调用点从 5 行仪式降到 4 行，且「app 提供的」与「OS 提供的」分开。
+- **Warning 5**：删 `ClipboardImage` 死导出。
+- **Warning 6**：`suspendToBackground` 方法名遮蔽同名导入 → 改名 `handleSuspend`。
+- **Nit 7**：手写 `cwd.split(/[\\/]/)` → `basename()`。
+- **Nit 8**：`toggleThinking` 误用 `repaintChrome`（重绘 banner/状态栏）→ `scheduleRender`
+  （与 `toggleFold` 一致，fold 只在渲染行时被读取）。
+
+### 变异验证：12 个变异，最终全部有效
+
+3 次 0 红逐条查明：
+- 「blocked 取最早」→ 断言太松（只查了 `state`），补 message 断言。
+- 「error 报成 done」→ 断言太松，补完整对象 + `done` 反向用例。
+- 「重开 dialog 不 delete」→ 用例构造不出顺序差异，补三源用例。
+- 另有一例（`case 'error':` 文本替换）**本身不可构造**——`currentStatus()` 返回的是变量
+  `state`，没有字面量可替换；`error` 的正确性由 `RunState` 类型在编译期保证。改用可构造的
+  等价变异（`error` 归一成 `done`）后 1 红。
+
+## Step 45 — Block 3 的补修：`error`/`done` 此前仍无生产者
+
+Step 44 声称「接上 `turn/end` 真实来源」，核查后**不成立**：只做了类型声明，
+`runStateOfStatus` 仍只产出 `working`/`idle`，`error` 与 `done` 两个分支不可达。
+即问题被「报告为已修」，实际只修了类型。
+
+### 真实链路
+
+```
+runner: ctx.on(session events)
+  → app.reportSessionEvent(event)
+    → applySessionEvent(reporter, event)
+      → runStateOfEvent(event)          // 只认 turn/end
+        → runStateOfTurnEnd(reason)     // 复用 turnEndFailure()
+          → reporter.setRunState(...)
+```
+
+`turnEndFailure()` 不重新实现：transcript 的 `failure` 行已由它产出，两种
+失败描述会是两处需要同步的东西。只剥掉 `Error: ` 前缀（状态栏已表明是错误）
+并取第一行（provider 消息可能多行，状态通道是单行）。
+
+### 为什么后来才发现
+
+三个变异连续 0 红，逐个查明都是**测试起测点太靠后**：
+
+| 变异 | 为何 0 红 |
+| --- | --- |
+| `runner` 删掉 `if (event.type === 'turn/end') ...` | `runner.ts` 是端到端胶水，测试够不到那一行 |
+| `runStateOfTurnEnd` 失败归一成 done | 同类：只测了纯函数，没测 app 转发 |
+| `app.reportSessionEvent` 删掉转发 | 断言从 `applySessionEvent` 开始，跳过 app 这一层 |
+
+修法是把逻辑**逐层下沉成可测函数**，让每次转发都只剩一次调用：
+
+- `runStateOfEvent(event)` —— 事件 → run state，纯函数
+- `applySessionEvent(reporter, event)` —— 上者 + setRunState，返回是否上报
+- `app.reportSessionEvent(event)` —— 一行转发（测试直接对 `TuiApp` 断言）
+
+补测后三个变异全部转红。
+
+### 真机闭环
+
+pty 不回应 OSC 7501 探测，`programStatusSupported` 默认 false，所以默认不发——
+这是 pi-tui 的正确行为，不是缺陷。用 `PI_PROGRAM_STATUS=1` 强制后实测：
+
+```
+state=idle → state=working → state=done → state=idle
+进度 OSC 9;4: 3 → 0
+```
+
+`done` 出现，证明 `turn/end` 的结局真的到达了终端。
+
+### 教训
+
+「声明了类型」不等于「接上了来源」。本轮 Block 3 第一次修复只动了类型定义，
+测试也只覆盖 `working`/`idle` —— 两处都「看起来完成了」。变异验证的价值正在这里：
+它不问代码写了什么，只问删掉之后有没有人发现。
+
+## Step 46 — 文档一致性：修既有孤儿块 + 把检查变成门禁
+
+### 三处既有孤儿块（HEAD 就有，非本轮引入）
+
+| 位置 | 孤儿块描述的 | 实际归属 |
+| --- | --- | --- |
+| `app.ts:317` | `/thinking` selector 字段 | 已迁入 `PanelHost`，字段不存在 |
+| `app.ts:367` | `statusLine` + 倒计时 | 已迁入 `NoticeLog`，理由在 `notice-log.ts` 模块注释里 |
+| `theme.ts:503` | `markdownThemeOf` 的说明 | 被 `CODE_RULE_WIDTH` 的文档挤到上面 |
+
+第三处是单纯的顺序错位；前两处是**重构残留的死注释**——它们描述的字段已经不存在了，
+读起来像「这里有个 `/thinking` 面板字段」，实际是 `PanelHost` 的一个槽位。这种注释比没有注释更糟。
+
+### 顺带查出的第四处
+
+`interactions.ts` 的 `interactionIntent()`：文档写 `@param digits`，实际参数名 `digit`。
+同样是既有的。
+
+### 根因是机械的，所以用脚本兜
+
+两类问题（插函数时把旧注释挤走、改名后 `@param` 不跟）都可以机械检出，
+比靠 review 记住更可靠。新增 `scripts/check-docs.mjs`，接进 `pnpm check`：
+
+```
+tsc --noEmit && tsc -p tsconfig.test.json && node scripts/check-docs.mjs
+```
+
+- **孤儿块**：`*/` 紧跟 `/**` 即报（精确判定）。
+- **`@param` 错位**：只在「签名里完全找不到该名字」时报，故意保守。
+  按嵌套深度切参数段（默认值里的逗号不会把一个参数切成两个），
+  取每段开头标识符——`rpcId = randomRpcId()` 没有类型注解，早期只匹配 `:`/`?` 的写法会漏掉它。
+
+脚本自身做了变异验证：重新制造孤儿块、重新制造 `@param` 错位，两次都 `exit=1` 并指到具体行号。
+
+## Step 47 — 第二轮复查：又找出 4 个缺陷
+
+上一轮报告「全部修复」后重新逐行读，发现 4 处。都是**上轮整改自己引入的**。
+
+### 1. `setProgress` 绕过了去重（性能 + 行为）
+
+`report()` 里 `setProgramStatus` 有 `JSON.stringify` 去重，`setProgress` 却在去重块**外面无条件调用**。
+而 `Terminal.setProgress` **不幂等**：`false` 会写 clear 序列并 `clearInterval`，`true` 会写 active 序列并装定时器。
+实测：连续 4 次 report 产生 4 次写入。
+
+修法：为 spinner 单独维护 `lastProgress` 缓存。不共用 status 的 key，因为两条通道的变化条件不同
+（blocked 时 status 变、spinner 不变）。
+
+### 2. `reset()` 不重置去重缓存
+
+`/resume` 换会话时 `reset()` 把 runState 设回 idle 并 `report()`。如果上一会话的最后状态也是 idle，
+去重命中 → **什么也不发** → 终端继续显示已离开的会话状态。
+
+实测：`setRunState(idle)` 后 `reset()`，`sent.length` 保持 1 不变。
+修法：`reset()` 清两个缓存再 report —— 缓存记的是「终端当前相信什么」，
+任何让这个信念失效的操作都必须清缓存。
+
+（我第一版的测试是碰巧通过的：中间插了一次状态变化，掩盖了问题。）
+
+### 3. `suspend` 失败时 `SIGCONT` 监听器泄漏
+
+`catch` 分支清了 keepAlive 和 `SIGINT`，但**没清 `SIGCONT`**。
+残留的监听器会调用 `startRendering()` —— 一个从未停过的 TUI 被 resume，
+且下次真挂起时会 resume 两次。
+
+修法：把 resume 逻辑提成具名 `onResume`，`once` 与 `removeListener` 用同一个引用，
+catch 里三个一起撤。
+
+### 4. `ctrl+v` 的文本分支不检查控制字符
+
+`readFiles` 拒绝含控制字符的路径，文本分支却原样返回。
+而 pi-tui 的编辑器**只**标准化换行和 tab（`normalizeText`），不净化 `\x1b`。
+实测 `'line1\nline2\x00\x1b[31mred'` 完整穿过了 `pasteClipboard` → 会进入编辑器 → 进入 prompt。
+
+修法：抽两条**语义不同**的规则：
+
+| 场景 | 规则 | 为什么 |
+| --- | --- | --- |
+| 文件路径 | `\p{Cc}`（含换行） | 路径要提交，`\n` 会把一次粘贴拆成两条消息 = 命令注入 |
+| 文本 | 排除 `\n` `\t` | 多行粘贴是主要用途，编辑器自己会标准化 |
+
+这两条长得像但不是重复，专门写了测试钉住差别，防止下一个人「去重」时合并掉。
+
+### 5. `cycleThinkingLevel` 报喜不报忧
+
+`commitThinking` 成功时自己 `showStatus`，失败时静默 `return`。
+`cycleThinkingLevel` 在调用后又无条件 `showStatus(level)` ——
+实测失败时同时输出「thinking level not applied: provider rejected」和「thinking level: high」。
+
+修法：`commitThinking` 返回 `boolean`，三个调用点（`shift+tab`、`/thinking <level>`、选择器）
+都按返回值决定是否提示。一处判定，调用方无需推断。
+
+### 变异验证
+
+新增 9 个变异，全部有效。修 #2 时第一版测试**碰巧通过**（中间状态变化掩盖），
+改用「idle → reset 也是 idle」的精确用例后才变红——这也是为什么每个修复都要
+用变异问一遍「删了它，测试会不会红」。
+
+## Step 48 — 第三轮复查：平台键位差异（对照 pi 的 keybindings.md 全表）
+
+前两轮都是读自己的代码。这轮改成**逐行对照 pi 的 `docs/keybindings.md`**，
+查出 3 处不一致，全部是我前面写的。
+
+### 1. `app.tools.expand` 的描述过期
+
+```
+description: 'Collapse or expand tool output and thinking'
+```
+
+Step 46 刚把 `ctrl+o`（工具）与 `ctrl+t`（思考）拆成正交的两个开关，
+描述却还写着「and thinking」。`/hotkeys` 会并排列出两条**互相矛盾**的说明：
+一条说 `ctrl+o` 管思考，一条说 `ctrl+t` 管思考。
+
+### 2. `app.clipboard.pasteImage` 少了 Windows 分支
+
+| | pi | 本仓（修前） |
+| --- | --- | --- |
+| Unix | `ctrl+v` | `ctrl+v` ✓ |
+| Windows / WSL | `alt+v` | 同样只有 `ctrl+v` ✗ |
+
+Windows 终端会拦截 `ctrl+v`，pi 因此换 `alt+v`。
+
+### 3. `app.model.cycleBackward` 缺平台分支且写法不同
+
+| | pi | 本仓（修前） |
+| --- | --- | --- |
+| Unix | `shift+ctrl+p` | `ctrl+shift+p` |
+| Windows / WSL | `alt+p` | 同上，无分支 ✗ |
+
+修饰键顺序两种写法 matcher 都接受（已实测），所以顺序不是 bug；
+**缺 Windows 分支才是**。
+
+### 修法：`actionKeys(action, platform, env)`
+
+`APP_KEYBINDINGS` 是静态常量，构建时无法判断平台，所以平台差异必须晚到运行时：
+
+```ts
+actionKeys(action, platform = process.platform, env = process.env)
+```
+
+平台判定照抄 pi，不自己发明：
+
+```ts
+platform === 'win32' || (platform === 'linux' && (WSL_DISTRO_NAME || WSL_INTEROP))
+```
+
+第二半是重点：**WSL 是 Linux 进程但跑在 Windows 终端里**，`ctrl+v` 在那里会被拦截。
+只判 `platform` 的写法在这一种情况下会错，而这恰好是最常见的开发环境之一。
+
+`installKeymap` 改为遍历 `actionKeys` 生成定义，而不是 spread 静态表 ——
+否则 `actionKeys` 再正确也不会生效。这一点单独写了测试
+（`installKeymap 用静态表` 变异 → 2 红），因为「函数正确但没人调用」正是前面
+Block 3 栽过的坑。
+
+Windows 上 `app.suspend` 的 `defaultKeys` 为 `[]`，与 pi 的 "None on Windows" 一致；
+用户的 `keybindings.json` 覆盖仍然优先于平台默认。
+
+### 变异验证
+
+4 个变异全部有效：
+`installKeymap 用静态表`（2 红）、`不算 WSL`（1 红）、`Windows 也绑 ctrl+z`（2 红）、
+`pasteImage 不区分平台`（3 红）。
+
+### 顺带核实
+
+`fold.ts` 的边界行为用探针查过：`toggle(row)` 单行翻转 → `toggleAll()` 清除 override
+→ 状态保持均匀，符合 `fold.ts` 模块注释的承诺。
+
+## Step 49 — `ctrl+c` 语义修正：先清草稿，两次才退出
+
+### 问题
+
+`app.clear`（`ctrl+c`）的 handler 是 `() => this.options.onExit()` —— **一按就退出**。
+这是每个终端用户用来放弃半条消息的那个键，换来的是整个会话（包括正在跑的 turn）被丢掉。
+
+pi 的提示写得很直白：
+
+```
+ctrl+c        to clear
+ctrl+c twice  to exit
+ctrl+d        to exit (empty)
+```
+
+### 语义（新建 `exit-keys.ts`）
+
+| 键 | 行为 |
+| --- | --- |
+| `ctrl+c` 第 1 次 | 清空编辑器草稿 |
+| `ctrl+c` 第 2 次（500 ms 内） | 退出 |
+| `ctrl+c` 间隔超过 500 ms | 重新算「第 1 次」 |
+| `ctrl+d` | 编辑器为空才退出；有草稿则无操作 |
+
+500 ms 窗口照抄 pi（`now - lastSigintTime < 500`）。**不是定时器而是时间戳比较**：
+定时器会让每次按键后有半秒的 ref'd handle，而比较本来就是 pi 的做法。
+
+`ctrl+d` 的空编辑器条件必须写在 app 里，因为**键位绑定看不到文本**
+（pi 在自己的 `CustomEditor` 里强制，pi-tui 的 `Editor` 没有等价钩子）。
+
+### 连带发现：面板里 `ctrl+c` 会直接退出程序
+
+`exit` scope 排在 pickers **之前**（为了「哪里都能退出」），所以面板打开时 `ctrl+c`
+仍然进到这条规则。实测：面板开着连按两次 → 程序退出而面板还画在屏幕上，
+且第一次按清掉的是用户**看不见的**草稿。
+
+修法是让 `exit` scope 在面板打开时**让位**（`handle: () => false`），而不是吞掉：
+
+```ts
+this.panelOpen()
+  ? { name: 'exit', handle: () => false }
+  : actionScope('exit', { ... })
+```
+
+「不能困住用户」这个保证没有丢 —— 它改由面板自己提供：pi-tui 的
+`tui.select.cancel` 默认就是 `['escape', 'ctrl+c']`，所以键仍然能把用户救出来，
+只是先关面板、再关程序，是一级一级往后退。
+
+### 6 条既有测试因此失效，全部更新
+
+| 测试 | 旧契约 | 新契约 |
+| --- | --- | --- |
+| `ctrl+c invokes onExit` | 一按就退出 | 一按清空、两按退出 |
+| `quits on ctrl+c, which is app.clear` | 同上 | 同上 |
+| `honours a rebound exit key` | 一次即退 | 重绑后同样两按 |
+| `ignores a key release` | 用 release 帧做「已退出」断言 | release 帧不算第二次按 |
+| `quits even with the model panel open` | 面板中直接退出 | 面板中关面板，不退出 |
+| `quits even with a theme picker open` | 同上 | 同上 |
+
+这些是**正确的连锁反应**：语义变了，旧契约就该改。但诉求（面板不能困住用户）保留，
+只是实现机制从「exit 穿透」改成「面板自己取消」。
+
+### 本轮新脚本立刻抓到一处
+
+`check-docs.mjs` 报 `app.ts:884 orphaned JSDoc` —— 我插入 `panelOpen` 时
+把 `ctrl+z` 的文档挤成了孤儿。上一轮才建的脚本，这一轮就用上了。
+
+### 变异验证
+
+4 个变异全部有效：取消 500ms 窗口（2 红）、`ctrl+d` 不看草稿（1 红）、
+`ctrl+c` 第一次就退出（11 红）、面板打开时不让位（4 红）。
+
+真机验收：第 1 次 `ctrl+c` → 进程 `Ss+`（存活）；第 2 次 → `Z`（僵尸态，已退出）。
+
+## Step 50 — 退出时重印整个文档，导致终端堆叠旧 banner
+
+### 症状
+
+用户截图：进入 TUI 后，上方还留着上一次运行的 banner + 状态行 + `To resume this session`，
+甚至更早的 shell 提示符。终端越用越乱。
+
+### 根因
+
+`printFinalDocument()` 在**退出时打印整个文档**（banner、transcript、editor、状态栏）。
+主屏模式下这完全是多余的 —— transcript 本来就在终端自己的 scrollback 里。
+
+实测对比（连续启动 2 次，统计 banner 版本行出现次数）：
+
+| | 版本行次数 |
+| --- | --- |
+| 修改前 | **4**（每次启动 1 + 每次退出 1） |
+| 修改后 | **2**（每次启动 1） |
+
+### pi 的实际行为
+
+在真实 pty 里跑 `pi` 然后 `ctrl+d`，全部输出是：
+
+```
+<u \r\r\nbash-3.2$
+```
+
+**只字不打印**。对话仍在 scrollback 里（终端自己保存的），重印只是噪音。
+
+### 修法：按屏幕模式分流
+
+两种屏幕的约束不同，不能共用一个退出路径：
+
+| 模式 | 退出时 | 为什么 |
+| --- | --- | --- |
+| `main`（默认） | 只打一行 resume 提示 | transcript 已在 scrollback，重印 = 堆叠 |
+| `fullscreen` | 打印完整文档 | alt screen 的内容被终端丢弃，不写回就永久丢失 |
+
+```ts
+const leavingAltScreen = this.fullscreen !== undefined
+this.resumeMainScreenQuietly()
+this.noticeLog.clearStatus()
+if (leavingAltScreen) this.printFinalDocument()
+else this.printResumeHint()
+```
+
+保留 resume 提示（pi 没有这一行）是有意的：它只有一行，且是「怎么回来」的唯一线索。
+全屏路径的完整打印有既有测试钉住（`prints the whole conversation onto the main screen on quit`），
+未受影响。
+
+### 中途踩的坑
+
+第一版直接让 `printFinalDocument` 只打提示，**误伤了全屏路径** ——
+`tui-fullscreen.spec.ts` 立刻报错。这正说明「两条路径约束不同」：
+把判断放在 `stop()` 里按模式分流，而不是在打印函数里一刀切。
+
+### 变异验证
+
+新增 2 条测试（`prints the hint and nothing else`、`never reprints the banner`），
+修前分别红在「13 行而非 1 行」和「输出含 █」。
+
+## Step 51 — 启动时清屏，让 TUI 独占屏幕
+
+### 用户诉求
+
+「进入终端是这样的，pi 进去的时候是只有自己的界面，而不是还要终端的其他信息」。
+Step 50 修掉了 banner 堆叠，但 shell 历史仍留在上方。
+
+### 关键实测：pi 其实不清屏
+
+在真实 pty 里跑 `pi`，扫描全部擦除类序列：
+
+```
+ESC[2J 全清屏      : 0
+ESC[3J 清scrollback: 0
+ESC[H 光标归位      : 0
+alt screen         : 0
+```
+
+pi **一个都不发**。它看起来干净，是因为启动内容有 26 行，而终端只有 30 行 ——
+历史被挤到上面看不见了。换大终端立刻露馅：
+
+| 终端行数 | pi 输出行数 | 结果 |
+| --- | --- | --- |
+| 30 | 26 | 铺满，历史不可见 |
+| 50 | 26 | **下方露出历史** |
+| 70 | 26 | **下方露出历史** |
+
+dsh 的 banner 只有 5 行，总计 12 行，所以在 30 行终端里历史也露着。
+
+### 结论：「跟随 pi」与「干净屏幕」是两个要求
+
+pi 的干净是**副作用**（内容够长），不是设计。要达成用户要的效果只有两条路：
+让内容铺满（依赖插件列表，dsh 没有），或**显式清屏**。选后者。
+
+用 pi-tui 自己的 API `Terminal.clearScreen()`（写 `ESC[2J ESC[H`），
+不手写转义序列。
+
+### 代价，明说而不是藏着
+
+清屏会丢掉启动前的 scrollback。这正是「只有自己的界面」的含义 ——
+而退出时那一行 resume 提示（Step 50）就是找回对话的入口。
+
+### 只在 start() 里清一次
+
+`requestRender()` 每秒跑很多次，绝不能清屏，否则启动后累积的 transcript 会被每帧抹掉。
+测试 `does not clear on every repaint` 钉住这一点。
+
+### 变异验证
+
+3 条测试（清屏存在、清屏是首个输出、不重复清屏），修前全红。
+真机确认：清屏位置在 shell 回显之后、所有 TUI 输出之前，且清屏后不含旧历史。
