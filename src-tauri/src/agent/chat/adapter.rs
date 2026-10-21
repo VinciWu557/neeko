@@ -5,6 +5,8 @@
 //! adapter only; the protocol and page are untouched (OCP).
 
 use async_trait::async_trait;
+
+use crate::common::agent::types::ModelInfo;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -139,21 +141,39 @@ pub trait AgentAdapter: Send + Sync {
     fn supports_chat_resume(&self) -> bool {
         false
     }
-    /// Whether this transport can expose model selection at all.
+    /// List the models this agent offers, **without** starting a session.
     ///
-    /// Default `false`, adapters opt in — same shape as `supports_chat_resume`
-    /// so a new agent never forces edits onto the command layer (OCP).
+    /// Default: unsupported — the adapter has no standalone "list models"
+    /// command. That is the normal case for ACP: the list only exists inside a
+    /// session, in `session/new`'s `configOptions` (there is no `models/list`
+    /// method in the protocol). Those adapters return
+    /// [`ModelCatalogResult::SessionScoped`] instead.
+    ///
+    /// Adapters that *do* have a command override this — `opencode models
+    /// --verbose`, `pi --list-models`. The point is to show a usable list
+    /// **before** the user sends anything, which is otherwise impossible.
+    ///
+    /// Returning `Err` means "supported but the command failed"; typing it as
+    /// `Result` rather than an empty `Vec` keeps the two distinguishable
+    /// (an empty list is a legitimate answer, a failure is not).
+    async fn list_models(&self, config: &AgentConfig) -> Result<Vec<ModelInfo>, AppError> {
+        // 大多数 agent 没有独立的列模型命令——ACP 就是这类（列表只在会话里）。
+        if config.model_list_args.is_none() {
+            return Err(AppError::Unsupported(
+                "this agent has no out-of-session model list".into(),
+            ));
+        }
+        crate::agent::model_discovery::list_models_by_command(config).await
+    }
+
+    /// Whether this adapter can select models at all (in-session or not).
+    ///
+    /// Drives the difference between [`ModelCatalogResult::SessionScoped`] and
+    /// [`ModelCatalogResult::Unsupported`] when [`AgentAdapter::list_models`]
+    /// says "no standalone list". ACP returns `true` (the list exists, just
+    /// inside a session); a headless-only transport returns `false`.
     fn supports_model_selection(&self) -> bool {
         false
-    }
-    /// Optional out-of-session model catalog (the "quick list" fast path).
-    ///
-    /// `None` means "no standalone list": either the transport has no such
-    /// command (ACP — models come from the session's `configOptions`), or it
-    /// cannot select models at all. Callers distinguish the two via
-    /// [`AgentAdapter::supports_model_selection`].
-    fn model_catalog(&self) -> Option<&dyn ModelCatalog> {
-        None
     }
 }
 
@@ -182,15 +202,6 @@ pub enum ModelCatalogResult {
 ///
 /// 只有确实拥有这种命令的适配器才实现；ACP 路径**故意不实现** —— 它的模型来自
 /// 会话的 `configOptions`，本来就不该有独立目录。
-#[async_trait]
-pub trait ModelCatalog: Send + Sync {
-    /// 列出该 agent 的模型。
-    async fn list(
-        &self,
-        config: &AgentConfig,
-    ) -> Result<Vec<crate::common::agent::types::ModelInfo>, AppError>;
-}
-
 /// A live, cancelable agent session (A5 — standard adapter shape).
 #[async_trait]
 pub trait AgentSession: Send {

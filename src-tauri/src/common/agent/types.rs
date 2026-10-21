@@ -233,6 +233,17 @@ pub struct AgentConfig {
     /// prompt 后置参数，追加在 prompt 之后。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_prompt_args: Option<Vec<String>>,
+    /// 「列出可用模型」命令参数，如 pi 的 `["--list-models"]`、
+    /// opencode 的 `["models", "--verbose"]`。`None` = 没有独立列模型命令。
+    ///
+    /// **与 CHAT 能力无关**：这是纯 CLI 查询，`chat: None` 的 agent 也能有。
+    /// 存在它才能让用户在**发第一条消息之前**看到模型列表 —— ACP 协议的模型列表
+    /// 只存在于会话的 `configOptions` 里，没有独立查询方法。
+    ///
+    /// 命令的 stdout 格式因 agent 而异，由各自的解析器处理（见
+    /// `agent/model_discovery` 与 `agent/chat/adapter` 里的 `list_models`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_list_args: Option<Vec<String>>,
     /// 全局 skills 目录 override（如 `~/.claude/skills`；opencode 特例
     /// `~/.config/opencode/skills`；与 `deploy.skills` 项目级模板并存）。
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -25,14 +25,12 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::sync::{mpsc, OnceCell};
 use tokio::time::timeout;
 
-use crate::agent::chat::adapter::{
-    AgentAdapter, AgentContext, AgentKind, AgentSession, ModelCatalog,
-};
+use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
 use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, ErrorKind, SessionRequest, StreamEvent, TodoItem,
     TurnEndReason,
 };
-use crate::common::agent::types::AgentConfig;
+use crate::common::agent::types::{AgentConfig, ModelInfo};
 use crate::common::error::AppError;
 use crate::common::executor::factory::ExecTarget;
 use crate::common::executor::BoxAsyncRead;
@@ -647,30 +645,6 @@ impl ServeAdapter {
 }
 
 /// `opencode models --verbose` 快速路径。
-///
-/// 存在理由：ACP 的模型列表只能从会话里取，而设置页没有会话。opencode 自带一条
-/// 独立命令，能让用户在**打开会话之前**看到可选模型。这是优化，不是主路径 ——
-/// 拿不到时 UI 会退回「会话内可选」的说明。
-pub struct OpencodeCatalog;
-
-#[async_trait]
-impl ModelCatalog for OpencodeCatalog {
-    async fn list(
-        &self,
-        config: &AgentConfig,
-    ) -> Result<Vec<crate::common::agent::types::ModelInfo>, AppError> {
-        // 用户在设置里可以覆盖二进制路径；未覆盖时用 `command`。
-        let binary = if config.command.is_empty() {
-            None
-        } else {
-            Some(config.command.clone())
-        };
-        crate::agent::model_discovery::discover_opencode_models(binary).await
-    }
-}
-
-static OPENCODE_CATALOG: OpencodeCatalog = OpencodeCatalog;
-
 #[async_trait]
 impl AgentAdapter for ServeAdapter {
     fn kind(&self) -> AgentKind {
@@ -682,9 +656,19 @@ impl AgentAdapter for ServeAdapter {
         true
     }
 
-    /// 唯一拥有「不建会话列模型」命令的传输。
-    fn model_catalog(&self) -> Option<&dyn ModelCatalog> {
-        Some(&OPENCODE_CATALOG)
+    /// serve 传输有独立的列模型命令（`opencode models --verbose`），
+    /// 因此能在**建会话之前**给出列表。
+    ///
+    /// 这属于「快速路径」：ACP 的模型列表只能从会话的 `configOptions` 取，
+    /// 而用户打开 Chat 时还没有会话。有这条命令就能先把选择器填上。
+    async fn list_models(&self, config: &AgentConfig) -> Result<Vec<ModelInfo>, AppError> {
+        // 用户在设置里可以覆盖二进制路径；未覆盖时用 `command`。
+        let binary = if config.command.is_empty() {
+            None
+        } else {
+            Some(config.command.clone())
+        };
+        crate::agent::model_discovery::discover_opencode_models(binary).await
     }
 
     async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError> {

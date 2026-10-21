@@ -25,6 +25,7 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             prompt_args: Some(vec!["--bare".into(), "-p".into()]),
             interactive_prompt_args: None,
             post_prompt_args: Some(vec!["--dangerously-skip-permissions".into()]),
+            model_list_args: None,
             skill_path: Some("~/.claude/skills".into()),
             detection: Some(Detection::Command {
                 target: "claude".into(),
@@ -104,16 +105,20 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             None,
             "~/.omp/skills",
         ),
-        shell_agent(
-            "pi",
-            "Pi",
-            "pi.svg",
-            "pi",
-            Some(&["-p"]),
-            None,
-            None,
-            None,
-            "~/.pi/skills",
+        with_model_list(
+            shell_agent(
+                "pi",
+                "Pi",
+                "pi.svg",
+                "pi",
+                Some(&["-p"]),
+                None,
+                None,
+                None,
+                "~/.pi/skills",
+            ),
+            // 表格输出：provider / model / context / max-out / thinking / images
+            &["--list-models"],
         ),
         shell_agent(
             "reasonix",
@@ -137,11 +142,14 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             None,
             "~/.grok/skills",
         ),
-        // ── mockAgent（进程内 CHAT mock，无 CLI 能力）────────────────────────
+        // ── MockAgent（进程内 CHAT mock，无 CLI 能力）────────────────────────
+        // 名字用「MockAgent」而 id 保持 `mockAgent`：id 被前端 `AGENT_IDS` 与持久化
+        // 配置引用，改名是破坏性变更；展示名只影响 UI。
         AgentConfig {
             id: "mockAgent".into(),
-            name: "mockAgent".into(),
-            icon: Some("mock.png".into()),
+            name: "MockAgent".into(),
+            // 复用应用自身图标 —— 之前指向不存在的 `mock.png`，界面上是空白。
+            icon: Some("mock-agent.png".into()),
             enabled: true,
             is_builtin: true,
             command: String::new(),
@@ -151,6 +159,7 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             prompt_args: None,
             interactive_prompt_args: None,
             post_prompt_args: None,
+            model_list_args: None,
             skill_path: Some("~/.mock-agent/skills".into()),
             detection: None,
             deploy: DeploySpec {
@@ -175,6 +184,15 @@ pub fn config_map() -> HashMap<String, AgentConfig> {
         .into_iter()
         .map(|c| (c.id.clone(), c))
         .collect()
+}
+
+/// 给 agent 声明「列出可用模型」的命令参数。
+///
+/// 与 CHAT 能力正交：`pi --list-models` 是纯 CLI 查询，不需要 ACP / serve 就能跑。
+/// 存在它，用户在**发第一条消息之前**就能看到模型列表。
+fn with_model_list(mut agent: AgentConfig, args: &[&str]) -> AgentConfig {
+    agent.model_list_args = Some(args.iter().map(|s| (*s).into()).collect());
+    agent
 }
 
 /// 构造一个标准 CLI agent：skills/commands 位于 `{{projectPath}}/.{id}/` 下、
@@ -205,6 +223,9 @@ fn shell_agent(
         interactive_prompt_args: interactive_prompt_args
             .map(|a| a.iter().map(|s| (*s).into()).collect()),
         post_prompt_args: post_prompt_args.map(|a| a.iter().map(|s| (*s).into()).collect()),
+        // 大多数 agent 没有独立的列模型命令；有的话由调用方后置设置
+        // （`with_model_list`），避免给这个已有 9 个参数的构造函数再加一个。
+        model_list_args: None,
         skill_path: Some(skill_path.into()),
         detection: Some(Detection::Command {
             target: command.into(),

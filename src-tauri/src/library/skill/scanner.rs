@@ -145,23 +145,15 @@ mod tests {
         let agent = crate::common::agent::types::AgentConfig {
             id: "test-agent".into(),
             name: "Test Agent".into(),
-            icon: None,
-            enabled: true,
-            is_builtin: false,
             command: "test".into(),
-            args: vec![],
-            env: std::collections::HashMap::new(),
-            chat: None,
-            prompt_args: None,
-            interactive_prompt_args: None,
-            post_prompt_args: None,
+            enabled: true,
             skill_path: Some(skills_dir.to_string_lossy().to_string()),
-            detection: None,
             deploy: crate::common::agent::types::DeploySpec {
                 skills: "{{projectPath}}/.test/skills".into(),
-                commands: None,
-                mcp_config: None,
+                ..Default::default()
             },
+            // 夹具只关心 skills 扫描相关字段，其余取默认值。
+            ..Default::default()
         };
 
         let managed_paths = vec![managed_dir.to_string_lossy().to_string()];

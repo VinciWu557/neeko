@@ -656,23 +656,16 @@ mod tests {
         AgentConfig {
             id: id.into(),
             name: id.into(),
-            icon: None,
-            enabled: true,
-            is_builtin: false,
             command: "test".into(),
-            args: vec![],
-            env: std::collections::HashMap::new(),
-            chat: None,
-            prompt_args: None,
-            interactive_prompt_args: None,
-            post_prompt_args: None,
-            skill_path: None,
-            detection: None,
+            enabled: true,
             deploy: DeploySpec {
                 skills: "{{projectPath}}/.test/skills".into(),
                 commands: commands.map(String::from),
                 mcp_config: mcp.map(String::from),
             },
+            // `AgentConfig` 字段较多且会随能力演进而增删；夹具只关心 deploy 相关字段，
+            // 其余取默认值 —— 否则每加一个字段都要回来改一遍测试。
+            ..AgentConfig::default()
         }
     }
 

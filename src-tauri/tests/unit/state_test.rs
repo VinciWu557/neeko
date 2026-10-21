@@ -192,6 +192,7 @@ fn agent_config_serde_roundtrip() {
         prompt_args: None,
         interactive_prompt_args: None,
         post_prompt_args: None,
+        model_list_args: None,
         is_builtin: false,
         skill_path: None,
         chat: None,

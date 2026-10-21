@@ -55,7 +55,10 @@ fn list_agent_models_does_not_dispatch_on_agent_id() {
     );
 }
 
-/// 能力必须来自适配器：命令层只问 `model_catalog` / `supports_model_selection`。
+/// 能力必须来自适配器，而不是按 agent id 判断。
+///
+/// `list_models` 是 `AgentAdapter` 上的方法（早先是 `supports_model_selection` +
+/// `model_catalog` + 独立的 `ModelCatalog` trait 三层，合并后只剩两个方法）。
 #[test]
 fn list_agent_models_asks_the_adapter_for_capability() {
     let source = fs::read_to_string("src/agent/commands.rs").expect("read agent/commands.rs");
@@ -67,12 +70,12 @@ fn list_agent_models_asks_the_adapter_for_capability() {
     let body = &rest[..end];
 
     assert!(
-        body.contains("model_catalog()"),
-        "必须经 model_catalog() 取目录"
-    );
-    assert!(
         body.contains("supports_model_selection()"),
         "必须经 supports_model_selection() 区分 SessionScoped / Unsupported"
+    );
+    assert!(
+        body.contains("try_list_via_command"),
+        "必须先尝试 agent 自己声明的列模型命令（与 chat 能力无关）"
     );
 }
 
@@ -116,5 +119,50 @@ fn every_model_switch_entry_point_uses_the_shared_judgement() {
     assert!(
         !source.contains(r#"&"model".to_string()"#) && !source.contains(r#""configId": "model""#),
         "不得硬编码 configId —— 必须取自会话状态（agent 的 id 不一定是 \"model\"）"
+    );
+}
+
+/// 「列模型」与「能聊天」必须解耦。
+///
+/// `pi --list-models` 是纯 CLI 查询，在 `chat: None` 时照样能跑。而
+/// `adapter_for` 对 `chat: None` 返回 `Err` —— 所以命令层**不能**先取 adapter
+/// 再问模型列表，否则这类 agent 连问都问不到。
+///
+/// 变异实测：把顺序换回「先 adapter_for 再 list_models」，Pi 的列表立刻消失。
+#[test]
+fn model_list_does_not_require_chat_capability() {
+    let source = fs::read_to_string("src/agent/commands.rs")
+        .expect("read agent/commands.rs (run from src-tauri)");
+
+    let start = source
+        .find("pub async fn list_agent_models(")
+        .expect("list_agent_models must exist");
+    let rest = &source[start..];
+    let end = rest.find("#[tauri::command]").unwrap_or(rest.len());
+    let body = code_only(&rest[..end]);
+
+    // 列模型命令必须**先于** adapter_for 被尝试
+    let by_command = body
+        .find("try_list_via_command")
+        .expect("must try the declared model-list command");
+    let adapter = body
+        .find("adapter_for")
+        .expect("must fall back to transport capability");
+    assert!(
+        by_command < adapter,
+        "列模型命令必须在 adapter_for 之前尝试 —— 否则 chat: None 的 agent（如 Pi）\
+         即使声明了 --list-models 也拿不到列表"
+    );
+}
+
+/// `model_list_args` 是「独立列模型命令」的唯一声明点。
+#[test]
+fn pi_declares_its_model_list_command() {
+    let source =
+        fs::read_to_string("src/agent/builtin/providers.rs").expect("read builtin/providers.rs");
+    assert!(
+        source.contains(r#"&["--list-models"]"#),
+        "Pi 必须声明 `--list-models` —— 它的 ACP 需要额外扩展，这条命令是当前\
+         唯一能提前拿到模型列表的途径"
     );
 }

@@ -77,20 +77,42 @@ pub async fn list_agent_models(
     state: State<'_, AppStateWrapper>,
 ) -> Result<ModelCatalogResult, AppError> {
     let agent = resolve_agent_config(&state, &agent_id)?;
-    let adapter = crate::agent::chat::adapter::adapter_for(&agent)?;
 
-    if let Some(catalog) = adapter.model_catalog() {
-        return catalog
-            .list(&agent)
-            .await
-            .map(|models| ModelCatalogResult::Available { models });
+    // 两步，彼此独立：
+    //
+    // 1. **有没有独立的列模型命令**（`model_list_args`）。这是纯 CLI 查询，
+    //    与 chat 能力无关 —— `pi --list-models` 在 `chat: None` 时照样能跑，
+    //    而它正是「让用户在发第一条消息之前看到列表」的唯一途径。
+    // 2. 没有命令时，再看 transport 能不能**在会话内**选模型（ACP 就是这样）。
+    //
+    // 早先这里先取 adapter 再问 catalog，把「列模型」和「能聊天」绑死：
+    // `chat: None` 的 agent 连问都问不到，即使它有列模型命令。
+    if let Some(models) = try_list_via_command(&agent).await? {
+        return Ok(ModelCatalogResult::Available { models });
     }
 
-    Ok(if adapter.supports_model_selection() {
+    let session_scoped = crate::agent::chat::adapter::adapter_for(&agent)
+        .is_ok_and(|adapter| adapter.supports_model_selection());
+
+    Ok(if session_scoped {
         ModelCatalogResult::SessionScoped
     } else {
         ModelCatalogResult::Unsupported
     })
+}
+
+/// 用 agent 声明的列模型命令取列表。
+///
+/// `None` = 这个 agent 没有这样的命令；`Some(_)` = 拿到了（可能是空列表 —— 空是
+/// 合法答案，不是失败）。**命令执行失败要往上抛**，否则用户会把「装坏了」看成
+/// 「本来就没有模型」。
+async fn try_list_via_command(agent: &AgentConfig) -> Result<Option<Vec<ModelInfo>>, AppError> {
+    if agent.model_list_args.is_none() {
+        return Ok(None);
+    }
+    crate::agent::model_discovery::list_models_by_command(agent)
+        .await
+        .map(Some)
 }
 
 /// Add or update an agent and persist to config.
