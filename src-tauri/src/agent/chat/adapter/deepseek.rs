@@ -9,6 +9,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
+use crate::agent::chat::capabilities::{ChatCapabilities, ConfigCapability};
 use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, ErrorKind, SessionRequest, StreamEvent,
     TurnEndReason,
@@ -34,6 +35,23 @@ impl DeepSeekHarnessAdapter {
 
 #[async_trait]
 impl AgentAdapter for DeepSeekHarnessAdapter {
+    /// DeepSeek Harness 是自定义 JSON-Lines 协议：
+    /// **没有**会话配置项，**没有**审批实现（旧代码在 `SessionStart` 里硬编码
+    /// `approvals: true` —— 那是谎报，P1 的实锤）。
+    ///
+    /// 它的 `SetConfigOption` 发一条 no-op 帧，只为让「发了但 agent 不认」在
+    /// 日志里可见，不构成能力。
+    fn chat_capabilities(&self) -> ChatCapabilities {
+        ChatCapabilities {
+            config: ConfigCapability::None,
+            // 无审批实现：`SessionRequest::Approve` 被翻译成一帧，但 harness
+            // 不会因此发出 `RequestApproval`。
+            approvals: false,
+            commands: false,
+            resume: false,
+        }
+    }
+
     fn kind(&self) -> AgentKind {
         // Jsonl 传输无专属 kind（会话持久化按 agent_id 字符串即可）。
         AgentKind::Custom
@@ -65,12 +83,13 @@ impl AgentAdapter for DeepSeekHarnessAdapter {
                 agent: ctx_agent_id,
                 model: None,
                 config_options: Vec::new(),
-                capabilities: Capabilities {
-                    approvals: true,
-                    command_echo: true,
-                    diff: true,
-                    resume: true,
-                },
+                // 由适配器能力快照派生。旧值 `approvals: true / resume: true`
+                // 都是谎报（harness 不发审批、`resume_id` 恒 None）。
+                capabilities: Capabilities::from_chat_capabilities(
+                    self.chat_capabilities(),
+                    true,
+                    true,
+                ),
             })
             .await;
         let _ = event_tx

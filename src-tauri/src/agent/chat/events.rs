@@ -16,6 +16,16 @@ pub const TRANSLATION_EVENT: &str = "translation://event";
 
 /// Lightweight capability declaration sent once at session start.
 /// The page uses this to decide which UI (approval panel, diff panel, …) to show.
+///
+/// # 必须由 `AgentAdapter::chat_capabilities()` **派生**，不得各 adapter 手填
+///
+/// 历史上这里是四个互不校验的硬编码布尔：四个 adapter 全填 `approvals: true`，
+/// 包括 `deepseek`（495 行里没有任何审批实现）—— 前端因此给它渲染了审批面板，
+/// 而 agent 永远不发 `RequestApproval`。
+///
+/// 现在统一走 [`Capabilities::from_chat_capabilities`]，把「适配器声明」与
+/// 「会话下发」收成一条链。新增字段时只需在 `ChatCapabilities` 加一次，
+/// 这里的投影随之更新，不会有两份真相。
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Capabilities {
     /// Whether the agent supports the approval Gate (A2).
@@ -26,6 +36,34 @@ pub struct Capabilities {
     pub diff: bool,
     /// Whether the session supports resume via `resume_id`.
     pub resume: bool,
+    /// 会话配置项的读写机制（`session_config` / `per_turn` / `none`）。
+    ///
+    /// 前端据此决定「配置项控件是否可见」与「写入走哪条通道」——
+    /// 不再靠 `configOptions` 是否非空推断（那种推断无法区分
+    /// 「不支持」与「会话还没建立」）。
+    #[serde(default)]
+    pub config: crate::agent::chat::capabilities::ConfigCapability,
+}
+
+impl Capabilities {
+    /// 从适配器的能力快照派生（**唯一**构造入口）。
+    ///
+    /// `command_echo` / `diff` 是**传输特性**而非能力开关（某个 adapter 会不会
+    /// 发那类事件），目前没有适配器级声明，暂由调用方传入。
+    #[must_use]
+    pub const fn from_chat_capabilities(
+        caps: crate::agent::chat::capabilities::ChatCapabilities,
+        command_echo: bool,
+        diff: bool,
+    ) -> Self {
+        Self {
+            approvals: caps.approvals,
+            command_echo,
+            diff,
+            resume: caps.resume,
+            config: caps.config,
+        }
+    }
 }
 
 /// Context manifest bound to a session at start (and rebound on project switch).
@@ -378,6 +416,7 @@ mod tests {
             agent: "opencode".into(),
             model: Some("deepseek-v4-flash".into()),
             capabilities: Capabilities {
+                config: crate::agent::chat::capabilities::ConfigCapability::SessionConfig,
                 approvals: true,
                 command_echo: true,
                 diff: true,

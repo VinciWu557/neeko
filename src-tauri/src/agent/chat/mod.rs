@@ -7,6 +7,8 @@
 
 pub mod adapter;
 pub mod bridge;
+pub mod capabilities;
+pub mod capability_probe;
 pub mod commands;
 pub mod events;
 pub mod manager;

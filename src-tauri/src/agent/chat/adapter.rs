@@ -10,6 +10,7 @@ use crate::common::agent::types::ModelInfo;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
+use crate::agent::chat::capabilities::ChatCapabilities;
 use crate::agent::chat::events::{SessionRequest, StreamEvent};
 use crate::common::agent::types::{AgentConfig, ChatStart};
 pub mod acp;
@@ -79,13 +80,15 @@ pub fn adapter_for(config: &AgentConfig) -> Result<Box<dyn AgentAdapter>, AppErr
         ))),
         Some(ChatStart::Mock) => Ok(Box::new(AcpAdapter::mock())),
         Some(ChatStart::Acp { args }) => {
-            let mut cmd = config.cmd_vec();
+            // `chat_cmd_vec()` 已含 chat 专用可执行文件与参数；`ChatStart::Acp`
+            // 的 `args` 是传输级附加（如 opencode 的 `["acp"]`），语义不同，仍追加。
+            let mut cmd = config.chat_cmd_vec();
             cmd.extend(args.iter().cloned());
             Ok(Box::new(AcpAdapter::new(cmd)))
         }
         Some(ChatStart::Serve) => Ok(Box::new(ServeAdapter::new())),
-        Some(ChatStart::Jsonl) => Ok(Box::new(DeepSeekHarnessAdapter::new(config.cmd_vec()))),
-        Some(ChatStart::PiRpc) => Ok(Box::new(pi_rpc::PiRpcAdapter::new(config.cmd_vec()))),
+        Some(ChatStart::Jsonl) => Ok(Box::new(DeepSeekHarnessAdapter::new(config.chat_cmd_vec()))),
+        Some(ChatStart::PiRpc) => Ok(Box::new(pi_rpc::PiRpcAdapter::new(config.chat_cmd_vec()))),
     }
 }
 
@@ -170,14 +173,39 @@ pub trait AgentAdapter: Send + Sync {
         crate::agent::model_discovery::list_models_by_command(config).await
     }
 
-    /// Whether this adapter can select models at all (in-session or not).
+    /// 本 adapter 是否能选模型（会话内配置项 **或** 每轮请求参数）。
     ///
-    /// Drives the difference between [`ModelCatalogResult::SessionScoped`] and
-    /// [`ModelCatalogResult::Unsupported`] when [`AgentAdapter::list_models`]
-    /// says "no standalone list". ACP returns `true` (the list exists, just
-    /// inside a session); a headless-only transport returns `false`.
+    /// Driven from [`Self::chat_capabilities`] —— 这里**故意不是**可直接覆盖的
+    /// 声明点：能选模型这件事已经在能力快照里表态，再开一个 override 就等于又
+    /// 造了一份可以与之矛盾的真相（P1 的形态）。
+    ///
+    ///
+    /// 影响 [`ModelCatalogResult::SessionScoped`] 与 [`ModelCatalogResult::Unsupported`]
+    /// 的区分：`list_models` 返回「没有独立命令」时，能选就回 `SessionScoped`。
     fn supports_model_selection(&self) -> bool {
-        false
+        self.chat_capabilities().config.shows_controls()
+    }
+
+    /// 本 `(agent, 传输)` 组合的**完整能力快照**。
+    ///
+    /// # 为什么必须实现，没有默认值
+    ///
+    /// 默认值会让「新 adapter 忘填」与「明确不支持」不可区分 —— 前者是缺陷，
+    /// 后者是设计。没有默认实现时，新增 adapter 必须显式表态；新增**能力字段**
+    /// 时所有既有 adapter 的构造点编译失败，强制回答「我支持吗」。
+    ///
+    /// P1 的成因正是有默认值：`supports_*` 默认 `false` 而
+    /// `SessionStart.capabilities` 又被各 adapter 独立硬编码（四个全填
+    /// `approvals: true`，包括没有审批实现的 deepseek）。两份声明互不校验。
+    fn chat_capabilities(&self) -> ChatCapabilities;
+
+    /// 本传输是否对**会话配置项**做了完整实现。
+    ///
+    /// 收口旧 `supports_model_selection`：那个名字语义太模糊 —— ACP 为 true 靠
+    /// `configOptions`，serve 为 true 靠 HTTP 请求参数，机制完全不同，调用方
+    /// 无法据此判断「能不能发 `set_config_option`」。
+    fn supports_session_config(&self) -> bool {
+        self.chat_capabilities().config.uses_session_config()
     }
 }
 
@@ -261,5 +289,115 @@ mod tests {
             msg.contains("does not support chat resume"),
             "error should explain resume unsupported: {msg}"
         );
+    }
+
+    /// **单一声明点护栏**：`AgentAdapter` 的 adapter 实现不得覆写
+    /// `supports_model_selection`。
+    ///
+    /// 这个方法曾经是可单独 override 的声明点，与 `chat_capabilities().config`
+    /// 构成两份可互相矛盾的真相（P1）。现在它由能力快照派生，旧 override 已删。
+    /// 这条用例扫 adapter 实现文件，防止它被重新加回来 —— 那种回退不会编译报错，
+    /// 只会让某个传输静默地“能选模型但列表是 SessionScoped”。
+    ///
+    /// 变异验证：在任一 adapter 里恢复 `fn supports_model_selection` → 本用例红。
+    #[test]
+    fn adapters_do_not_redeclare_model_selection() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/agent/chat/adapter");
+        let mut checked = 0usize;
+        let mut offenders = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(dir)];
+        while let Some(path) = stack.pop() {
+            for entry in std::fs::read_dir(&path).expect("read adapter dir") {
+                let entry = entry.expect("dir entry");
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                if p.extension().and_then(|e| e.to_str()) != Some("rs") {
+                    continue;
+                }
+                // `adapter.rs` 是声明点本身，允许出现。
+                if p.file_name().and_then(|n| n.to_str()) == Some("adapter.rs") {
+                    continue;
+                }
+                let src = std::fs::read_to_string(&p).expect("read adapter source");
+                checked += 1;
+                if src.contains("fn supports_model_selection") {
+                    offenders.push(p.display().to_string());
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "scanner found no adapter files (path drifted?)"
+        );
+        assert!(
+            offenders.is_empty(),
+            "supports_model_selection must be derived from chat_capabilities(), \
+             not overridden in: {offenders:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod adapter_for_tests {
+    use super::*;
+
+    fn cfg(chat: ChatStart) -> AgentConfig {
+        AgentConfig {
+            id: "t".into(),
+            name: "T".into(),
+            command: "cli".into(),
+            args: vec!["--tui".into()],
+            chat: Some(chat),
+            ..Default::default()
+        }
+    }
+
+    /// `adapter_for` 确实能构造出适配器（含 PiRpc / Jsonl 两条 chat_cmd_vec 路径）。
+    #[test]
+    fn builds_an_adapter_for_every_chat_transport() {
+        for chat in [
+            ChatStart::Mock,
+            ChatStart::Serve,
+            ChatStart::Jsonl,
+            ChatStart::PiRpc,
+            ChatStart::Acp {
+                args: vec!["acp".into()],
+            },
+        ] {
+            assert!(adapter_for(&cfg(chat.clone())).is_ok(), "{chat:?}");
+        }
+    }
+
+    /// **静态护栏**：chat 分支必须用 `chat_cmd_vec()`，不能回退到 CLI 的 `cmd_vec()`。
+    ///
+    /// 变异验证：把 `PiRpcAdapter::new(config.chat_cmd_vec())` 改回
+    /// `config.cmd_vec()` → 本用例红。回退的后果是 `chat_command` 覆盖静默失效
+    /// —— 用户配了 `pi-acp`，实际仍 spawn `pi`，且没有任何报错。
+    #[test]
+    fn chat_branches_use_the_chat_command_vector() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent/chat/adapter.rs"
+        ))
+        .expect("read adapter.rs");
+        // 只看生产代码：测试块里的字符串会自我命中。
+        let production = src
+            .split("#[cfg(test)]")
+            .next()
+            .expect("production section");
+
+        assert!(
+            production.contains("config.chat_cmd_vec()"),
+            "adapter_for must call chat_cmd_vec() so chat_command takes effect"
+        );
+        for stale in [
+            "DeepSeekHarnessAdapter::new(config.cmd_vec())",
+            "pi_rpc::PiRpcAdapter::new(config.cmd_vec())",
+        ] {
+            assert!(!production.contains(stale), "found stale CLI form: {stale}");
+        }
     }
 }

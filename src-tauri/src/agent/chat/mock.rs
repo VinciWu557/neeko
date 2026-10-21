@@ -88,6 +88,21 @@ fn config_options(current_model: &str, fast_mode: bool) -> Value {
             "category": "model_config",
             "type": "boolean",
             "currentValue": fast_mode
+        },
+        {
+            // `mode` 是 ACP 规范的第四类 category（build / plan）。
+            // 真实 agent 里目前**没有**任何一家下发它 —— mock 先覆盖，
+            // 这样「模式这条链」在进程内就能验证，等真实 agent 支持时
+            // 前端无需改动（能力位 + 通用渲染已在位）。
+            "id": "session-mode",
+            "name": "Mode",
+            "category": "mode",
+            "type": "select",
+            "currentValue": "build",
+            "options": [
+                { "value": "build", "name": "Build" },
+                { "value": "plan", "name": "Plan" }
+            ]
         }
     ])
 }

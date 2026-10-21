@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 
 use crate::agent::chat::adapter::acp_config;
 use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
+use crate::agent::chat::capabilities::{ChatCapabilities, ConfigCapability};
 use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, SessionRequest, StreamEvent, TurnEndReason,
 };
@@ -442,14 +443,22 @@ impl AcpAdapter {
 
 #[async_trait]
 impl AgentAdapter for AcpAdapter {
-    /// ACP 支持模型选择，但**只在会话内**：模型列表来自 `session/new` 响应的
-    /// `configOptions`，协议没有独立的「列模型」方法（见
-    /// `.trellis/spec/backend/agent-acp-model-selection.md` §7）。
+    /// ACP 的模型/档位/模式全部经 `configOptions`，变更是全量
+    /// `config_option_update` —— 这是协议级保证，不是本仓的约定。
     ///
-    /// 所以 `list_models` 用默认实现（返回 Unsupported），命令层据此回
-    /// `SessionScoped` —— 那是诚实的回答，不是错误。
-    fn supports_model_selection(&self) -> bool {
-        true
+    /// 模型列表也来自 `session/new` 响应的 `configOptions`（协议没有独立的
+    /// 「列模型」方法，见 `.trellis/spec/backend/agent-acp-model-selection.md` §7），
+    /// 所以 `SessionConfig` 同时回答了「能不能选模型」。
+    fn chat_capabilities(&self) -> ChatCapabilities {
+        ChatCapabilities {
+            config: ConfigCapability::SessionConfig,
+            // ACP 有 `session/request_permission`。
+            approvals: true,
+            // ACP 没有「列命令」方法。
+            commands: false,
+            // `AgentAdapter::resume` 未覆写（ACP 的会话恢复不在本期范围）。
+            resume: false,
+        }
     }
 
     fn kind(&self) -> AgentKind {
@@ -481,7 +490,8 @@ impl AgentAdapter for AcpAdapter {
                     .stdin
                     .ok_or_else(|| AppError::Io("acp child has no stdin".into()))?;
                 log::info!("[AcpAdapter::create] Child spawned successfully, setting up session");
-                Self::create_with_io(ctx, stdout, stdin, wire_format).await
+                Self::create_with_io(ctx, stdout, stdin, wire_format, self.chat_capabilities())
+                    .await
             }
             AcpIo::Mock => {
                 // In-process: a duplex pipe; one end drives run_mock_loop, the
@@ -495,6 +505,7 @@ impl AgentAdapter for AcpAdapter {
                     BufReader::new(client_reader),
                     client_writer,
                     wire_format,
+                    self.chat_capabilities(),
                 )
                 .await
             }
@@ -510,6 +521,7 @@ impl AcpAdapter {
         stdout: BufReader<R>,
         stdin: W,
         wire_format: WireFormat,
+        caps: ChatCapabilities,
     ) -> Result<Box<dyn AgentSession>, AppError>
     where
         R: tokio::io::AsyncRead + Unpin + Send + 'static,
@@ -665,12 +677,8 @@ impl AcpAdapter {
                     agent: ctx_agent_id,
                     model: None,
                     config_options: configs_for_event.snapshot(),
-                    capabilities: Capabilities {
-                        approvals: true,
-                        command_echo: false,
-                        diff: false,
-                        resume: false,
-                    },
+                    // 由适配器能力快照派生 —— 不再手填（见 Capabilities 的文档）。
+                    capabilities: Capabilities::from_chat_capabilities(caps, false, false),
                 })
                 .await;
             let _ = event_tx
@@ -1272,11 +1280,13 @@ mod tests {
             current_value: Some(acp_config::SessionConfigValue::Text(current.into())),
             options: Some(acp_config::SessionConfigSelectOptions::Ungrouped(vec![
                 acp_config::SessionConfigSelectOption {
+                    group: None,
                     value: current.into(),
                     name: current.into(),
                     description: None,
                 },
                 acp_config::SessionConfigSelectOption {
+                    group: None,
                     value: "claude-sonnet".into(),
                     name: "Claude Sonnet".into(),
                     description: None,

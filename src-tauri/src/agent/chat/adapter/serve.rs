@@ -26,6 +26,7 @@ use tokio::sync::{mpsc, OnceCell};
 use tokio::time::timeout;
 
 use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
+use crate::agent::chat::capabilities::{ChatCapabilities, ConfigCapability};
 use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, ErrorKind, SessionRequest, StreamEvent, TodoItem,
     TurnEndReason,
@@ -651,9 +652,19 @@ impl AgentAdapter for ServeAdapter {
         AgentKind::Opencode
     }
 
-    /// serve 支持按轮次指定模型（每次 prompt 都带 model 字段）。
-    fn supports_model_selection(&self) -> bool {
-        true
+    /// serve 的模型切换靠 **每轮 HTTP 请求参数**（`Turn { model_id }`），
+    /// 不走 `set_config_option`，也不产生 `config_option_update`。
+    ///
+    /// 这正是 P1 的例子：旧 `supports_model_selection` 对它返回 true，
+    /// 前端据此以为「可以切模型」，但点选后走 `set_config_option` 是空实现 ——
+    /// 静默无操作。`PerTurn` 把机制差异表达出来。
+    fn chat_capabilities(&self) -> ChatCapabilities {
+        ChatCapabilities {
+            config: ConfigCapability::PerTurn,
+            approvals: true,
+            commands: false,
+            resume: true,
+        }
     }
 
     /// serve 传输有独立的列模型命令（`opencode models --verbose`），
@@ -702,7 +713,7 @@ impl AgentAdapter for ServeAdapter {
             ctx.session_id
         );
 
-        attach_streaming(conn, ctx, serve_sid).await
+        attach_streaming(conn, ctx, serve_sid, self.chat_capabilities()).await
     }
 
     async fn resume(
@@ -720,7 +731,13 @@ impl AgentAdapter for ServeAdapter {
             "[ServeAdapter] resuming native session {native_session_id} as {}",
             ctx.session_id
         );
-        attach_streaming(conn, ctx, native_session_id.to_string()).await
+        attach_streaming(
+            conn,
+            ctx,
+            native_session_id.to_string(),
+            self.chat_capabilities(),
+        )
+        .await
     }
 
     fn supports_chat_resume(&self) -> bool {
@@ -738,6 +755,7 @@ async fn attach_streaming(
     conn: &'static Arc<ServeConnection>,
     ctx: &AgentContext,
     serve_sid: String,
+    caps: ChatCapabilities,
 ) -> Result<Box<dyn AgentSession>, AppError> {
     // ── First prompt (model selection is per-prompt; resume starts silent) ──
     let model_id = ctx.model_id.clone();
@@ -781,12 +799,7 @@ async fn attach_streaming(
                 agent: ctx_agent_id,
                 model: pump_model_id,
                 config_options: Vec::new(),
-                capabilities: Capabilities {
-                    approvals: true,
-                    command_echo: false,
-                    diff: false,
-                    resume: true,
-                },
+                capabilities: Capabilities::from_chat_capabilities(caps, false, false),
             })
             .await;
         let _ = pump_event_tx
