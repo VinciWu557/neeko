@@ -236,7 +236,11 @@ def run_step(step: Step, root: Path) -> StepResult:
 def main(argv: list = None) -> int:
     parser = argparse.ArgumentParser(
         prog="check:quick",
-        description="轻量检查（静态 + 改动文件的单元测试）；**不是门禁**，不能替代 `pnpm check`",
+        description=(
+            "开发循环的默认检查（静态 + 改动文件的单元测试）。"
+            "覆盖面窄于全量 `pnpm check`；全量由 pre-push hook 与 CI 承担，"
+            "不需要在本地重复跑"
+        ),
     )
     parser.add_argument(
         "paths",
@@ -296,12 +300,15 @@ def main(argv: list = None) -> int:
         return 2
     if failures or static_code == 1:
         print(
-            "\ncheck:quick 有失败项 —— 修完再跑一次；`pnpm check` 是全量判据。",
+            "\ncheck:quick 有失败项 —— 修完再跑一次。",
             file=sys.stderr,
         )
         return 1
 
-    print("check:quick 全部通过（轻量档：判据弱于 `pnpm check`，不能替代它）。")
+    print(
+        "check:quick 全部通过（开发循环档：静态判据 + 改动文件的单元测试）。"
+        "全量测试/集成/覆盖率由 pre-push hook 与 CI 覆盖，此处不重复。"
+    )
     return 0
 
 

@@ -54,9 +54,8 @@ required check 核对属批次 2。
 ```bash
 pnpm install                 pnpm tauri dev            pnpm tauri build
 pnpm lint          # 全部静态检查：进程内判据 + lint_fe（eslint + tsc）+ lint_rust:all-targets（fmt + clippy 全目标）
-pnpm check         # 本地全量门禁：lint + test（单次框架调用，组成声明在 ledger/gates.json）
-pnpm check:quick   # 延迟预算内的轻量检查（~15-20s）：静态检查（框架 lint 档）+ 改动文件的单元测试
-                   # **不是门禁** —— 分钟级的（全量测试/集成/覆盖率）留在 push（见 quality-guidelines.md）
+pnpm check:quick   # 开发循环的默认检查（~15-20s）：静态检查 + 改动文件的单元测试（覆盖窄于全量）
+pnpm check         # 全量门禁（分钟级）：lint + test。**不本地跑** —— 由 pre-push hook 与 CI 执行
 pnpm guards list   # 列当前门禁清单与其 stage/scope/argv（checks/ 目录 + ledger/gates.json）
 pnpm lint:fix      # 写回修复：cargo fmt（Rust）+ eslint --fix（前端）
 pnpm type-check    # 仅 TypeScript 类型检查
@@ -65,7 +64,8 @@ pnpm test:fe · pnpm test:rust · pnpm test:host
 pnpm test:coverage # 两套覆盖率门禁（前端地板在 vitest.config.ts、Rust 在 package.json）
 ```
 
-最小回归集：`pnpm check`（定义单点在 `package.json` 的 `check` —— 这里不再复述它的组成）。
+**最小回归集：`pnpm check:quick`**。全量 `pnpm check` 由 `pre-push` hook 与 CI 兜底，
+不在本地重复。分工与延迟预算见 `.trellis/spec/frontend/quality-guidelines.md`「质量门禁」。
 
 ## 架构基本原则（强制）
 
@@ -174,12 +174,11 @@ Tauri Event 字符串（如 `terminal-output-{id}`、`git-status-diff`）禁止�
 **开发前**：`python3 ./.trellis/scripts/get_context.py` → 读相关 spec index → 创建/选择任务目录 →
 `task.py init-context` + `task.py add-context` → `task.py start` 激活上下文。
 
-**检查用哪条命令（硬指令）**：开发循环（Phase 2.2 每一轮）用 `pnpm check:quick`；
-`pnpm check`（全量、分钟级）只留给**收尾那一次**、用户明确要求、或怀疑跨模块影响时。
-**不要在开发循环里跑 `pnpm check`**。理由与覆盖面：
-`.trellis/spec/frontend/quality-guidelines.md`「质量门禁」。
+**检查用哪条命令（硬指令）**：**一律用 `pnpm check:quick`** —— 开发循环、收尾、每次改动后都是它。
+**不要主动跑 `pnpm check`**：它由 `pre-push` hook 与 CI 执行，本地重复一遍只是浪费几分钟。
+例外仅两种：用户明确要求，或排查「`check:quick` 绿但 push 红」的覆盖面差异。
 
-**收尾**：跑 `pnpm check`（全量那一次）确认通过 → 同步必要 spec 文档 →
+**收尾**：跑 `pnpm check:quick` 确认通过 → 同步必要 spec 文档 →
 `python3 ./.trellis/scripts/add_session.py --title "<title>" --commit "<hash>"` →
 **不要主动提交代码**。
 

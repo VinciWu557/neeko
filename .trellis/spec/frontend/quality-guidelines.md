@@ -341,7 +341,7 @@ pnpm test:fe        # 跑一次前端测试（push 档用它）
 pnpm test:fe:coverage  # 带覆盖率跑同一套（CI 用它；地板见 vitest.config.ts）
 pnpm test           # 三套串接：test:fe + test:rust + test:host
 pnpm check          # 本地全量：lint + 两套单元测试 + host 自检（--jobs auto，按机器并发）
-pnpm check:quick    # 延迟预算内的轻量检查（~15-20s）；**不是门禁**，判据弱于 check（见下）
+pnpm check:quick    # 开发循环的默认检查（~15-20s）；覆盖面窄于 check，全量留给 push（见下）
 ```
 
 > 命令的**定义单点在 `package.json`**（本文件只引用脚本名）。hook 与 CI 调用的名字必须与它一致 ——
@@ -358,7 +358,8 @@ pnpm check:quick    # 延迟预算内的轻量检查（~15-20s）；**不是门�
 > （护栏 `check_gate_topology` 的 A5 判据强制 —— 否则调上限只改到框架侧，push 档与本地档
 > 会真的跑出不同并发度）。要一次性覆盖才在命令行显式传正整数（`--jobs 3`）。
 >
-> **`pnpm check:quick` 是「延迟预算内的轻量检查」，不是门禁 —— 结果不能作为提交 / 合并依据。**
+> **`pnpm check:quick` 是开发循环的默认检查** —— 开发期一律跑它，不要本地跑 `pnpm check`。
+> 它的覆盖面窄于全量（见下表），全量由 `pre-push` hook 与 CI 承担。
 >
 > 定位（第一性原理）：**阶段边界按延迟预算划，不按语言划** —— 这条原则本仓库早已写在
 > `lefthook.yml` 文件头（commit = 快静态检查 / push = 全套分钟级门禁 / CI = 三平台终审）。
@@ -382,7 +383,7 @@ pnpm check:quick    # 延迟预算内的轻量检查（~15-20s）；**不是门�
 > - `tools/java-host/**`：它的**唯一**门禁就是重量级的 `test:host`（本命令不含）。
 >   —— 该目录不受任何 lint 门禁覆盖，所以这条声明尤其重要。
 >
-> **`vitest related` 的盲区**（这是它不能替代 `check` 的根本原因）：动态 `import()`、
+> **`vitest related` 的盲区**（这是它覆盖面窄于 `check` 的根本原因）：动态 `import()`、
 > `vi.mock` 隔离掉真实依赖、模块级单例（store）造成的跨文件影响都可能**漏判**。
 > 因此「没有相关测试」被显式报告为**失败**而不是通过（`vitest related` 在该情形下退出码
 > 仍是 0，当成通过就是本仓库反复踩的静默绿失效模式）。
