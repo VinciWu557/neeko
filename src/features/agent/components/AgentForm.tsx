@@ -17,6 +17,7 @@ import { Button } from '@/ui';
 
 import { addAgent, importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
 
+import { argsFromText, argsTextOf, splitArgs, splitCsv } from './agentFormArgs';
 import { buildChatStart, CHAT_HINTS, CHAT_OPTIONS, type ChatTransport } from './agentFormChat';
 import CapabilityBadges from './CapabilityBadges';
 
@@ -25,22 +26,6 @@ interface AgentFormProps {
   initial?: AgentConfig | null;
   onSaved?: (agent: AgentConfig) => void;
   onCancel?: () => void;
-}
-
-/** 空格分隔字符串 ↔ 参数数组。 */
-function splitArgs(s: string): string[] {
-  return s.trim() ? s.trim().split(/\s+/) : [];
-}
-
-/** 逗号分隔字符串 ↔ 参数数组（Headless/ACP 参数常见带空格的值）。 */
-function splitCsv(s: string): string[] {
-  return s.trim()
-    ? s
-        .trim()
-        .split(',')
-        .map((a) => a.trim())
-        .filter(Boolean)
-    : [];
 }
 
 function emptyForm(): AgentConfig {
@@ -55,6 +40,7 @@ function emptyForm(): AgentConfig {
     chat: null,
     prompt_args: null,
     post_prompt_args: null,
+    model_list_args: null,
     skill_path: null,
     detection: null,
     deploy: { skills: '{{projectPath}}/.agent/skills', commands: null, mcp_config: null },
@@ -74,6 +60,7 @@ interface FormTextState {
   acpArgsText: string;
   promptArgsText: string;
   postPromptArgsText: string;
+  modelListArgsText: string;
   skillPath: string;
   detectionCmd: string;
   deploySkills: string;
@@ -91,8 +78,7 @@ function toTextState(form: AgentConfig): FormTextState {
     enabled: form.enabled,
     chat: (chatTransportOf(form.chat) ?? '') as ChatTransport | '',
     acpArgsText: chatAcpArgsOf(form.chat).join(' '),
-    promptArgsText: form.prompt_args?.join(', ') ?? '',
-    postPromptArgsText: form.post_prompt_args?.join(', ') ?? '',
+    ...argsTextOf(form),
     skillPath: form.skill_path ?? '',
     detectionCmd: form.detection?.type === 'command' ? form.detection.target : '',
     deploySkills: form.deploy?.skills ?? '{{projectPath}}/.agent/skills',
@@ -135,7 +121,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       env: initial?.env ?? {},
       chat: buildChatStart(t.chat, t.acpArgsText, splitArgs),
       prompt_args: promptArgs,
-      post_prompt_args: t.postPromptArgsText.trim() ? splitCsv(t.postPromptArgsText) : null,
+      ...argsFromText(t),
       skill_path: t.skillPath.trim() || null,
       detection: t.detectionCmd.trim() ? { type: 'command', target: t.detectionCmd.trim() } : null,
       deploy: {
@@ -386,6 +372,16 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
                 value={t.postPromptArgsText}
                 onChange={(e) => set('postPromptArgsText', e.target.value)}
                 placeholder="--dangerously-skip-permissions"
+                className={cn(fieldCls, 'font-mono')}
+              />
+            </label>
+            <label className={groupCls}>
+              <span className={labelCls}>List Models Args</span>
+              <input
+                type="text"
+                value={t.modelListArgsText}
+                onChange={(e) => set('modelListArgsText', e.target.value)}
+                placeholder="--list-models"
                 className={cn(fieldCls, 'font-mono')}
               />
             </label>

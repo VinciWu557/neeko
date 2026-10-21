@@ -51,6 +51,14 @@ export interface AgentConfig {
   /** 交互式（TUI）prompt 前置参数（如 opencode `--prompt`：打开 CLI 并预填 prompt）；None = 无交互形态，回落 headless prompt_args。 */
   interactive_prompt_args?: string[] | null;
   post_prompt_args?: string[] | null;
+  /**
+   * 「列出可用模型」命令参数（如 pi 的 `["--list-models"]`）。
+   *
+   * **与 chat 能力无关**：纯 CLI 查询，`chat: null` 的 agent 也能有。
+   * 存在它，用户在发第一条消息之前就能看到模型列表 —— ACP 的模型列表只存在于
+   * 会话的 `configOptions` 里，没有独立查询方法。
+   */
+  model_list_args?: string[] | null;
   /** 全局 skills 目录 override（如 ~/.claude/skills）。 */
   skill_path?: string | null;
   /** 安装检测（None = 恒视为已安装）。 */

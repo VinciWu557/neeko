@@ -238,7 +238,14 @@ function ModelPicker({
               selectedId={current?.id}
               onSelect={handleSelect}
               agent={agent}
-              emptyMessage={models.length === 0 ? 'No models available' : 'No matching models'}
+              emptyMessage={
+                models.length > 0
+                  ? 'No matching models'
+                  : // ACP 的模型列表只存在于会话内（协议没有独立的「列模型」方法），
+                    // 会话在发送第一条消息时才建立。说「没有模型」是误导 —— 真相是
+                    // 「还没有会话」。见 spec/backend/agent-acp-model-selection.md §7。
+                    'Send a message first — models appear once a session exists'
+              }
             />
             {/*
               模型相关配置项紧随模型列表：它们是「这个模型怎么跑」的参数，

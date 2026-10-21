@@ -4,6 +4,7 @@ import codebuddyIcon from '../../assets/agents/codebuddy.svg';
 import codexIcon from '../../assets/agents/codex.png';
 import geminiIcon from '../../assets/agents/gemini.png';
 import grokIcon from '../../assets/agents/grok.ico';
+import mockAgentIcon from '../../assets/agents/mock-agent.png';
 import ompIcon from '../../assets/agents/omp.svg';
 import opencodeIcon from '../../assets/agents/opencode.png';
 import piIcon from '../../assets/agents/pi.svg';
@@ -22,6 +23,9 @@ const AGENT_ICONS: Record<string, string> = {
   'reasonix.svg': reasonixIcon,
   'grok.ico': grokIcon,
   'cli.svg': cliIcon,
+  // MockAgent 复用应用自身图标（`neeko-icon.png` 的拷贝）—— 它没有专属品牌资源，
+  // 而指向不存在的文件会让它在 agent 列表里显示为空白。
+  'mock-agent.png': mockAgentIcon,
 };
 
 export const PRESET_AGENT_ICONS = Object.keys(AGENT_ICONS);
