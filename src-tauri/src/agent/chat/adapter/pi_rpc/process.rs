@@ -169,9 +169,15 @@ impl PiRpcProcess {
     }
 
     /// 发一条命令但**不等响应**（`prompt` 用：完成由 `agent_settled` 决定）。
+    ///
+    /// `id` 只在**缺省时**补 —— `extension_ui_response` 必须回携带 pi 自己发的
+    /// 请求 id（`extension_ui_request.id`），那个值由协议规定，不是我们的 uuid。
+    /// 无条件覆盖会让 pi 收到一个它不认识 id 的响应，审批永远无法完成
+    ///（工具卡在等回答上，表现为「点了允许没反应」）。
     pub async fn send(&self, mut cmd: Value) -> Result<(), AppError> {
         if let Some(obj) = cmd.as_object_mut() {
-            obj.insert("id".into(), json!(uuid::Uuid::new_v4().to_string()));
+            obj.entry("id")
+                .or_insert_with(|| json!(uuid::Uuid::new_v4().to_string()));
         }
         use tokio::io::AsyncWriteExt;
         let mut stdin = self.stdin.lock().await;
