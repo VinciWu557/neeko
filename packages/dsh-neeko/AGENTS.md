@@ -231,7 +231,7 @@ src/
     row-cache.ts      渲染管线的纯函数（签名 + 协调）
     transcript*.ts    行模型与行渲染
     picker.ts         所有选择器的共享骨架
-    fullscreen.ts     alt screen 挂载
+    screen.ts         which screen mounts（main / alt）+ the ONE default
 tests/
   support/            共享夹具（ansi / fake-terminal）
   *-glue.spec.ts      经 TuiApp 的端到端行为
@@ -265,7 +265,21 @@ pnpm run build && node scripts/sync-profiles.mjs   # 改完必须两步一起
 
 ## 已知陷阱
 
-- `file:` 依赖 + `lib/` 产物 → 不 `sync-profiles` 就是在跑旧代码（见铁律一）
+- `file:` 依赖 + `lib/` 产物 → 不 `sync-profiles` 就是在跑旧代码（见铁律一）。
+  **`sync-profiles` 只 copy 不 delete**，profile 里会残留 `lib/` 已删的 chunk；
+  它不会被引用，所以无害，但 `ls` profile 的 `lib/` 会看到幽灵文件。
 - 屏幕模式是**三态**（`'main' | 'fullscreen' | 未表态`），默认是 main —— 不要让某层自己定义缺省值（见铁律九）
 - Vite 预打包缓存与本包无关，但改了 `patches/*.patch` 后根仓库需要 `rm -rf node_modules/.vite`
   （见 `.trellis/spec/frontend/quality-guidelines.md`）
+- **`tsconfig.json` 没开 `noUnusedLocals`**，所以死代码（未使用的 import / 常量 / 私有字段）
+  不会被 `prepublishOnly` 拦住。想查就单独跑
+  `npx tsc --noEmit -p tsconfig.json --noUnusedLocals`
+- **`pi-tui` 的组件对「缓存数组」不一致**：`Text` / `Markdown` / `Box` 返回缓存实例，
+  `Container` / `Spacer` 每次新建。给 `render()` 加装饰时必须用副本，否则每帧叠加
+  （实测 500 帧涨 8016 字节）。判据与修法见
+  `.trellis/spec/guides/code-reuse-thinking-guide.md`「缓存返回同一个数组实例」
+- **`SelectList` 不支持 `pageUp` / `pageDown`**：`handleInput` 只处理 up / down / confirm /
+  cancel，且上下**环绕**（不是钳制）。实测，不是从类型推的。
+- **同一策略复制 N 份时，各份的私有状态可以互相矛盾**：三个选择器曾各持一个
+  `Xxx | undefined`，「有没有面板打开」有三个答案。已收进 `panel-host.ts` 的单一槽位。
+  新增第四个选择器时用它，不要再开字段。

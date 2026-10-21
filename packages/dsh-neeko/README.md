@@ -96,7 +96,7 @@ Options:
   --spawn <cmd>    override the Neeko launch command (e.g. "open -a Neeko")
   --no-spawn       do not spawn Neeko even in CLI mode
   --tui            run the interactive terminal UI instead of the Neeko bridge
-  --main-screen    TUI: keep the terminal scrollback (fullscreen is the default)
+  --main-screen    TUI: keep the terminal scrollback (this is the default)
 
 Environment:
   DSH_NEEKO_PORT=3081            port override when --port is absent
@@ -184,7 +184,7 @@ of a WebSocket client. It is published as its own entry point, `dsh-neeko/tui`.
 ```shell
 dsh --profile neeko --tui                          # start a new session
 dsh --profile neeko --tui --session <id>           # resume
-dsh --profile neeko --tui --main-screen            # keep the terminal scrollback
+dsh --profile neeko --tui --fullscreen             # opt in to the alt screen
 DSH_NEEKO_THEME=light dsh --profile neeko --tui    # start on a given theme
 ```
 
@@ -196,16 +196,27 @@ To resume this session: dsh --profile neeko --tui --session <id>
 
 ### Screen modes
 
-The **main screen is the default**: the terminal owns the scrollback, so
-PageUp/PageDown, the wheel and the scrollbar behave the way they already do in
-every other CLI, and the app keeps no scroll position of its own.
+The **terminal-owned main screen is the default**, and it matches what pi actually
+runs. `TuiMainScreen` appends to the terminal, so the conversation lands in the
+terminal's scrollback: the scrollbar is the terminal's own, `PageUp` / `Shift+PageUp`
+are the terminal's keys, and history from before the TUI started is still there.
 
-`--fullscreen` opts into the alt screen. It owns the viewport, enables
-click-to-expand cards, and copies through **OSC 52** (works over SSH, no
-`pbcopy`/`xclip`), at the cost of the terminal's own scrollback.
+> pi's *source* suggests otherwise — `settings-defaults.js` ships
+> `tuiMode: "fullscreen"` — but `getTuiMode()` returns `"regular"` unless the stored
+> value is literally `"fullscreen"`. Measured on a pty: `pi` starts with no `?1049h`.
+
+The cost is the first frame: `TuiMainScreen` never clears, so the command that
+launched the TUI stays visible above the banner.
+
+`--fullscreen` opts into the alt screen. It owns the viewport (application scrolling,
+click-to-expand cards, `PageUp` inside the app) and copies through **OSC 52** (works
+over SSH, no `pbcopy`/`xclip`), at the cost of the terminal's own scrollback and
+scrollbar. Its layout is pi's `createChatViewport`: the transcript scrolls, the
+composer is a fixed dock below it.
 
 Three sources, most specific first: the flag, then `DSH_NEEKO_SCREEN`, then the
 older single-purpose variables. `/fullscreen` toggles at runtime either way.
+`src/tui/screen.ts` holds the single decision; no other layer supplies a default.
 
 ### Slash commands
 
@@ -217,6 +228,7 @@ older single-purpose variables. `/fullscreen` toggles at runtime either way.
 | `/thinking [level]` | bare opens a selector; with a level, applies directly |
 | `/theme [name]` | bare opens a picker; with a name, applies directly |
 | `/fullscreen` | toggle fullscreen |
+| `/hotkeys` | print the active key bindings, resolved live |
 | `/exit` | quit the TUI |
 
 DSH-plugin-registered commands and skills appear in the **same** `/` menu. Host
@@ -238,6 +250,29 @@ registered after boot still appear.
 | `↑` / `↓` / `enter` | navigate and confirm a selector |
 | `ctrl+s` | (model panel) set the highlighted model as the profile default |
 | `tab` | slash / argument completion |
+
+This table is a summary. **`/hotkeys` prints the live bindings**, resolved from the
+installed registry, so it is the authority when the two disagree.
+
+Rebind by writing pi's own `<agent-dir>/keybindings.json` — `$PI_AGENT_DIR` if set,
+else `~/.pi/agent` (pi itself calls this directory `PI_CODING_AGENT_DIR`; this build
+reads the shorter name):
+
+```json
+{
+  "$schema": "https://pi.dev/schemas/keybindings.schema.json",
+  "app.tools.expand": "ctrl+e",
+  "tui.altScreen.pageUp": []
+}
+```
+
+Actions are pi's ids — `app.clear` (`ctrl+c`), `app.exit` (`ctrl+d`),
+`app.tools.expand` (`ctrl+o`) plus the whole `tui.*` set, which the editor and the
+fullscreen viewport read from the same registry. An empty list **disables** an
+action. A key id the matcher could never fire on (a typo such as `ctr+q`) is dropped
+and the action keeps its default — an override replaces the default, so accepting a
+typo would silently remove the key entirely. A malformed or absent file falls back
+to the defaults; it never stops the TUI from starting.
 
 ### Transcript
 
@@ -307,7 +342,7 @@ it as "provider default".
 | `DSH_NEEKO_FULLSCREEN` | `1` → the alt screen (older spelling of `DSH_NEEKO_SCREEN=fullscreen`) |
 | `DSH_NEEKO_MAIN_SCREEN` | `1` → the main screen (older still; still honoured) |
 | `DSH_NEEKO_THEMES_DIR` | override the TUI's own theme directory |
-| `PI_AGENT_DIR` | pi's agent dir; its `themes/` is scanned too |
+| `PI_AGENT_DIR` | pi's agent dir; its `themes/` is scanned too (and `keybindings.json` is read from it) |
 | `COLORTERM` | `truecolor`/`24bit` → truecolor, else 256color |
 
 ## Project layout
@@ -324,25 +359,35 @@ dsh-neeko/
 |   +-- neeko-adapter.ts     # protocol -> DSH API calls
 |   +-- agent-handlers.ts    # agent-scoped approval/question waterfall wiring
 |   +-- startup.ts           # `dsh --profile neeko` CLI parsing
-|   +-- tui/                 # interactive terminal UI (30 modules)
+|   +-- tui/                 # interactive terminal UI (37 modules)
 |       +-- runner.ts        # Cordis entry: mounts the TUI, owns the live agent
 |       +-- app.ts           # screen assembly, lifecycle, key arbitration
+|       +-- screen.ts        # which screen mounts, and the ONE default
+|       +-- keymap.ts        # action table, priority stack, /hotkeys, rebind file
+|       +-- message-view.ts  # row -> pi-tui component (user/assistant/tool/failure)
+|       +-- composer.ts      # the editor, with the activity indicator in its border
+|       +-- status-indicator.ts # Loader-based indicator + border composition
 |       +-- transcript.ts    # merges live frames + durable log into rows
-|       +-- transcript-view.ts  # row -> pi-tui component (pure)
 |       +-- fold.ts          # global switch + per-row fold overrides
-|       +-- tool-present.ts  # tool name -> variant, header, summary
 |       +-- highlight.ts     # hand-rolled lexical syntax highlighter
 |       +-- commands.ts      # slash-command table + pure classification
+|       +-- command-controller.ts # slash line -> app action + model catalogue
 |       +-- model-panel.ts   # /model picker (fuzzy filter, ctrl+s default)
-|       +-- thinking.ts      # /thinking selector
+|       +-- theme-selector.ts # /theme picker, with live preview
+|       +-- thinking-selector.ts # /thinking picker, with a filter box
+|       +-- resume-selector.ts   # /resume picker panel
+|       +-- resume-controller.ts # /resume state, paging and title cache
+|       +-- resume-list.ts   # session rows (title, age, current marker)
+|       +-- thinking.ts      # /thinking decisions (pure)
 |       +-- theme.ts         # Theme class, user-theme loader, search paths
 |       +-- theme-data.ts    # the two built-in palettes
-|       +-- theme-tokens.ts  # pi's 56-token vocabulary
+|       +-- theme-tokens.ts  # pi's 56-token vocabulary + fallback chain
+|       +-- picker.ts        # what a key means while a selector is open
 |       +-- status-bar.ts    # status-bar formatting (pure)
-|       +-- timing.ts        # session timing arithmetic
-|       +-- host-facts.ts    # git branch, dsh version, context pressure
-|       +-- fullscreen.ts    # alt screen + scroll + click regions
-+-- tests/                   # vitest suite (40 spec files)
+|       +-- interactions.ts  # approval / question state machine
+|       +-- notice-log.ts    # transient notices and the self-clearing status line
+|       +-- row-cache.ts     # row signature + container reconciliation
++-- tests/                   # vitest suite (49 spec files)
 +-- docs/dsh-neeko-integration.md
 ```
 

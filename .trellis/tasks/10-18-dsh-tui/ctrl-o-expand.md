@@ -1471,3 +1471,297 @@ Typescript 抓不到（两个函数互不相干、`noUnusedLocals` 也认为它�
 
 - `ctrl+t`（pi 的独立 thinking 折叠键）：本轮只有一个折叠维度，不引入第二个键。
 - 按 turn 窗口化的默认折叠（原 `boundary` 想做的事）：生产从未启用，不复活。
+
+## Step 37 — pi-tui 原生能力对标（用户需求 · 测绘轮）
+
+用户原话：
+
+> 能否完全对标原生的 pi-tui，当前的 tui 很多功能和原生的 tui 差异很大，
+> **不要出现问题改一遍又一遍**
+
+约束比目标重要：它把任务从「补功能」改成「找出为什么会反复改」。
+完整测绘（4 类 22 项，file:line 级）见 **`pi-parity.md`**，此处只留结论。
+
+### 三条结论
+
+**① 「改一遍又一遍」的机械原因：三种形态没形成开放集合**
+
+| 形态 | pi 的载体 | 本仓现状 | 后果 |
+| --- | --- | --- | --- |
+| Overlay | `ui.showOverlay()` | **0 处**；用 `replaceInputSlot`（`app.ts:823`）顶替编辑器 | 同时两个面板不可能；`/model` 曾卡死 |
+| Keybinding | `KeybindingsManager` + 28 个 `tui.*` | **0 处**；`handleInput` 手写 `matchesKey` 级联（`app.ts:1335`） | 无法重绑、无法 `/hotkeys`、面板优先级靠 `if` 位置 |
+| Entry | 一个 `Component` 子类 | `switch (row.kind)`（`transcript-view.ts:102`） | 加一种行要改渲染器 |
+
+每加一个面板/键位/行类型都要回中心文件改分支 —— 这就是反复改的来源。
+
+**② 差距是「没接线」，不是「没实现」**
+
+pi-tui 已提供而本仓使用数为 0 的：`showOverlay`、`KeybindingsManager`、
+`setTitle` / `setProgress` / `setProgramStatus`、`captureRenderState` / `switchTuiMode`。
+→ 优先级定为 **接线 > 重写**；任何「自己再实现一遍」都是负债。
+（`Editor` 的 kill-ring / yank / undo 40 处是白得的，因为已经用了 `Editor`。）
+
+**③ 用户截图那个现象 = A4 默认屏幕不对齐**
+
+`runner.ts:129` 返回 `'main'`，pi `settings-defaults.js:61` 是 `"fullscreen"`。
+`TuiMainScreen` 首次渲染的注释就是 "assumes clean screen"，它**不清屏** ——
+所以 shell 命令行必然留在最上面。alt screen 进入时是 `?1049h` + `2J` + `H`。
+
+### 用户决策
+
+- **「pi 是什么行为就跟着什么行为」** —— 对齐判据不是「哪个更合理」，是「pi 怎么做」。
+  因此默认屏幕定为 `fullscreen`，`--main-screen` / `DSH_NEEKO_SCREEN=main` 保留为 opt-out。
+- **P2/P3 延后** —— 先把形态层做对，自造组件替换（`picker.ts` / `thinking.ts` /
+  `status-bar.ts` / `transcript-view.ts`）单独一轮。理由：这四项与 849 条测试断言
+  耦合深，混在形态改动里一旦变红就分不清是「形态没做对」还是「替换没对齐」。
+  延后清单在 `pi-parity.md` §6.2。
+
+### 执行顺序
+
+| 步 | 内容 | 验收 |
+| --- | --- | --- |
+| P0-1 | `screen.ts`：`DEFAULT_SCREEN='fullscreen'`；删 `app.ts:482` 的 `?? 'main'`；`mountScreen()` 取代 `mountFullscreen()` | 真 pty 进入即整屏 |
+| P0-2 | `keymap.ts`：`routeKey` + `KeyScope` 栈；`/hotkeys` | 849 测试全绿 + 新测试 |
+| P1-3 | `overlay-host.ts`：`showOverlay` 替 `replaceInputSlot` | 两个面板可同时开 |
+| P1-4 | `entry/` 注册表 | 加 `entry/diff.ts` 不改核心 |
+| P1-5 | 内置 search（`TuiAltScreen` 白给） | `ctrl+shift+f` 可用 |
+| P3-6 | `setTitle` / `setProgress` / `ctrl+z` / `ctrl+g` / `ctrl+v` | 对齐 `docs/keybindings.md` |
+
+### 顺带记录：本仓自己定的铁律九已被违反
+
+`screenMode` 的缺省值写在**两处**：`runner.ts:129` 返回 `'main'`，
+`app.ts:482` 又写一次 `?? 'main'`。P0-1 会把缺省收敛成 `screen.ts` 的
+`DEFAULT_SCREEN` 一个常量 —— 这是本轮要顺带修掉的结构性缺陷。
+
+## Step 38 — P0-1 屏幕形态：默认对齐 pi，缺省收敛为单一来源
+
+> 用户决策：「pi 是什么行为就跟着什么行为」。
+> 上一步（Step 37）的测绘结论是 A4「默认屏幕不对齐 pi」+ D1「缺省值两处」。
+
+### 用户报的现象
+
+> 刚开始进入的时候 pi 是完整的界面，而 dsh-neeko tui 是还能看到命令行
+
+真机取证：`TuiMainScreen` 首次渲染的注释就是 *"First render - just output
+everything without clearing"* —— 它**不清屏**。所以 shell 那行
+`tomgs@tomgs-2 neeko % dsh --profile neeko --tui` 必然留在最上面。
+pi 的默认是 alt screen（`settings-defaults.js` → `tuiMode: "fullscreen"`），
+进入时发 `?1049h` + `2J` + `H`，所以首帧是干净整屏。
+
+### 修法
+
+| 改动 | 内容 |
+| --- | --- |
+| 新 `src/tui/screen.ts` | `DEFAULT_SCREEN = 'fullscreen'`；`resolveScreen(config, env)` 唯一决策点；`mountScreen()` 两种形态；`ScreenParts` 四个聚合 |
+| `app.ts` | 删 `?? 'main'`；构造时 `resolveScreen()` 一次；`screenParts()` 一个 builder 供两块屏共用 |
+| `runner.ts` | `screenModeOf()` 降为 `resolveScreen()` 的别名，不再自带逻辑与缺省 |
+| 删 `fullscreen.ts` | 并入 `screen.ts`（152 行 → 一块形态逻辑） |
+
+**顺带根治 D2**：`mountFullscreen()` 的字段清单换成 `ScreenParts` 四个聚合。
+面板挂在 `aboveInput` / `inputSlot` 容器里，屏幕收到的就是容器，**加面板无法被遗忘**。
+
+### 挂载与启动分离
+
+`mountScreen()` 只组装树、不碰终端；`start()` 才进 raw mode 与 alt screen。
+理由：`TuiApp` 要先画 banner 再让字节到达终端；测试也能在没有 TTY 的情况下检查挂载树。
+原实现两种屏的契约不同（alt 在 `mountFullscreen()` 内部 start，main 由 `TuiApp` start），
+只有一种能在测试里跑。
+
+### 变异验证（4/4 有效）
+
+| 变异 | 变红 |
+| --- | --- |
+| `DEFAULT_SCREEN` 改回 `'main'` | 3 |
+| `app.ts` 恢复 `?? 'fullscreen'` 第二缺省 | 1 |
+| 删 `DSH_NEEKO_MAIN_SCREEN` 分支 | 2 |
+| `mountScreen` 挂载即 start | 1 |
+
+### 真机 pty（6 种组合）
+
+| 调用 | altIn | altOut | capJunk |
+| --- | --- | --- | --- |
+| 默认 | True | True | False |
+| `--main-screen` | False | False | False |
+| `DSH_NEEKO_SCREEN=main` | False | False | False |
+| `DSH_NEEKO_SCREEN=fullscreen` | True | True | False |
+| `DSH_NEEKO_SCREEN=bogus`（应忽略→默认） | True | True | False |
+| `DSH_NEEKO_MAIN_SCREEN=1` | False | False | False |
+
+首帧专项：`?1049h` 后紧跟 `2J`+`H`（清屏+home），mouse reporting 开，
+**shell 命令行不再泄漏**。
+
+### 验收
+
+- [x] 真 pty 进入即整屏，无 shell 命令行残留
+- [x] `--main-screen` / `DSH_NEEKO_SCREEN=main` opt-out 正常
+- [x] 缺省值只剩 `screen.ts:73` 一处（结构测试钉住 `app.ts` 不得出现 `?? '`）
+- [x] 单测 **763**（48 文件）；删 `tui-screen-mode.spec.ts`（被 `tui-screen.spec.ts` 取代）
+- [x] `prepublishOnly` 全绿；`build` + `sync-profiles` 已跑（铁律一）
+- [ ] P0-2 键位栈（下一轮）
+
+## Step 39–40 — pi-tui 原生对齐（S1…S4）+ 屏幕/滚动定案
+
+> 测绘见 `pi-parity.md` §9。本轮是「对标 pi」的执行段，**用户三次纠正**推翻了我前两轮的判断。
+
+### 用户决策链
+
+1. 「pi 是什么行为就跟着什么行为」
+2. 「不引入 pi-coding-agent，参考其组件写法移植到当前系统」
+3. 「主题也包括，但可以加载 `~/.dsh/themes/*.json`，写法保持和 pi 一致」
+4. 「先就保持和 pi 一样就行」
+
+### S1 主题：补 fallback 链（不补则任何 pi 主题都崩）
+
+**真实缺陷**：`Theme` 没有 pi 的 token fallback。pi 的 `dark.json` / `light.json` 都**省略**
+`scrollbarTrack` / `scrollbarThumb` / `searchMatchBg` / `searchMatchText`，靠链补齐。
+
+- `theme-tokens.ts` 加 `THEME_TOKEN_SPECS`（56 token 的 slot + 四个 fallback）
+- `theme.ts` 加 `withTokenFallbacks()`；`has()` 改为「能否绘制」
+- **顺带修**：构造函数把 `''`（终端默认色，合法）与解析失败（拼错）混为一谈，两者都写 reset
+  → 拼写错误看起来像有意为之，且 `has()` 永远无法报告
+- `theme-data.ts` 删掉内置主题里那 4 个 token（写死让 fallback 链在自带主题上永不执行）
+
+真机：`~/.dsh/themes` 里 5 个真实 pi 主题全部可加载；`/theme` 列出 7 项。
+
+### S2 消息组件：按源码移植
+
+`message-view.ts` 移植 `UserMessageComponent` / `AssistantMessageComponent` /
+`ToolExecutionComponent` / `formatToolCallWithArgs` / `keyHint`。删 `transcript-view.ts` 437 +
+`tool-present.ts` 242。
+
+修掉的真实缺陷：
+- `zoneMarked` 用 `Container` 包装 → 丢 `children`，破坏 `invalidate` 传播；且每次返回新数组，
+  破坏渲染缓存 → 改为在组件自身 `render` 上注入标记
+- 折叠提示硬编码 `ctrl+o` → 用户重绑后提示错误 → `setKeyReader` 读实时注册表
+- 工具卡缺前置 `Spacer(1)` → 卡片紧贴上一行
+
+### S3 输入框：`CustomEditor` 的边框形态
+
+`composer.ts` 移植 `renderTopBorder` + `getEditorTheme`；`status-indicator.ts` 移植
+`StatusIndicator` / `DynamicBorder`。
+
+**真实缺陷**：边框宽度少 1 列（pi 公式里 `"── "` 后那个前导空格漏了），两个分支都中招，
+每帧边框比终端窄一列，右边框呈锯齿。
+
+**照 pi 保留的怪癖**：约 24–36 列时标签和溢出标记会同时消失（`bothFit` 失败 → 降级 spinner
+→ 落进 label-only 分支）。改了就与 pi 在同终端不一致，写成测试记录。
+
+### S4 选择器：换 `SelectList`
+
+`thinking-selector.ts` / `theme-selector.ts` / `resume-selector.ts`。删 `theme-picker.ts` 69。
+
+**主题选择器新增能力：实时预览**（`onSelectionChange` → 改调色板，未提交）。真机确认下移一格
+后重绘颜色真的变了（`118;129;134` → `135;144;149`）。
+
+**真实缺陷**：`panel.list` 是构造时的字段，`applyFilter` 重建列表后仍指向旧对象 ——
+`selectedModel` / detail 行 / `ctrl+s` 全部从没人看的列表读答案。改为 getter。
+
+**`resume` 只移植面板**：pi 的 `SessionSelectorComponent` 892 行含 scope 切换 / 排序 / 删除 /
+重命名 / 后台扫描，本仓都没有对应物（语料库契约就是 newest-first，且无持久化 API）。
+
+### 屏幕与滚动：三次纠正（最终定案）
+
+| 用户说 | 我的错误判断 | 事实 |
+| --- | --- | --- |
+| 启动不该看到 shell 命令行 | 以为 pi 默认 fullscreen | **pi 默认 regular**：`settings-defaults.js` 写 `fullscreen`，但 `getTuiMode()` 返回 `"regular"` 除非存的是字面量；用户 profile 就是 `"tuiMode": "regular"`。实测 `pi` 无 `?1049h` |
+| 要终端 scrollback + 终端滚动条 | 用 alt screen 默认 | 只有主屏有。用户截图的滚动条即证据 |
+| 消息滚动查看不了 | 把 `tailWindow` 当性能优化 | **`tailWindow` 是元凶**：裁成 `rows - dock`，超出部分根本不渲染，从未进 scrollback |
+
+最终形态（零本地改良）：
+
+```
+main:       document(整个) + aboveInput + input + footer    ← pi regular
+fullscreen: ScrollView(document) + 固定 dock                 ← pi createChatViewport
+启动:       不清屏（pi 实测 2J=0 / 3J=0）
+```
+
+撤回三个自造改动：`tailWindow`、启动清屏（`2J`+`H`）、fullscreen 的 B2（编辑器进滚动流，
+会让往上滚后无法输入）。`screen.ts` 388 → 340 行。
+
+真机对齐验证：
+
+| | pi regular | dsh main |
+| --- | --- | --- |
+| alt screen | False | **False** |
+| 启动 `2J` / `3J` | 0 / 0 | **0 / 0** |
+| 退出后 scrollback | 1383 行 | **1212 行** |
+| 两轮对话保留 | ✅ | **✅** |
+
+### 顺带修掉的真实缺陷
+
+- `setClearOnShrink(true)` 在 `/clear` 后**永久打开** → 之后任何内容收缩都整屏重绘 + 清
+  scrollback（22.9KB → 12.5KB）
+- 退出路径 `drainInput()`：Kitty 释放事件（`9;5:3u`）留在 stdin 会被 shell 回显。
+  **诚实记录：这个修复我未能复现验证**（四种场景都无乱码），保留是因为 pi-tui 文档明确要求
+  且 `stop()` 此前从不排空 stdin；不声称它修好了用户报的现象。
+
+### 验收
+
+- **889 passed / 52 files**（S1 前 794）
+- `prepublishOnly` 全绿 + `sync-profiles`
+- 变异 35/35（含 6 条「首次 0 红」：1 条是真缺陷、5 条是测试不够刁钻）
+- 用户确认：「这样没有问题，非常好」
+
+## Step 41 — neeko-check 审核修复 + app.ts 拆分
+
+> 用户指令：`/neeko-check` 从第一性原理 + 高内聚/低耦合/可扩展性审当前改动；
+> 然后「app.ts 能否保持轻薄，可以拆分多文件的方式」。
+
+### 审核方式
+
+两个独立审核者并行（架构原则 / 规范一致性）+ 我逐条实测复核。
+**15 条红线对本包全部 N/A**（Node 库，非 Tauri 后端）。
+
+### 4 个 Block（全部实测复现）
+
+| # | 缺陷 | 实测 | 修法 |
+| --- | --- | --- | --- |
+| B1 | `zoneMarked` 原地改写 `Text` 的缓存数组 | 500 帧首行 100→8116 字节（每帧 +16） | `[...lines]` 后再改 |
+| B2 | `/resume` 高亮与实际选择脱节 | `view.index=2` 但选中仍 `s0`，enter resume 错的会话 | `setChoices` 增 `index` 参数 |
+| B3 | `thinking-selector` 硬编码导航键 | 重绑后方向键与 `ctrl+n` **两键皆死** | 改走 `getKeybindings()` + `NAV_ACTIONS` |
+| B4 | 屏幕模式文档三方矛盾 | 代码 `main`，CLI/README 说 `fullscreen` | 三处统一 + README 重写 |
+
+### 8 个 Warning
+
+W1 `styleBold` 手写 `\x1b[1m` → `theme.bold()`（铁律五）
+W2 `stripTerminalControl` → `stripTerminalSequences`（实测 pi-tui 不处理 CR/C0，保留这两条）
+W3 删死代码：`window.ts`(89)+测试、`renderPanel`/`runPickerKey`/`renderPanel` 等
+W4 `app.ts` 拆分（见下）
+W5 删 `keyHint`/`hintLine`（零消费者）
+W6 **删掉 transcript 的整套动画** —— `spinnerFrame` 出签名、50 行定时器删除
+W7 `PI_CODING_AGENT_DIR` → 统一为代码事实 `PI_AGENT_DIR`
+W8 `AGENTS.md`/README 模块清单按实际重写
+
+### W6 值得单独记：比审核者建议的更彻底
+
+审核者说「两套 80ms 动画时钟」→ 建议合并。查下去发现**可以整个删**：
+pi 的折叠思考行是纯文字 `Thinking...`，`🐳` 是本仓自造的。删掉 glyph 后
+`spinnerFrame` 整条链（定时器 + 进签名 + 常量）都不需要 —— 每 80ms 不再重建流式行。
+
+### app.ts 拆分（用户要求）
+
+| 新模块 | 行数 | 职责 |
+| --- | --- | --- |
+| `panel-host.ts` | 125 | dock 的单占用者规则（三份复制的归宿） |
+| `view-tree.ts` | 127 | 控件树（容器 + 文本行） |
+| `subsystems.ts` | 134 | 四个 controller 的构造 |
+
+`app.ts` **1851 → 1703**（-148），`selectListThemeOf` 移入 `theme.ts`。
+顺手删掉 `resumeText` —— 建了、挂了、**从不写**的死行。
+
+**未拆的**：`submit`(78) 的 14 个 case 必须留在 app.ts（每个都调 `this.xxx`，
+且 `assertNever` 保证穷尽性）；`mountTranscript`(53) 是 flush 管线，抽出去要 6+ 个协作者。
+
+### 变异验证 8/8
+
+B1 / B2 / B3 / B4 / W4 / PanelHost.hide 不 restore / PanelHost 关闭仍报 consumed /
+PanelHost.show 不清 dock / view-tree 无永久行 —— 全部有效。
+
+其中 **B2 首次 0 红**：查明是没有任何测试覆盖「app 传递 index」这条路径
+（之前的验证是临时脚本，没进测试套件）。补 3 条「enter 必须 resume 高亮行」后才抓住。
+
+### 验收
+
+- **896 passed / 51 files**（删 21 条死测试，加 26 条断言）
+- `prepublishOnly` 全绿 + `sync-profiles`
+- 本轮引入的死代码清零（`--noUnusedLocals` 只剩 `index.ts` 两条既有问题）

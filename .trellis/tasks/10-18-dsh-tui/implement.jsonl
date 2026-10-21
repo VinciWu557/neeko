@@ -5,3 +5,4 @@
 {"file": "packages/dsh-neeko/cordis.patch.yml", "reason": "neeko-tui 行的装配落点"}
 {"file": "packages/dsh-neeko/src/dsh-adapter.ts", "reason": "可复用：readSessionEvents/buildHistory（历史填充）；translateStreamFrame 的 id 纪律"}
 {"file": "packages/dsh-neeko/src/agent-handlers.ts", "reason": "可复用：canAnswerQuestions 谓词、waterfall 注册契约、测试形态"}
+{"file": ".trellis/tasks/10-18-dsh-tui/pi-parity.md", "reason": "pi-tui 原生能力对标测绘：4 类 22 项差距（file:line）、四张注册表目标形态、P0-P3 执行顺序、用户决策（跟随 pi 行为 + P2/P3 延后）"}

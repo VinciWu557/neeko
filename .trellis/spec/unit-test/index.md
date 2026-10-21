@@ -52,6 +52,8 @@
 | [前端测试](./frontend-testing.md) | Vitest 配置、Hook/组件测试、Tauri API mock | 已填写 |
 | [后端测试](./backend-testing.md) | Rust 单元测试、git2 临时仓库、存储测试 | 已填写 |
 | [Mock 策略](./mock-strategies.md) | Tauri invoke mock、xterm mock、平台存根 | 已填写 |
+| [真实源确定性](./real-source-determinism.md) | 真实源的断言只承诺 `≥`，禁止对观察者做精确集合断言 | 已填写 |
+| [变异验证](./mutation-verification.md) | 证明断言真的能红；0 红必须查到底 | 已填写 |
 
 ---
 
@@ -78,6 +80,9 @@
 
 ### 指导原则
 
+0. **全绿不等于有效** —— 一份全绿的套件只证明「代码满足这些断言」，不证明「断言能抓住缺陷」。
+   每个新断言至少做一次变异（改坏实现，确认变红），`0 红` 必须查到底。
+   详见 [变异验证](./mutation-verification.md)。
 1. **测试内部逻辑，而非框架包装** —— 测试 `ProjectManager.add_project()`，而非 `#[tauri::command] fn add_project()` 包装层
 2. **真实优于 mock** —— 使用真实的临时 git 仓库，而非 mock git2。
    **对偶条款**：真实源只承诺「至少一次」可达，断言必须单向（`≥`），不得对事件观察者做

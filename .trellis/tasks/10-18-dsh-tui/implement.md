@@ -695,3 +695,116 @@ curl -s http://127.0.0.1:3197/neeko-health
 - [x] 变异 3/3 有效（header 参数 5 / 折叠行数 6 / 前置空行 3）；单测 **637**。
 - [x] 真机：`bash command="echo TOOLCHECK" description="..."`，无 emoji、无 `[ok]`。
 - [x] `prepublishOnly` 全绿。
+
+### Step 37：pi-tui 原生能力对标（用户需求 · 测绘轮）
+
+> 详细测绘见 `pi-parity.md`。本轮**只测绘 + 记录，未动代码**。
+
+- [x] **差距测绘到 file:line**：4 类 22 项（A 形态缺失 4 / B 能力缺口 10 /
+      C 重复实现 5 / D 静默风险 3）。关键证据：
+      `showOverlay` 零使用、`KeybindingsManager` 零使用、
+      `runner.ts:129` 与 `app.ts:482` 各写一次缺省屏幕（违反铁律九）。
+- [x] **第一性原理结论**：「改一遍又一遍」的机械原因是**三种形态没形成开放集合**
+      —— overlay 用「换 inputSlot」实现、键位用散落 `matchesKey` 硬编码、
+      entry 用 `switch (row.kind)`。每加一个面板/键位/行类型都要回中心文件改分支。
+- [x] **差距性质定案**：是「没接线」，不是「没实现」。pi-tui 已提供
+      `showOverlay` / `KeybindingsManager` / search / `setTitle` / `setProgress`，
+      本仓使用数为 0。→ 优先级「接线 > 重写」，任何自己再实现一遍都是负债。
+- [x] **目标形态**：四张注册表（EntryRegistry / KeyScope 栈 / ActionRegistry /
+      CommandRegistry）替代三处 switch。`Panel` 接口是从现有三个面板**归纳**出来的
+      共同超集，不是设计出来的抽象。
+- [x] **执行顺序 P0→P3**：P0-1 屏幕形态、P0-2 键位栈、P1-3 overlay、
+      P1-4 entry 注册表、P1-5 search、P3-6 标题/进度/杂项键位。
+
+#### 用户决策（本轮记录）
+
+- [x] **「pi 是什么行为就跟着什么行为」** —— 对齐判据不是「哪个更合理」，
+      是「pi 怎么做」。因此默认屏幕定为 `fullscreen`（pi `settings-defaults.js:61`），
+      即使 main screen 保留终端原生 scrollback 技术上更保守，也不作默认。
+- [x] **P2/P3 延后** —— 先把形态层（P0/P1）做对，自造组件的替换
+      （`picker.ts` / `thinking.ts` / `status-bar.ts` / `transcript-view.ts`）
+      单独一轮。理由：这四项的行为细节与 849 条测试断言耦合深，
+      混在形态改动里一旦变红就分不清是「形态没做对」还是「替换没对齐」——
+      **这正是要避免的「改一遍又一遍」**。延后清单已列在 `pi-parity.md` §6.2，不丢。
+
+### Step 38：P0-1 屏幕形态（用户需求 — 用户截图的现象）
+
+- [x] 用户报障：「刚开始进入的时候 pi 是完整的界面，而 dsh-neeko tui 是还能看到命令行」。
+      **根因**：`TuiMainScreen` 首次渲染的注释就是 "assumes clean screen" —— 它不清屏；
+      pi 的默认是 alt screen（`settings-defaults.js` → `tuiMode: "fullscreen"`），
+      进入即 `?1049h` + `2J` + `H`。
+- [x] 新 `src/tui/screen.ts`：`DEFAULT_SCREEN='fullscreen'`、`resolveScreen()`（唯一决策点）、
+      `mountScreen()`（两种形态）、`ScreenParts`（四个聚合）。
+- [x] `app.ts` 删 `?? 'main'`；构造时解析一次存字段；`screenParts()` 一个 builder 供两块屏共用。
+- [x] `runner.screenModeOf()` 降为 `resolveScreen()` 别名 —— 不再自带逻辑与缺省。
+- [x] 删 `fullscreen.ts`（并入 `screen.ts`）。**顺带根治 D2**：
+      `mountFullscreen()` 的字段清单换成四个聚合容器，面板挂在容器里，**加面板无法被遗忘**。
+- [x] **挂载与启动分离**：`mountScreen()` 只组装树，`start()` 才进 raw mode / alt screen。
+      原实现两种屏的契约不同（alt 在挂载内 start，main 由 `TuiApp` start），
+      只有一种能在无 TTY 的测试里跑。
+- [x] 变异 4/4 有效（默认改回 main→3 红 / 恢复第二缺省→1 红 /
+      删 MAIN_SCREEN 分支→2 红 / 挂载即 start→1 红）。
+- [x] 真机 pty 6 种组合全对；首帧专项：`?1049h` 后紧跟 `2J`+`H`，shell 命令行不再泄漏。
+- [x] 单测 **763**；删 `tui-screen-mode.spec.ts`（被 `tui-screen.spec.ts` 取代）。
+- [x] `prepublishOnly` 全绿 + `build` + `sync-profiles`（铁律一）。
+
+#### 待办（下一轮起点）
+
+- [ ] P0-2 `keymap.ts`：`routeKey` + `KeyScope` 优先级栈；`/hotkeys` 命令
+- [ ] P1-3 `overlay-host.ts`：`showOverlay` 替 `replaceInputSlot`
+
+### Step 39–40：pi-tui 原生对齐（S1…S4）+ 屏幕/滚动定案
+
+详见 `pi-parity.md` §9 与 `ctrl-o-expand.md` Step 39–40。
+
+- [x] **S1 主题**：`THEME_TOKEN_SPECS` 补 pi 的四个 fallback → 真实 pi 主题可直接加载。
+      顺带修 `''` 与解析失败被混为一谈的缺陷。`~/.dsh/themes` 优先 + pi 目录兼容。
+- [x] **S2 消息组件**：`message-view.ts` 移植 pi 三个组件；删 `transcript-view.ts`(437) +
+      `tool-present.ts`(242)。修 `zoneMarked` 丢 children / 破坏缓存、折叠提示硬编码 `ctrl+o`、
+      工具卡缺前置空行。
+- [x] **S3 输入框**：`composer.ts` 移植 `renderTopBorder`；`status-indicator.ts` 移植
+      `StatusIndicator`/`DynamicBorder`。修**边框宽度少 1 列**（漏了 pi 公式里的前导空格）。
+- [x] **S4 选择器**：`thinking-selector` / `theme-selector` / `resume-selector` 全换 `SelectList`；
+      删 `theme-picker.ts`。主题选择器新增**实时预览**。修 `panel.list` 过时引用（真缺陷）。
+- [x] **屏幕定案**：默认 `main`（pi 实际默认，不是源码里的 `fullscreen`）。撤回 `tailWindow`、
+      启动清屏、fullscreen B2 三个自造改动。
+- [x] **顺带修**：`setClearOnShrink` 泄漏（`/clear` 后永久开启 → 每次收缩整屏重绘 + 清 scrollback）。
+- [x] **诚实记录**：退出 `drainInput()` 修复**未能复现验证**（四种场景均无乱码）；保留因 pi-tui
+      文档明确要求且 `stop()` 此前从不排空 stdin，但不声称修好了用户报的现象。
+- [x] 变异 35/35；889 测试；`prepublishOnly` 全绿；真机与 pi 逐项对齐（用户确认）。
+
+#### 待办
+
+- [ ] P3 剩余：`setTitle` / `setProgress` / `ctrl+z` / `ctrl+g` / `ctrl+v`（`docs/keybindings.md` 全表）
+- [ ] 退出乱码 `9;5:3u`：需用户提供终端类型才能定向验证
+
+### Step 41：neeko-check 审核修复 + `app.ts` 拆分
+
+详见 `ctrl-o-expand.md` Step 41。
+
+- [x] 双审核者并行（架构原则 / 规范一致性）+ 逐条实测复核。
+      **15 条红线对本包全部 N/A**（Node 库）。
+- [x] **4 Block 全修**（均实测复现）：`zoneMarked` 每帧累积 OSC133（500 帧 +8016 字节）/
+      `/resume` 高亮与实际选择脱节 / `thinking-selector` 硬编码导航键致重绑双死 /
+      屏幕模式文档三方矛盾。
+- [x] **8 Warning 全修**：`theme.bold()` 唯一入口 / `stripTerminalSequences` /
+      删 `window.ts`+死导出 / `app.ts` 拆分 / 删僵尸导出 / **删掉 transcript 整套动画** /
+      环境变量名统一 / 模块清单按实际重写。
+- [x] **`app.ts` 1851 → 1703**：新增 `panel-host.ts`(125) / `view-tree.ts`(127) /
+      `subsystems.ts`(134)，`selectListThemeOf` 移入 `theme.ts`，删掉从不写的 `resumeText`。
+- [x] 未拆的（附理由）：`submit`(78) 的 14 个 case 每个都调 `this.xxx` 且 `assertNever`
+      依赖 switch 在原地；`mountTranscript`(53) 要 6+ 协作者，抽出去内聚反而降低。
+- [x] **变异 8/8 有效**；其中 B2 首次 0 红，查明是**无测试覆盖**「app 传 index」这条路径。
+- [x] `896 passed / 51 files`；`prepublishOnly` 全绿；`sync-profiles` 已跑。
+- [x] 本轮引入的死代码清零（`--noUnusedLocals` 只剩 `index.ts` 两条既有问题）。
+- [x] **spec 沉淀**：新建 `.trellis/spec/unit-test/mutation-verification.md`；
+      `guides/code-reuse-thinking-guide.md` 加两条陷阱（复制策略的私有状态 / 缓存数组原地改）；
+      `packages/dsh-neeko/AGENTS.md`「已知陷阱」加 4 条。
+- [x] 根仓 `pnpm lint` 27/27 全过（`check_agents_md_size` 未越界）。
+
+#### 待办
+
+- [ ] P3 剩余：`setTitle` / `setProgress` / `ctrl+z` / `ctrl+g` / `ctrl+v`
+- [ ] `index.ts:467,475` 的 `requestId` 是 `for...of` Map 的无用键（改 `.values()` 即可），
+      属桥侧代码，不在本轮 TUI 范围
+- [ ] 退出乱码 `9;5:3u`：需用户提供终端类型才能定向验证
