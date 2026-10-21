@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   BUILTIN_THEMES, THEME_TOKENS, THEMES_DIR_ENV, Theme, findBuiltin, listThemes,
@@ -43,9 +43,22 @@ describe('Theme resolution', () => {
     expect(theme.ansiOf('text')).toBe('\x1b[39m')
   })
 
-  it('does not throw on an unparsable color (degrades to default)', () => {
-    const theme = resolveTheme({ name: 'broken', colors: { accent: 'not-a-color' } })
-    expect(() => theme.fg('accent', 'x')).not.toThrow()
+  it('leaves an unparsable colour unpaintable rather than hiding it', () => {
+    // A typo is not the same as `""` (pi's spelling of "the terminal's own
+    // colour"). Degrading a typo to the default reset made a broken theme look
+    // deliberate and left `has()` unable to report it. `resolveTheme` overlays a
+    // built-in, so the raw constructor is where this contract lives.
+    const theme = new Theme('broken', { name: 'broken', colors: { accent: 'not-a-color', text: '#fff' } })
+    expect(theme.has('accent')).toBe(false)
+    expect(() => theme.fg('accent', 'x')).toThrow(/no color for "accent"/)
+  })
+
+  it('still treats an empty string as the terminal default', () => {
+    // pi writes `text: ""` meaning "whatever the terminal uses"; that is a valid
+    // declaration and must stay paintable.
+    const theme = new Theme('plain', { name: 'plain', colors: { text: '' } })
+    expect(theme.has('text')).toBe(true)
+    expect(() => theme.fg('text', 'x')).not.toThrow()
   })
 
   it('throws a named error for a token a hand-built theme does not define', () => {
@@ -208,7 +221,17 @@ describe('user theme files', () => {
 
   it('honours the themes-dir env override', () => {
     expect(themesDir({ [THEMES_DIR_ENV]: '/custom/themes' } as NodeJS.ProcessEnv)).toBe('/custom/themes')
-    expect(themesDir({} as NodeJS.ProcessEnv).endsWith(join('.dsh-neeko', 'themes'))).toBe(true)
+  })
+
+  it('defaults to ~/.dsh/themes, the DSH home', () => {
+    // Not `~/.dsh-neeko/themes`: the DSH home already holds `profiles/`,
+    // `sessions/` and `storages/`, and a theme is profile configuration.
+    expect(themesDir({} as NodeJS.ProcessEnv)).toBe(join(homedir(), '.dsh', 'themes'))
+  })
+
+  it('honours DSH_HOME for the home directory', () => {
+    // A relocated profile must not leave its themes behind in `~/.dsh`.
+    expect(themesDir({ DSH_HOME: '/srv/dsh' } as NodeJS.ProcessEnv)).toBe(join('/srv/dsh', 'themes'))
   })
 })
 
@@ -222,9 +245,16 @@ describe('pi theme compatibility', () => {
     expect(THEME_TOKENS).toContain('mdHeading')
   })
 
-  it('ships built-ins carrying all of pi\'s tokens', () => {
+  it('ships built-ins that leave pi\'s four fallback tokens to the chain', () => {
+    // pi's own `dark.json` and `light.json` omit these four and rely on the
+    // fallback chain. Writing them into the built-in data would be a second
+    // definition of the same fact — and it would stop the chain from ever running
+    // on a built-in, which is how this file came to disagree with pi.
+    const FALLBACK_FILLED = ['scrollbarTrack', 'scrollbarThumb', 'searchMatchBg', 'searchMatchText'] as const
     for (const theme of BUILTIN_THEMES) {
-      expect(Object.keys(theme.colors)).toHaveLength(56)
+      for (const token of FALLBACK_FILLED) {
+        expect(theme.colors[token], `${theme.name}/${token}`).toBeUndefined()
+      }
     }
   })
 
@@ -235,11 +265,31 @@ describe('pi theme compatibility', () => {
     expect(dark.colors.toolDiffAdded).toBeDefined()
   })
 
-  it('scans pi\'s theme directory too, local first', () => {
+  it('scans ~/.dsh/themes first, then pi\'s directory', () => {
+    // `~/.dsh` is the DSH home — it already holds `profiles/`, `sessions/` and
+    // `storages/`, so themes join them rather than getting a second directory of
+    // their own. pi's directory stays in the list as a compatibility layer: a
+    // theme already installed for pi keeps working without being copied.
     const paths = themeSearchPaths({} as NodeJS.ProcessEnv)
     expect(paths).toHaveLength(2)
-    expect(paths[0]?.endsWith(join('.dsh-neeko', 'themes'))).toBe(true)
-    expect(paths[1]?.endsWith(join('.pi', 'agent', 'themes'))).toBe(true)
+    expect(paths[0]).toBe(join(homedir(), '.dsh', 'themes'))
+    expect(paths[1]).toBe(join(homedir(), '.pi', 'agent', 'themes'))
+  })
+
+  it('honours DSH_NEEKO_THEMES_DIR as the first directory', () => {
+    // The override is what a test or an alternate profile uses; it must not also
+    // disable the built-in search, or a user theme would vanish under a test that
+    // only wanted to redirect writes.
+    const paths = themeSearchPaths({ DSH_NEEKO_THEMES_DIR: '/custom/themes' } as NodeJS.ProcessEnv)
+    expect(paths[0]).toBe('/custom/themes')
+  })
+
+  it('collapses the two directories when they resolve to the same path', () => {
+    // `PI_AGENT_DIR=~/.dsh` (or `DSH_NEEKO_THEMES_DIR` pointing at pi's own
+    // directory) would otherwise scan the same directory twice and list every
+    // theme in it twice.
+    const paths = themeSearchPaths({ DSH_NEEKO_THEMES_DIR: '/same/themes', PI_AGENT_DIR: '/same' } as NodeJS.ProcessEnv)
+    expect(paths).toEqual(['/same/themes'])
   })
 
   it('honours PI_AGENT_DIR for pi\'s directory', () => {

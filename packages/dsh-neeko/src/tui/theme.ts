@@ -23,9 +23,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { backgroundAnsi, foregroundAnsi, styleTextWithAnsi } from '@earendil-works/pi-tui'
 import { parseColor } from '@earendil-works/pi-tui'
-import type { Color, MarkdownTheme, TerminalColorMode } from '@earendil-works/pi-tui'
+import type { Color, MarkdownTheme, SelectListTheme, TerminalColorMode } from '@earendil-works/pi-tui'
 import { highlightCodeFence } from './highlight.ts'
-import { THEME_TOKENS } from './theme-tokens.ts'
+import { THEME_TOKEN_SPECS, THEME_TOKENS } from './theme-tokens.ts'
 import type { ThemeToken } from './theme-tokens.ts'
 import { BUILTIN_THEMES } from './theme-data.ts'
 import type { ThemeDocument } from './theme-data.ts'
@@ -54,11 +54,23 @@ export class Theme {
       if (value === undefined) continue
       // Var reference first (pi's semantics), then a literal color string.
       const literal = vars[value] ?? value
-      const color: Color | undefined = literal === '' ? undefined : safeParse(literal)
-      // `""` means "terminal default foreground": emit the reset sequence so the
-      // token still produces well-formed output.
-      this.fgAnsi.set(token, color === undefined ? '\x1b[39m' : foregroundAnsi(color, this.mode))
-      this.bgAnsi.set(token, color === undefined ? '\x1b[49m' : backgroundAnsi(color, this.mode))
+      // Two different "no colour" cases, which used to be collapsed into one:
+      //
+      // - `""` is pi's spelling of "the terminal's own colour". It is a *valid*
+      //   declaration, so it emits a reset and the token stays paintable.
+      // - A string that fails to parse is a **typo**. It must leave the token
+      //   unset: painting it with a reset would silently render malformed input
+      //   as "terminal default" and hide the mistake, and `has()` could then
+      //   never report the token as broken.
+      if (literal === '') {
+        this.fgAnsi.set(token, '\x1b[39m')
+        this.bgAnsi.set(token, '\x1b[49m')
+        continue
+      }
+      const color = safeParse(literal)
+      if (color === undefined) continue
+      this.fgAnsi.set(token, foregroundAnsi(color, this.mode))
+      this.bgAnsi.set(token, backgroundAnsi(color, this.mode))
     }
   }
 
@@ -87,16 +99,21 @@ export class Theme {
   }
 
   /**
-   * Whether a token is defined by this theme.
+   * Whether this theme can paint a token.
    *
-   * Lets a surface fall back rather than throw when a pi theme omits a token
-   * this TUI would like to paint with.
+   * "Paintable", not "declared": a token filled by the fallback chain *is*
+   * paintable, so it answers true. Asking `document.colors` instead would report
+   * `scrollbarTrack` as absent on every stock pi theme and the renderer would
+   * skip a colour it actually has.
+   *
+   * A malformed colour also answers false: the token cannot be painted, and a
+   * surface that would rather fall back than throw can ask first.
    *
    * @param token - the token to test.
-   * @returns true when the theme defines it.
+   * @returns true when an escape sequence exists for it.
    */
   has(token: ThemeToken): boolean {
-    return this.document.colors[token] !== undefined
+    return this.fgAnsi.has(token) || this.bgAnsi.has(token)
   }
 
   /**
@@ -179,7 +196,44 @@ export function findBuiltin(name: string): ThemeDocument | undefined {
  * @returns the resolved theme.
  */
 export function resolveTheme(document: ThemeDocument): Theme {
-  return new Theme(document.name, overlayOn(document.appearance ?? 'dark', document))
+  return new Theme(document.name, withTokenFallbacks(overlayOn(document.appearance ?? 'dark', document)))
+}
+
+/**
+ * Fill omitted tokens from pi's fallback chain.
+ *
+ * pi's `withThemeTokenFallbacks`, and it is what makes a **stock pi theme load
+ * unchanged**: `dark.json` and `light.json` both omit `scrollbarTrack`,
+ * `scrollbarThumb`, `searchMatchBg` and `searchMatchText`, relying on the chain.
+ * Without it every pi theme fails on the first repaint of the scrollbar.
+ *
+ * Runs *after* {@linkcode overlayOn} on purpose. The overlay seeds the base
+ * palette, so most tokens already resolve; the chain then covers the four tokens
+ * no built-in defines. The two mechanisms answer different questions — "what
+ * does this theme look like" versus "what does an omitted token mean" — and
+ * collapsing them would make a partial user file inherit a colour it never asked
+ * for instead of pi's documented fallback.
+ *
+ * Faithful to pi in one more respect: a token whose slot differs from its
+ * fallback is a **declaration** error caught by a test, not a runtime surprise.
+ *
+ * @param document - the theme, already overlaid on a built-in.
+ * @returns the document with every fallback chain resolved.
+ */
+function withTokenFallbacks(document: ThemeDocument): ThemeDocument {
+  const colors: Record<string, string> = { ...document.colors }
+  for (const token of THEME_TOKENS) {
+    if (colors[token] !== undefined) continue
+    const fallback = THEME_TOKEN_SPECS[token].fallback
+    if (fallback === undefined) continue
+    const value = colors[fallback]
+    // A fallback target that is itself missing stays missing: pi throws here, but
+    // this loader is fail-open by contract (see `coerceThemeDocument`), and a
+    // theme with no `muted` is the *loader's* caller's problem, not a reason to
+    // take the TUI down.
+    if (value !== undefined) colors[token] = value
+  }
+  return { ...document, colors: colors as ThemeDocument['colors'] }
 }
 
 /**
@@ -201,23 +255,54 @@ function overlayOn(base: string, top: ThemeDocument): ThemeDocument {
 
 
 // ── custom theme files ──────────────────────────────────────────────────────
-// Same convention as pi: one JSON file per theme under
-// `~/.dsh-neeko/themes/<name>.json` (pi uses `~/.pi/agent/themes`). The file
-// name is the fallback theme name; unknown/invalid files are skipped rather
-// than aborting startup — a broken user theme must not break the TUI.
+// One JSON file per theme, in **pi's format** (see `theme-tokens.ts` for why the
+// format is shared rather than translated). The primary directory is
+// `~/.dsh/themes` — the DSH home already holds `profiles/`, `sessions/` and
+// `storages/`, so themes join them instead of getting a directory of their own.
+//
+// pi's own `~/.pi/agent/themes` stays in the search list as a compatibility
+// layer: a theme somebody already installed for pi keeps working without being
+// copied anywhere. The file name is the fallback name; unknown/invalid files are
+// skipped rather than aborting startup — a broken user theme must not break the
+// TUI.
 
 /** Env override for our own theme directory (tests, alternate profiles). */
 export const THEMES_DIR_ENV = 'DSH_NEEKO_THEMES_DIR'
 
 /**
- * The directory scanned for this TUI's own theme files.
+ * The primary directory scanned for theme files.
+ *
+ * `~/.dsh/themes`. The DSH home is the natural home for a DSH profile's
+ * configuration, and themes are configuration — they belong beside `profiles/`
+ * and `sessions/`, not in a second hidden directory named after this plugin.
+ *
+ * `DSH_NEEKO_THEMES_DIR` overrides it for tests and alternate profiles. It
+ * replaces only *this* directory; {@linkcode themeSearchPaths} still lists pi's,
+ * so an override cannot accidentally hide an installed pi theme.
+ *
  * @param env - environment to read (tests inject their own).
  * @returns the absolute themes directory.
  */
 export function themesDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env[THEMES_DIR_ENV]?.trim()
   if (override !== undefined && override !== '') return override
-  return join(homedir(), '.dsh-neeko', 'themes')
+  return join(dshHome(env), 'themes')
+}
+
+/**
+ * The DSH home directory.
+ *
+ * `DSH_HOME` when set (a profile may relocate its state), then `~/.dsh`. Read
+ * through one function so the theme directory and the DSH home cannot disagree
+ * about where "the DSH home" is.
+ *
+ * @param env - environment to read.
+ * @returns the absolute home directory.
+ */
+function dshHome(env: NodeJS.ProcessEnv): string {
+  const override = env['DSH_HOME']?.trim()
+  if (override !== undefined && override !== '') return override
+  return join(homedir(), '.dsh')
 }
 
 /**
@@ -249,6 +334,9 @@ export function piThemesDir(env: NodeJS.ProcessEnv = process.env): string {
 export function themeSearchPaths(env: NodeJS.ProcessEnv = process.env): readonly string[] {
   const own = themesDir(env)
   const pi = piThemesDir(env)
+  // Collapsed when equal: `PI_AGENT_DIR=~/.dsh` (or an override pointing at pi's
+  // own directory) would otherwise scan one directory twice and list every theme
+  // in it twice.
   return own === pi ? [own] : [own, pi]
 }
 
@@ -464,5 +552,32 @@ export function markdownThemeOf(theme: Theme): MarkdownTheme {
     highlightCode: (code, language) => highlightCodeFence(code, language, paint),
     // Two cells keeps long code readable against the surrounding prose.
     codeBlockIndent: '  ',
+  }
+}
+
+/**
+ * Select-list styling for a theme.
+ *
+ * pi's `getSelectListTheme()`: the selected row's prefix and text in `accent`,
+ * descriptions and the scroll counter in `muted`, and a `noMatch` line that reads
+ * as an empty state rather than as an error.
+ *
+ * Lives here rather than in the selector files because it is a *theme projection*,
+ * the same way {@linkcode markdownThemeOf} is: three selectors need it, and a copy
+ * per selector is how one of them ends up with an unstyled menu (which is exactly
+ * what happened — the old `editorTheme` returned the text unchanged).
+ *
+ * @param theme - the active palette.
+ * @returns the list theme.
+ */
+export function selectListThemeOf(theme: Theme): SelectListTheme {
+  const paint = (token: 'accent' | 'muted', text: string): string =>
+    theme.has(token) ? theme.fg(token, text) : text
+  return {
+    selectedPrefix: (text: string) => paint('accent', text),
+    selectedText: (text: string) => paint('accent', text),
+    description: (text: string) => paint('muted', text),
+    scrollInfo: (text: string) => paint('muted', text),
+    noMatch: (text: string) => paint('muted', text),
   }
 }

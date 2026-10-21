@@ -37,3 +37,87 @@ export const THEME_TOKENS = [
 
 /** A theme token name. */
 export type ThemeToken = (typeof THEME_TOKENS)[number]
+
+/**
+ * Token metadata: which colour slot a token paints, and what it inherits when a
+ * theme omits it.
+ *
+ * Transcribed from pi's `theme-tokens.js` so a **pi theme file resolves
+ * identically** here. The `fallback` field is load-bearing, not cosmetic: pi's
+ * own `dark.json` and `light.json` both omit `scrollbarTrack`, `scrollbarThumb`,
+ * `searchMatchBg` and `searchMatchText`, relying on the chain below. A loader
+ * without it rejects every stock pi theme with
+ * `Theme token scrollbarTrack has unresolved fallback muted` — which is exactly
+ * what this build did before the metadata existed.
+ */
+export interface ThemeTokenSpec {
+  /** Which escape channel the token paints: foreground or background. */
+  readonly slot: 'foreground' | 'background'
+  /** Token to inherit when a theme omits this one. Same slot, by construction. */
+  readonly fallback?: ThemeToken
+}
+
+/**
+ * Every token with its slot, in pi's declaration order.
+ *
+ * Background tokens are the seven that fill a band (`Box(1, 1, bg)` and the
+ * select-list highlight); everything else is a foreground colour.
+ */
+export const THEME_TOKEN_SPECS: Readonly<Record<ThemeToken, ThemeTokenSpec>> = {
+  accent: { slot: 'foreground' },
+  border: { slot: 'foreground' },
+  borderAccent: { slot: 'foreground' },
+  borderMuted: { slot: 'foreground' },
+  success: { slot: 'foreground' },
+  error: { slot: 'foreground' },
+  warning: { slot: 'foreground' },
+  muted: { slot: 'foreground' },
+  dim: { slot: 'foreground' },
+  text: { slot: 'foreground' },
+  thinkingText: { slot: 'foreground' },
+  scrollbarTrack: { slot: 'foreground', fallback: 'muted' },
+  scrollbarThumb: { slot: 'foreground', fallback: 'text' },
+  selectedBg: { slot: 'background' },
+  searchMatchBg: { slot: 'background', fallback: 'selectedBg' },
+  searchMatchText: { slot: 'foreground', fallback: 'text' },
+  userMessageBg: { slot: 'background' },
+  userMessageText: { slot: 'foreground' },
+  customMessageBg: { slot: 'background' },
+  customMessageText: { slot: 'foreground' },
+  customMessageLabel: { slot: 'foreground' },
+  toolPendingBg: { slot: 'background' },
+  toolSuccessBg: { slot: 'background' },
+  toolErrorBg: { slot: 'background' },
+  toolTitle: { slot: 'foreground' },
+  toolOutput: { slot: 'foreground' },
+  mdHeading: { slot: 'foreground' },
+  mdLink: { slot: 'foreground' },
+  mdLinkUrl: { slot: 'foreground' },
+  mdCode: { slot: 'foreground' },
+  mdCodeBlock: { slot: 'foreground' },
+  mdCodeBlockBorder: { slot: 'foreground' },
+  mdQuote: { slot: 'foreground' },
+  mdQuoteBorder: { slot: 'foreground' },
+  mdHr: { slot: 'foreground' },
+  mdListBullet: { slot: 'foreground' },
+  toolDiffAdded: { slot: 'foreground' },
+  toolDiffRemoved: { slot: 'foreground' },
+  toolDiffContext: { slot: 'foreground' },
+  syntaxComment: { slot: 'foreground' },
+  syntaxKeyword: { slot: 'foreground' },
+  syntaxFunction: { slot: 'foreground' },
+  syntaxVariable: { slot: 'foreground' },
+  syntaxString: { slot: 'foreground' },
+  syntaxNumber: { slot: 'foreground' },
+  syntaxType: { slot: 'foreground' },
+  syntaxOperator: { slot: 'foreground' },
+  syntaxPunctuation: { slot: 'foreground' },
+  thinkingOff: { slot: 'foreground' },
+  thinkingMinimal: { slot: 'foreground' },
+  thinkingLow: { slot: 'foreground' },
+  thinkingMedium: { slot: 'foreground' },
+  thinkingHigh: { slot: 'foreground' },
+  thinkingXhigh: { slot: 'foreground' },
+  thinkingMax: { slot: 'foreground' },
+  bashMode: { slot: 'foreground' },
+}

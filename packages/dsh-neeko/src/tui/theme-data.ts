@@ -53,10 +53,13 @@ export const BUILTIN_THEMES: readonly ThemeDocument[] = [
       text: 'text',
       thinkingText: 'okhsl(226 7% 65%)',
       selectedBg: 'blueBg',
-      scrollbarTrack: 'okhsl(237 7% 33%)',
-      scrollbarThumb: 'okhsl(232 7% 65%)',
-      searchMatchBg: 'okhsl(53 51% 24%)',
-      searchMatchText: 'muted',
+      // `scrollbarTrack` / `scrollbarThumb` / `searchMatchBg` / `searchMatchText`
+      // are deliberately **omitted**, exactly as pi's own `dark.json` omits them.
+      // They resolve through the fallback chain in `theme.ts`
+      // (track→muted, thumb→text, matchBg→selectedBg, matchText→text). Writing
+      // them here would be a second definition of the same fact, and it would
+      // stop the chain from ever running on a built-in — which is how this file
+      // came to disagree with pi in the first place.
       userMessageBg: 'blueBg',
       userMessageText: 'text',
       customMessageBg: 'okhsl(295 42% 24%)',
@@ -125,10 +128,7 @@ export const BUILTIN_THEMES: readonly ThemeDocument[] = [
       text: 'text',
       thinkingText: 'okhsl(234 8% 55%)',
       selectedBg: 'blueBg',
-      scrollbarTrack: 'okhsl(248 3% 90%)',
-      scrollbarThumb: 'okhsl(226 7% 65%)',
-      searchMatchBg: 'okhsl(56 22% 91%)',
-      searchMatchText: 'muted',
+      // Omitted on purpose: see the dark theme above.
       userMessageBg: 'blueBg',
       userMessageText: 'text',
       customMessageBg: 'okhsl(295 25% 91%)',
