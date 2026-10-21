@@ -114,7 +114,8 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
                 Some(&["-p"]),
                 None,
                 None,
-                None,
+                // 私有 rpc 协议（单进程，不依赖 pi-acp 中间层）。
+                Some(ChatStart::PiRpc),
                 "~/.pi/skills",
             ),
             // 表格输出：provider / model / context / max-out / thinking / images

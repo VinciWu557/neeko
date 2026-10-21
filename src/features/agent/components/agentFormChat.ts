@@ -14,7 +14,7 @@ import type { ChatStart } from '@/shared/types/agent';
  */
 
 /** 表单内部只处理传输标识字符串。 */
-export type ChatTransport = 'acp' | 'serve' | 'jsonl' | 'mock';
+export type ChatTransport = 'acp' | 'serve' | 'jsonl' | 'mock' | 'pi-rpc';
 
 /** 传输下拉的选项。 */
 export const CHAT_OPTIONS: { value: ChatTransport; label: string; hint: string }[] = [
@@ -22,6 +22,7 @@ export const CHAT_OPTIONS: { value: ChatTransport; label: string; hint: string }
   { value: 'serve', label: 'Serve', hint: 'opencode serve · HTTP+SSE' },
   { value: 'jsonl', label: 'JSON-Lines', hint: 'Custom stdio protocol' },
   { value: 'mock', label: 'Mock', hint: 'In-process mock (no subprocess)' },
+  { value: 'pi-rpc', label: 'Pi RPC', hint: 'pi --mode rpc · private NDJSON' },
 ];
 
 /** 选中传输后的说明文案。 */
@@ -30,6 +31,7 @@ export const CHAT_HINTS: Record<ChatTransport, string> = {
   serve: 'opencode serve HTTP + SSE transport',
   jsonl: 'Custom JSON-Lines stdio protocol',
   mock: 'In-process ACP mock, no command required',
+  'pi-rpc': 'Pi private rpc protocol (`pi --mode rpc`) — single process, no ACP',
 };
 
 /** 表单态 → 持久化形态。

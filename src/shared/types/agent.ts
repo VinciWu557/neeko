@@ -8,7 +8,14 @@
  *
  * 只有 `acp` 接受对象形态：其余传输的启动方式由 `command` 决定，不需要额外参数。
  */
-export type ChatStart = 'acp' | 'serve' | 'jsonl' | 'mock' | { transport: 'acp'; args: string[] };
+export type ChatStart =
+  | 'acp'
+  | 'serve'
+  | 'jsonl'
+  | 'mock'
+  /** Pi 的私有 rpc 协议（`pi --mode rpc`，单进程，不依赖 pi-acp 中间层）。 */
+  | 'pi-rpc'
+  | { transport: 'acp'; args: string[] };
 
 /** `ChatStart` 的传输标识（对象形态取其 `transport`），供 UI 判断与展示。 */
 export function chatTransportOf(chat: ChatStart | null | undefined): string | null {

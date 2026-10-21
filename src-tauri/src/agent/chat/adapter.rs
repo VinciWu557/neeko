@@ -15,7 +15,9 @@ use crate::common::agent::types::{AgentConfig, ChatStart};
 pub mod acp;
 pub mod acp_config;
 pub mod deepseek;
+pub mod pi_rpc;
 pub mod serve;
+pub mod session_config;
 
 pub use acp::AcpAdapter;
 pub use deepseek::DeepSeekHarnessAdapter;
@@ -67,7 +69,8 @@ impl AgentKind {
 /// - `Acp { args }` → [`AcpAdapter`]（`command + args` 启动，opencode 的
 ///   `["opencode","acp"]` 由内置定义提供）；
 /// - `Serve` → [`ServeAdapter`]（opencode serve 的 REST + SSE 传输）；
-/// - `Jsonl` → [`DeepSeekHarnessAdapter`]（stdio JSON-Lines）。
+/// - `Jsonl` → [`DeepSeekHarnessAdapter`]（stdio JSON-Lines）；
+/// - `PiRpc` → [`PiRpcAdapter`]（pi 的私有 `--mode rpc` 协议，单进程）。
 pub fn adapter_for(config: &AgentConfig) -> Result<Box<dyn AgentAdapter>, AppError> {
     match &config.chat {
         None => Err(AppError::Unsupported(format!(
@@ -82,6 +85,7 @@ pub fn adapter_for(config: &AgentConfig) -> Result<Box<dyn AgentAdapter>, AppErr
         }
         Some(ChatStart::Serve) => Ok(Box::new(ServeAdapter::new())),
         Some(ChatStart::Jsonl) => Ok(Box::new(DeepSeekHarnessAdapter::new(config.cmd_vec()))),
+        Some(ChatStart::PiRpc) => Ok(Box::new(pi_rpc::PiRpcAdapter::new(config.cmd_vec()))),
     }
 }
 

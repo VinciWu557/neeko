@@ -32,6 +32,12 @@ pub enum ChatStart {
     Jsonl,
     /// 进程内 mock（mockAgent，无子进程）。
     Mock,
+    /// Pi 的**私有** rpc 协议：`pi --mode rpc`（NDJSON over stdio）。
+    ///
+    /// 与 `Jsonl` 不是一回事 —— `Jsonl` 是 DeepSeek Harness 的私有协议，
+    /// 两者的命令形状与事件类型完全不同，共用一个变体会让适配器里出现
+    /// 「解码后再按 kind 分支」的二段分派。
+    PiRpc,
 }
 
 impl ChatStart {
@@ -43,6 +49,7 @@ impl ChatStart {
             Self::Serve => "serve",
             Self::Jsonl => "jsonl",
             Self::Mock => "mock",
+            Self::PiRpc => "pi-rpc",
         }
     }
 }
@@ -85,6 +92,10 @@ impl<'de> Deserialize<'de> for ChatStart {
                 "serve" => Self::Serve,
                 "jsonl" => Self::Jsonl,
                 "mock" => Self::Mock,
+                // ⚠️ 新变体必须写在下面这条兜底**之前**。兜底接收一切未列举的
+                // 字符串，写在它之后的分支永远命中不到 —— 而且不报错，只会把
+                // agent 悄悄当成 ACP 去 spawn。
+                "pi-rpc" => Self::PiRpc,
                 // "acp" 及未知值 → Acp（args 由内置定义提供）。
                 _ => Self::Acp { args: Vec::new() },
             });
@@ -370,5 +381,30 @@ mod chat_start_serde_tests {
     fn unknown_string_still_parses_as_acp() {
         let parsed: ChatStart = serde_json::from_str(r#""something-new""#).unwrap();
         assert_eq!(parsed, ChatStart::Acp { args: vec![] });
+    }
+
+    /// `"pi-rpc"` 必须解析成自己的变体，**不能被 `_ => Acp` 兜底吞掉**。
+    ///
+    /// 这是本类型的结构性陷阱：反序列化末尾的 `_ => Self::Acp { args }` 会接收
+    /// 一切未列举的字符串。新变体的分支只要写在它之后，就永远命中不到 —— 而且
+    /// 不会编译报错，只会悄悄把 Pi 当成 ACP agent 去 spawn。
+    #[test]
+    fn reads_pi_rpc() {
+        let parsed: ChatStart = serde_json::from_str(r#""pi-rpc""#).unwrap();
+        assert_eq!(parsed, ChatStart::PiRpc);
+    }
+
+    /// 往返：`PiRpc` 无额外参数 → 裸字符串。
+    #[test]
+    fn writes_pi_rpc_as_bare_string() {
+        let json = serde_json::to_string(&ChatStart::PiRpc).unwrap();
+        assert_eq!(json, r#""pi-rpc""#);
+    }
+
+    #[test]
+    fn round_trips_pi_rpc() {
+        let json = serde_json::to_string(&ChatStart::PiRpc).unwrap();
+        let back: ChatStart = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ChatStart::PiRpc);
     }
 }
