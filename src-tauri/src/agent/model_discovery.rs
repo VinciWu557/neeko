@@ -267,36 +267,6 @@ fn parse_plain_model_lines(stdout: &str) -> Vec<ModelInfo> {
         .collect()
 }
 
-/// 执行 `pi --list-models` 并解析。
-pub async fn discover_pi_models(binary_path: Option<String>) -> Result<Vec<ModelInfo>, AppError> {
-    use crate::common::executor::factory::ExecTarget;
-    use crate::core::exec;
-
-    let path = binary_path.unwrap_or_else(|| "pi".into());
-    let target = ExecTarget::Local;
-
-    let output = exec::collect(&target, &path, &["--list-models"], None)
-        .await
-        .map_err(|e| AppError::Io(format!("failed to execute pi --list-models: {e}")))?;
-
-    models_from_pi_output(output)
-}
-
-/// 纯核：把 `pi --list-models` 的 `ExecOutput` 转成模型列表（零进程）。
-pub fn models_from_pi_output(output: ExecOutput) -> Result<Vec<ModelInfo>, AppError> {
-    if output.exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Io(format!(
-            "pi --list-models failed (code {}): {}",
-            output.exit_code,
-            stderr.trim()
-        )));
-    }
-    Ok(parse_pi_models_output(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
-}
-
 /// 解析 `pi --list-models` 的**固定宽度表格**输出。
 ///
 /// 形状（实测）：

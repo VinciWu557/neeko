@@ -107,21 +107,17 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             None,
             "~/.omp/skills",
         ),
-        with_model_list(
-            shell_agent(
-                "pi",
-                "Pi",
-                "pi.svg",
-                "pi",
-                Some(&["-p"]),
-                None,
-                None,
-                // 私有 rpc 协议（单进程，不依赖 pi-acp 中间层）。
-                Some(ChatStart::PiRpc),
-                "~/.pi/skills",
-            ),
-            // 表格输出：provider / model / context / max-out / thinking / images
-            &["--list-models"],
+        shell_agent(
+            "pi",
+            "Pi",
+            "pi.svg",
+            "pi",
+            Some(&["-p"]),
+            None,
+            None,
+            // 私有 rpc 协议（单进程，不依赖 pi-acp 中间层）。
+            Some(ChatStart::PiRpc),
+            "~/.pi/skills",
         ),
         shell_agent(
             "reasonix",
@@ -191,15 +187,6 @@ pub fn config_map() -> HashMap<String, AgentConfig> {
         .collect()
 }
 
-/// 给 agent 声明「列出可用模型」的命令参数。
-///
-/// 与 CHAT 能力正交：`pi --list-models` 是纯 CLI 查询，不需要 ACP / serve 就能跑。
-/// 存在它，用户在**发第一条消息之前**就能看到模型列表。
-fn with_model_list(mut agent: AgentConfig, args: &[&str]) -> AgentConfig {
-    agent.model_list_args = Some(args.iter().map(|s| (*s).into()).collect());
-    agent
-}
-
 /// 构造一个标准 CLI agent：skills/commands 位于 `{{projectPath}}/.{id}/` 下、
 /// MCP 配置位于 `{{home}}/.{id}/config.json`，detection = command。
 #[allow(clippy::too_many_arguments)]
@@ -232,7 +219,7 @@ fn shell_agent(
             .map(|a| a.iter().map(|s| (*s).into()).collect()),
         post_prompt_args: post_prompt_args.map(|a| a.iter().map(|s| (*s).into()).collect()),
         // 大多数 agent 没有独立的列模型命令；有的话由调用方后置设置
-        // （`with_model_list`），避免给这个已有 9 个参数的构造函数再加一个。
+        // 模型列表一律走 agent 自己的协议（见下方说明），内置定义不填。
         model_list_args: None,
         skill_path: Some(skill_path.into()),
         detection: Some(Detection::Command {

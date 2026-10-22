@@ -150,26 +150,25 @@ pub trait AgentAdapter: Send + Sync {
     }
     /// List the models this agent offers, **without** starting a session.
     ///
-    /// Default: unsupported — the adapter has no standalone "list models"
-    /// command. That is the normal case for ACP: the list only exists inside a
-    /// session, in `session/new`'s `configOptions` (there is no `models/list`
-    /// method in the protocol). Those adapters return
-    /// [`ModelCatalogResult::SessionScoped`] instead.
+    /// Default: fall back to the command the agent declares in
+    /// [`AgentConfig::model_list_args`]; `Unsupported` when there is none.
     ///
-    /// Adapters that *do* have a command override this — `opencode models
-    /// --verbose`, `pi --list-models`. The point is to show a usable list
-    /// **before** the user sends anything, which is otherwise impossible.
+    /// # 为什么这是**唯一**会话外目录入口
+    ///
+    /// 它是 `AgentAdapter` 上可覆盖的方法，因此「这个 transport 能不能在会
+    /// 话外列模型」是一个**局部决策**：opencode 覆盖它（`models --verbose`），
+    /// ACP / Pi 不覆盖（它们的列表只存在于会话的 `configOptions` 里，协议没有
+    /// 独立的列模型方法）。
+    ///
+    /// 早先 `list_agent_models` 绕过本方法直接读 `model_list_args`，导致：
+    /// ① 本方法与 `ServeAdapter` 的覆盖一起变成死代码；② opencode 的
+    /// `models --verbose` 快速路径（它的 `model_list_args` 为 `None`）永远走
+    /// 不到，`per-turn` 传输的模型列表恒为空。
     ///
     /// Returning `Err` means "supported but the command failed"; typing it as
     /// `Result` rather than an empty `Vec` keeps the two distinguishable
     /// (an empty list is a legitimate answer, a failure is not).
     async fn list_models(&self, config: &AgentConfig) -> Result<Vec<ModelInfo>, AppError> {
-        // 大多数 agent 没有独立的列模型命令——ACP 就是这类（列表只在会话里）。
-        if config.model_list_args.is_none() {
-            return Err(AppError::Unsupported(
-                "this agent has no out-of-session model list".into(),
-            ));
-        }
         crate::agent::model_discovery::list_models_by_command(config).await
     }
 
@@ -179,9 +178,13 @@ pub trait AgentAdapter: Send + Sync {
     /// 声明点：能选模型这件事已经在能力快照里表态，再开一个 override 就等于又
     /// 造了一份可以与之矛盾的真相（P1 的形态）。
     ///
-    ///
     /// 影响 [`ModelCatalogResult::SessionScoped`] 与 [`ModelCatalogResult::Unsupported`]
-    /// 的区分：`list_models` 返回「没有独立命令」时，能选就回 `SessionScoped`。
+    /// 的区分：会话外拿不到目录时，能选就回 `SessionScoped`。
+    ///
+    /// **不要**拿它当「禁止 CLI 目录」的判据 —— `PerTurn`（opencode serve）也
+    /// 为真，而它的 id 本来就是 `provider/model` 复合串（`model_slug_split` 就是
+    /// 按这个形状拆的），禁掉目录会让它的模型列表恒空。互斥判据是
+    /// [`Self::supports_session_config`]。
     fn supports_model_selection(&self) -> bool {
         self.chat_capabilities().config.shows_controls()
     }

@@ -80,21 +80,54 @@ pub async fn list_agent_models(
 
     // 两步，彼此独立：
     //
-    // 1. **有没有独立的列模型命令**（`model_list_args`）。这是纯 CLI 查询，
-    //    与 chat 能力无关 —— `pi --list-models` 在 `chat: None` 时照样能跑，
-    //    而它正是「让用户在发第一条消息之前看到列表」的唯一途径。
-    // 2. 没有命令时，再看 transport 能不能**在会话内**选模型（ACP 就是这样）。
+    // 1. **会话外目录**：由 adapter 的 [`AgentAdapter::list_models`] 给出（可覆盖，
+    //    所以「这个 transport 有没有会话外目录」是局部决策）。没有 adapter 时
+    //    （`chat: None` 的纯 CLI agent）退回它声明的 `model_list_args` ——
+    //    「列模型」与「能聊天」必须解耦。
+    // 2. **会话内能力**：`supports_model_selection()` 区分 `SessionScoped` / `Unsupported`。
     //
-    // 早先这里先取 adapter 再问 catalog，把「列模型」和「能聊天」绑死：
-    // `chat: None` 的 agent 连问都问不到，即使它有列模型命令。
-    if let Some(models) = try_list_via_command(&agent).await? {
-        return Ok(ModelCatalogResult::Available { models });
+    // # 互斥裁决：只用 `SessionConfig` 做判据，**不是** `supports_model_selection`
+    //
+    // 两者给的 `id` 形状不同（会话内裸名 vs 目录 `provider/model`），并存必然
+    // 漂移（spec/backend/agent-chat-transports.md §10.5b）。两个方向不对称：
+    //
+    // | 能力 | 目录 id 形状 | CLI 目录能否共存 |
+    // | --- | --- | --- |
+    // | `SessionConfig`（ACP / Pi） | 裸名 | **否** —— 复合串会让 `set_config_option` 被拒 |
+    // | `PerTurn`（serve） | `provider/model` | **是** —— `model_slug_split` 就按这个形状拆 |
+    //
+    // 早先这里用 `supports_model_selection()`（`shows_controls()`，`PerTurn` 也为真）
+    // 做门控，等于把 serve 的 `models --verbose` 快速路径一并关掉 —— `PerTurn` 传输
+    // 又不是 `SessionConfig`，两条路径全被封，模型列表恒空。
+    //
+    // 为什么必须在**消费点**裁决，而不是只靠内置定义不填：
+    // `~/.neeko/config.json` 的 `agentOverrides` 是用户编辑时的整份快照，
+    // 内置定义改过之后旧快照仍会把 `--list-models` 带回来（实测：用户机器上
+    // Pi 的覆盖里存着 `["--list-models"]`）。让能力位做裁决，用户的真实自定义
+    // （改 command/args 等）不受影响。
+    let adapter = crate::agent::chat::adapter::adapter_for(&agent).ok();
+    let session_scoped = adapter
+        .as_ref()
+        .is_some_and(|a| a.supports_session_config());
+
+    if !session_scoped {
+        let listed = match adapter.as_ref() {
+            Some(a) => match a.list_models(&agent).await {
+                Ok(models) => Some(models),
+                // 该 transport 没有会话外目录（ACP / Pi）→ 继续走下一步。
+                Err(AppError::Unsupported(_)) => None,
+                // 命令真的执行失败 → **必须往上抛**，否则用户把「装坏了」看成
+                // 「本来就没有模型」。
+                Err(e) => return Err(e),
+            },
+            None => try_list_via_command(&agent).await?,
+        };
+        if let Some(models) = listed {
+            return Ok(ModelCatalogResult::Available { models });
+        }
     }
 
-    let session_scoped = crate::agent::chat::adapter::adapter_for(&agent)
-        .is_ok_and(|adapter| adapter.supports_model_selection());
-
-    Ok(if session_scoped {
+    Ok(if adapter.is_some_and(|a| a.supports_model_selection()) {
         ModelCatalogResult::SessionScoped
     } else {
         ModelCatalogResult::Unsupported
