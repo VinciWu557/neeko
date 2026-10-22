@@ -66,14 +66,25 @@ function ModelSelector({
               }
             }}
           />
-          <div className="model-dropdown show">
-            {chatAgents.length === 0 ? (
-              <div className="attach-empty">暂无可用的 chat agent</div>
-            ) : (
-              chatAgents.map((a) => (
+          {/*
+            空态提示放在 listbox **外面**：`role="listbox"` 只允许 option / group
+            子元素，塞一个文本 div 进去会被屏幕阅读器整段忽略。
+          */}
+          {chatAgents.length === 0 ? (
+            <div className="attach-empty">暂无可用的 chat agent</div>
+          ) : null}
+          <div className="model-dropdown show" role="listbox" aria-label="Agents">
+            {chatAgents.map((a) => {
+              // 选中态同时要能被屏幕阅读器读到 —— 与 `ModelList` /
+              // `ParamSelectors` 同一套语义（项目既有范式：`ActionPalette.tsx:94`）。
+              const isSelected = a.id === selectedAgent.id;
+              return (
                 <button
                   key={a.id}
-                  className={`model-option${a.id === selectedAgent.id ? ' selected' : ''}`}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`model-option${isSelected ? ' selected' : ''}`}
                   onClick={() => {
                     useEditorStore.getState().updateTab(tabKey, tabId, { agentId: a.id });
                     setOpen(false);
@@ -84,8 +95,8 @@ function ModelSelector({
                     <span className="model-opt-name">{displayName(a.name)}</span>
                   </span>
                 </button>
-              ))
-            )}
+              );
+            })}
           </div>
         </>
       )}

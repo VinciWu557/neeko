@@ -43,7 +43,7 @@ describe('ModelPicker 可写性门控', () => {
   /** 可写：列表项可点，回调真的触发。 */
   it('should let the user pick a model when the list is writable', () => {
     const { onChange } = renderPicker('writable');
-    const item = screen.getByRole('button', { name: /deepseek-flash/ });
+    const item = screen.getByRole('option', { name: /deepseek-flash/ });
     expect(item).toBeEnabled();
     fireEvent.click(item);
     expect(onChange).toHaveBeenCalled();
@@ -57,7 +57,7 @@ describe('ModelPicker 可写性门控', () => {
    */
   it('should disable every item when the list has no write channel', () => {
     const { onChange } = renderPicker('read-only');
-    const item = screen.getByRole('button', { name: /deepseek-flash/ });
+    const item = screen.getByRole('option', { name: /deepseek-flash/ });
     expect(item).toBeDisabled();
     fireEvent.click(item);
     expect(onChange).not.toHaveBeenCalled();
@@ -113,7 +113,7 @@ describe('ModelPicker 可写性门控', () => {
   it('should disable all items, not just the first', () => {
     renderPicker('read-only');
     for (const m of MODELS) {
-      const item = screen.getByRole('button', { name: new RegExp(m.name) });
+      const item = screen.getByRole('option', { name: new RegExp(m.name) });
       expect(item).toBeDisabled();
     }
   });

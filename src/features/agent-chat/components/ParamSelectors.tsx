@@ -81,23 +81,32 @@ function ConfigOptionSelector({ option, iconFor, disabled, onSelect }: ConfigOpt
               }
             }}
           />
-          <div className="param-dropdown show">
-            {option.options.map((o) => (
-              <button
-                key={o.value}
-                className={`param-option${o.value === selected ? ' selected' : ''}`}
-                onClick={() => {
-                  onSelect(option.id, o.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="param-opt-icon">{iconFor(o.value)}</span>
-                <span className="param-opt-info">
-                  <span className="param-opt-name">{o.name}</span>
-                  {o.description && <span className="param-opt-desc">{o.description}</span>}
-                </span>
-              </button>
-            ))}
+          <div className="param-dropdown show" role="listbox" aria-label={option.name}>
+            {option.options.map((o) => {
+              // 选中态必须同时可被屏幕阅读器读到 —— 只靠 `.selected` 的底色
+              // 等于「视觉用户知道在用哪个，读屏用户不知道」。与 `ModelList`
+              // 对齐同一套 listbox / option / aria-selected 语义。
+              const isSelected = o.value === selected;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`param-option${isSelected ? ' selected' : ''}`}
+                  onClick={() => {
+                    onSelect(option.id, o.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="param-opt-icon">{iconFor(o.value)}</span>
+                  <span className="param-opt-info">
+                    <span className="param-opt-name">{o.name}</span>
+                    {o.description && <span className="param-opt-desc">{o.description}</span>}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </>
       )}

@@ -78,33 +78,54 @@ export function ModelList({
       {/*
         禁用时必须说明原因：用户看到「一串灰模型」无法区分「会话还在建」
         与「这个 agent 不能切模型」—— 那是 R3 的变体：没反应且不知道为什么。
+
+        必须在 listbox **外面**：`role="listbox"` 只允许 option / group 作为子元素，
+        塞一个普通文本 div 进去会被屏幕阅读器整段忽略 —— 那正好是这条提示
+        要防的东西（「不知道为什么」）。
       */}
       {disabled && disabledHint ? <div className="attach-empty">{disabledHint}</div> : null}
-      {models.map((m) => (
-        <button
-          key={modelKeyOf(m)}
-          ref={selectedKey === modelKeyOf(m) ? selectedRef : undefined}
-          className={`param-option${selectedKey === modelKeyOf(m) ? ' selected' : ''}`}
-          disabled={disabled}
-          onClick={() => onSelect(m)}
-        >
-          <span className="param-opt-icon">
-            <ModelBadge modelId={m.id} modelName={m.name} />
-          </span>
-          <span className="param-opt-info">
-            <span className="param-opt-name">{displayName(m.name)}</span>
-            {/*
+      {/*
+        `role="listbox"` 不能省：下面每个条目是 `role="option"`，而 option 必须归属于
+        一个 listbox —— 否则屏幕阅读器读到的就是一串孤立条目，既念不出「共 N 项」，
+        也读不到选中态。项目内既有范式：`ActionPalette.tsx:94`。
+      */}
+      <div role="listbox" aria-label="Models">
+        {models.map((m) => {
+          // 选中判据**必须**走 `modelKeyOf`，不能是裸 id —— Pi 的 224 条模型只有
+          // 194 个唯一 id。用裸 id 时两行会同时报 `aria-selected="true"`，
+          // 屏幕阅读器念出两个「已选中」。这与 React key 用同一判据不是巧合：
+          // 二者问的是同一个问题「这是不是同一条」。
+          const isSelected = selectedKey === modelKeyOf(m);
+          return (
+            <button
+              key={modelKeyOf(m)}
+              ref={isSelected ? selectedRef : undefined}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              className={`param-option${isSelected ? ' selected' : ''}`}
+              disabled={disabled}
+              onClick={() => onSelect(m)}
+            >
+              <span className="param-opt-icon">
+                <ModelBadge modelId={m.id} modelName={m.name} />
+              </span>
+              <span className="param-opt-info">
+                <span className="param-opt-name">{displayName(m.name)}</span>
+                {/*
               这里曾拼 `provider · 200k ctx · free`。三者都不是模型条目的属性：
               provider 已并入 `name`（解析实现如此），上下文大小与免费标记在 ACP 里
               是 `model_config` 配置项，规范要求渲染在模型选择器**附近**而不是挤进
               同一行文本。改由下方 config 区呈现。
             */}
-            {(m.group ?? m.description) ? (
-              <span className="param-opt-desc">{m.group ?? m.description}</span>
-            ) : null}
-          </span>
-        </button>
-      ))}
+                {(m.group ?? m.description) ? (
+                  <span className="param-opt-desc">{m.group ?? m.description}</span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
     </>
   );
 }
