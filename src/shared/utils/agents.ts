@@ -2,7 +2,9 @@ import claudeCodeIcon from '../../assets/agents/claude-code.png';
 import cliIcon from '../../assets/agents/cli.svg';
 import codebuddyIcon from '../../assets/agents/codebuddy.svg';
 import codexIcon from '../../assets/agents/codex.png';
+import deepseekIcon from '../../assets/agents/deepseek.svg';
 import geminiIcon from '../../assets/agents/gemini.png';
+import glmIcon from '../../assets/agents/glm.svg';
 import grokIcon from '../../assets/agents/grok.ico';
 import mockAgentIcon from '../../assets/agents/mock-agent.png';
 import ompIcon from '../../assets/agents/omp.svg';
@@ -11,6 +13,17 @@ import piIcon from '../../assets/agents/pi.svg';
 import qoderIcon from '../../assets/agents/qoder.svg';
 import reasonixIcon from '../../assets/agents/reasonix.svg';
 
+/**
+ * 图标文件名 → 打包后的 URL。
+ *
+ * 一个资源只在这里 import 一次：Vite 只打包被 import 的文件，所以加图必须同步
+ * 在这里登记，否则文件进了仓库却不进产物（`deepseek.svg` / `glm.svg` 曾 staged
+ * 但零引用 = 白装）。
+ *
+ * 键名同时被**两类消费方**共用：
+ * 1. agent 配置的 `icon` 字段（`getAgentIconSrc`）；
+ * 2. 模型列表的厂商图标（`ModelBadge` 的 `VENDOR_ICON`）。
+ */
 const AGENT_ICONS: Record<string, string> = {
   'claude-code.png': claudeCodeIcon,
   'opencode.png': opencodeIcon,
@@ -23,6 +36,9 @@ const AGENT_ICONS: Record<string, string> = {
   'reasonix.svg': reasonixIcon,
   'grok.ico': grokIcon,
   'cli.svg': cliIcon,
+  // 模型厂商图标（不是 agent 图标）：模型列表按厂商显示品牌，见 `ModelBadge`。
+  'deepseek.svg': deepseekIcon,
+  'glm.svg': glmIcon,
   // MockAgent 复用应用自身图标（`neeko-icon.png` 的拷贝）—— 它没有专属品牌资源，
   // 而指向不存在的文件会让它在 agent 列表里显示为空白。
   'mock-agent.png': mockAgentIcon,
