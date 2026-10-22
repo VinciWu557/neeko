@@ -166,6 +166,26 @@ bool 会允许 `{config: true, per_turn: true}` 这种无意义状态。
 
 ### 3.2 模型引用（展示与可写分离）
 
+> **实施后修正（2026-08-24）**：P3 描述的「id 语义分裂」与取证不符。实际是
+> **每个传输的 id 语义各自匹配自己的写入路径**：
+>
+> | 来源 | `id` 形状 | 正确的写回 |
+> | --- | --- | --- |
+> | 会话内 `configOptions`（ACP / Pi） | 裸名 | `set_config_option` 的 value |
+> | 会话外 `--list-models`（serve） | `provider/model` | `Turn { model_id }` |
+> | 会话外 `--list-models`（Pi 表格） | `provider/model` | **不可写** |
+>
+> 所以真正的问题不是「语义分裂」，而是**跨来源误用**：旧实现 `if (configId)` 兜底
+> 让 serve 静默跳过（靠空值巧合），一旦残留选项让 `configId` 有值，复合串就会被
+> 喂进 `set_config_option`。`ModelTarget` 把三者的差异表达成类型。
+>
+> 实施中另外抓到两个真实缺陷（都由变异验证逼出）：
+> 1. `none` 传输被判定可写（`fromSession` 判在能力位之前）
+> 2. `per_turn` 传输在「残留选项」状态下走 `set_config_option`（serve 那条分支是
+>    空实现 `{}`，发了会被静默吞掉）
+>
+> 两者都修正为「能力位优先于来源」：`none` 永不可写、`per_turn` 永远走每轮参数。
+
 ```rust
 pub struct ModelRef {
     pub display: String,
@@ -251,7 +271,7 @@ MockAgent 是**进程内**的 ACP 实现（`run_mock_loop` 驱动任意 `AsyncRe
 | **3** | `CapabilityProbe`；**先跑 MockAgent**，再跑 4 个真实 adapter | 立刻抓出 `approvals: true` 但 deepseek 无实现 |
 | **4** | `ModelRef` 替换 `ModelInfo`（前后端）；会话外列表变 `ReadOnly` | 点选不可写的项在类型层就不可能 |
 | **5** | MockAgent 补 `category: "mode"` | 模式这条链有 mock 覆盖 |
-| **6** | `useAgentChat` 按 P6 拆分 | 从 819 行降到单职责钩子 |
+| **6** | `useAgentChat` 按 P6 拆分 | ✅ 819 → 484（基线下调 698 → 484） |
 
 **依赖**：1 → 2 → 3 必须顺序（3 依赖 1、2）。4、5 可与 3 并行。6 最后。
 
@@ -275,6 +295,72 @@ MockAgent 是**进程内**的 ACP 实现（`run_mock_loop` 驱动任意 `AsyncRe
 | `Unsupported.replace()` 改为静默接受 | `unsupported_refuses_data` |
 | `ModelRef::is_selectable()` 对 `ReadOnly` 返回 true | 点选不可写项的用例 |
 | 前端控件改回「凭数据非空推断」 | 静态护栏 |
+
+### 6.1 阶段 6 的实施记录（2026-08-24）
+
+`useAgentChat` **819 → 484 行**，拆成三个单元：
+
+| 单元 | 行数 | 唯一职责 |
+| --- | --- | --- |
+| `useTurnStream` | 292 | 话轮流：`turn_start` → 工具三件套 → `turn_end` / `session_done` |
+| `toolTurnOps`（纯函数） | 71 | 去重判定 + 计数归类（`bucketOfTool` / `recordToolStart`） |
+| `closeRunningTools`（纯 reducer） | — | 话轮结束时把 `running` 工具标 `done` |
+
+**接缝判据不是行数，是「改一处只影响一类事件」**：
+`user_input` / `proposed_plan` / `meta` 留在 `useAgentChat` —— 它们是**会话级**
+状态（换一轮不清零），不属话轮账本。
+
+**行为零漂移的验证方式**：用脚本从 `HEAD` 版本与新文件逐 case 提取归一化文本
+比对，11/12 完全一致；唯一差异是 `request_approval` 的 `break` → `return true`
+（`handle` 返回 `boolean` 后语义等价，已人工核对）。
+
+**变异验证 4/4**：
+
+| 变异 | 期望 |
+| --- | --- |
+| `turn_start` 不认领（`return false`） | 变红 |
+| `turn_end` 不关闭 running 工具 | 变红 |
+| 去掉 auto-approve 分支 | 变红 |
+| 未知事件误报已处理（`default` → `true`） | **5 条同时变红** |
+
+最后一条是拆分的**正确性前提**：若 `handle` 对未识别事件也返回 `true`，
+调用方那句 `if (turnStream.handle(ev)) return;` 会把 `user_input` / `meta` /
+`config_option_update` 整个吞掉 —— 表现是「计划卡片不出现、用量表不更新」，
+且没有任何报错。
+
+### 6.2 状态空间收敛（2026-08-24 第三轮）
+
+早期把可用性写成 `{phase, capability}` 两个可自由组合的字段。实测**只 4 种组合可达**，
+但类型允许 9 种 —— 于是 4 处消费点各自 `switch` 两个维度，必然漂移。
+
+收敛成 4 态 union（`shared/utils/modelTarget.ts`）：
+
+```
+no-config | per-turn | pending | ready
+```
+
+| 判据 | 函数 | 消费点 |
+| --- | --- | --- |
+| 合成（唯一入口） | `modelAvailabilityOf(config, phase)` | `useSessionConfigOptions` |
+| 是否显示选择器 | `showsModelPicker(a)` | `ChatComposer` |
+| 可写性三态 | `writabilityOf(a)` | `ChatComposer` → `ModelPicker` |
+| 写回目标 | `modelWriteOf(a, model)` | `useModelSelection` |
+
+**关键设计**：「不可写」不是 `ModelWrite` 的一个变体，而是**拿不到写回目标**（`null`）。
+于是「渲染说能点、写入拿不到目标」这个矛盾在类型层无法表达。
+
+变异 4/4：能力位不再优先于就绪度 / `pending` 报成 writable / `pending` 也能写 /
+`no-config` 也显示选择器 —— 全部变红。
+
+### 6.3 重复的不可变更新收成一个 reducer
+
+`tool_output` 与 `tool_end` 曾各 26 行「查找 → 逐层 map → 改命中块」。抽
+`updateToolBlock(prev, callId, update)` 后两个消费点只表达差异，`useTurnStream`
+300 → 270 行。
+
+变异 3/3：忽略 `blockIndex`（改错块）/ 找不到时也重建数组（破坏引用相等）/
+原地改 tool（不可变性）—— 全部变红，且**必须先补「同一消息两个 tool block」
+的用例**才能抓到第一条（原测试只覆盖单块）。
 
 ## 7. 不做的事
 
