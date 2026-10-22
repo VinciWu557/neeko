@@ -167,10 +167,14 @@ function ModelPicker({
     }
   }, []);
 
-  // 打开下拉框时聚焦搜索框
+  // 打开下拉框时聚焦搜索框。
+  //
+  // `preventScroll: true` 不是可选优化 —— 缺了它，聚焦会把列表滚回顶部（搜索框
+  // 在列表上方），把 `ModelList` 刚 `scrollIntoView` 到中间的选中项顶掉。表现就是
+  // 「自动定位不生效」：滚动确实发生了，只是紧接着被聚焦撤销。
   useEffect(() => {
     if (!open) return;
-    const timer = setTimeout(() => searchRef.current?.focus(), 50);
+    const timer = setTimeout(() => searchRef.current?.focus({ preventScroll: true }), 50);
     return () => clearTimeout(timer);
   }, [open]);
 
@@ -188,11 +192,7 @@ function ModelPicker({
   );
 
   const current = selected ?? null;
-  const displayNameLabel = current
-    ? displayName(current.name).length > 20
-      ? `${displayName(current.name).slice(0, 18)}…`
-      : displayName(current.name)
-    : 'Select model';
+  const displayNameLabel = current ? displayName(current.name) : 'Select model';
 
   return (
     <div className="param-selector-wrap">

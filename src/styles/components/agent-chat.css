@@ -303,9 +303,12 @@
   .send-btn.stop { background:transparent; color:var(--accent-red); cursor:pointer; opacity:1; }
 
   /* ── 选择器（Agent / 模型 / 模式 / 思考） ─────────────────────────────── */
-  .model-selector-wrap, .param-selector-wrap { position:relative; }
+  /* `min-width:0` 不能省：`.composer-left` 是 `flex-wrap` 容器，而 flex item 默认
+     `min-width:auto` = 不小于内容宽度。长模型名（`nowrap`）会把 wrap 撑宽、独佔一行
+     并溢出 `.wa-box`。给按钮加 `max-width:100%` 治不了 —— 它参照的正是那个被撑开的宽度。 */
+  .model-selector-wrap, .param-selector-wrap { position:relative; min-width:0; }
   /* 无边框无背景，hover 背景反馈（shadcn ghost） */
-  .model-selector-btn, .param-selector-btn { display:flex; align-items:center; gap:6px; height:28px; padding:0 8px 0 6px; background:transparent; border:none; border-radius:var(--radius-sm); font-size:12px; color:var(--text-primary); transition:background 150ms; cursor:pointer; }
+  .model-selector-btn, .param-selector-btn { display:flex; align-items:center; gap:6px; height:28px; padding:0 8px 0 6px; max-width:100%; background:transparent; border:none; border-radius:var(--radius-sm); font-size:12px; color:var(--text-primary); transition:background 150ms; cursor:pointer; }
   .model-selector-btn:hover, .param-selector-btn:hover { background:var(--bg-hover); }
   .model-icon { display:flex; color:var(--accent-blue); }
   /* param 选择器（build/plan、思考强度）收起态图标跟随文字色，与按钮文字一致 */
@@ -314,7 +317,10 @@
   .agent-badge-img { object-fit:contain; border-radius:4px; display:block; }
   .model-icon .agent-badge-img, .param-icon .agent-badge-img { width:16px; height:16px; }
   .model-name { max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .param-name { max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* 模型名不做主动截断：模型 id 是用户判断「我选了哪个模型」的唯一依据，
+     `Deepseek-V4.1-Flash` 恰好卡在旧阈值上被切成 `Deepseek-V4.1-Flas…`。
+     空间不够时先靠 `.composer-left` 的 flex-wrap 换行；真的超出整行宽度才降级省略。 */
+  .param-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .model-selector-btn.model { font-family:var(--font-mono); font-size:11px; }
   .model-chevron, .param-chevron { color:var(--text-muted); display:flex; }
 
@@ -335,8 +341,13 @@
   .model-dropdown-scroll { max-height:300px; overflow-y:auto; }
   .model-option, .param-option { display:flex; align-items:center; gap:8px; width:100%; border:none; background:transparent; color:var(--text-secondary); font-size:12px; padding:6px 8px; border-radius:var(--radius-sm); text-align:left; cursor:pointer; }
   .model-option:hover, .param-option:hover { background:var(--bg-hover); color:var(--text-primary); }
+  /* 选中态：底色 + 文字色都变。只改背景在深色主题下几乎看不出来，
+     而选中项是「我现在在跑哪个」的唯一指示 —— 必须一眼可辨。 */
+  .model-option.selected, .param-option.selected { background:rgba(var(--accent-blue-rgb),.08); background:color-mix(in srgb, var(--accent-blue) 8%, var(--bg-secondary)); color:var(--text-primary); }
+  .model-option.selected:hover, .param-option.selected:hover { background:rgba(var(--accent-blue-rgb),.13); background:color-mix(in srgb, var(--accent-blue) 13%, var(--bg-secondary)); }
+  .model-option.selected .model-opt-name, .param-option.selected .param-opt-name { color:var(--accent-blue); font-weight:500; }
   /* 选项图标跟随文字色（lucide 用 currentColor stroke；不用 --text-on-accent，其在部分主题下为纯白）。
-     选中态无特殊样式：不背景、不变色，与未选中一致，图标跟随文字默认色。 */
+     选中态见上方 `.param-option.selected`：底色 + 名字变色，图标不单独改。 */
   .model-opt-icon, .param-opt-icon { width:18px; height:18px; border-radius:5px; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:700; color:var(--text-secondary); flex:0 0 18px; }
   .model-opt-info, .param-opt-info { flex:1; min-width:0; display:flex; flex-direction:column; }
   .model-opt-name, .param-opt-name { font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
