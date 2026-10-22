@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import type { ConfigCapability, SessionConfigOption } from '@/shared/types/agentChat';
+import { modelAvailabilityOf, type ModelAvailability } from '@/shared/utils/modelTarget';
 
 import { setAgentConfigOption } from '../api/agentChatApi';
 
@@ -19,35 +20,17 @@ import { setAgentConfigOption } from '../api/agentChatApi';
  * 推送 `config_option_update`（典型场景：rate limit 时 fallback 换模型）。本地先改
  * 会让 UI 短暂显示一个 agent 并未接受的选项；等事件回来再更新则始终与真实状态一致。
  */
-/// 会话配置项的**三态**。
-///
-/// 三态而非「空数组 = 不支持」，因为两者在 UI 上完全不同：
-///
-/// | 真实处境 | 正确渲染 | 旧的二态实现 |
-/// | --- | --- | --- |
-/// | 传输不支持（`per_turn` / `none`） | 隐藏控件 | 隐藏（碰巧对了） |
-/// | 支持但会话还没建立 | 加载态 | **隐藏** —— 把「等一下」误报成「不支持」 |
-/// | 有配置项 | 正常渲染 | 正常 |
-export type SessionConfigPhase =
-  /** 传输不提供会话配置项（`ConfigCapability::None` / `PerTurn`）。 */
-  | 'unsupported'
-  /** 能力有，但 `session_start` 还没到（会话建立中）。 */
-  | 'loading'
-  /** 有配置项。 */
-  | 'ready';
-
-/** 前端渲染需要的三态视图（打包成一个对象，减少调用方的解构噪音）。 */
-export interface SessionConfigView {
-  phase: SessionConfigPhase;
-  supported: boolean;
-  capability: ConfigCapability;
-}
-
 export interface SessionConfigState {
   /** 当前会话的配置项（含模型列表）。非 `ready` 时为空数组。 */
   options: SessionConfigOption[];
-  /** 三态视图（打包成对象，调用方少解构几行）。 */
-  view: SessionConfigView;
+  /**
+   * 模型/配置项的**可用状态**（唯一判据，见 `shared/utils/modelTarget.ts`）。
+   *
+   * 这里直接给出 `ModelAvailability` 而不是 `{phase, capability}` 两字段：
+   * 后者是 9 种组合的自由空间（只 4 种可达），每个消费点都要自己 switch
+   * 两个维度 —— 4 处判据自然漂移。收成一个 union 后非法状态无法表达。
+   */
+  availability: ModelAvailability;
   /** 整体替换（`session_start` / `config_option_update` 都是全量语义）。 */
   replace: (options: SessionConfigOption[]) => void;
   /** 由 `SessionStart.capabilities.config` 设置（会话建立时调用一次）。 */
@@ -87,6 +70,14 @@ export function useSessionConfigOptions(
    * 在那之前 `phase` 是 `loading`，UI 显示加载态而不是隐藏控件。
    */
   const [capability, setCapabilityState] = useState<ConfigCapability>('session_config');
+  /**
+   * 握手是否已完成（`session_start` 到达过）。
+   *
+   * 用来把「还没收到握手」与「握手完成但 agent 没下发配置项」区分开 ——
+   * 前者是 `loading`，后者是 `ready`（空列表）。没有它，第二种会永久卡在
+   * `loading`，UI 表现为「模型列表永远灰着」。
+   */
+  const [handshaken, setHandshaken] = useState(false);
 
   const replace = useCallback((next: SessionConfigOption[]) => {
     // 协议要求整体替换：换模型可能连带改变 thought_level 的可选项，
@@ -115,6 +106,12 @@ export function useSessionConfigOptions(
       // 协议要求整体替换：换模型可能连带改变 thought_level 的可选项，
       // 局部合并会留下与真实状态不符的陈旧选项。
       setOptions(nextOptions ?? []);
+      // `session_start` 到达即「握手完成」—— 此后不会再有第二次握手事件。
+      // 没有这一行，`session_config` + 空 `config_options` 会让 `phase` 永久停在
+      // `loading`：模型列表永远灰、提示永远说 "Models are loading…"。
+      // 后端契约（`capability_probe`）要求声明 `SessionConfig` 就必须带配置项，
+      // 但前端不能依赖后端永远正确 —— 那正是 P1/P8 的教训。
+      setHandshaken(true);
     },
     [],
   );
@@ -130,23 +127,20 @@ export function useSessionConfigOptions(
 
   const reset = useCallback(() => {
     setOptions([]);
+    setHandshaken(false);
     // 回到「未知」而不是「不支持」—— `reset` 的语义是「换会话了」，
     // 新会话的能力还没到，此时断言 `none` 会让控件瞬间消失再出现。
     setCapabilityState('session_config');
   }, []);
 
-  // 三态推导：**只看能力位 + 是否已有选项**，不从选项非空反推能力。
-  const supported = capability === 'session_config';
-  const phase: SessionConfigPhase = !supported
-    ? 'unsupported'
-    : options.length > 0
-      ? 'ready'
-      : 'loading';
+  // 握手已完成 ⟺ `session_start` 到过，或选项已经来了（`config_option_update`
+  // 也可能先于握手到达，两者等价地说明「会话就绪」）。
+  const ready = handshaken || options.length > 0;
+  const availability = modelAvailabilityOf(capability, ready ? 'ready' : 'loading');
 
   return {
     options,
-    // 三态打包：`useAgentChat` 贴着 ratchet 线，逐字段解构会白占行数。
-    view: { phase, supported, capability } satisfies SessionConfigView,
+    availability,
     replace,
     setCapability,
     applySessionStart,

@@ -1,7 +1,6 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { ModelInfo } from '@/features/agent/api/agentApi';
 import { AGENT_CHAT_EVENT } from '@/shared/events';
 import { useEditorStore } from '@/shared/store/editorStore';
 import type { SequencedEvent } from '@/shared/types/agentChat';
@@ -18,19 +17,14 @@ import {
 import { loadCachedMessages } from '../components/messageCache';
 import {
   appendDelta,
-  clipToolOutput,
   nextBlockId,
   nextMsgId,
   type ChatMessage,
-  type ContextWindow,
   type CtxInfo,
-  type PendingUserInput,
 } from '../components/messageModel';
-import type { PendingApproval, ToolCard, WorkedSummary } from '../types';
+import type { PendingApproval } from '../types';
 import { formatChatTime } from '../utils/chatFormat';
-import { normalizeToolName } from '../utils/toolNames';
 
-import { appendBlock, appendCommandBlock, attachFileDiff, findToolBlock } from './streamReducers';
 import { useAgentSessionLifecycle } from './useAgentSessionLifecycle';
 import { useChatAgents } from './useChatAgents';
 import { useChatAttachments } from './useChatAttachments';
@@ -40,7 +34,10 @@ import { useMessagesCacheSync } from './useMessagesCacheSync';
 import { useMockEventSchedule } from './useMockEventSchedule';
 import { useModelSelection } from './useModelSelection';
 import { usePendingEventDrain } from './usePendingEventDrain';
+import { useSelectedModel } from './useSelectedModel';
 import { useSessionConfigOptions } from './useSessionConfigOptions';
+import { useSessionLevelEvents } from './useSessionLevelEvents';
+import { useTurnStream } from './useTurnStream';
 import { useVisibleChatSession } from './useVisibleChatSession';
 
 export interface UseAgentChatParams {
@@ -57,7 +54,7 @@ export interface UseAgentChatParams {
  * 组件层（AgentChatTabView）只保留 DOM refs、滚动跟随与 JSX 布局。
  */
 export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAgentChatParams) {
-  const { agentId, sessionId: initialSessionId } = data;
+  const { agentId, sessionId: initialSessionId, modelId: initialModelId } = data;
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadCachedMessages(tabId) ?? []);
 
   // 流式增量 rAF 批处理：text/reasoning delta 合并为一个动画帧 flush，避免逐 token 全量 setState
@@ -82,14 +79,18 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     toRequestFiles,
   } = useChatAttachments();
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  const [pendingUserInput, setPendingUserInput] = useState<PendingUserInput | null>(null);
   const [streaming, setStreaming] = useState(false);
   // 可对话 agent 列表 + 选中项派生（只读，与消息流无关）。
   const { chatAgents, selectedAgent } = useChatAgents(agentId);
-  const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null);
+  // 选中模型的状态 + 跨 tab 切换持久化 + 切 agent 时的清理（见该 hook 文档）。
+  const {
+    selectedModel,
+    setSelectedModel,
+    clear: clearSelectedModel,
+  } = useSelectedModel(tabKey, tabId, initialModelId);
   const {
     options: sessionConfigOptions,
-    view: sessionConfigView,
+    availability,
     replace: replaceConfigOptions,
     applySessionStart,
     setOption: setConfigOption,
@@ -97,8 +98,25 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   } = useSessionConfigOptions(() => sessionIdRef.current);
   /** 工作目录：后端 `AgentContext.project_id` 即项目绝对路径（cwd）。 */
   const [ctxInfo, setCtxInfo] = useState<CtxInfo | null>(null);
-  const [proposedPlan, setProposedPlan] = useState<string | null>(null);
-  const [contextWindow, setContextWindow] = useState<ContextWindow | null>(null);
+
+  /** 往消息流里追加一条系统消息（错误提示等）。 */
+  const appendSystemMessage = useCallback((text: string) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: nextMsgId(), role: 'system', blocks: [{ kind: 'text', id: nextBlockId(), text }] },
+    ]);
+  }, []);
+
+  /** 会话级事件（上下文 / 用户输入 / 计划 / 用量 / 错误）。见该 hook 文档。 */
+  const {
+    handle: sessionLevelHandle,
+    state: { pendingUserInput, setPendingUserInput, proposedPlan, contextWindow },
+  } = useSessionLevelEvents({
+    onContextInit: setCtxInfo,
+    flushDeltas,
+    setStreaming,
+    appendSystemMessage,
+  });
 
   // 切换 **agent** 时清空 sessionId：复用旧会话会把新 agent 的请求路由过去
   // ——日志实证：agent 切到 opencode 后 agent_stream 仍继续了 mockAgent 的旧会话。
@@ -112,7 +130,6 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   //    首次到达时 `useSelectedModelSync` 会把它填成首个模型 —— 若把模型纳入
   //    清空判据，这第一次自动选中就会把刚拿到的 `sessionId` 清掉，于是后续
   //    所有 `text_delta` 都因 sid 不匹配被丢弃，界面停在 thinking。
-  //    （ACP 侥幸没踩到：它的 `SessionStart` 早于 sid 赋值到达。）
   // 消息缓存同步 / 通知可见性事实源上报（两个单职责小 hook，见各自文件头）。
   useMessagesCacheSync(tabId, messages);
   useVisibleChatSession(data.sessionId);
@@ -121,303 +138,71 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   const { buffer: bufferPending, drain: drainPending, setApplier } = usePendingEventDrain();
 
   // 会话生命周期（agent 变了就换会话 + 预开静默会话）抽成子 hook：
-  // 本文件贴着组件规模 ratchet 线，且那段逻辑与消息流无耦合。
+  // 本文件贴着 ratchet 线，且那段逻辑与消息流无耦合。落定后的 agent id 必须
+  // 给生命周期与模型列表（`data.agentId` 新建 tab 时为空）。
+  const settled = selectedAgent.id;
+  // `useCallback` 必需：lifecycle 的切换 effect 把 `onAgentChanged` 排除在依赖外
+  //（「由调用方保证稳定」）。内联箭头会让那条 effect 每渲染都跑一遍。
+  const handleAgentChanged = useCallback(() => {
+    resetConfigOptions();
+    // 旧 agent 的模型 id 对新 agent 可能不存在，且会被当成 `modelId` 传给
+    // `agent_chat_open`（ACP 在 create() 里预切）—— 必须一并丢掉。
+    clearSelectedModel();
+  }, [resetConfigOptions, clearSelectedModel]);
   const { sessionIdRef, primeAgentBaseline } = useAgentSessionLifecycle({
-    agentId,
+    agentId: settled,
     projectId,
     tabKey,
     tabId,
     initialSessionId,
     modelId: selectedModel?.id,
-    onAgentChanged: resetConfigOptions,
+    onAgentChanged: handleAgentChanged,
     flushPendingEvents: drainPending,
   });
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
-  const turnStartRef = useRef<number | null>(null);
-  const turnCountsRef = useRef({ ran: 0, edited: 0, searched: 0 });
-  const turnToolsRef = useRef<ToolCard[]>([]);
-  const approvalSeqRef = useRef(0);
-  const autoApproveToolsRef = useRef<Set<string>>(new Set());
-
-  // 模型列表 + 双向同步（UI→会话 下发 / 会话→UI 跟随）整体收在一个 hook 里。
   const { models, selectModel } = useModelSelection({
-    agentId,
+    agentId: settled,
     sessionConfigOptions,
+    availability,
     selectedModel,
     setSelectedModel,
     setConfigOption,
   });
 
+  const turnStream = useTurnStream({
+    setMessages,
+    setStreaming,
+    flushDeltas,
+    pushDelta,
+    setPendingApproval,
+    sessionIdRef,
+  });
+
   const applyEvent = useCallback(
     (seqEv: SequencedEvent) => {
       const ev = seqEv;
+      // 话轮流（turn_* / tool_* / command_run / session_done）先处理。
+      if (turnStream.handle(ev)) return;
+      // 会话级状态（跨话轮存活）：上下文 / 用户输入 / 计划 / 用量 / 错误。
+      if (sessionLevelHandle(ev)) return;
       switch (ev.type) {
         case 'session_start':
           applySessionStart(ev.capabilities.config, ev.config_options);
           break;
         case 'config_option_update':
           // agent 主动变更（如 rate limit fallback 换模型）。协议要求视为**全量**：
-          // 整体替换，不做局部 patch —— 换模型可能连带改变 thought_level 的可选项，
-          // 局部更新会留下陈旧选项。
+          // 整体替换，不做局部 patch —— 换模型可能连带改变 thought_level 的可选项。
           replaceConfigOptions(ev.config_options);
-          break;
-        case 'context_init':
-          setCtxInfo({
-            projectName: ev.project_name,
-            env: ev.env,
-            projectPath: ev.project_id,
-          });
-          break;
-        case 'turn_start':
-          flushDeltas();
-          turnStartRef.current = Date.now();
-          turnCountsRef.current = { ran: 0, edited: 0, searched: 0 };
-          turnToolsRef.current = [];
-          break;
-        case 'text_delta':
-          // 累积到 rAF 批处理 buffer，动画帧内一次性 flush
-          pushDelta('text', ev.delta);
-          break;
-        case 'reasoning_delta':
-          pushDelta('reasoning', ev.delta);
-          break;
-        case 'tool_start': {
-          // 先冲刷滞留在 rAF 批处理 buffer 中的文本增量，再追加工具块：
-          // 保持「先输出意图 → 再执行工具」的流式时序（后端一次 burst 连发时，
-          // 文本 delta 尚未到动画帧 flush，若不冲刷会出现「工具在前、文本在后」）。
-          flushDeltas();
-          // 去重：同一 callId 可能因后端重复 ToolStart（如 opencode serve 的
-          // pending + running）而到达两次。话轮内已记工具（turnToolsRef）已含该
-          // callId 即视为重复，忽略本次，避免同一任务渲染成两行。
-          const alreadySeen = turnToolsRef.current.some((t) => t.callId === ev.call_id);
-          if (alreadySeen) {
-            break;
-          }
-          // 工具名归一化：opencode 等框架的原始名（edit/read/exec_command…）
-          // 对齐标准名，保证 WorkRows 卡片分派与话轮计数在 live 流和历史
-          // 恢复（historyConvert）两条链路行为一致。
-          const normName = normalizeToolName(ev.name);
-          const tool: ToolCard = {
-            callId: ev.call_id,
-            name: normName,
-            title: ev.title,
-            status: 'running',
-          };
-          if (normName === 'read_file' || normName === 'search' || normName === 'grep') {
-            turnCountsRef.current.searched += 1;
-          } else if (normName === 'edit_file' || normName === 'write_file') {
-            turnCountsRef.current.edited += 1;
-          } else {
-            turnCountsRef.current.ran += 1;
-          }
-          turnToolsRef.current.push(tool);
-          // 按时序追加 tool block：末尾消息是 assistant 则追加，否则新建消息
-          setMessages((prev) =>
-            appendBlock(prev, {
-              kind: 'tool',
-              id: nextBlockId(),
-              tool,
-            }),
-          );
-          break;
-        }
-        case 'tool_output':
-          // 跨消息查找对应 tool block 并累积 output
-          setMessages((prev) => {
-            const found = findToolBlock(prev, ev.call_id);
-            if (!found) return prev;
-            return prev.map((m, i) =>
-              i === found.msgIndex
-                ? {
-                    ...m,
-                    blocks: m.blocks.map((b, j) =>
-                      j === found.blockIndex && b.kind === 'tool'
-                        ? {
-                            ...b,
-                            tool: { ...b.tool, output: clipToolOutput(b.tool.output, ev.output) },
-                          }
-                        : b,
-                    ),
-                  }
-                : m,
-            );
-          });
-          break;
-        case 'tool_end':
-          // 跨消息查找对应 tool block 并更新 status
-          setMessages((prev) => {
-            const found = findToolBlock(prev, ev.call_id);
-            if (!found) return prev;
-            return prev.map((m, i) =>
-              i === found.msgIndex
-                ? {
-                    ...m,
-                    blocks: m.blocks.map((b, j) =>
-                      j === found.blockIndex && b.kind === 'tool'
-                        ? {
-                            ...b,
-                            tool: {
-                              ...b.tool,
-                              status: ev.status === 'failed' ? 'failed' : 'done',
-                            },
-                          }
-                        : b,
-                    ),
-                  }
-                : m,
-            );
-          });
-          break;
-        case 'command_run':
-          // 同 tool_start：先冲刷文本增量，保证命令前的说明文本渲染在其卡片之前。
-          flushDeltas();
-          turnCountsRef.current.ran += 1;
-          turnToolsRef.current.push({
-            callId: ev.call_id,
-            name: 'run_command',
-            title: ev.cmd,
-            status: 'running',
-          });
-          // 按时序追加 command tool block
-          setMessages((prev) =>
-            appendCommandBlock(prev, {
-              kind: 'tool',
-              id: nextBlockId(),
-              tool: {
-                callId: ev.call_id,
-                name: 'run_command',
-                title: ev.cmd,
-                status: 'running',
-              },
-            }),
-          );
-          break;
-        case 'todo_updated':
-          // 保持时序：追加非文本块前先冲刷文本增量。
-          flushDeltas();
-          // 按时序追加 todos block
-          setMessages((prev) =>
-            appendBlock(prev, {
-              kind: 'todos',
-              id: nextBlockId(),
-              todos: ev.todos,
-            }),
-          );
-          break;
-        case 'file_diff':
-          // 保持时序：追加 diff 块前先冲刷文本增量。
-          flushDeltas();
-          setMessages((prev) => attachFileDiff(prev, ev.path, ev.diff));
-          break;
-        case 'request_approval':
-          approvalSeqRef.current += 1;
-          if (autoApproveToolsRef.current.has(ev.tool)) {
-            void (async () => {
-              const sid = sessionIdRef.current;
-              if (!sid) return;
-              try {
-                await approveAgentCall(sid, ev.call_id, true);
-              } catch {
-                /* auto-approve failed; ignore */
-              }
-            })();
-            break;
-          }
-          setPendingApproval({
-            callId: ev.call_id,
-            tool: ev.tool,
-            title: ev.title,
-            prompt: ev.prompt,
-            diff: ev.diff,
-            cmd: ev.cmd,
-            index: approvalSeqRef.current,
-            total: approvalSeqRef.current,
-          });
-          break;
-        case 'user_input':
-          setPendingUserInput({ turnId: ev.turn_id, prompt: ev.prompt, options: ev.options });
-          break;
-        case 'proposed_plan':
-          setProposedPlan(ev.plan);
-          break;
-        case 'meta':
-          if (ev.usage) {
-            setContextWindow({
-              used: ev.usage.input_tokens ?? 0,
-              total: (ev.usage.input_tokens ?? 0) + (ev.usage.output_tokens ?? 0),
-              model: ev.model ?? 'unknown',
-            });
-          }
-          break;
-        case 'turn_end':
-          flushDeltas();
-          setStreaming(false);
-          // 把所有 running 状态的 tool block 标记为 done
-          setMessages((prev) =>
-            prev.map((m) => ({
-              ...m,
-              blocks: m.blocks.map((b) =>
-                b.kind === 'tool' && b.tool.status === 'running'
-                  ? { ...b, tool: { ...b.tool, status: 'done' } }
-                  : b,
-              ),
-            })),
-          );
-          if (turnStartRef.current != null) {
-            const durationMs = Date.now() - turnStartRef.current;
-            const summary: WorkedSummary = {
-              durationMs,
-              ran: turnCountsRef.current.ran,
-              edited: turnCountsRef.current.edited,
-              searched: turnCountsRef.current.searched,
-              tools: turnToolsRef.current.map((t) => ({
-                ...t,
-                status: t.status === 'failed' ? 'failed' : 'done',
-              })),
-            };
-            turnStartRef.current = null;
-            if (summary.tools.length > 0) {
-              // 按时序追加 worked block
-              setMessages((prev) =>
-                appendBlock(prev, {
-                  kind: 'worked',
-                  id: nextBlockId(),
-                  worked: summary,
-                }),
-              );
-            }
-          }
-          break;
-        case 'session_done':
-          flushDeltas();
-          setStreaming(false);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: nextMsgId(),
-              role: 'system',
-              blocks: [{ kind: 'text', id: nextBlockId(), text: `会话已结束（${ev.reason}）` }],
-            },
-          ]);
-          break;
-        case 'error':
-          flushDeltas();
-          setStreaming(false);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: nextMsgId(),
-              role: 'system',
-              blocks: [{ kind: 'text', id: nextBlockId(), text: `⚠ ${ev.message} (${ev.code})` }],
-            },
-          ]);
           break;
         default:
           break;
       }
     },
-    [flushDeltas, pushDelta, replaceConfigOptions, applySessionStart],
+    // **依赖只允许稳定引用**（§15）：把 `sessionLevel` 整个容器放进来会让
+    // `meta` 事件（每个话轮都发）触发 listen 重注册 —— 那正是「模型列表永久
+    // 停在 loading」的成因。
+    [replaceConfigOptions, applySessionStart, turnStream, sessionLevelHandle],
   );
 
   // 让 `flushPendingEvents`（定义在前）总能拿到最新的 applyEvent。
@@ -476,9 +261,9 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     projectId,
     applyEvent,
     sessionIdRef,
-    turnStartRef,
-    turnCountsRef,
-    turnToolsRef,
+    turnStartRef: turnStream.refs.turnStart,
+    turnCountsRef: turnStream.refs.turnCounts,
+    turnToolsRef: turnStream.refs.turnTools,
   });
 
   useEffect(() => {
@@ -504,9 +289,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     ]);
     setInput('');
     setStreaming(true);
-    turnStartRef.current = Date.now();
-    turnCountsRef.current = { ran: 0, edited: 0, searched: 0 };
-    turnToolsRef.current = [];
+    turnStream.reset();
     try {
       // 附件 → 请求字段的映射只有一处（`useChatAttachments.toRequestFiles`）：
       // 文件取 `id`（路径），skill 取 `name`。消费侧不要再自己拼。
@@ -586,7 +369,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   const handleAllowSession = useCallback(() => {
     const pending = pendingApproval;
     if (!pending) return;
-    autoApproveToolsRef.current.add(pending.tool);
+    turnStream.autoApproveTools.current.add(pending.tool);
     setPendingApproval(null);
     void handleApproval(true);
   }, [pendingApproval, handleApproval]);
@@ -659,6 +442,9 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     // 会话状态
     messages,
     streaming,
+    /** 话轮账本 refs —— `useWorkingStatus`（回合指示器）读已进行时长与活动工具。 */
+    turnStartRef: turnStream.refs.turnStart,
+    turnToolsRef: turnStream.refs.turnTools,
     pendingApproval,
     pendingUserInput,
     proposedPlan,
@@ -679,7 +465,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     setSelectedModel,
     selectModel,
     sessionConfigOptions,
-    sessionConfigView,
+    modelAvailability: availability,
     handleSetConfigOption: setConfigOption,
     selectedAgent,
     // actions

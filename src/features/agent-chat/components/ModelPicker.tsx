@@ -2,12 +2,38 @@ import { ChevronDown, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ModelConfigOption, ModelInfo } from '@/features/agent/api/agentApi';
+import { modelKeyOf, type ModelWritability } from '@/shared/utils/modelTarget';
 import { noAutocorrectProps } from '@/ui/inputDefaults';
 
 import { AgentBadge } from './AgentBadge';
 import { displayName } from './constants';
 import { ModelBadge } from './ModelBadge';
 import { ModelConfigSection } from './ModelConfigSection';
+import { ModelList } from './ModelList';
+
+/** 不可写时的用户可见原因。措辞必须区分「等一下就好」与「一直如此」。 */
+const MODEL_LIST_HINT: Record<ModelWritability, string | undefined> = {
+  writable: undefined,
+  loading: 'Models are loading…',
+  'read-only': 'Read-only list for this agent',
+};
+
+/**
+ * **空列表**时的文案 —— 按「为什么空」分三种，不能共用一句。
+ *
+ * - `loading`：会话正在建立，列表还没到（等一下就好）
+ * - `read-only`：这个 agent 不提供模型选择（一直如此）
+ * - `writable`：列表本应可写却空 —— 只能是真的没有模型
+ *
+ * 早期只有一句 `Models appear once the session is ready`，对 `read-only` 的
+ * agent（如 deepseek）是误导：它永远不会出现。
+ */
+const MODEL_LIST_EMPTY: Record<ModelWritability | 'filtered', string> = {
+  filtered: 'No matching models',
+  loading: 'Models appear once the session is ready',
+  'read-only': 'This agent offers no model selection',
+  writable: 'No models available',
+};
 
 // ─── 模型搜索 Hook ───
 // 高内聚：只负责搜索状态和过滤逻辑
@@ -81,55 +107,6 @@ function ModelSearchInput({ value, onChange, onClear, onEscape, inputRef }: Mode
 }
 
 // ─── 模型列表 ───
-// 高内聚：只负责渲染模型列表
-// 低耦合：通过 props 接收数据和回调，不关心搜索逻辑
-interface ModelListProps {
-  models: ModelInfo[];
-  /** 选中项的**组合键**（`id|provider`）。不能用裸 id —— 同一 id 会出现在多个 provider 下。 */
-  selectedKey: string | undefined;
-  onSelect: (model: ModelInfo) => void;
-  emptyMessage?: string;
-}
-
-function ModelList({
-  models,
-  selectedKey,
-  onSelect,
-  emptyMessage = 'No models available',
-}: ModelListProps) {
-  if (models.length === 0) {
-    return <div className="attach-empty">{emptyMessage}</div>;
-  }
-
-  return (
-    <>
-      {models.map((m) => (
-        <button
-          key={`${m.id}|${m.group ?? ''}`}
-          className={`param-option${selectedKey === `${m.id}|${m.group ?? ''}` ? ' selected' : ''}`}
-          onClick={() => onSelect(m)}
-        >
-          <span className="param-opt-icon">
-            <ModelBadge modelId={m.id} modelName={m.name} />
-          </span>
-          <span className="param-opt-info">
-            <span className="param-opt-name">{displayName(m.name)}</span>
-            {/*
-              这里曾拼 `provider · 200k ctx · free`。三者都不是模型条目的属性：
-              provider 已并入 `name`（解析实现如此），上下文大小与免费标记在 ACP 里
-              是 `model_config` 配置项，规范要求渲染在模型选择器**附近**而不是挤进
-              同一行文本。改由下方 config 区呈现。
-            */}
-            {(m.group ?? m.description) ? (
-              <span className="param-opt-desc">{m.group ?? m.description}</span>
-            ) : null}
-          </span>
-        </button>
-      ))}
-    </>
-  );
-}
-
 // ─── 模型选择器（容器组件）───
 // 高内聚：负责协调子组件，处理下拉框开关逻辑
 // 低耦合：组合 useModelSearch + ModelSearchInput + ModelList
@@ -140,6 +117,7 @@ function ModelPicker({
   agent,
   configOptions = [],
   onConfigChange,
+  writability = 'writable',
   disabled,
 }: {
   models: ModelInfo[];
@@ -156,6 +134,20 @@ function ModelPicker({
   configOptions?: ModelConfigOption[];
   /** 配置项变更（下发 `session/set_config_option`）。 */
   onConfigChange?: (configId: string, value: string | boolean) => void;
+  /**
+   * 模型列表的**可写性**（三态，而不是两个布尔）。
+   *
+   * - `'writable'` —— 可点，写回按 `modelWriteOf` 走
+   * - `'loading'`  —— 会话建立中，暂时禁用（提示"等一下就好"）
+   * - `'read-only'`—— 该 agent 无写通道，永久禁用（提示"只读"）
+   *
+   * 两个布尔能表达 4 种组合，其中 `{writable:true, pending:true}` 无意义 ——
+   * 与 `ConfigCapability` 用枚举而非 bool 组合是同一个理由。
+   *
+   * 与 `disabled` 不同：`disabled` 是**此刻**不能操作（流式中），
+   * 本项是**这份列表**能不能写。流式中仍允许展开浏览。
+   */
+  writability?: ModelWritability;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -255,16 +247,11 @@ function ModelPicker({
             />
             <ModelList
               models={filteredModels}
-              selectedKey={current ? `${current.id}|${current.group ?? ''}` : undefined}
+              selectedKey={current ? modelKeyOf(current) : undefined}
               onSelect={handleSelect}
-              emptyMessage={
-                models.length > 0
-                  ? 'No matching models'
-                  : // ACP 的模型列表只存在于会话内（协议没有独立的「列模型」方法），
-                    // 会话在发送第一条消息时才建立。说「没有模型」是误导 —— 真相是
-                    // 「还没有会话」。见 spec/backend/agent-acp-model-selection.md §7。
-                    'Send a message first — models appear once a session exists'
-              }
+              disabled={writability !== 'writable'}
+              disabledHint={MODEL_LIST_HINT[writability]}
+              emptyMessage={MODEL_LIST_EMPTY[models.length > 0 ? 'filtered' : writability]}
             />
             {/*
               模型相关配置项紧随模型列表：它们是「这个模型怎么跑」的参数，

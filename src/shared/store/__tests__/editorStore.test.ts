@@ -319,6 +319,94 @@ describe('editorStore.updateTab — file tab 只读字段透传（mergeTabData�
   });
 });
 
+/**
+ * `agent-chat` tab 的字段必须能**落盘并读回**。
+ *
+ * # 为什么这条不能用 mock 写
+ *
+ * `mergeTabData` 是**穷举重建**（逐字段 `in p ? p.x : d.x`），不是浅合并 ——
+ * 漏一个字段就静默丢弃它。早先 `modelId` / `resume*` 就是这样丢的：
+ *
+ * - `useSelectedModel` 的 effect 每次渲染都写 `modelId`，但**永远读不回来**
+ *   → 切 tab 回来 `initialModelId` 为空 → 落到 `models[0]`
+ *   → 「切个 tab 我的模型自己变了」那个 bug 实际没修好；
+ * - `useChatRestore` 的「一次性消费」写入同样无效。
+ *
+ * 而当时那条 `ModelSelectionPersistence.test.tsx` 把整个 `@/shared/store/editorStore`
+ * mock 掉了 —— 它保护的是 mock，不是行为。**护栏必须跑真 store。**
+ */
+describe('editorStore.updateTab — agent-chat 字段落盘（mergeTabData 穷举白名单）', () => {
+  beforeEach(() => {
+    useEditorStore.setState({ tabs: {}, editorLayout: {} });
+  });
+
+  function seedChatTab() {
+    useEditorStore.getState().addTab({
+      id: 'tc1',
+      scope: { kind: 'workspace', session: mkSession('p1') },
+      title: 'Agent Chat',
+      data: { kind: 'agent-chat', agentId: 'pi' },
+    });
+  }
+
+  const chatData = () =>
+    useEditorStore.getState().tabs[SPACE]!.tabs.find((t) => t.id === 'tc1')!.data;
+
+  it('modelId 写入后必须能读回（否则模型选择持久化失效）', () => {
+    seedChatTab();
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { modelId: 'deepseek-flash' });
+
+    const data = chatData();
+    expect(data.kind === 'agent-chat' && data.modelId).toBe('deepseek-flash');
+  });
+
+  it('写 modelId 不得顺手抹掉 agentId / sessionId', () => {
+    seedChatTab();
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { sessionId: 'sid-1' });
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { modelId: 'm1' });
+
+    const data = chatData();
+    if (data.kind !== 'agent-chat') throw new Error('kind changed');
+    expect(data.agentId).toBe('pi');
+    expect(data.sessionId).toBe('sid-1');
+    expect(data.modelId).toBe('m1');
+  });
+
+  /**
+   * 显式写 `undefined` 是**清除**语义（切 agent 丢模型、恢复标记一次性消费）。
+   * 用 `p.x !== undefined` 做判据会让清除也生效不了。
+   */
+  it('显式写 undefined 必须能清除已有值', () => {
+    seedChatTab();
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { modelId: 'm1' });
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { modelId: undefined });
+
+    const data = chatData();
+    expect(data.kind === 'agent-chat' && data.modelId).toBeUndefined();
+  });
+
+  it('resume 目标同样必须能落盘与清除（useChatRestore 一次性消费）', () => {
+    seedChatTab();
+    useEditorStore.getState().updateTab(SPACE, 'tc1', {
+      resumeConversationId: 'conv-1',
+      resumeNativeSessionId: 'native-1',
+    });
+    let data = chatData();
+    if (data.kind !== 'agent-chat') throw new Error('kind changed');
+    expect(data.resumeConversationId).toBe('conv-1');
+    expect(data.resumeNativeSessionId).toBe('native-1');
+
+    useEditorStore.getState().updateTab(SPACE, 'tc1', {
+      resumeConversationId: undefined,
+      resumeNativeSessionId: undefined,
+    });
+    data = chatData();
+    if (data.kind !== 'agent-chat') throw new Error('kind changed');
+    expect(data.resumeConversationId).toBeUndefined();
+    expect(data.resumeNativeSessionId).toBeUndefined();
+  });
+});
+
 describe('editorStore.unpinTabTo — 拖拽 unpin 到指定组', () => {
   beforeEach(() => {
     useEditorStore.setState({

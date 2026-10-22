@@ -70,7 +70,7 @@ export interface SessionConfigOption {
          * Pi 的模型里 `deepseek-v4-pro` 会出现在多个 provider 下（实测
          * 224 条 / 194 唯一）。丢掉它 → React key 重复 + 搜不到 provider。
          */
-        group?: string | null;
+        group?: string;
       }[]
     | null;
 }
@@ -86,7 +86,10 @@ export function modelsFromConfigOptions(options: SessionConfigOption[] | undefin
     id: item.value,
     name: item.name,
     description: item.description ?? undefined,
-    group: item.group ?? null,
+    // 与 `ModelInfo.group` 同为「缺省即无分组」：统一用 `undefined`，
+    // 不用 `null` —— 后端 `Option<String>` 配 `skip_serializing_if` 时字段是
+    // **缺失**（`undefined`），两种表示混用会让 `modelKeyOf` 的判据分叉。
+    group: item.group ?? undefined,
   }));
 }
 

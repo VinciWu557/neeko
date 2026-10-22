@@ -99,6 +99,22 @@ export interface AgentChatTabData {
   agentId?: string;
   /** 会话 ID（用于恢复）。 */
   sessionId?: string;
+  /**
+   * 用户选中的模型 id（`ModelInfo.id`）。
+   *
+   * # 为什么必须持久化到 tab data
+   *
+   * `useAgentChat` 的 `selectedModel` 是组件局部 state，而 `PaneContent` 只渲染
+   * `activeTab` —— 切到别的 tab 就卸载，切回来重新挂载时它是 `null`。此时
+   * `useSelectedModelSync` 会落到 `models[0]`（agent 下发的首选），**不是**用户
+   * 上次选的那个。
+   *
+   * 会话内 `configOptions.current_value` 看似能救，但它只在 `ready` 时可信，且
+   * 静默会话重建期间拿不到 —— 用户看到的是「切个 tab 我的模型就变了」。
+   *
+   * 只存 id：`name` / `group` 等展示字段由列表按 id 反查，避免存一份会过期的快照。
+   */
+  modelId?: string;
   /** Histor 恢复目标：conversation 域的会话 id（拉取历史渲染）。 */
   resumeConversationId?: string;
   /** Histor 恢复目标：agent 原生会话 id（agent_chat_resume 接续写入）。 */

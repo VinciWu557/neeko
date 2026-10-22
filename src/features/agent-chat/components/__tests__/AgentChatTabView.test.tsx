@@ -17,10 +17,15 @@ function mkSession(projectId: string) {
 }
 
 vi.mock('@/features/agent/api/agentApi', () => ({
+  // `mockAgent` 必须在列表里：切 agent 的用例会切到它。
+  // 列表里没有的 id 会走 fallback（`useChatAgents` → 列表首项），
+  // 那是**真实行为**（用户选不到列表外的 agent），但会让「切 agent」这类
+  // 用例测不到它想测的东西 —— 落定 id 没变，会话自然不会重置。
   listChatAgents: vi.fn(() =>
     Promise.resolve([
       { id: 'opencode', name: 'OpenCode', version: '1.0' },
       { id: 'claude-code', name: 'Claude Code', version: '1.0' },
+      { id: 'mockAgent', name: 'Mock Agent', version: '1.0' },
     ]),
   ),
   listAgentModels: vi.fn(() => Promise.resolve([])),
@@ -1067,5 +1072,74 @@ describe('AgentChatTabView', () => {
       expect(insertAgentInput(TAB_SESSION, 't-wt-dup', 'wrong unit')).toBe(false);
       expect(deliverOn(wtSession, 't-wt-dup', 'right unit')).toBe(true);
     });
+  });
+
+  /**
+   * **`session_start` 必须能被收到，且事件监听器只能注册一次。**
+   *
+   * 事故（2026-08-24 实测，Pi 与 opencode 同时中招）：`useTurnStream` 返回对象
+   * 字面量（每次渲染新建）→ `applyEvent` 的 useCallback 身份每渲染变 →
+   * `listen` 的 useEffect 依赖它 → 每次渲染 unlisten + listen →
+   * **最早到达的 `session_start` 落进这个窗口** → `handshaken` 恒 false →
+   * 模型列表永久停在 "Models appear once the session is ready"。
+   *
+   * 两条断言缺一不可：
+   * - 「只注册一次」直接钉住重建（这是根因）
+   * - 「模型列表出现」钉住可观测结果（这是用户看到的）
+   *
+   * 变异验证：把 `useTurnStream` 的 `useMemo` 去掉 → 两条都变红。
+   */
+  it('registers the event listener once and renders the models from session_start', async () => {
+    await renderView();
+    await waitFor(() => expect(mockListen).toHaveBeenCalled());
+
+    // 根因：监听器不得因渲染而重建
+    expect(mockListen).toHaveBeenCalledTimes(1);
+
+    emitEvent({
+      type: 'session_start',
+      session_id: 's1',
+      agent: 'opencode',
+      capabilities: {
+        config: 'session_config',
+        approvals: true,
+        commands: false,
+        resume: false,
+      },
+      config_options: [
+        {
+          id: 'model',
+          name: 'Model',
+          category: 'model',
+          current_value: 'gpt-5',
+          options: [{ value: 'gpt-5', name: 'GPT-5' }],
+        },
+      ],
+    } as StreamEvent);
+
+    // 可观测结果：pending 文案消失（说明 handshaken 置位），列表可展开
+    expect(screen.queryByText('Models appear once the session is ready')).not.toBeInTheDocument();
+  });
+
+  /**
+   * 流式中的回合指示器必须是 `WorkingIndicator`（Working… + 时长 + 当前工具），
+   * 不是硬编码的 "Thinking..."。
+   *
+   * `WorkingIndicator` 组件（含 5 条单测）此前**零消费点** —— 主界面一直用内联
+   * 的 `<span>Thinking...</span>`，组件白写。接线后用户能看到：回合已进行
+   * 多久、正在跑哪个工具 —— 而不是一个永远不变的 "Thinking"。
+   *
+   * 变异验证：退回内联 Thinking → 本用例变红。
+   */
+  it('shows the working indicator with duration while streaming', async () => {
+    await renderView();
+    // 走真实路径触发 streaming：输入并发送（handleSend 会 setStreaming(true)）
+    const ta = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: 'hello' } });
+    fireEvent.click(screen.getByTitle('Send'));
+
+    expect(await screen.findByTestId('working-indicator')).toBeInTheDocument();
+    // 旧文案不得再出现
+    expect(screen.queryByText('Thinking...')).not.toBeInTheDocument();
   });
 });

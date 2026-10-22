@@ -2,8 +2,8 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { SessionConfigOption } from '@/shared/types/agentChat';
+import type { ModelAvailability } from '@/shared/utils/modelTarget';
 
-import type { SessionConfigView } from '../../hooks/useSessionConfigOptions';
 import ChatComposer from '../ChatComposer';
 
 /**
@@ -30,7 +30,7 @@ const MODE_OPTION: SessionConfigOption = {
   ],
 };
 
-function renderComposer(view: SessionConfigView, options: SessionConfigOption[]) {
+function renderComposer(view: ModelAvailability, options: SessionConfigOption[]) {
   return render(
     <ChatComposer
       input=""
@@ -79,16 +79,13 @@ describe('ChatComposer 能力位门控', () => {
    * 变异验证：把 `configWritable` 短路成 `true` → 本用例变红。
    */
   it('should render the mode selector only when the session config is writable', () => {
-    const { unmount } = renderComposer(
-      { phase: 'ready', supported: true, capability: 'session_config' },
-      [MODE_OPTION],
-    );
+    const { unmount } = renderComposer('ready', [MODE_OPTION]);
     expect(hasModeSelector()).toBe(true);
     unmount();
 
     // 能力位说不可写：即便**选项还在**（残留），也不能渲染 ——
     // 那就是「显示了控件、点选静默无操作」（R3 禁止的组合）。
-    renderComposer({ phase: 'unsupported', supported: false, capability: 'none' }, [MODE_OPTION]);
+    renderComposer('no-config', [MODE_OPTION]);
     expect(hasModeSelector()).toBe(false);
   });
 
@@ -97,9 +94,7 @@ describe('ChatComposer 能力位门控', () => {
    * 但**模型选择器仍在**（走每轮请求参数）。
    */
   it('should hide config controls but keep the model picker for per_turn', () => {
-    renderComposer({ phase: 'unsupported', supported: false, capability: 'per_turn' }, [
-      MODE_OPTION,
-    ]);
+    renderComposer('per-turn', [MODE_OPTION]);
     expect(hasModeSelector()).toBe(false);
     // 模型选择器**仍在**：per_turn 走每轮请求参数。
     expect(hasModelPicker()).toBe(true);
@@ -112,9 +107,7 @@ describe('ChatComposer 能力位门控', () => {
    * 变 `ready`，`unsupported` 永远不会。这条只钉住「不闪出不存在的控件」。
    */
   it('should not render config controls while loading', () => {
-    renderComposer({ phase: 'loading', supported: true, capability: 'session_config' }, [
-      MODE_OPTION,
-    ]);
+    renderComposer('pending', [MODE_OPTION]);
     expect(hasModeSelector()).toBe(false);
   });
 });

@@ -26,6 +26,11 @@ const VENDOR_ICON: Partial<Record<ModelVendor, string>> = {
   google: 'gemini.png',
   opencode: 'opencode.png',
   xiaomi: 'mimo.png',
+  // 有品牌资源的厂商一律用真 logo（比语义兜底图标信息量大）。
+  // 加图时必须在 `shared/utils/agents.ts` 的 `AGENT_ICONS` 里同时登记，
+  // 否则 Vite 不打包该文件 → `<img>` 加载失败后静默回落到兜底图标。
+  deepseek: 'deepseek.svg',
+  zhipu: 'glm.svg',
 };
 
 /** 没有品牌资源时的语义兜底（按厂商的“气质”选一个稳定图标）。 */

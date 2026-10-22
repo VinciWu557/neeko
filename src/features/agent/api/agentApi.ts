@@ -1,36 +1,15 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 import type { AgentConfig } from '@/shared/types';
+import type { ModelInfo } from '@/shared/types/agent';
 import type { SessionConfigOption } from '@/shared/types/agentChat';
 import { getAgentIconSrc as getPresetIconSrc } from '@/shared/utils/agents';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
-/** Information about a model supported by an agent. */
-/**
- * 一个可选的模型条目 —— 与后端 `ModelInfo` 及 ACP `SessionConfigSelectOption` 一一对应。
- *
- * 早先这里还有 `provider_id` / `provider_name` / `context_window` /
- * `supported_reasoning_efforts` / `default_reasoning_effort` / `is_free`，全部由
- * opencode 的私有输出解析而来。它们不是模型条目的属性：ACP 用
- * `category: "model_config"`（上下文大小等）与 `"thought_level"`（推理档位）的
- * **会话配置项**表达，走 `configOptions` 而非模型列表。
- */
-export interface ModelInfo {
-  /** 模型标识。语义**不透明**：可能是 `provider/model` 复合串，也可能是 `default` 别名。 */
-  id: string;
-  /** 展示名（opencode 的解析实现会把 provider 前缀并入这里）。 */
-  name: string;
-  /** 可选说明。 */
-  description?: string;
-  /**
-   * 可选**分组标识** —— 当 `id` 在列表内不唯一时，与它一起构成主键。
-   *
-   * Pi 的 rpc 列表里 `deepseek-v4-pro` 会同时出现在多个 provider 下
-   * （实测 224 条 / 194 唯一 id）。React key 与选中判定都必须用
-   * `id|group` 组合，否则会重复 key、多行同时高亮。
-   */
-  group?: string | null;
-}
+// `ModelInfo` 住在 `@/shared/types/agent`（跨 feature 共用，`shared/` 层
+// 不得反向依赖 `features/`）。这里重导出以保持既有 import 零改动。
+
+export type { ModelInfo };
 
 export function listAgents(): Promise<AgentConfig[]> {
   return invoke<AgentConfig[]>('list_agents');

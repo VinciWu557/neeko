@@ -4,9 +4,9 @@ import type { ChangeEvent, KeyboardEvent } from 'react';
 import type { ModelConfigOption, ModelInfo } from '@/features/agent/api/agentApi';
 import type { AgentConfig } from '@/shared/types/agent';
 import type { SessionConfigOption } from '@/shared/types/agentChat';
+import { showsModelPicker, writabilityOf } from '@/shared/utils/modelTarget';
+import type { ModelAvailability } from '@/shared/utils/modelTarget';
 import { noAutocorrectProps } from '@/ui/inputDefaults';
-
-import type { SessionConfigView } from '../hooks/useSessionConfigOptions';
 
 import ContextWindowMeter from './ContextWindowMeter';
 import type { Attachment } from './messageModel';
@@ -23,15 +23,15 @@ interface ChatComposerProps {
   /** ACP 会话配置项（模型列表 + model_config 控件的来源）。 */
   sessionConfigOptions?: SessionConfigOption[];
   /**
-   * 配置项的**三态视图**（`unsupported` / `loading` / `ready` + 能力位）。
+   * 模型/配置项的**可用状态**（`ModelAvailability` 四态 union）。
    *
    * 不能只凭 `sessionConfigOptions` 是否为空推断 —— 那个二态把「传输不支持」
    * 与「会话还没建立」压成同一个结果，后者应显示加载态而非隐藏控件。
    *
-   * `capability` 不能压成 `supported` 布尔：`per_turn`（serve）与 `none` 都
-   * 不可写，但**前者的模型选择器仍有意义**（走每轮请求参数）。
+   * 也不能拆成两个字段（`capability` + `phase`）：那是 9 种组合的自由空间，
+   * 只 4 种可达，每个消费点都要自己 switch 两个维度 —— 四份判据必然漂移。
    */
-  sessionConfigView?: SessionConfigView;
+  sessionConfigView?: ModelAvailability;
   selectedModel: ModelInfo | null;
   selectedAgent: { id: string; name: string; icon?: string | null };
   contextWindow: { used: number; total: number; model: string } | null;
@@ -151,15 +151,13 @@ export default function ChatComposer({
   onConfigChange,
   sessionConfigView,
 }: ChatComposerProps) {
-  // 模式与推理档位都来自会话配置项；agent 不提供时**整个选择器消失**
-  //（显示一个点不动的控件比不显示更糟，见各自的提取函数文档）。
-  //
-  // **能力的判据是能力位，不是数据是否非空**：`supported` 为 false
-  // 时即便恰好有残留选项也不渲染 —— 那会让用户点一个发不出去的控件（R3）。
-  const configWritable =
-    sessionConfigView?.supported === true && sessionConfigView.phase === 'ready';
-  // 模型选择器看能力位原值：`per_turn` 也显示（走每轮请求参数）。
-  const showModelPicker = sessionConfigView?.capability !== 'none';
+  // 三个判据全部从**同一个 union** 派生（`shared/utils/modelTarget.ts`）。
+  // 早期它们各自 switch `{phase, capability}` 两个维度 —— 四份实现必然漂移，
+  // 曾出现「渲染说能点、写入拿不到目标」的矛盾。
+  // 配置类控件（模式/档位/model_config）只能走 `set_config_option`。
+  const configWritable = sessionConfigView === 'ready';
+  // 模型列表：`no-config` 隐藏，其余显示（不可写时禁用并给出原因）。
+  const showModelPicker = showsModelPicker(sessionConfigView ?? 'no-config');
   const mode = configWritable ? modeOptionOf(sessionConfigOptions) : null;
   const thoughtLevel = configWritable ? thoughtLevelOptionOf(sessionConfigOptions) : null;
   return (
@@ -219,6 +217,7 @@ export default function ChatComposer({
                 agent={selectedAgent}
                 configOptions={configWritable ? modelConfigOptionsOf(sessionConfigOptions) : []}
                 onConfigChange={onConfigChange}
+                writability={writabilityOf(sessionConfigView ?? 'no-config')}
                 disabled={streaming}
               />
             )}

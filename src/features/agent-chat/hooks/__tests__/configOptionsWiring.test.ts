@@ -50,8 +50,12 @@ describe('configOptions wiring', () => {
    */
   it('should reset options when the session context is invalidated', () => {
     const source = codeOnly(readFileSync(HOOK, 'utf8'));
-    // effect 在 lifecycle hook 里，通过 onAgentChanged 回调把 resetConfigOptions 接进去
-    expect(source).toContain('onAgentChanged: resetConfigOptions');
+    // effect 在 lifecycle hook 里，通过 onAgentChanged 回调把清理动作接进去。
+    // 这里只断言**接线存在**；「切 agent 真的清空了配置项与模型」由行为测试
+    // `useAgentSessionLifecycle.test.ts` 与 `useSelectedModel.test.ts` 覆盖 ——
+    // 早先这条断言写死 `onAgentChanged: resetConfigOptions` 字符串，一旦清理
+    // 动作变成多个（还要清模型）就误报，属 §10.6 那类「静态护栏只能防整段删除」。
+    expect(source).toMatch(/onAgentChanged:\s*handleAgentChanged/);
     const lifecycle = codeOnly(readFileSync(LIFECYCLE, 'utf8'));
     expect(lifecycle).toContain('onAgentChanged?.()');
   });
@@ -116,5 +120,30 @@ describe('session invalidation key', () => {
     expect(body).toContain('sessionIdRef.current = undefined');
     // 后端必须被告知（否则每切一次泄漏一个 agent 子进程）
     expect(body).toContain('cancelAgentStream(');
+  });
+
+  /**
+   * **`useTurnStream` 的返回值必须是稳定引用** —— 否则事件监听器每次渲染都重建。
+   *
+   * 事故链（2026-08-24 实测）：
+   *
+   * ```
+   * useTurnStream 返回对象字面量（每次渲染新建）
+   *   → useAgentChat 的 applyEvent 依赖它 → useCallback 身份每渲染变
+   *   → listen 的 useEffect 依赖 applyEvent → 每次渲染 unlisten + listen
+   *   → session_start（最早到达的事件）落进这个窗口 → 永远收不到握手
+   *   → handshaken 恒 false → 模型列表永久停在 "Models appear once the session is ready"
+   * ```
+   *
+   * 症状是「Pi 和 opencode 都看不到模型列表」—— 通用链路断裂，不是某个 adapter 的事。
+   *
+   * 变异验证：把 `useMemo` 去掉、直接返回对象字面量 → 本用例变红。
+   */
+  it('should return a stable container from useTurnStream', () => {
+    const source = codeOnly(readFileSync('src/features/agent-chat/hooks/useTurnStream.ts', 'utf8'));
+    // 返回语句必须被 `useMemo` 包住，不能是裸对象字面量
+    expect(source).toMatch(/return\s+useMemo\(/);
+    // 且不得存在「return { ... }」形态（那正是回归的样子）
+    expect(source).not.toMatch(/return\s*\{\s*\n\s*handle,/);
   });
 });

@@ -11,6 +11,7 @@ import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { useAgentChat } from '../hooks/useAgentChat';
 import { useAgentInputRegistration } from '../hooks/useAgentInputRegistration';
 import { useOpenAgentFile } from '../hooks/useOpenAgentFile';
+import { useWorkingStatus } from '../hooks/useWorkingStatus';
 
 import ApprovalPanel from './ApprovalPanel';
 import AttachFilePicker from './AttachFilePicker';
@@ -19,6 +20,7 @@ import MessageList from './MessageList';
 import ProposedPlanCard from './ProposedPlanCard';
 import ResumeList from './ResumeList';
 import UserInputPanel from './UserInputPanel';
+import WorkingIndicator from './WorkingIndicator';
 
 export { clearMessageCache } from './messageCache';
 
@@ -61,12 +63,14 @@ export default function AgentChatTabView({
     selectedModel,
     selectModel,
     sessionConfigOptions,
-    sessionConfigView,
+    modelAvailability,
     handleSetConfigOption,
     selectedAgent,
     handleSend,
     handleApproval,
     handleAllowSession,
+    turnStartRef,
+    turnToolsRef,
     handleCancelTurn,
     handleUserInput,
     handleStop,
@@ -83,6 +87,9 @@ export default function AgentChatTabView({
   const [attachFiles, setAttachFiles] = useState<FileNode[]>([]);
   const [attachFilesLoading, setAttachFilesLoading] = useState(false);
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
+
+  // 回合指示器数据源（时长 + 活动工具）：从 turnStream 的 ref 账本派生。
+  const working = useWorkingStatus(streaming, turnStartRef, turnToolsRef);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   /// 滚动容器（.wa-chat）—— MessageList 虚拟器据此计算可见窗口
@@ -222,10 +229,7 @@ export default function AgentChatTabView({
           )}
 
           {streaming && (
-            <div className="working-indicator">
-              <div className="working-dot" />
-              <span>Thinking...</span>
-            </div>
+            <WorkingIndicator durationMs={working.durationMs} activeTool={working.activeTool} />
           )}
 
           <div ref={chatEndRef} />
@@ -260,7 +264,7 @@ export default function AgentChatTabView({
         chatAgents={chatAgents}
         models={models}
         sessionConfigOptions={sessionConfigOptions}
-        sessionConfigView={sessionConfigView}
+        sessionConfigView={modelAvailability}
         selectedModel={selectedModel}
         selectedAgent={selectedAgent}
         contextWindow={contextWindow}

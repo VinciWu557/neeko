@@ -4,7 +4,7 @@ import {
   type ChatMessage,
   type ContentBlock,
 } from '../components/messageModel';
-import type { FileStat } from '../types';
+import type { FileStat, ToolCard } from '../types';
 import { formatChatTime } from '../utils/chatFormat';
 import { diffStats } from '../utils/diffHighlight';
 import { withParagraphBreak } from '../utils/messageContent';
@@ -136,4 +136,63 @@ export function appendCommandBlock(prev: ChatMessage[], block: ContentBlock): Ch
       ts: formatChatTime(new Date()),
     },
   ];
+}
+
+/**
+ * 话轮结束时把所有 `running` 的工具块标记为 `done`.
+ *
+ * # 为什么需要
+ *
+ * 工具块的 `done` 通常由 `tool_end` 事件给出。但 agent 崩溃、被取消、或
+ * 直接 `turn_end` 而不发 `tool_end` 时（实测 opencode serve 的取消路径），
+ * 卡片会一直转圈。
+ *
+ * 这是纯 reducer（输入输出都是数组），所以能被密集单测 —— 变异验证：
+ * 删掉 `status === 'running'` 判据会把**已完成**的块也改写（丢掉 `failed`）。
+ */
+export function closeRunningTools(prev: ChatMessage[]): ChatMessage[] {
+  return prev.map((m) => ({
+    ...m,
+    blocks: m.blocks.map((b) =>
+      b.kind === 'tool' && b.tool.status === 'running'
+        ? { ...b, tool: { ...b.tool, status: 'done' } }
+        : b,
+    ),
+  }));
+}
+
+/**
+ * 就地改写某条 `callId` 的 tool block（**跨消息**定位）。
+ *
+ * # 为什么需要
+ *
+ * `tool_output`（累积输出）与 `tool_end`（更新状态）用的是同一套 26 行结构：
+ * 查找 → 逐层 map → 只改命中那一块。两处复制会漂移 —— 比如一处加上「找不到
+ * 就新建」，另一处没加，行为就不一致了。
+ *
+ * 收成一个「取旧 tool、返回新 tool」的入口后：
+ * - 定位逻辑只有一份（`findToolBlock` 已抽，这里再加一层不可变更新）；
+ * - 两个消费点只表达**差异**（改 output vs 改 status）；
+ * - 找不到时原样返回，不会凭空造块。
+ *
+ * @param update 把旧 `tool` 映射成新 `tool`（纯函数，不得原地改）。
+ */
+export function updateToolBlock(
+  prev: ChatMessage[],
+  callId: string,
+  update: (tool: ToolCard) => ToolCard,
+): ChatMessage[] {
+  const found = findToolBlock(prev, callId);
+  if (!found) return prev;
+  const { msgIndex, blockIndex } = found;
+  return prev.map((m, i) =>
+    i === msgIndex
+      ? {
+          ...m,
+          blocks: m.blocks.map((b, j) =>
+            j === blockIndex && b.kind === 'tool' ? { ...b, tool: update(b.tool) } : b,
+          ),
+        }
+      : m,
+  );
 }

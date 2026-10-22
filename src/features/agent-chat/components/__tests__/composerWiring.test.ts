@@ -106,4 +106,27 @@ describe('composer wiring', () => {
     expect((DRAIN.match(/pendingRef\.current = \[\];/g) ?? []).length).toBe(1);
     expect(HOOK).not.toContain('pendingEventsRef');
   });
+
+  /**
+   * **会话生命周期与模型列表必须用「落定后」的 agent id，不是 `data.agentId`。**
+   *
+   * 新建 Chat tab 时 `data.agentId` 是 `undefined`。`useChatAgents` 会 fallback
+   * 到列表首项（UI 显示正常），但若把原始的 `undefined` 传给这两个 hook：
+   *
+   * - `openSilentSession` 直接 return → **会话永不建立** →
+   *   `SessionStart.config_options` 永不到达 → 模型列表一直空
+   * - `useAgentModels(undefined)` 直接 return → 目录也不拉
+   *
+   * 表现就是「看不到任何模型」。2026-08-24 实测踩过。
+   *
+   * 变异验证：把 `agentId: settledAgentId` 改回 `agentId` → 本用例变红。
+   */
+  it('should pass the settled agent id to the session and model hooks', () => {
+    expect(HOOK).toContain('const settled = selectedAgent.id');
+    // 两个消费点都必须用落定值
+    const sessionCall = HOOK.slice(HOOK.indexOf('useAgentSessionLifecycle({'));
+    expect(sessionCall.slice(0, 200)).toContain('agentId: settled,');
+    const modelCall = HOOK.slice(HOOK.indexOf('useModelSelection({'));
+    expect(modelCall.slice(0, 200)).toContain('agentId: settled,');
+  });
 });

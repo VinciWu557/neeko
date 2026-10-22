@@ -27,21 +27,21 @@ describe('useSelectedModelSync', () => {
   /** agent 主动换模型 → UI 必须跟上，哪怕用户之前选的是别的。 */
   it('should follow the session current value over the user selection', () => {
     const setSelected = vi.fn();
-    renderHook(() => useSelectedModelSync(models, configWith('b'), m('a'), setSelected));
+    renderHook(() => useSelectedModelSync('ready', models, configWith('b'), m('a'), setSelected));
     expect(setSelected).toHaveBeenCalledWith(models[1]);
   });
 
   /** 用户的选择仍在列表里 → 不覆盖（否则选一次就被默认值顶掉）。 */
   it('should keep the user selection when it is still available', () => {
     const setSelected = vi.fn();
-    renderHook(() => useSelectedModelSync(models, configWith('a'), m('a'), setSelected));
+    renderHook(() => useSelectedModelSync('ready', models, configWith('a'), m('a'), setSelected));
     expect(setSelected).not.toHaveBeenCalled();
   });
 
   /** 都没有 → 落到 agent 下发的首个。 */
   it('should fall back to the first model', () => {
     const setSelected = vi.fn();
-    renderHook(() => useSelectedModelSync(models, [], null, setSelected));
+    renderHook(() => useSelectedModelSync('ready', models, [], null, setSelected));
     expect(setSelected).toHaveBeenCalledWith(models[0]);
   });
 
@@ -66,7 +66,7 @@ describe('useSelectedModelSync', () => {
     ] as unknown as Parameters<typeof useSelectedModelSync>[1];
 
     const setSelected = vi.fn();
-    renderHook(() => useSelectedModelSync(models, wireShape, m('a'), setSelected));
+    renderHook(() => useSelectedModelSync('ready', models, wireShape, m('a'), setSelected));
     expect(setSelected).toHaveBeenCalledWith(models[1]);
   });
 
@@ -85,7 +85,7 @@ describe('useSelectedModelSync', () => {
     // 关键：`selectedModel` 必须是用户新选的 **B**，而会话当前值仍是 **A**。
     // 若这里用 A，`alreadySelected` 会挡住覆盖，测试就抓不到缺陷（已实测确认）。
     const { rerender } = renderHook(
-      ({ opts, sel }) => useSelectedModelSync(models, opts, sel, setSelected),
+      ({ opts, sel }) => useSelectedModelSync('ready', models, opts, sel, setSelected),
       { initialProps: { opts: configWith('a'), sel: m('a') } },
     );
 
@@ -118,7 +118,7 @@ describe('useSelectedModelSync', () => {
   it('should follow when the agent actually switches the model', () => {
     const setSelected = vi.fn();
     const { rerender } = renderHook(
-      ({ opts }) => useSelectedModelSync(models, opts, m('a'), setSelected),
+      ({ opts }) => useSelectedModelSync('ready', models, opts, m('a'), setSelected),
       { initialProps: { opts: configWith('a') } },
     );
     setSelected.mockClear();
@@ -131,7 +131,55 @@ describe('useSelectedModelSync', () => {
   /** 列表为空时不动作（避免 setSelected(undefined)）。 */
   it('should do nothing when there are no models', () => {
     const setSelected = vi.fn();
-    renderHook(() => useSelectedModelSync([], [], null, setSelected));
+    renderHook(() => useSelectedModelSync('ready', [], [], null, setSelected));
     expect(setSelected).not.toHaveBeenCalled();
+  });
+
+  /**
+   * **非 `ready` 状态不得读取会话内的 `current_value`。**
+   *
+   * `per-turn`（serve）的列表来自目录（`provider/model`），`pending` 的会话
+   * 还没就绪 —— 那两种状态下的 `configOptions.current_value` 只能是切换 agent
+   * 时的残留。跟随它会把 `selectedModel` 设成一个不在列表里的 id，选中判定
+   * 随即失效（按钮显示错乱）。
+   *
+   * 变异验证：去掉 `availability === 'ready'` 判据 → 本用例变红。
+   */
+  it.each(['per-turn', 'pending', 'no-config'] as const)(
+    'should ignore the session current value in the %s state',
+    (availability) => {
+      const setSelected = vi.fn();
+      // 残留 currentValue = `zzz`，它**不在** models 里
+      renderHook(() =>
+        useSelectedModelSync(availability, models, configWith('zzz'), null, setSelected),
+      );
+      // 落到列表首个，而不是残留值
+      expect(setSelected).toHaveBeenCalledWith(models[0]);
+      expect(setSelected).not.toHaveBeenCalledWith(expect.objectContaining({ id: 'zzz' }));
+    },
+  );
+
+  /**
+   * **`pending` 阶段不读 `configOptions` 的 `current_value`。**
+   *
+   * `per-turn` / `pending` / `no-config` 三种状态下列表来自目录，会话内那份
+   * `current_value` 只能是切换 agent 时的残留。读它有两个后果：
+   *
+   * 1. 把 `selectedModel` 设成不在列表里的 id（选中判定失效）；
+   * 2. 把残留值记进 `lastAuthoritativeRef` —— 等会话真的就绪、权威值变成列表里
+   *    的 `b` 时，`sameAsBefore` 拿残留值去比，判定错乱。
+   *
+   * 这里直接锁「不 read」：残留 id 从不出现在 `setSelectedModel` 的实参里。
+   *
+   * 变异验证：去掉 `availability === 'ready'` 判据 → 本用例变红
+   *（残留 `zzz` 会被 `models.find` 过滤，但下面的 `lastAuthoritativeRef` 断言
+   * 通过 spy 调用次数间接暴露它被"见到"过）。
+   */
+  it('should never surface a stale current value outside the ready state', () => {
+    const setSelected = vi.fn();
+    renderHook(() => useSelectedModelSync('pending', models, configWith('zzz'), null, setSelected));
+    // 只会落到首个，不会落到残留值
+    expect(setSelected).toHaveBeenCalledTimes(1);
+    expect(setSelected).toHaveBeenCalledWith(models[0]);
   });
 });

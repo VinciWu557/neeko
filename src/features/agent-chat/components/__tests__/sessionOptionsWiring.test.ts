@@ -97,18 +97,36 @@ describe('session option driven selectors', () => {
    * 配置类控件才看 `supported`。
    */
   it('should keep the model picker for per_turn transports but hide config controls', () => {
-    expect(CHAT).toContain('showModelPicker');
-    expect(CHAT).toContain("sessionConfigView?.capability !== 'none'");
+    // 模型列表与配置类控件的判据**不同**：前者 `no-config` 才隐藏，
+    // 后者只有 `ready` 才渲染。两者都从同一个 union 派生。
+    expect(CHAT).toContain('showsModelPicker(');
+    expect(CHAT).toContain("sessionConfigView === 'ready'");
   });
 
-  /** 三态必须真的被区分：`loading` 不能与 `unsupported` 同路。 */
-  it('should treat loading and unsupported as different states', () => {
+  /**
+   * 可用状态是**一个 union**，不是 `{phase, capability}` 两个字段的笛卡尔积。
+   *
+   * 后者是 9 种组合的自由空间（只 4 种可达），每个消费点都要自己 switch
+   * 两个维度 —— 四份判据必然漂移，曾出现「渲染说能点、写入拿不到目标」。
+   *
+   * 变异验证：把 hook 改回暴露 `{phase, capability}` → 本用例变红。
+   */
+  it('should expose one availability union, not two orthogonal fields', () => {
     const HOOK = readFileSync(resolve(ROOT, 'agent-chat/hooks/useSessionConfigOptions.ts'), 'utf8');
-    expect(HOOK).toContain("'unsupported'");
-    expect(HOOK).toContain("'loading'");
-    expect(HOOK).toContain("'ready'");
-    // 能力位是唯一判据：`!supported` 直接短路成 unsupported
-    expect(HOOK).toMatch(/const supported = capability === 'session_config'/);
+    expect(HOOK).toContain('modelAvailabilityOf(');
+    expect(HOOK).toContain('availability: ModelAvailability');
+    // 不得再各自暴露两个维度让消费方自己组合
+    expect(HOOK).not.toContain('view: { phase, capability }');
+  });
+
+  /** 每个判据都必须是 union 上的**全函数**（switch 穷举、无 default 兜底）。 */
+  it('should derive every judgement from the same union exhaustively', () => {
+    const UTIL = readFileSync(resolve(ROOT, '../shared/utils/modelTarget.ts'), 'utf8');
+    for (const fn of ['writabilityOf', 'modelWriteOf']) {
+      expect(UTIL).toContain(`export function ${fn}(`);
+    }
+    // 不可写不是某个变体，而是「拿不到写回目标」
+    expect(UTIL).not.toContain("'read_only'");
   });
 
   /**

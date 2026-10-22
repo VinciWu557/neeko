@@ -158,3 +158,22 @@ export interface ContextWindow {
   total: number;
   model: string;
 }
+
+/**
+ * `meta` 事件 → 用量条数据；没有 `usage` 时返回 `null`（不渲染用量条）。
+ *
+ * `total` 是**已用**：input + output（不是 context window 上限 —— 那个值
+ * `Usage` 事件装不下，见 `design.md`「压缩/切换/导出/统计不做」）。
+ */
+export function contextWindowOf(ev: {
+  usage?: { input_tokens?: number | null; output_tokens?: number | null } | null;
+  model?: string | null;
+}): ContextWindow | null {
+  if (!ev.usage) return null;
+  const used = ev.usage.input_tokens ?? 0;
+  return {
+    used,
+    total: used + (ev.usage.output_tokens ?? 0),
+    model: ev.model ?? 'unknown',
+  };
+}

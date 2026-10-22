@@ -202,8 +202,23 @@ function mergeTabData(data: TabData, partial: Partial<TabData>): TabData {
       const d = data as AgentChatTabData;
       return {
         kind: 'agent-chat' as const,
+        // 逐字段 presence 合并 —— 每个字段必须单独出现，漏一个就是
+        // 「写进去了但读不回来」：`useSelectedModel` 的 effect 写 `modelId`、
+        // `useChatRestore` 写 resume 目标，三者都靠这里落盘。
+        //
+        // `'x' in p` 而不是 `p.x !== undefined`：显式写 `undefined` 是
+        // **清除**语义（切 agent 丢模型、恢复标记一次性消费），必须能落盘。
         agentId: 'agentId' in p ? (p.agentId as string | undefined) : d.agentId,
         sessionId: 'sessionId' in p ? (p.sessionId as string | undefined) : d.sessionId,
+        modelId: 'modelId' in p ? (p.modelId as string | undefined) : d.modelId,
+        resumeConversationId:
+          'resumeConversationId' in p
+            ? (p.resumeConversationId as string | undefined)
+            : d.resumeConversationId,
+        resumeNativeSessionId:
+          'resumeNativeSessionId' in p
+            ? (p.resumeNativeSessionId as string | undefined)
+            : d.resumeNativeSessionId,
       };
     }
     default:

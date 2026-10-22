@@ -5,7 +5,7 @@
     "src/app/components/ProjectView.tsx": 300,
     "src/app/hooks/buildAppShellValues.ts": 316,
     "src/app/hooks/useAppShellData.ts": 394,
-    "src/features/agent-chat/hooks/useAgentChat.ts": 698,
+    "src/features/agent-chat/hooks/useAgentChat.ts": 484,
     "src/features/agent-chat/hooks/useMockEventSchedule.ts": 367,
     "src/features/agent/components/AgentForm.tsx": 505,
     "src/features/agent/components/AgentSelector.tsx": 447,

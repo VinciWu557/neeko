@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { ModelInfo } from '@/features/agent/api/agentApi';
 import type { SessionConfigOption } from '@/shared/types/agentChat';
 import { currentModelFromConfigOptions } from '@/shared/types/agentChat';
+import { hasModelId, resolveModelById, type ModelAvailability } from '@/shared/utils/modelTarget';
 
 /**
  * 让「选中的模型」与会话的真实状态保持一致。
@@ -31,6 +32,7 @@ import { currentModelFromConfigOptions } from '@/shared/types/agentChat';
  * 而列表获取只需断言「拉到了没有」。
  */
 export function useSelectedModelSync(
+  availability: ModelAvailability,
   models: ModelInfo[],
   sessionConfigOptions: SessionConfigOption[],
   selectedModel: ModelInfo | null,
@@ -44,7 +46,17 @@ export function useSelectedModelSync(
     if (models.length === 0) return;
 
     // 1. 会话当前值**变化**时跟随（首次拿到也跟随）
-    const authoritative = currentModelFromConfigOptions(sessionConfigOptions);
+    //
+    // 只有 `ready` 才有「会话内当前值」这回事：`per-turn` 的列表来自目录、
+    // `pending` 的会话还没就绪 —— 那两种状态下 `configOptions` 里的
+    // `current_value` 只能是切换 agent 时的**残留**。
+    //
+    // 注：下面的 `models.find` 也会过滤掉不在列表里的残留 id，所以这条判据
+    // 是**防御性**的（删掉它现有测试仍全绿）。保留理由：它让「读会话内当前值」
+    // 这个动作的**前提**在代码里显式可见，而不是隐含依赖下游过滤。
+    // 真正的行为约束由 `useModelsForPicker` 的来源判据保证。
+    const authoritative =
+      availability === 'ready' ? currentModelFromConfigOptions(sessionConfigOptions) : null;
     const previous = lastAuthoritativeRef.current;
     if (authoritative) lastAuthoritativeRef.current = authoritative;
 
@@ -57,9 +69,12 @@ export function useSelectedModelSync(
     // 刚选的新模型。
     const sameAsBefore = previous !== null && authoritative === previous;
     // 已经是用户选中的那个值 → 无事可做（避免每次刷新都触发一次 setState）
-    const alreadySelected = authoritative !== null && authoritative === selectedModel?.id;
-    if (authoritative !== null && !sameAsBefore && !alreadySelected) {
-      const match = models.find((m) => m.id === authoritative);
+    const alreadySelected = authoritative != null && authoritative === selectedModel?.id;
+    if (authoritative != null && !sameAsBefore && !alreadySelected) {
+      // **歧义消解走唯一入口**：同一裸 id 可能对应多条（不同 provider）。
+      // 直接 `models.find(m => m.id === authoritative)` 会按数组顺序命中，
+      // 于是高亮跳到另一行（实际跑的模型没变）。见 `resolveModelById`。
+      const match = resolveModelById(models, authoritative, selectedModel);
       if (match) {
         setSelectedModel(match);
         return;
@@ -67,11 +82,11 @@ export function useSelectedModelSync(
     }
 
     // 2. 已有选择且仍在列表里 → 保留
-    if (selectedModel && models.some((m) => m.id === selectedModel.id)) return;
+    if (selectedModel && hasModelId(models, selectedModel.id)) return;
 
     // 3. 落到 agent 下发的首选
     setSelectedModel(models[0]);
     // selectedModel 只用于「是否保留」，不作为触发条件（否则选一次就再跑一轮）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models, sessionConfigOptions]);
+  }, [availability, models, sessionConfigOptions]);
 }
