@@ -60,12 +60,54 @@ pub fn translate(session_id: &str, ev: &Value) -> Translation {
         "agent_settled" => Translation::events(vec![StreamEvent::TurnEnd {
             session_id: session_id.into(),
             turn_id: String::new(),
-            reason: TurnEndReason::Completed,
+            reason: settled_reason(ev),
         }]),
+
+        // `turn_end` 可能携带**失败**：上游 API 报错时 `message.stopReason == "error"`
+        // 且 `content` 为空 —— pi 不发独立的 error 事件，失败信息只在这里。
+        // 静默丢弃它 = 「发消息零输出零提示」（2026-10-22 实测）。
+        "turn_end" => match ev
+            .get("message")
+            .and_then(|m| m.get("stopReason"))
+            .and_then(Value::as_str)
+        {
+            Some("error") => Translation::events(vec![StreamEvent::Error {
+                session_id: session_id.into(),
+                kind: crate::agent::chat::events::ErrorKind::Agent,
+                code: "E_TURN_FAILED".into(),
+                // `errorMessage` 是 pi 1.4.0 携带失败详情的字段（实测）：
+                // `403: {"type":"FreeTierError","message":"OpenCode's free tier …"}`
+                // —— 上游 HTTP 状态 + 错误体原文。没有它用户只看到
+                //「model call failed」，还得自己去翻 ~/.pi/free.log。
+                // 兜底再拼 provider/model：errorMessage 缺失时（旧版 pi）仍可定位。
+                message: {
+                    let detail = ev
+                        .pointer("/message/errorMessage")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if detail.is_empty() {
+                        format!(
+                            "model call failed (provider: {}, model: {})",
+                            ev.pointer("/message/provider")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown"),
+                            ev.pointer("/message/model")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown"),
+                        )
+                    } else {
+                        detail.to_string()
+                    }
+                },
+            }]),
+            _ => {
+                log::debug!("[pi-rpc] lifecycle event: turn_end");
+                Translation::events(Vec::new())
+            }
+        },
 
         // 其余生命周期事件不产生输出，但**不是错误** —— 记 debug 便于排查时序。
         "agent_start"
-        | "turn_end"
         | "agent_end"
         | "session_info_changed"
         | "auto_retry_start"
@@ -88,6 +130,32 @@ pub fn translate(session_id: &str, ev: &Value) -> Translation {
             log::debug!("[pi-rpc] unmapped event type: {other}");
             Translation::events(Vec::new())
         }
+    }
+}
+
+/// `agent_settled` 的**结束原因**（与 `turn_end` 的失败判据正交）。
+///
+/// # 为什么必须区分 `aborted`
+///
+/// `agent_settled` 是**唯一的**回合终止信号，因此它的 `reason` 会一路决定用户
+/// 看到什么：
+///
+/// | 载荷 | 正确 reason | 不区分的后果 |
+/// | --- | --- | --- |
+/// | `{aborted: true}`（用户点停止） | `Stopped` | 发「任务完成」通知 —— `notify.rs` 的
+///   `TurnEndReason::Stopped => return None` 分支在 pi 上永不可达 |
+/// | `{aborted: false}` | `Completed` | 同上 |
+/// | 字段缺失（旧版 pi / 我方向 `abort` 后进程未回包） | `Stopped` | 保守取「被叫停」：
+///   宁可少一条完成通知，也不要给用户谎报成功 |
+///
+/// `aborted` 字段实测存在（`{"type":"agent_settled","aborted":false}`）。缺失时
+/// 不能假定 `Completed` —— 那是「用缺省值宣布成功」，属最坏的一类默认值。
+fn settled_reason(ev: &Value) -> TurnEndReason {
+    match ev.get("aborted").and_then(Value::as_bool) {
+        Some(false) => TurnEndReason::Completed,
+        Some(true) => TurnEndReason::Stopped,
+        // 缺失/非布尔：无法证明是正常完成 → 按「非正常完成」处理（不发完成通知）。
+        None => TurnEndReason::Stopped,
     }
 }
 
@@ -117,20 +185,27 @@ fn translate_message_update(session_id: &str, ev: &Value) -> Vec<StreamEvent> {
 
 /// 工具开始。
 ///
-/// `title` 取 `toolName`：pi 的 `args` 里可能带路径或命令，但字段名不统一
-///（`bash` 用 `command`、`read`/`edit` 用 `path`），这里不逐个猜 —— 前端拿
-/// `name` 已经能显示「正在用 bash」，具体参数由 `ToolOutput` 的流式输出呈现。
+/// `title` 优先取 `args.command`（bash 的实际命令）：只填工具名时，工具执行
+/// **中**的卡片是空的 —— 前端 `extractCommand` 的输出回显兜底要等
+/// `tool_execution_end` 才有材料（2026-10-22 实测截图：光秃秃的 "$ bash"）。
+///
+/// 其余工具（read/edit）的 args 字段名不统一（`path` 等）—— 没有可提取的
+/// 命令时回落到工具名，具体参数由 `ToolOutput` 的流式输出呈现。
 fn translate_tool_start(session_id: &str, ev: &Value) -> Vec<StreamEvent> {
     let Some(call_id) = ev.get("toolCallId").and_then(Value::as_str) else {
         // 没有 id 就无法与后续 update/end 关联 —— 发了也是孤儿事件。
         return Vec::new();
     };
     let name = ev.get("toolName").and_then(Value::as_str).unwrap_or("tool");
+    let title = ev
+        .pointer("/args/command")
+        .and_then(Value::as_str)
+        .unwrap_or(name);
     vec![StreamEvent::ToolStart {
         session_id: session_id.into(),
         call_id: call_id.into(),
         name: name.into(),
-        title: name.into(),
+        title: title.into(),
     }]
 }
 
@@ -541,5 +616,250 @@ mod tests {
         assert!(evs("s1", &json!({"type": "totally-new"})).is_empty());
         assert!(evs("s1", &json!({})).is_empty());
         assert!(evs("s1", &json!("not-an-object")).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod real_protocol_probe {
+    use super::*;
+
+    /// pi 1.4.0 实测的真实事件序列（2026-10-22 探针捕获）。
+    fn real_pi_1_4_sequence() -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"type":"agent_start"}),
+            serde_json::json!({"type":"turn_start"}),
+            serde_json::json!({"type":"message_start","message":{"role":"system"}}),
+            serde_json::json!({"type":"message_end","message":{"role":"system"}}),
+            serde_json::json!({"type":"message_start","message":{"role":"user"}}),
+            serde_json::json!({"type":"message_end","message":{"role":"user"}}),
+            serde_json::json!({"type":"message_start","message":{"role":"assistant"}}),
+            serde_json::json!({"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":0}}),
+            serde_json::json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"Hello,"}}),
+            serde_json::json!({"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":" world!"}}),
+            serde_json::json!({"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":0,"content":"Hello, world!"}}),
+            serde_json::json!({"type":"message_end","message":{"role":"assistant"}}),
+            serde_json::json!({"type":"entry_appended","entry":{}}),
+            serde_json::json!({"type":"turn_end"}),
+            serde_json::json!({"type":"agent_end"}),
+            serde_json::json!({"type":"agent_settled","aborted":false}),
+        ]
+    }
+
+    /// **上游失败必须产出 Error 事件，不许静默。**
+    ///
+    /// 2026-10-22 事故：用户选 `big-pickle`（opencode provider），上游调用失败
+    ///（`success:false, tokens:0`），pi 发出的 `turn_end.message.stopReason == "error"`。
+    /// 旧实现把 `turn_end` 归为「静默生命周期事件」—— 前端收到回合结束、
+    /// 界面却零输出零错误。**失败必须可见**：哪怕是错的输出也要输出。
+    #[test]
+    fn turn_end_with_error_stop_reason_must_surface() {
+        let ev = serde_json::json!({
+            "type": "turn_end",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "provider": "opencode",
+                "model": "big-pickle",
+                "stopReason": "error"
+            }
+        });
+        let t = translate("s1", &ev);
+        assert!(
+            t.events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::Error { .. })),
+            "turn_end with stopReason=error must produce an Error event, got: {:?}",
+            t.events
+        );
+    }
+
+    /// **失败详情（`errorMessage`）必须原样透传。**
+    ///
+    /// 实测 pi 1.4.0：`big-pickle` 上游 403 时 `turn_end.message.errorMessage` 是
+    /// `403: {"type":"FreeTierError","message":"OpenCode's free tier can only be
+    /// used from within OpenCode. …"}`。只报 provider/model 等于让用户自己翻
+    /// `~/.pi/free.log` —— 那是 2026-10-22 事故里定位慢的直接原因。
+    #[test]
+    fn turn_end_error_message_is_passed_through_verbatim() {
+        let ev = serde_json::json!({
+            "type": "turn_end",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "provider": "opencode",
+                "model": "big-pickle",
+                "stopReason": "error",
+                "errorMessage": "403: {\"type\":\"FreeTierError\",\"message\":\"OpenCode's free tier can only be used from within OpenCode.\"}"
+            }
+        });
+        let t = translate("s1", &ev);
+        let msg = t
+            .events
+            .iter()
+            .find_map(|e| match e {
+                StreamEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .expect("must produce an Error event");
+        assert!(msg.starts_with("403:"));
+        assert!(msg.contains("FreeTierError"));
+        // 原文透传：不是「我们拼的」格式（那会丢掉上游状态码与错误体）
+        assert!(!msg.starts_with("model call failed"));
+    }
+
+    /// `errorMessage` 缺失（旧版 pi / 网络中断）→ 回落到 provider/model 定位串。
+    #[test]
+    fn turn_end_error_without_detail_falls_back_to_model_identity() {
+        let ev = serde_json::json!({
+            "type": "turn_end",
+            "message": {
+                "role": "assistant",
+                "content": [],
+                "provider": "opencode",
+                "model": "big-pickle",
+                "stopReason": "error"
+            }
+        });
+        let t = translate("s1", &ev);
+        let msg = t
+            .events
+            .iter()
+            .find_map(|e| match e {
+                StreamEvent::Error { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .expect("must produce an Error event");
+        assert!(msg.contains("opencode"));
+        assert!(msg.contains("big-pickle"));
+    }
+
+    /// 正常完成的 `turn_end` 不产出 Error（回归保护）。
+    #[test]
+    fn turn_end_with_normal_stop_reason_produces_no_error() {
+        let ev = serde_json::json!({
+            "type": "turn_end",
+            "message": {"role": "assistant", "content": [], "stopReason": "stop"}
+        });
+        let t = translate("s1", &ev);
+        assert!(!t
+            .events
+            .iter()
+            .any(|e| matches!(e, StreamEvent::Error { .. })));
+    }
+
+    /// **用户点停止必须翻译成 `Stopped`，不能是 `Completed`。**
+    ///
+    /// `agent_settled` 是唯一的回合终止信号，它的 `reason` 直接决定通知类别：
+    /// `notify.rs` 对 `TurnEndReason::Stopped` 明确 `return None`（用户自己点的
+    /// 停止不该发通知），而对 `Completed` 发「任务完成」。
+    ///
+    /// 不区分 `aborted` 时：用户点停止 → 「任务完成」通知，且那条
+    /// `Stopped => return None` 分支在 pi 传输上**永不可达**。
+    ///
+    /// 变异验证：把 `settled_reason` 写死成 `Completed` → 本用例变红。
+    #[test]
+    fn agent_settled_aborted_maps_to_stopped_not_completed() {
+        let aborted = serde_json::json!({"type":"agent_settled","aborted":true});
+        let t = translate("s1", &aborted);
+        match t.events.first() {
+            Some(StreamEvent::TurnEnd { reason, .. }) => {
+                assert_eq!(
+                    *reason,
+                    TurnEndReason::Stopped,
+                    "用户主动停止不得报成「任务完成」（会发完成通知）"
+                );
+            }
+            other => panic!("expected TurnEnd, got {other:?}"),
+        }
+    }
+
+    /// `aborted: false` = 正常完成。
+    #[test]
+    fn agent_settled_not_aborted_maps_to_completed() {
+        let ev = serde_json::json!({"type":"agent_settled","aborted":false});
+        match translate("s1", &ev).events.first() {
+            Some(StreamEvent::TurnEnd { reason, .. }) => {
+                assert_eq!(*reason, TurnEndReason::Completed);
+            }
+            other => panic!("expected TurnEnd, got {other:?}"),
+        }
+    }
+
+    /// **`aborted` 缺失时不得假定成功。**
+    ///
+    /// 旧版 pi / 进程被 dispose 后回包不完整时字段可能缺失。默认成 `Completed`
+    /// 等于「用缺省值宣布成功」—— 宁可少一条完成通知，也不要给用户谎报。
+    #[test]
+    fn agent_settled_without_aborted_field_defaults_to_stopped() {
+        let ev = serde_json::json!({"type":"agent_settled"});
+        match translate("s1", &ev).events.first() {
+            Some(StreamEvent::TurnEnd { reason, .. }) => {
+                assert_eq!(*reason, TurnEndReason::Stopped);
+            }
+            other => panic!("expected TurnEnd, got {other:?}"),
+        }
+    }
+
+    /// **工具开始事件必须带上可读的 title（实际命令），不能只给工具名。**
+    ///
+    /// 实测 pi 1.4.0：`tool_execution_start.args.command` 是实际要执行的命令
+    ///（如 `env | grep -i '^PI_' | sort`）。只填工具名（`bash`）时，工具执行**中**
+    /// 卡片是空的 —— 前端 `extractCommand` 的输出回显兜底要等 `tool_execution_end`
+    /// 才有材料，运行期间用户看到的就是一个光秃秃的 "$ bash"（2026-10-22 实测截图）。
+    #[test]
+    fn tool_start_carries_the_command_as_title() {
+        let ev = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "call_01",
+            "toolName": "bash",
+            "args": {"command": "env | grep -i '^PI_' | sort"}
+        });
+        let t = translate("s1", &ev);
+        match t.events.first() {
+            Some(StreamEvent::ToolStart { title, .. }) => {
+                assert_eq!(title, "env | grep -i '^PI_' | sort");
+            }
+            other => panic!("expected ToolStart with command title, got {other:?}"),
+        }
+    }
+
+    /// 非 bash 工具（read/edit）的 args 字段名不同 —— 没有可提取的命令时
+    /// 回落到工具名，不 panic。
+    #[test]
+    fn tool_start_without_command_arg_falls_back_to_tool_name() {
+        let ev = serde_json::json!({
+            "type": "tool_execution_start",
+            "toolCallId": "call_02",
+            "toolName": "read",
+            "args": {"path": "/tmp/x.rs"}
+        });
+        let t = translate("s1", &ev);
+        match t.events.first() {
+            Some(StreamEvent::ToolStart { title, .. }) => {
+                assert_eq!(title, "read");
+            }
+            other => panic!("expected ToolStart fallback title, got {other:?}"),
+        }
+    }
+
+    /// **实测 pi 1.4.0 的真实事件序列必须产出文本。**
+    ///
+    /// 2026-10-22 事故：Agent Chat 里发消息后 assistant 完全没有输出，
+    /// 连错误都没有。日志显示事件都到了（`message_start` / `message_end` /
+    /// `entry_appended` 被记为 unmapped），但界面空白。
+    #[test]
+    fn real_pi_sequence_produces_text() {
+        let events: Vec<StreamEvent> = real_pi_1_4_sequence()
+            .iter()
+            .flat_map(|ev| translate("s1", ev).events)
+            .collect();
+        let text: String = events
+            .iter()
+            .filter_map(|e| match e {
+                StreamEvent::TextDelta { delta, .. } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "Hello, world!");
     }
 }

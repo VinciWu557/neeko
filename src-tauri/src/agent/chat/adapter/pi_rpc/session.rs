@@ -32,7 +32,9 @@ use crate::agent::chat::adapter::session_config::{
 };
 use crate::agent::chat::adapter::{AgentContext, AgentSession};
 use crate::agent::chat::capabilities::ChatCapabilities;
-use crate::agent::chat::events::{Capabilities, ContextManifest, SessionRequest, StreamEvent};
+use crate::agent::chat::events::{
+    Capabilities, ContextManifest, SessionRequest, StreamEvent, TurnEndReason,
+};
 use crate::common::error::AppError;
 
 /// 一条 pi 会话。
@@ -57,6 +59,16 @@ pub struct PiSession {
     /// 取决于是 `confirm`（`confirmed`）还是 `select`（`value`）。这个形状只在
     /// 请求本身里，`allow` 带不过来 —— 必须在发出审批时记下。
     pending_approvals: Arc<StdMutex<std::collections::HashMap<String, ApprovalKind>>>,
+    /// **本轮是否已报过错误**（跨事件事实，`absorb` 维护，`agent_settled` 消费）。
+    ///
+    /// 为什么不能放在 `translate`：它是纯函数，只看得到一条 pi 事件；而失败与
+    /// 终止是**两条**事件（`turn_end{stopReason:error}` → `Error`，随后
+    /// `agent_settled` → `TurnEnd`）。
+    ///
+    /// 不记这个事实的后果：失败轮先报「会话异常终止」，紧接着 settle 又报
+    /// 「任务完成」—— `notify.rs` 明确要求二者互斥（`TurnEnd{error}` 留给
+    /// Error / SessionDone 事件，避免双发）。
+    turn_failed: bool,
     /// 已就绪、待 `next()` 取走的事件队列。
     ///
     /// **两个生产者**：
@@ -233,6 +245,7 @@ impl PiSession {
             session_id: ctx.session_id.clone(),
             native_session_id,
             pending_approvals,
+            turn_failed: false,
             pending,
             request_events: Some(request_events),
             request_tx,
@@ -560,7 +573,7 @@ impl AgentSession for PiSession {
                             m.insert(id, kind);
                         }
                     }
-                    self.pending.extend(translated.events);
+                    self.absorb(translated.events);
                 }
             }
         }
@@ -595,6 +608,67 @@ impl AgentSession for PiSession {
     /// `pi --session <id>`。返回 `None` 会让「历史会话 → 继续聊」这条入口消失。
     fn resume_id(&self) -> Option<String> {
         self.native_session_id.clone()
+    }
+}
+
+impl PiSession {
+    /// 把一次翻译产出入队，并在**事件边界**维护「本轮已失败」这条跨事件事实。
+    ///
+    /// # 为什么需要它
+    ///
+    /// 一条话轮的失败由 `translate` 产出 `Error`，而终止由**另一条**事件
+    /// （`agent_settled`）产出 `TurnEnd`。两侧都只看得见自己那条事件：
+    ///
+    /// - `translate` 是纯函数，无状态（这是它可被密集单测的前提，不能破）；
+    /// - `agent_settled` 的载荷只有 `aborted`，不包含「本轮是否报过错」。
+    ///
+    /// 于是 `TurnEnd{Completed}` 会紧随 `Error` 到达，`notify.rs` 的两条互斥
+    /// 声明被同时触发（「会话异常终止」+「任务完成」）。
+    ///
+    /// 修法：把**判定输入**（这一轮失败过没有）记在这里，让它与 `TurnEnd` 在
+    /// 同一个事件边界上汇合。
+    ///
+    /// # 为什么在入队时改写，而不是在 `next()` 出队时
+    ///
+    /// 入队就是事件产生的那个时刻，此时「本轮」是唯一确定的。
+    /// 出队时再判会让 `TurnEnd` 与它前面那条 `Error` 的对应关系取决于队列
+    /// 消费速度 —— 那是另一个时序 bug。
+    fn absorb(&mut self, events: Vec<StreamEvent>) {
+        for ev in events {
+            match ev {
+                // 失败标记：任何带 Agent/Protocol/Transport 性质的错误都说明本轮没成功。
+                StreamEvent::Error { .. } => {
+                    self.turn_failed = true;
+                    self.pending.push_back(ev);
+                }
+                // 失败轮的 settle 是 `Completed`（pi 不认为「上游报错」算 abort）——
+                // 但对我们它**不是**完成：用户没拿到结果。改成 `Error`，让
+                // `notify.rs` 走 Failed 而不是 Completed，且与前面那条 `Error`
+                // 同类同 session（节流窗口内合并）。
+                StreamEvent::TurnEnd {
+                    session_id,
+                    turn_id,
+                    reason,
+                } => {
+                    self.pending.push_back(StreamEvent::TurnEnd {
+                        session_id,
+                        turn_id,
+                        reason: if self.turn_failed {
+                            TurnEndReason::Error
+                        } else {
+                            reason
+                        },
+                    });
+                    // 终止事件本身就是账本的终点（下一轮从干净状态开始）。
+                    self.turn_failed = false;
+                }
+                // 不要在这里加 `TurnStart` 分支：pi 传输**从不产出**
+                // `StreamEvent::TurnStart` —— `translate` 没有那个臂，`turn_start`
+                // 落进 `unmapped` 分支。写一条不可达的清零路径 = 自己造「声明了
+                // 却没人实现」，反而让人误以为有两条保障。
+                other => self.pending.push_back(other),
+            }
+        }
     }
 }
 
@@ -845,6 +919,89 @@ mod tests {
             }
         }
         assert_eq!(seen, ["a", "b", "end"]);
+    }
+
+    /// **失败轮不得被 settle 追认为「完成」。**
+    ///
+    /// 失败与终止是**两条**事件：`turn_end{stopReason:error}` 产出 `Error`，
+    /// 随后 `agent_settled{aborted:false}` 产出 `TurnEnd`。pi 不认为「上游报错」
+    /// 算 abort，所以 settle 报的是 `Completed` —— 而 `notify.rs` 明确要求
+    /// `TurnEnd{error}` 与 Error 事件互斥（否则用户同时收到「会话异常终止」与
+    /// 「任务完成」两条通知，后者完全是谎报）。
+    ///
+    /// 跨事件事实（本轮失败过没有）属于会话层，不能放进纯函数的 `translate`。
+    ///
+    /// 变异验证：把 `absorb` 里的 `turn_failed` 判据去掉（无条件透传 reason）
+    /// → 本用例变红。
+    #[tokio::test]
+    async fn failed_turn_is_not_reported_as_completed() {
+        let (proc, _fake) = fake_pi_with_events(vec![
+            json!({"type": "turn_end",
+                   "message": {"role": "assistant", "content": [],
+                               "provider": "opencode", "model": "big-pickle",
+                               "stopReason": "error"}}),
+            json!({"type": "agent_settled", "aborted": false}),
+        ]);
+        let mut session = PiSession::start_with(proc, &ctx(), test_caps())
+            .await
+            .expect("start");
+        let _ = session.next().await; // SessionStart
+        let _ = session.next().await; // ContextInit
+
+        // 第一条是失败本身
+        match session.next().await.expect("error").expect("ok") {
+            StreamEvent::Error { code, .. } => assert_eq!(code, "E_TURN_FAILED"),
+            other => panic!("expected the failure first, got {other:?}"),
+        }
+        // 第二条是终止 —— 必须是 Error，不能是 Completed
+        match session.next().await.expect("turn_end").expect("ok") {
+            StreamEvent::TurnEnd { reason, .. } => assert_eq!(
+                reason,
+                TurnEndReason::Error,
+                "失败轮被 settle 报成 Completed → 用户会收到「任务完成」通知"
+            ),
+            other => panic!("expected TurnEnd, got {other:?}"),
+        }
+    }
+
+    /// 上一轮的失败不得泄漏到下一轮（账本在 `TurnEnd` 清零）。
+    ///
+    /// 注意：pi 传输**不产出 `TurnStart`**（`translate` 没有那个臂），所以账本
+    /// 的清零点只有 `TurnEnd` 一处 —— 本用例就守住那一条。
+    #[tokio::test]
+    async fn failure_state_does_not_leak_into_the_next_turn() {
+        let (proc, _fake) = fake_pi_with_events(vec![
+            // 第一轮：失败
+            json!({"type": "turn_end",
+                   "message": {"role": "assistant", "content": [],
+                               "provider": "p", "model": "m",
+                               "stopReason": "error"}}),
+            json!({"type": "agent_settled", "aborted": false}),
+            // 第二轮：正常完成
+            json!({"type": "agent_settled", "aborted": false}),
+        ]);
+        let mut session = PiSession::start_with(proc, &ctx(), test_caps())
+            .await
+            .expect("start");
+        let _ = session.next().await; // SessionStart
+        let _ = session.next().await; // ContextInit
+
+        let mut reasons = Vec::new();
+        // **有界读取**（与 `next_drains_every_translated_event` 同形）：
+        // `while let Some(_) = session.next().await` 依赖事件流关闭，而假 pi
+        // 不会关流 —— 那种写法会让用例永久阻塞。
+        for _ in 0..3 {
+            match session.next().await.expect("event").expect("ok") {
+                StreamEvent::Error { .. } => {}
+                StreamEvent::TurnEnd { reason, .. } => reasons.push(reason),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert_eq!(
+            reasons,
+            [TurnEndReason::Error, TurnEndReason::Completed],
+            "第二轮的 settle 必须恢复为 Completed（否则正常完成的轮永远报错）"
+        );
     }
 
     /// **接入护栏（AC7）**：`confirm` 审批 → 允许 → 回 `{confirmed: true}`。
