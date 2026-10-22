@@ -272,12 +272,22 @@ pub struct AgentConfig {
     /// prompt 后置参数，追加在 prompt 之后。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_prompt_args: Option<Vec<String>>,
-    /// 「列出可用模型」命令参数，如 pi 的 `["--list-models"]`、
-    /// opencode 的 `["models", "--verbose"]`。`None` = 没有独立列模型命令。
+    /// 「列出可用模型」命令参数，如 opencode 的 `["models", "--verbose"]`。
+    /// `None` = 没有独立列模型命令。
     ///
     /// **与 CHAT 能力无关**：这是纯 CLI 查询，`chat: None` 的 agent 也能有。
     /// 存在它才能让用户在**发第一条消息之前**看到模型列表 —— ACP 协议的模型列表
     /// 只存在于会话的 `configOptions` 里，没有独立查询方法。
+    ///
+    /// # 声明了会话内模型能力的 transport 不得声明它
+    ///
+    /// CLI 目录的 `id` 是 `provider/model` 复合串，而 `ConfigCapability::SessionConfig`
+    /// 的写回通道要**裸名** —— 两条来源并存会让「显示的列表」与「能写回的 id」
+    /// 形状不一致（实测 `Model not found: provider/provider/model`）。
+    /// 详见 `.trellis/spec/backend/agent-chat-transports.md` §10.5b。
+    ///
+    /// Pi 曾在这里声明 `["--list-models"]`，连专用表格解析器一起已删除：
+    /// 它的模型列表来自 rpc 的 `get_available_models`，CLI 里没有。
     ///
     /// 命令的 stdout 格式因 agent 而异，由各自的解析器处理（见
     /// `agent/model_discovery` 与 `agent/chat/adapter` 里的 `list_models`）。

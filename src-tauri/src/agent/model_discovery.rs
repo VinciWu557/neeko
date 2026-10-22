@@ -203,10 +203,12 @@ pub fn parse_opencode_model_json(
 ///
 /// 解析方式按 `command` 分派 —— 输出格式是各家私有的，无法统一：
 /// - `opencode`：NDJSON（slug 行 + JSON 对象），见 [`parse_opencode_models_output`]
-/// - `pi`：固定宽度表格，见 [`parse_pi_models_output`]
 ///
 /// 其余命令暂按「每行一个 `provider/model`」处理（最简单的约定），
 /// 遇到真正接入的 agent 时再补专用解析器。
+///
+/// **Pi 故意没有专用解析器** —— 它走 rpc 协议，模型列表不在 CLI 里。
+/// 见 `parse_models_stdout` 里的说明。
 pub async fn list_models_by_command(config: &AgentConfig) -> Result<Vec<ModelInfo>, AppError> {
     use crate::common::executor::factory::ExecTarget;
     use crate::core::exec;
@@ -247,7 +249,12 @@ fn parse_models_stdout(command: &str, stdout: &str) -> Vec<ModelInfo> {
 
     match bin {
         "opencode" => parse_opencode_models_output(stdout).unwrap_or_default(),
-        "pi" => parse_pi_models_output(stdout),
+        // 曾经这里有一条 `"pi" => parse_pi_models_output(stdout)`。已删除：
+        // Pi 走 `PiRpc` 传输，模型列表来自 rpc 的 `get_available_models`（裸 id），
+        // 而表格解析产出 `provider/model` 复合串。两条来源并存会让「显示的列表」
+        // 与「能写回的 id」形状不一致（实测 `Model not found: provider/provider/model`）。
+        // 现在 pi 命令走兜底解析，且内置定义不声明 `model_list_args`，
+        // 消费点还有 `supports_session_config` 裁决 —— 三道门都指向「不取表格」。
         _ => parse_plain_model_lines(stdout),
     }
 }
@@ -263,79 +270,6 @@ fn parse_plain_model_lines(stdout: &str) -> Vec<ModelInfo> {
             name: line.to_string(),
             description: None,
             group: None,
-        })
-        .collect()
-}
-
-/// 解析 `pi --list-models` 的**固定宽度表格**输出。
-///
-/// 形状（实测）：
-///
-/// ```text
-/// provider                                 model                                               context  max-out  thinking  images
-/// ark-coding-plan                          ark-code-latest                                     128K     16.4K    no        no
-/// ```
-///
-/// # 为什么按列位置而不是按空白切分
-///
-/// provider 与 model 列宽固定、用空格填充；model 名字里**不含空格**，但
-/// `max-out` 之类可能为 `-`。按空白 `split` 在列值含空格时会串位，而按表头
-/// 给出的起始列切片是稳定的。表头位置在解析时动态读出，不硬编码 —— 上游加列也
-/// 不会静默错位（读不到 model 列就返回空，而不是给出错乱的 id）。
-///
-/// # id 用 `provider/model`
-///
-/// 与 opencode 的 `provider/model` 复合串保持一致（见 `ModelInfo::id` 的
-/// 「语义不透明」说明）。这样历史会话记录的 `provider/model` 能直接匹配回列表。
-#[must_use]
-pub fn parse_pi_models_output(output: &str) -> Vec<ModelInfo> {
-    let mut lines = output.lines();
-    let Some(header) = lines.next() else {
-        return Vec::new();
-    };
-
-    // 表头每个词 -> 起始列。找不到 provider / model 就放弃（格式不认识）。
-    let columns: Vec<(usize, &str)> = header
-        .match_indices(|c: char| !c.is_whitespace())
-        .filter(|(i, _)| *i == 0 || header.as_bytes()[i - 1].is_ascii_whitespace())
-        .map(|(i, _)| {
-            let rest = &header[i..];
-            let end = rest
-                .find(char::is_whitespace)
-                .map_or(header.len(), |e| i + e);
-            (i, &header[i..end])
-        })
-        .collect();
-
-    let column_start = |name: &str| columns.iter().find(|(_, n)| *n == name).map(|(i, _)| *i);
-    let (Some(provider_at), Some(model_at)) = (column_start("provider"), column_start("model"))
-    else {
-        return Vec::new();
-    };
-    // model 列到下一个具名列之间
-    let model_end = columns
-        .iter()
-        .map(|(i, _)| *i)
-        .find(|i| *i > model_at)
-        .unwrap_or(header.len());
-
-    lines
-        .filter(|line| !line.trim().is_empty())
-        .filter_map(|line| {
-            let provider = line.get(provider_at..model_at)?.trim();
-            let model = line.get(model_at..model_end)?.trim();
-            if provider.is_empty() || model.is_empty() {
-                return None;
-            }
-            Some(ModelInfo {
-                // 这条路径的 id 是 `provider/model` 复合串，本身已唯一。
-                // （与 rpc 的 `get_available_models` 不同 —— 那边 id 是裸名，
-                // 同名项靠 `group` 区分。见 `pi_rpc/config.rs`。）
-                id: format!("{provider}/{model}"),
-                name: format!("{provider}/{model}"),
-                description: None,
-                group: Some(provider.to_string()),
-            })
         })
         .collect()
 }
@@ -387,46 +321,6 @@ opencode/claude-fable-5
         assert_eq!(models[1].name, "opencode/Claude Fable 5");
     }
 
-    // ── pi --list-models（固定宽度表格）──────────────────────────────────
-
-    const PI_TABLE: &str = "\
-provider                                 model                                               context  max-out  thinking  images
-ark-coding-plan                          ark-code-latest                                     128K     16.4K    no        no
-ark-coding-plan                          deepseek-v4-flash                                   1.0M     393.2K   no        no
-cc-switch-xiaomi-mi-mo                   mimo-v2.5                                           1.0M     131.1K   yes       yes
-";
-
-    /// 表格按列位置切片，产出 `provider/model` 复合 id。
-    #[test]
-    fn parses_pi_table_into_provider_model_ids() {
-        let models = parse_pi_models_output(PI_TABLE);
-        assert_eq!(
-            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            vec![
-                "ark-coding-plan/ark-code-latest",
-                "ark-coding-plan/deepseek-v4-flash",
-                "cc-switch-xiaomi-mi-mo/mimo-v2.5",
-            ]
-        );
-    }
-
-    /// 表头变化（上游加列）时不得错位：读不到 provider / model 列就返回空，
-    /// 而不是给出错乱的 id。
-    #[test]
-    fn returns_empty_when_the_table_shape_is_unrecognized() {
-        assert!(parse_pi_models_output("some other output\nwith lines\n").is_empty());
-        assert!(parse_pi_models_output("").is_empty());
-        // 只有表头、没有数据行
-        assert!(parse_pi_models_output("provider  model\n").is_empty());
-    }
-
-    /// 空行与只有空白的行要被跳过。
-    #[test]
-    fn skips_blank_rows() {
-        let models = parse_pi_models_output(PI_TABLE);
-        assert_eq!(models.len(), 3, "blank rows must not become entries");
-    }
-
     /// 兜底解析器：每行一个 id。
     #[test]
     fn plain_line_parser_keeps_one_id_per_line() {
@@ -437,11 +331,66 @@ cc-switch-xiaomi-mi-mo                   mimo-v2.5                              
     }
 
     /// 按命令名选解析器：绝对路径取文件名。
+    ///
+    /// 用 **opencode** 验绝对路径分支 —— Pi 的表格解析器已删除，拿 pi 验等于
+    /// 只走了兜底分支，「`Path::file_name()` 能剥出已知二进制名」这条没被测到。
     #[test]
     fn dispatches_parser_by_command_basename() {
-        assert_eq!(parse_models_stdout("/usr/local/bin/pi", PI_TABLE).len(), 3);
+        let ndjson = "opencode/big-pickle\n{\"id\":\"big-pickle\",\"providerID\":\"opencode\",\"name\":\"Big Pickle\"}";
+        // 绝对路径 → 取 basename → 命中 opencode 解析器（裸命令名同效）
+        assert_eq!(
+            parse_models_stdout("/usr/local/bin/opencode", ndjson).len(),
+            1
+        );
+        assert_eq!(parse_models_stdout("opencode", ndjson).len(), 1);
         // 未知命令走兜底
         assert_eq!(parse_models_stdout("some-agent", "x/y\nz/w\n").len(), 2);
+    }
+
+    /// **Pi 的 `--list-models` 表格输出必须走通用兜底，不得有任何专用识别。**
+    ///
+    /// 曾经的 `parse_pi_models_output` 按表头列位切片，产出 `provider/model` 复合串。
+    /// 而 Pi 走 `PiRpc` 传输，模型列表来自 rpc 的 `get_available_models`（裸 id）——
+    /// 两条来源并存会让「显示的列表」与「能写回的 id」形状不一致（实测
+    /// `Model not found: provider/provider/model`）。所以那条解析器已删除。
+    ///
+    /// # 判据为什么是「等价于兜底」而不是「不含某个前缀」
+    ///
+    /// 弱判据（`!id.starts_with("ark-coding-plan/")`）只能盖住**那一种**回退写法。
+    /// 任何人换一种专用识别（按空白切列、跳过表头行、取第二列……）都能绕过它，
+    /// 而回退的后果（写出错误的 id）一模一样。
+    ///
+    /// 这里钉的不变量是：**表格输出对 pi 而言只是一堆不透明文本行**，所以解析
+    /// 结果必须与 `parse_plain_model_lines` **逐字段相等**。这条同时盖住两个方向：
+    /// 加回旧解析器、或给兜底加「看起来像表格就特殊处理」的逻辑。
+    ///
+    /// 变异验证（两个方向都已实测）：
+    /// 1. 把 `"pi" => parse_pi_models_output(stdout),` 加回 `parse_models_stdout`
+    /// 2. 在 `parse_plain_model_lines` 里加「跳过含连续空白的行」（变相认表头）
+    ///
+    /// 两者均变红。
+    #[test]
+    fn pi_table_output_is_not_parsed_any_more() {
+        let table = "\
+provider                                 model                                               context  max-out  thinking  images
+ark-coding-plan                          ark-code-latest                                     128K     16.4K    no        no
+";
+        let via_pi = parse_models_stdout("/usr/local/bin/pi", table);
+        let via_fallback = parse_plain_model_lines(table);
+
+        assert_eq!(
+            via_pi, via_fallback,
+            "pi 的表格输出必须原样走兜底 —— 任何专用识别（列位切片 / 跳表头 / 取第二列）\
+             都会让 id 形状偏离会话内列表的裸名\nvia_pi={via_pi:?}"
+        );
+
+        // 兜底的真实行为：表头行也是「非空非注释行」，所以也是一个条目。
+        // 显式钉住它，防止有人以「跳过表头」为名重新引入对 pi 表格的半识别。
+        assert_eq!(via_pi.len(), 2, "表头 + 1 数据行，两行都被当作不透明文本");
+        assert!(
+            via_pi.iter().all(|m| m.group.is_none()),
+            "兜底路径不得发明 provider 分组 —— 那是 `provider/model` 解析的产物"
+        );
     }
 
     #[test]

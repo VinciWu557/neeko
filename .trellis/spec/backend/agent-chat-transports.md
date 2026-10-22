@@ -190,8 +190,9 @@ spawn 时带参数或旧版本行为。**pi 1.3.0 实测 `非 JSON 行: 0`**。
 | `common/agent/types.rs` | `pi-rpc` 解析 / 往返 / 不被兜底吞掉 |
 | `pi_rpc/translate.rs` | 文本/推理增量、空 delta 丢弃、**压缩场景序列**、扩展请求不是审批、畸形事件不 panic |
 | `pi_rpc/process.rs` | 响应按 id 配对不广播、无 id 广播、非 JSON 行不杀循环、迟到响应丢弃 |
-| `pi_rpc/mod.rs` | 模型映射（provider 放 description）、缺字段降级 |
-| `agent/builtin/tests.rs` | Pi 走 `PiRpc` 传输 + `model_list_args` 仍在 |
+| `pi_rpc/config.rs` | 模型映射（provider 放 `group`）、缺字段降级 |
+| `agent/builtin/tests.rs` | Pi 走 `PiRpc` 传输 + **不得**声明 `model_list_args` |
+| `agent/model_discovery.rs` | 表格解析器已删除的反向护栏 `pi_table_output_is_not_parsed_any_more` |
 | `chatTransportOptions.test.ts` | 前端选项 ↔ 后端字符串三处同步、分支顺序 |
 
 ## 8. 会话配置项：跨传输的契约 vs 传输专属语义

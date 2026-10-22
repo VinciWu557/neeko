@@ -277,11 +277,10 @@ async fn handle_request(
             if let Some(model_id) = model_id {
                 match set_model(proc, configs, session_id, &model_id).await {
                     Ok(evs) => events = evs,
-                    // 切模型失败**不阻断本轮**：会话外列表（`--list-models`）的 id
-                    // 是 `provider/model` 复合串，与 `set_model` 认的裸 id 不同源；
-                    // 真没法用的时候退回当前模型继续跑，比让用户「发消息直接报错」
-                    // 更有用。但**必须告知**：否则用户看到的是「选了模型却没用」，
-                    // 而 UI 上什么都没有。
+                    // 切模型失败**不阻断本轮**：历史遗留的 `provider/model` 复合串
+                    // 与 `set_model` 认的裸 id 不同源；真没法用的时候退回当前模型
+                    // 继续跑，比让用户「发消息直接报错」更有用。但**必须告知**：
+                    // 否则用户看到的是「选了模型却没用」，而 UI 上什么都没有。
                     Err(e) => {
                         log::warn!(
                             "[pi-rpc] cannot switch to model '{model_id}', keeping current: {e}"
@@ -381,10 +380,13 @@ async fn set_model(
 ///
 /// | 来源 | 形态 | 例子 |
 /// | --- | --- | --- |
-/// | 会话内 `configOptions` | 裸 id | `deepseek-flash` |
-/// | 会话外 `--list-models` | `provider/model` | `ark-coding-plan/ark-code-latest` |
+/// | 会话内 `configOptions` / rpc 列表 | 裸 id | `deepseek-flash` |
+/// | 历史遗留（旧版 tab 持久化、旧会话记录） | `provider/model` | `ark-coding-plan/ark-code-latest` |
 ///
-/// 前端「会话内优先、回落会话外」，所以这两种都可能被当作 `model_id` 送进来。
+/// 第一行是当下的**唯一活来源**。第二行不再是活列表 —— `pi --list-models`
+/// 的表格解析器已删除（它的复合串 id 写不回去），但用户机器上可能还存着旧版
+/// 持久化的 `modelId`，所以这条翻译路径必须留着。
+///
 /// 这里统一把复合串翻译成裸 id —— 翻译放在**唯一的回查入口**，而不是让每个
 /// 调用方自己拆（拆法不一致就是静默失效）。
 ///
@@ -1223,7 +1225,7 @@ mod tests {
         );
     }
 
-    /// `model_id` 是会话外列表的复合串（`provider/model`）时切不动 —— 必须
+    /// `model_id` 是认不出来的复合串（`provider/model`）时切不动 —— 必须
     /// **降级为不切**并继续本轮，而不是让用户发消息直接失败。
     #[tokio::test]
     async fn unknown_model_id_does_not_block_the_turn() {
@@ -1237,7 +1239,7 @@ mod tests {
         session
             .send(SessionRequest::Turn {
                 prompt: "hi".into(),
-                // `--list-models` 的形态，set_model 认不出来
+                // 历史遗留的复合串形态，set_model 认不出来
                 model_id: Some("ark-coding-plan/ark-code-latest".into()),
             })
             .await
@@ -1298,10 +1300,11 @@ mod tests {
         );
     }
 
-    /// **会话外复合串要能被翻译**：`provider/model` → 裸 id + provider。
+    /// **历史遗留的复合串要能被翻译**：`provider/model` → 裸 id + provider。
     ///
-    /// 会话外列表（`--list-models`）与会话内列表（`configOptions`）是两套 id。
-    /// 不翻译的话，用户从快速路径选一个模型就永远切不动。
+    /// 旧版 Pi 走 `--list-models` 表格（`provider/model`），那个解析器已删除；
+    /// 但用户机器上可能还存着旧版 tab 持久化的 `modelId`。不翻译的话，这些会话
+    /// 选中的模型永远切不动。
     ///
     /// 变异验证：把 `provider_of` 的「拆尾段」回退 → 本用例红。
     #[tokio::test]

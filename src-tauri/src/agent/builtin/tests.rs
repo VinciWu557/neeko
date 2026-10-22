@@ -118,10 +118,10 @@ fn pi_uses_the_private_rpc_transport() {
     let pi = c.get("pi").expect("pi config");
     assert_eq!(pi.chat, Some(crate::common::agent::types::ChatStart::PiRpc));
     // **不声明 CLI 列模型命令**：模型列表由 rpc 的 `get_available_models` 提供，
-    // 它给的是裸名 id（与会话配置项同形）。`pi --list-models` 走我们自己的表格
-    // 解析，给 `provider/model` 复合串 —— 两条来源并存会让「显示的列表」与
-    // 「能写回的 id」形状不一致（实测会得到
-    // `Model not found: provider/provider/model`）。
+    // 它给的是裸名 id（与会话配置项同形）。CLI 表格那条路径给的是
+    // `provider/model` 复合串，两条来源并存会让「显示的列表」与「能写回的 id」
+    // 形状不一致（实测会得到 `Model not found: provider/provider/model`）。
+    // 表格解析器已删（见 `model_discovery::pi_table_output_is_not_parsed_any_more`）。
     assert_eq!(pi.model_list_args, None);
 }
 
