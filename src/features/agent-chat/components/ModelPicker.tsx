@@ -6,7 +6,7 @@ import { modelKeyOf, type ModelWritability } from '@/shared/utils/modelTarget';
 import { noAutocorrectProps } from '@/ui/inputDefaults';
 
 import { AgentBadge } from './AgentBadge';
-import { displayName } from './constants';
+import { displayName, providerLabelOf } from './constants';
 import { ModelBadge } from './ModelBadge';
 import { ModelConfigSection } from './ModelConfigSection';
 import { ModelList } from './ModelList';
@@ -193,6 +193,9 @@ function ModelPicker({
 
   const current = selected ?? null;
   const displayNameLabel = current ? displayName(current.name) : 'Select model';
+  // provider 是「同名模型散落在多个 provider 下」时唯一能分辨的信息，但只在该
+  // 来源没把它拼进 `name` 时才单独显示（否则会重复）。判据收在 `providerLabelOf`。
+  const providerLabel = current ? providerLabelOf(current) : undefined;
 
   return (
     <div className="param-selector-wrap">
@@ -218,6 +221,7 @@ function ModelPicker({
           )}
         </span>
         <span className="param-name">{displayNameLabel}</span>
+        {providerLabel ? <span className="param-provider">{providerLabel}</span> : null}
         <span className="param-chevron">
           <ChevronDown size={12} />
         </span>

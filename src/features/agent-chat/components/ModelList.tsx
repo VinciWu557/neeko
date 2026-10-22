@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { ModelInfo } from '@/features/agent/api/agentApi';
 import { modelKeyOf } from '@/shared/utils/modelTarget';
 
-import { displayName } from './constants';
+import { displayName, providerLabelOf } from './constants';
 import { ModelBadge } from './ModelBadge';
 
 /**
@@ -91,6 +91,10 @@ export function ModelList({
       */}
       <div role="listbox" aria-label="Models">
         {models.map((m) => {
+          // 副标题只放 `providerLabelOf` 认为「确实是额外信息」的 provider
+          // （Pi 的 rpc 列表），否则回落到 `description`。直接用 `m.group` 会让
+          // 旧版 Pi 表格路径把 `magpie/xxx` 里的 provider 再写一遍。
+          const subtitle = providerLabelOf(m) ?? m.description;
           // 选中判据**必须**走 `modelKeyOf`，不能是裸 id —— Pi 的 224 条模型只有
           // 194 个唯一 id。用裸 id 时两行会同时报 `aria-selected="true"`，
           // 屏幕阅读器念出两个「已选中」。这与 React key 用同一判据不是巧合：
@@ -118,9 +122,7 @@ export function ModelList({
               是 `model_config` 配置项，规范要求渲染在模型选择器**附近**而不是挤进
               同一行文本。改由下方 config 区呈现。
             */}
-                {(m.group ?? m.description) ? (
-                  <span className="param-opt-desc">{m.group ?? m.description}</span>
-                ) : null}
+                {subtitle ? <span className="param-opt-desc">{subtitle}</span> : null}
               </span>
             </button>
           );

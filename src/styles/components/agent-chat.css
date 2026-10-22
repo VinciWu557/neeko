@@ -321,6 +321,9 @@
      `Deepseek-V4.1-Flash` 恰好卡在旧阈值上被切成 `Deepseek-V4.1-Flas…`。
      空间不够时先靠 `.composer-left` 的 flex-wrap 换行；真的超出整行宽度才降级省略。 */
   .param-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* provider 徽标：只在它没被拼进 `name` 时出现（见 `providerLabelOf`）。
+     弱化处理 —— 它是背景信息，不该和模型名争抢视觉权重。 */
+  .param-provider { flex:0 0 auto; font-family:var(--font-mono); font-size:10px; color:var(--text-muted); padding:1px 5px; border-radius:4px; background:var(--bg-tertiary); }
   .model-selector-btn.model { font-family:var(--font-mono); font-size:11px; }
   .model-chevron, .param-chevron { color:var(--text-muted); display:flex; }
 
