@@ -239,11 +239,196 @@ const lspKeymap = useMemo(() => ..., [projectPath, tab, ...]);                  
 
 **回归测试**：`lspDiagnosticsProjection.test.ts`（reconfigure 后波浪线自愈 / 推送本身不触发重放 / 镜像位置映射与塌缩丢弃 / 连续重配置合并 / 销毁后不抛）；身份稳定用例在 `UseEditorSave.test.tsx` 与 `useLspNavigation.test.ts`。
 
-### 11. JSDoc 举例没有实现支撑的语义（声明了却没人实现 = 静默功能缺失的文档版）
+### 11. 大 hook 拆分的接缝必须用「改一处只影响一类事件」判定
+
+`useAgentChat` 曾 819 行、36 个 hook 调用、31 个返回值、19 个事件分支。按**行数**
+拆会把同一条事件的归约切到两个文件；按**职责内聚**拆才对。
+
+判据：**加一个新工具类别只动一个文件，加一个新配置项只动另一个文件**。
+
+2026-08-24 的实例（`08-24-agent-config-unify` 阶段 6）：
+- `useTurnStream`（292 行）= 话轮流（`turn_start` → 工具三件套 → `turn_end`）
+- `user_input` / `proposed_plan` / `meta` **留在** `useAgentChat` —— 它们是会话级
+  状态（换一轮不清零），不属话轮账本
+- 结果：819 → 484，ratchet 基线同批下调 698 → 484
+
+**拆分后必须验证的两种失败模式**：
+
+1. **事件被吞**：子 hook 的 `handle(ev): boolean` 若对未识别事件也返回 `true`，
+   调用方的 `if (sub.handle(ev)) return;` 会静默丢掉它不负责的事件 —— 表现是
+   「某个卡片再也不出现」，且无报错。护栏：`it.each` 列出所有**不该**认领的
+   事件类型，断言返回 `false`。
+2. **行为漂移**：抽出的行是否真的一字未改。可行做法是从 `HEAD` 与新文件逐 case
+   提取归一化文本比对（忽略缩进与 `break`/`return` 差异），差异必须逐条人工确认。
+
+### 12. 正交状态字段应收成一个 union，不要暴露笛卡尔积
+
+同一状态若由两个**可自由组合**的字段表达，消费方就得各自 `switch` 两个维度 ——
+N 个消费点 = N 份必然漂移的实现。
+
+2026-08-24 的实例（`08-24-agent-config-unify`）：会话配置项的可用性曾写成
+`{ phase: 'unsupported' | 'loading' | 'ready', capability: 'none' | 'per_turn' | 'session_config' }`。
+
+真实可达的状态只有 **4 个**：
+
+| 状态 | 传输 | 会话就绪 | 可写性 |
+| --- | --- | --- | --- |
+| `no-config` | `none` | — | 永久否 |
+| `per-turn` | `per_turn` | — | 是（每轮请求参数） |
+| `pending` | `session_config` | 否 | 暂时否 |
+| `ready` | `session_config` | 是 | 是（`set_config_option`） |
+
+9 种输入组合里有 5 种不可达（如 `{phase:'ready', capability:'none'}`），而类型层
+允许它们存在。后果是**四份判据各自推导**：`ChatComposer` 用
+`phase === 'ready'`、`useModelSelection` 用 `options.length > 0`、渲染层用
+`capability !== 'none'` —— 曾经出现「渲染说能点、写入拿不到目标」的矛盾。
+
+**正确做法**：
+
+1. **一个合成入口**（`modelAvailabilityOf`）把后端能力位 + 就绪度映射成 4 态 union；
+2. 每个判据都是该 union 上的**全函数**（`switch` 穷举、编译器强制处理新状态，无 `default` 兜底）；
+3. 「不可写」不是某个变体，而是**拿不到写回目标**（`modelWriteOf` 返回 `null`）——
+   于是「拿到 write 却写不了」在类型上无法表达。
+
+**判据**：新增状态时，如果 `switch` 需要 `default` 分支才能通过编译，说明 union 没穷举完；
+如果某个消费点还在 `switch` 两个字段，说明合成点放错了位置。
+
+**同一条规则的推论：派生点也必须是唯一。** union 收好了，但如果还有消费点自己
+「再判断一次」，漂移会以另一种形式回来。2026-08-24 第二轮实证：
+`useModelsForPicker` 自己数 `options.length > 0` 决定「列表来自会话内还是目录」，
+而 `modelWriteOf` 用 `availability` 决定「写回是裸名还是复合串」——
+10 种组合里只有 2 种一致。表现是「列表显示 A，写回发的却是 B 的格式」。
+
+修法：让 `useModelsForPicker` 也吃 `availability`，并把「`ready` 只返回会话内列表」
+写死 —— 没有列表时返回**空数组**而不是退回目录。退回目录会让用户看到一串
+`provider/model` 复合串、而写回通道要裸名 = 「能点但切不动」（R3 禁止）。
+**空列表 + 空态文案比一串点不动的模型诚实。**
+
+### 13. 占位值不得是「一个真实存在的实体」
+
+「还没有数据」必须表达成**未知/空**，不能填一个看起来合法的真实值。
+
+2026-08-24 实测（`useChatAgents`）：`agentId` 未落定时 fallback 到
+`AGENT_IDS.mockAgent`，于是新建 Chat tab 的首帧永远显示「mockAgent」的名字与图标 ——
+与用户实际会用的 agent 无关，且会让用户以为选中了它。
+
+正确顺序：**命中真实数据 → 列表首项 → 空壳（占位图标）**。
+硬编码一个真实存在的 agent 比显示「未知」更糟。
+
+同类推论：空列表文案也要按**原因**分开（`loading` / `read-only` / `writable`）。
+共用一句 `Models appear once the session is ready` 对不提供模型选择的 agent
+（`no-config`）是误导 —— 它永远不会出现。
+
+**判据**：任何 `?? SOME_REAL_ID` 形态的 fallback 都要问「这个 id 是否代表用户的
+真实选择」。不是 → 改 `?? undefined` 并在渲染层给占位。
+
+### 14. 「落定值」与「原始值」是两个东西，派生 hook 必须收落定值
+
+当 UI 显示用了 fallback（列表首项 / 占位），而**行为**（建会话、拉数据）用了原始
+入参，两者会分叉：界面看起来有 agent，实际什么都没发生。
+
+2026-08-24 实测（`08-24-agent-config-unify`）：新建 Chat tab 时
+`AgentChatTabData.agentId` 是 `undefined`。`useChatAgents` 正确地 fallback 到
+列表首项（UI 显示正常），但 `useAgentSessionLifecycle` 与 `useAgentModels`
+收到的仍是 `undefined`：
+
+- `openSilentSession` 直接 `return` → **会话永不建立**
+- `SessionStart.config_options` 永不到达 → `availability` 卡在 `pending`
+- `useAgentModels(undefined)` 也直接 `return` → 目录不拉
+- **表现：模型列表完全空白**
+
+修法：在组合层算出**落定值**（`const settled = selectedAgent.id`），所有派生
+hook 一律收它。落定值为空串（列表还没到）时那些 hook 同样 `return`，不会白建会话。
+
+**判据**：任何「显示用的 id」与「行为用的 id」来自不同表达式的地方，都是分叉点。
+护栏要断言**两个消费点都收了落定值**（`composerWiring.test.ts`），只测 hook 自身
+行为测不到 —— hook 收到 `undefined` 时「正确地什么都不做」也是全绿的。
+
+### 15. effect 依赖里禁止出现「每次渲染新建的对象」
+
+`useEffect` / `useCallback` 的依赖数组只允许出现：原始值、ref、
+`useCallback`/`useMemo` 的产物、模块级常量。**禁止**出现 hook 返回的对象字面量
+容器 —— 即使它内部装的都是稳定值。
+
+2026-08-24 事故（`08-24-agent-config-unify`，Pi 与 opencode 同时中招）：
+
+```
+useTurnStream 返回对象字面量（每次渲染新建）
+  → useAgentChat 的 applyEvent 依赖它 → useCallback 身份每渲染变
+  → listen 的 useEffect 依赖 applyEvent → 每次渲染 unlisten + listen
+  → session_start（最早到达的事件）落进这个窗口 → 前端永远收不到握手
+  → handshaken 恒 false → 模型列表永久停在
+    "Models appear once the session is ready"
+```
+
+实测：旧代码上 `listen` 注册了 **3 次**，修好后 **1 次**。
+
+讽刺的是那段代码原本有一句注释自称「`refs` 每次渲染都是新对象字面量 —— 这是
+**有意的**」。那个理由只对 `refs` 成立（消费方只用其中的 ref），对整个返回值是错的。
+
+`react-hooks/exhaustive-deps` **抓不到**这类问题 —— 依赖数组是「完整」的，只是
+不稳定。护栏要断言**注册次数**（`expect(mockListen).toHaveBeenCalledTimes(1)`），
+而不是断言源码里出现了某个标识符。
+
+### 16. JSDoc 举例没有实现支撑的语义（声明了却没人实现 = 静默功能缺失的文档版）
 
 类型/注册表的 docstring 写「handler 自行判断是否接收（例如流式进行中不许改写输入框）」，但全仓唯一生产 handler 恒 `return true` —— 声明的能力没有消费点，与红线 14 同型（2026-10-13 实证：`agentInputRegistry.ts`，修法是删掉该举例并写明「今日 false 的唯一原因是未登记」）。
 
 **判据**：docstring 里的每个「例如」必须能在生产代码里 grep 到对应分支；找不到 = 删例或补实现，二选一。不接受「以后可能用到」的举例 —— 那是 YAGNI 在文档层的形态。
+
+### 17. `mergeTabData` 是**穷举白名单** —— 新增 tab data 字段必须同步登记
+
+`editorStore.mergeTabData` 对每个 kind **逐字段重建**（`'x' in p ? p.x : d.x`），
+不是浅合并。它的存在有理由（阻止跨 kind 污染、自动去除非本 kind 字段），但代价是：
+**给 `XxxTabData` 加一个字段而忘了在 switch 里登记，那个字段就永远写不进去且不报错**。
+
+2026-10-22 事故（`08-24-agent-config-unify`）：
+
+```
+AgentChatTabData 新增 modelId
+useSelectedModel 的 effect 每次渲染都 updateTab({ modelId })
+mergeTabData 的 agent-chat 分支只回填 agentId / sessionId  → modelId 被丢弃
+切 tab 回来 initialModelId 为空 → 落到 models[0] → 「切个 tab 我的模型自己变了」
+```
+
+功能完全没生效，而那条行为测试是绿的：它 `vi.mock` 掉了整个
+`@/shared/store/editorStore` —— **保护的是 mock，不是行为**。
+
+**判据**：新增 tab data 字段时，同一 diff 内必须给
+`editorStore.test.ts` 加一条**跑真 store** 的「写入后能读回」用例（不得 mock
+store）。`resumeConversationId` / `resumeNativeSessionId` 曾是同一个 bug 的受害者。
+
+> 注：显式写 `undefined` 是**清除**语义（切 agent 丢模型、恢复标记一次性消费），
+> 所以判据必须是 `'x' in p`，**不能**是 `p.x !== undefined`。
+
+### 18. 护栏必须跑**真依赖**，并且断言身份/行为而不是字面量
+
+§15 已说明「依赖数组里禁止每次渲染新建的对象」，本批又出现三个同型变形，
+统一判据：
+
+**(a) 一个返回值混了两种稳定性 → 必须在类型层拆开。**
+`useSessionLevelEvents` 曾把稳定的 `handle` 与每次状态变化都换的 state 快照	
+装进同一个 `useMemo`，并把 state 写进依赖数组 —— 身份仍随每个 `meta` 事件变化。
+正确做法是返回 `{ handle, state }`，调用方只能把 `handle` 放进依赖。
+
+**(b) 注释里的已删符号会让静态断言**假绿**。**
+`expect(SELECTION).toContain('modelSourceOf')` 命中的是源码里一条过时注释，
+函数早就不存在。凡是对源码做字符串断言的护栏，必须先剥注释（参照后端
+`agent_model_dispatch_test.rs::code_only`）。
+
+**(c) 判据要钉在「不变量」上，不是「某个标识符出现了」。**
+
+| 弱判据（会被绕过） | 强判据（钉住语义） |
+| --- | --- |
+| 源码里有 `useMemo` | 状态变化后 `handle` 身份**不变** |
+| 源码里有 `closeRunningTools(` | 已 `failed` 的工具不被改写成 `done` |
+| 组件有 `disabled` prop | 上半真的会传 `read-only`（且逐项 `toBeDisabled`）|
+| `updateTab` 被调用过（mock） | 写入后**从真 store 读回**得该值 |
+
+**(d) 间接使用 ≠ 被测。** `closeRunningTools` 被 `useTurnStream` 的 `turn_end`
+用例间接走到，但那条用例里的唯一工具就是 `running` 的 —— 删掉
+`status === 'running'` 判据它仍然绿。纯 reducer 要直测，且必须包含**反例**
+（不应被改的那一类）。
 
 ---
 

@@ -100,7 +100,58 @@ pi 一次用户 prompt 可能发出**多个** `turn_end` / `agent_end`（自动�
 **必须**按 `method` 分派。一律映射成 `RequestApproval` 会让用户每次开 Chat 都看到
 一串莫名其妙的审批弹窗。护栏：`extension_ui_request_is_not_an_approval`。
 
-### 4.6 没有前导人类可读行（实测）
+### 4.6 上游失败只藏在 `turn_end` 里（实测 pi 1.4.0）
+
+上游 API 调用失败（key 无效 / 网络 / 模型不存在）时，pi **不发独立的 error 事件**：
+`agent_start → turn_start → message_start/end(空 content) → turn_end → agent_end → agent_settled`，
+失败信息只在 `turn_end.message.stopReason == "error"`（实测 `big-pickle` 上游失败：
+`content: []`、`usage.totalTokens: 0`、telemetry `success:false`）。
+
+把 `turn_end` 归为「静默生命周期事件」= **用户发消息零输出零提示**（2026-10-22
+实测事故）。translate 必须检查 `stopReason`：`"error"` 时产出
+`StreamEvent::Error`（code `E_TURN_FAILED`），且**消息体取
+`turn_end.message.errorMessage` 原文透传**（实测：`403: {"type":"FreeTierError",…}`，
+含上游 HTTP 状态码与错误体）—— 只报 provider/model 等于让用户自己翻
+`~/.pi/free.log`。`errorMessage` 缺失（旧版 pi）才回落到 provider/model 定位串。
+护栏 `turn_end_with_error_stop_reason_must_surface` /
+`turn_end_error_message_is_passed_through_verbatim` /
+`turn_end_error_without_detail_falls_back_to_model_identity` /
+`turn_end_with_normal_stop_reason_produces_no_error`。
+
+pi 侧日志线索：`~/.pi/free.log` 的 `[telemetry]` 行带 `success:false` 与
+provider/model —— 排障时先看它，能直接区分「上游失败」与「Neeko 丢事件」。
+
+### 4.6b `agent_settled` 的 `reason` 决定通知，且失败不可被追认为完成
+
+`agent_settled` 是**唯一**的回合终止信号（`turn_end` / `agent_end` 在重试/压缩
+时会发多次），因此它的 `reason` 一路 downstream 到通知：
+
+| 载荷 | 正确 reason | 不区分的后果 |
+| --- | --- | --- |
+| `{aborted: true}`（用户点停止） | `Stopped` | 发「任务完成」通知 —— `notify.rs` 的 `Stopped => return None` 在 pi 上永不可达 |
+| `{aborted: false}` | `Completed` | — |
+| 字段缺失（旧版 pi） | `Stopped` | 保守取「被叫停」：宁可少一条完成通知，不谎报成功 |
+
+**跨事件事实必须落在会话层，不能放进 `translate`。** 失败与终止是**两条**事件：
+`turn_end{stopReason:error}` → `Error`，随后 `agent_settled{aborted:false}` →
+`TurnEnd{Completed}`（pi 不认为「上游报错」算 abort）。两条都只看得见自己：
+
+- `translate` 是纯函数（这是它能被密集单测的前提，不能破）；
+- `agent_settled` 的载荷里没有「本轮是否报过错」。
+
+于是 `notify.rs` 的两条互斥声明被同时触发（「会话异常终止」+「任务完成」）。
+修法：`PiSession::absorb()` 在**入队那个事件边界**维护 `turn_failed`，遇
+`Error` 置位、遇 `TurnEnd` 消费并清零（下一轮从干净状态开始）。
+
+护栏：`agent_settled_aborted_maps_to_stopped_not_completed` /
+`agent_settled_without_aborted_field_defaults_to_stopped` /
+`failed_turn_is_not_reported_as_completed` /
+`failure_state_does_not_leak_into_the_next_turn`。
+
+> 写测试时的坑：用例用 `while let Some(ev) = session.next().await` 会**永久阻塞**
+> —— 假 pi 不关事件流。一律有界读取（`for _ in 0..N`）。
+
+### 4.7 没有前导人类可读行（实测）
 
 `pi-acp` 的实现里有 `preludeLines` 收集（`JSON.parse` 失败的行存起来），推测是它
 spawn 时带参数或旧版本行为。**pi 1.3.0 实测 `非 JSON 行: 0`**。
@@ -199,6 +250,13 @@ tool_execution_end    { toolCallId, result, isError }
 ```
 
 没有 `toolCallId` 的事件直接丢弃 —— 发出去只会是孤儿，前端无法更新对应那一行。
+
+**`tool_execution_start` 的 `title` 必须取 `args.command`（bash 的实际命令）**：
+只填工具名时工具执行**中**的卡片是空的 —— 前端 `extractCommand` 的输出回显
+兜底要等 `tool_execution_end` 才有材料（2026-10-22 实测：光秃秃的 "$ bash"）。
+其余工具（read/edit）的 args 字段名不统一（`path` 等），无可提取命令时回落工具名。
+护栏 `tool_start_carries_the_command_as_title` /
+`tool_start_without_command_arg_falls_back_to_tool_name`。
 
 **`ToolEnd` 的交付顺序是硬约束**：`tool_execution_end` 的 `result` 是最终输出，
 必须先 `ToolOutput` 再 `ToolEnd`。反过来会让前端先关掉那一行再收到内容，
@@ -343,6 +401,75 @@ _ => Ok(Vec::new())
 
 **判据**：控件的可见性必须能追溯到一个能力位；写路径被拒绝时必须有一个测试
 说明为什么拒绝（而不是 `if (configId)` 恰好为空）。
+
+### 10.5b 模型列表的权威来源是 agent 协议，不是我们 spawn 的二进制
+
+`model_list_args`（`pi --list-models` 那类）是**我们自己解析表格**得到的列表，
+它的 `id` 形状与协议给的**不一致**：
+
+| 来源 | `id` 形状 | 能否直接喂给 `set_config_option` |
+| --- | --- | --- |
+| `model_list_args`（CLI 表格） | `provider/model`（如 `cline/cohere/north-mini-code:free`） | **否** —— agent 会拒绝 |
+| rpc `get_available_models` / ACP `configOptions` | 裸名（`deepseek-flash`） | 是 |
+
+两条来源并存必然漂移。2026-08-24 实测：Pi 同时声明了 `--list-models`，
+用户在会话建立前看到的是 `provider/model` 复合串，点选后 `set_model` 报
+`Model not found: provider/provider/model`。
+
+**规则**：声明了会话内模型能力的 transport（`ConfigCapability::SessionConfig`）
+**不得**再声明 `model_list_args`。模型列表只在会话内取（`SessionScoped`），
+会话一建立就由握手填充 —— 静默会话（`agent_chat_open`）让这几乎无延迟。
+
+### 10.5c 互斥判据是 `SessionConfig`，**不是** `shows_controls()`
+
+上面那条「不得并存」的规则**只对 `SessionConfig` 成立**，两个方向不对称：
+
+| 能力 | 会话外目录 id 形状 | CLI 目录能否共存 |
+| --- | --- | --- |
+| `SessionConfig`（ACP / Pi） | 裸名 | **否** —— 复合串会被 `set_config_option` 拒绝 |
+| `PerTurn`（opencode serve） | `provider/model` | **是** —— `model_slug_split` 就按这个形状拆 |
+
+`supports_model_selection()` 是 `shows_controls()`，`PerTurn` 也为真。拿它当互斥
+门控会把 serve 的 `models --verbose` 快速路径一并关掉，而 serve 又不是
+`SessionConfig` —— 两条路径全被封，**`PerTurn` 传输的模型列表恒空**。
+
+正确门控是 `supports_session_config()`（`uses_session_config()`）。护栏
+`session_model_capability_overrides_the_cli_bypass` 断言判据字面值，
+`out_of_session_catalog_goes_through_the_adapter` 断言目录经 adapter 取。
+
+### 10.5d 会话外目录的唯一入口是 `AgentAdapter::list_models`
+
+它是**可覆盖**的方法，所以「这个 transport 有没有会话外目录」是局部决策：
+solve 覆盖它（`models --verbose`），ACP / Pi 用默认（退到 `model_list_args`）。
+
+2026-10-22 事故：`list_agent_models` 绕过 adapter 直接读 `config.model_list_args`，
+后果是双向的：
+
+1. `AgentAdapter::list_models` 与 `ServeAdapter` 的覆盖一起变成**死代码**；
+2. opencode 的快速路径（`model_list_args` 为 `None`）永远走不到 —— 模型列表恒空。
+
+**错误分两类，处理不同**：`Err(AppError::Unsupported(_))` = 「我没有会话外目录」
+（合法答案，继续走下一步）；其他 `Err` = 命令真的执行失败（**必须上抛**，否则
+用户把「装坏了」看成「本来就没有模型」）。
+
+`model_list_args` 仍然保留为**用户可自定义**字段（`AgentForm` 有输入框），
+供确实没有协议级模型接口的第三方 CLI 使用。
+
+**裁决必须在消费点做，不能只靠内置定义不填。** 原因：
+`~/.neeko/config.json` 的 `agentOverrides` 是用户编辑时的**整份快照**
+（`AgentConfig` 多数字段非 `Option`，序列化后丢失 presence，「没设置」与
+「设为空」不可区分，所以无法做字段级合并）。内置定义改过之后，旧快照仍会把
+`--list-models` 带回来 —— 2026-08-24 实测用户机器上正是如此：Pi 的覆盖里存着
+`["--list-models"]`，模型列表又变回 `cline/cohere/north-mini-code:free` 复合串，
+点选写不进去。
+
+因此 `list_agent_models` 先算 `session_scoped = adapter.supports_model_selection()`，
+**只有 `!session_scoped` 时才尝试 CLI 旁路**。用户的真实自定义（改 command / args /
+icon 等）照旧生效，「有没有 CLI 旁路」由能力位说了算。
+
+护栏：`transports_with_session_models_do_not_declare_a_cli_bypass`（内置定义不填）
++ `session_model_capability_overrides_the_cli_bypass`（消费点裁决顺序
+`scoped < guarded < cmd`）。两条都做过变异验证。
 
 ### 10.6 静态护栏只能防「整段删除」，防不住「条件被短路」
 
