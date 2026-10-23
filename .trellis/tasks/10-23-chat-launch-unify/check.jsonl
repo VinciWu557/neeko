@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "红线核对：命令执行、模块薄度"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "变异验证与迁移矩阵覆盖"}

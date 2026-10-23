@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/agent-chat-transports.md", "reason": "传输分派契约 + opencode 双栈事实；本次改写为 ChatLaunch 识别规则"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Rust 模块落点：types.rs / adapter.rs / builtin/providers.rs 的职责边界"}
+{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "TDD + 变异验证要求"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "AgentForm / ChatLaunchFields 组件边界与体积 ratchet"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "ChatStart 联合类型 → ChatLaunch 接口的类型改造"}
