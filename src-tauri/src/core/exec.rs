@@ -57,6 +57,26 @@ pub async fn spawn_with(
     .await
 }
 
+/// Spawn a long-lived process with extra environment variables.
+///
+/// 与 [`spawn`] 的唯一差别是注入 `env`；`kill_tree` 同样恒开（长驻受管进程）。
+/// `spawn_target` 对 Local 走 `with_default_env` 合并语义，注入的变量不会被默认值覆盖。
+///
+/// 用途：`opencode serve` 的 `OPENCODE_SERVER_PASSWORD` —— 两版都认这个环境变量，
+/// 注入后 2.0 不再打印随机密码行、1.x 不再警告 `server is unsecured`，密码由调用方持有。
+pub async fn spawn_with_env(
+    target: &ExecTarget,
+    cmd: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> Result<ExecChild, ExecError> {
+    spawn_target(
+        target,
+        SpawnOptions::new(cmd, args).with_kill_tree().with_env(env),
+    )
+    .await
+}
+
 /// Collect raw stdout/stderr/exit code (including non-zero exits).
 ///
 /// `current_dir` 与 [`spawn_with`] 同义：`None` 用执行环境默认目录，`Some(dir)`
