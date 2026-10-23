@@ -354,7 +354,9 @@ class ContextCommandSetTest(unittest.TestCase):
         # + check_conflict_read_contract（git 冲突读路径：index stages 唯一真值 / 缺失不归一 /
         #   唯一封顶 / 前端不解析 marker）
         # + check_server_no_business_dep（server/ 引擎零业务分支、零 Tauri，可纯 tokio 驱动）
-        self.assertEqual(self.in_process_count("local"), 26)
+        # + check_agent_config_single_source（前端不得持有 agent 配置副本：读走 agentStore、
+        #   写只经 saveAgent/resetAgent、终端未加载要等而非放弃）
+        self.assertEqual(self.in_process_count("local"), 27)
 
     def test_coverage_entry_is_the_manual_stage(self):
         self.assertEqual(
@@ -380,7 +382,7 @@ class ContextCommandSetTest(unittest.TestCase):
         self.assertEqual(self.command_ids("ci", suite="lint", source="python"), [])
         # 与 local 档同源（同一批进程内判据）：新增一条就要同时改这里 ——
         # 这两个数字互不相等时，意味着某条护栏只在本地跑、对 PR 零约束力（历史事故）。
-        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 26)
+        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 27)
 
 
 if __name__ == "__main__":
