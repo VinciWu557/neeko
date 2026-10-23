@@ -22,13 +22,16 @@
 //! 后续加 2.x 支持时才有地方落代码而不把单文件推到 3000 行。
 
 mod adapter;
+mod config_options;
 mod connection;
 mod events_v1;
+mod events_v2;
 mod eventurl;
 mod protocol;
 mod pump;
 mod request;
 mod session;
+mod tool_title;
 
 #[cfg(test)]
 mod integ;

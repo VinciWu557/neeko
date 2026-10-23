@@ -1,14 +1,26 @@
 use crate::common::error::AppError;
 
-/// Build the `GET /event` URL scoped to a project directory.
+use super::protocol::ServeProtocol;
+
+/// Build the SSE stream URL, per protocol.
 ///
-/// opencode 1.18.x filters the broadcast by the request's `directory` query
-/// parameter: a bare `/event` stream only carries server-level events
-pub(super) fn event_stream_url(base_url: &str, directory: &str) -> String {
-    format!(
-        "{base_url}/event?directory={}",
-        urlencoding::encode(directory)
-    )
+/// | 版本 | 形状 | 会话过滤靠什么 |
+/// | --- | --- | --- |
+/// | V1 | `/event?directory=<dir>` | **必须**带 directory（服务端按目录分片） |
+/// | V2 | `/api/event` | **不接受**任何 query；按事件自带 `location.directory` 过滤 |
+///
+/// V2 带 query 不会被拒，但会被忽略 —— 于是 1.x 的「按目录缩小订阅范围」
+/// 在 2.x 失效，必须靠事件载荷过滤。这个差异收在端点表里，泵循环不感知。
+#[must_use]
+pub(super) fn event_stream_url(protocol: ServeProtocol, base_url: &str, directory: &str) -> String {
+    match protocol {
+        ServeProtocol::V1 => format!(
+            "{base_url}{}?directory={}",
+            protocol.event_path(),
+            urlencoding::encode(directory)
+        ),
+        ServeProtocol::V2 => format!("{base_url}{}", protocol.event_path()),
+    }
 }
 
 /// 提问回执 URL。
@@ -34,11 +46,12 @@ pub(super) fn question_reply_url(base_url: &str, directory: &str, request_id: &s
 /// Open the SSE `/event` stream. Reconnects are handled by the pump loop.
 pub(super) async fn open_sse(
     client: &reqwest::Client,
+    protocol: ServeProtocol,
     base_url: &str,
     directory: &str,
 ) -> Result<reqwest::Response, AppError> {
     let resp = client
-        .get(event_stream_url(base_url, directory))
+        .get(event_stream_url(protocol, base_url, directory))
         .send()
         .await
         .map_err(|e| AppError::Io(format!("serve GET /event failed: {e}")))?;

@@ -7,11 +7,24 @@ use crate::agent::chat::events::{ErrorKind, StreamEvent, TodoItem, TurnEndReason
 // ── SSE event translation (pure, testable) ──────────────────────────────────
 
 /// One SSE `data:` payload from `GET /event`.
+///
+/// # 两个协议的包络不同，这里统一成一个形状
+///
+/// | 版本 | 包络 |
+/// | --- | --- |
+/// | V1 | `{id, type, properties}` |
+/// | V2 | `{id, created, type, location, data, durable}` |
+///
+/// `properties` 用 `#[serde(alias = "data")]` 承接：两者是「事件载荷」的同一个
+/// 概念，只是名字不同。归一化放在反序列化这一层，翻译器与泵循环就**不需要**
+/// 知道自己在读哪个版本的包络 —— 它们只消费「载荷对象」。
+///
+/// 注意 `alias` 在同时出现两个字段时以主名为准；两个协议不会同时发，所以无歧义。
 #[derive(Debug, Deserialize)]
 pub(super) struct ServeEvent {
     #[serde(rename = "type")]
     pub(super) event_type: String,
-    #[serde(default)]
+    #[serde(default, alias = "data")]
     pub(super) properties: serde_json::Value,
 }
 
@@ -21,6 +34,27 @@ pub(super) enum PartKind {
     Text,
     Reasoning,
     Tool,
+}
+
+/// 一轮结束时清理翻译状态。
+///
+/// # 为什么两版都需要（且必须是同一个语义）
+///
+/// `part_kinds`（V1）与 `tool_names` / `tool_started`（V2）都只描述**一轮内**
+/// 的流式/工具生命周期。它们的有效期就是一轮：
+///
+/// | 状态 | 失效时机 |
+/// | --- | --- |
+/// | `part_kinds` | 该 part 的消息结束（= 回合结束） |
+/// | `tool_names` / `tool_started` | 该工具调用结束（≤ 回合结束） |
+///
+/// 不清的后果两版相同：长会话里持续增长，且 `tool_started` 的**去重语义**
+/// 会被跨轮污染（agent 若复用 callID，第二轮的同名工具静默丢 `ToolStart`）。
+///
+/// V1 实测：连续两轮的 `partID` 无重叠 —— 清空安全。
+fn end_turn_state(part_kinds: &mut HashMap<String, PartKind>, tool_started: &mut HashSet<String>) {
+    part_kinds.clear();
+    tool_started.clear();
 }
 
 /// Translate one opencode serve SSE event into a [`StreamEvent`].
@@ -51,11 +85,24 @@ pub(super) fn translate_event(
         // 缺这一条 = 自有会话的提问既不显示内联面板、也不会产生任何通知。
         "question.asked" => translate_question_asked(session_id, properties),
         "todo.updated" => translate_todo_updated(session_id, properties),
-        "session.idle" => vec![StreamEvent::TurnEnd {
-            session_id: session_id.into(),
-            turn_id: String::new(),
-            reason: TurnEndReason::Completed,
-        }],
+        // 回合结束：清理**只在一轮内有效**的翻译状态。
+        //
+        // 实测（1.19.0，连续两轮）：`partID` / `callID` 跨轮**无重叠**，
+        // 所以清空安全。不清的后果与 V2 相同：
+        // - 长会话里持续增长；
+        // - `tool_started` 是去重集合，跨轮累积后若 agent 复用 callID，
+        //   第二轮的同名工具会被误判成「已发过」而静默丢掉 `ToolStart`。
+        //
+        // V1 的 `session.idle` 是唯一的正常收尾事件（`session.error` 之后
+        // 仍会来一条 idle，见 `v1_session_error_uses_real_error_shape`）。
+        "session.idle" => {
+            end_turn_state(part_kinds, tool_started);
+            vec![StreamEvent::TurnEnd {
+                session_id: session_id.into(),
+                turn_id: String::new(),
+                reason: TurnEndReason::Completed,
+            }]
+        }
         "session.error" => {
             let message = properties
                 .get("error")
@@ -156,7 +203,8 @@ pub(super) fn translate_tool(
         .and_then(|v| v.as_str())
         .unwrap_or("tool")
         .to_string();
-    let title = tool_title(part);
+    let title =
+        super::tool_title::tool_title(&name, part.get("state").and_then(|s| s.get("input")));
     match part
         .get("state")
         .and_then(|s| s.get("status"))
@@ -224,90 +272,6 @@ pub(super) fn translate_tool(
         }
         _ => Vec::new(),
     }
-}
-
-/// Human-readable tool title derived from the tool input (bash command / file
-/// path / pattern / task description / todo count). Falls back to the tool name.
-pub(super) fn tool_title(part: &serde_json::Value) -> String {
-    let tool = part
-        .get("tool")
-        .and_then(|v| v.as_str())
-        .unwrap_or("tool")
-        .to_string();
-    let input = part.get("state").and_then(|s| s.get("input"));
-    // task (subagent spawn) → "Type Task" + description（对齐 opencode TUI 的 `{type} Task`）。
-    if tool == "task" {
-        let sub_type = input
-            .and_then(|i| i.get("subagent_type"))
-            .and_then(|v| v.as_str())
-            .filter(|v| !v.is_empty())
-            .unwrap_or("general");
-        let desc = input
-            .and_then(|i| i.get("description"))
-            .and_then(|v| v.as_str())
-            .filter(|v| !v.is_empty());
-        return match desc {
-            Some(d) => format!("{sub_type} Task: {d}"),
-            None => format!("{sub_type} Task"),
-        };
-    }
-    // todowrite → "N todos"（对齐 opencode 完成态 title）。
-    if tool == "todowrite" {
-        if let Some(count) = input
-            .and_then(|i| i.get("todos"))
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.len())
-        {
-            return format!("{count} todos");
-        }
-        return "todo".to_string();
-    }
-    // bash / run_command → 完整命令（`command` 支持 string 或数组；另兼容
-    // `script` / `cmd` 字段），确保命令卡片能展示「执行了什么」而非工具名。
-    if tool == "bash" || tool == "run_command" {
-        if let Some(cmd) = command_from_input(input) {
-            return cmd;
-        }
-    }
-    // read_file / read → filePath / path / file（read 操作折叠标题 `read <路径>`）。
-    for key in ["command", "filePath", "path", "file", "pattern"] {
-        if let Some(v) = input
-            .and_then(|i| i.get(key))
-            .and_then(|v| v.as_str())
-            .filter(|v| !v.is_empty())
-        {
-            return v.to_string();
-        }
-    }
-    tool
-}
-
-/// 从 bash 工具的 input 提取命令字符串：`command`（string 或数组）、
-/// `script`、`cmd`。均缺省时返回 `None`（调用方回退到工具名）。
-pub(super) fn command_from_input(input: Option<&serde_json::Value>) -> Option<String> {
-    let i = input?;
-    if let Some(v) = i.get("command") {
-        match v {
-            serde_json::Value::String(s) if !s.is_empty() => return Some(s.clone()),
-            serde_json::Value::Array(arr) => {
-                let parts: Vec<&str> = arr.iter().filter_map(|x| x.as_str()).collect();
-                if !parts.is_empty() {
-                    return Some(parts.join(" "));
-                }
-            }
-            _ => {}
-        }
-    }
-    for key in ["script", "cmd"] {
-        if let Some(s) = i
-            .get(key)
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            return Some(s.to_string());
-        }
-    }
-    None
 }
 
 /// `todo.updated` — agent's live plan. Global event filtered by `sessionID`

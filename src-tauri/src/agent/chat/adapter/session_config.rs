@@ -39,11 +39,13 @@ pub const CATEGORY_MODEL: &str = "model";
 pub const CATEGORY_MODEL_CONFIG: &str = "model_config";
 /// `category` 取值：推理档位（`model_config` 的历史特例，保留向后兼容）。
 pub const CATEGORY_THOUGHT_LEVEL: &str = "thought_level";
-// 注：`category: "mode"`（plan / build）**故意不在这层定义**。
-// 本期没有任何传输下发它（Pi 的 rpc 没这个语义，opencode serve 也不发），
-// 而先建一个零消费常量会变成「协议已支持 mode」的误导。前端 `modeOptionOf`
-// 已按字符串读它（传输侧一旦下发 UI 自动出现）；如果真要把它提升为共享常量，
-// 请把「哪个 adapter 下发」和「谁消费」写进同一个 diff。
+/// `category` 取值：会话模式（plan / build）。
+///
+/// 这个常量曾被刻意省略 —— 当时没有任何传输下发它。2026-10-23 起
+/// `serve` 适配器会下发（`serve::config_options::mode_option`），
+/// 消费点是前端 `ChatComposer` 的 `modeOptionOf`（`category === 'mode'`）。
+/// 生产者与消费者已在同一个仓库里，常量化才有意义。
+pub const CATEGORY_MODE: &str = "mode";
 
 /// 规范里的惯例 `id`，仅在 `category` 缺失时作为兜底判据；
 /// 也是 `session/set_config_option` 的 `configId`（各家实测都用它）。
