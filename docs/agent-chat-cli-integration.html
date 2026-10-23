@@ -245,7 +245,7 @@
 
   <h3>4.2 ServeAdapter — opencode serve (REST + SSE)</h3>
   <p>OpenCode 独有的高性能传输: 一个共享的 <code>opencode serve</code> 进程, 通过 HTTP API 创建会话, 通过 SSE 接收流式事件。</p>
-<pre><code><span class="cm">// Serve 传输流程 (adapter/serve.rs)</span>
+<pre><code><span class="cm">// Serve 传输流程 (adapter/opencode/)</span>
 1. 懒启动: 首次使用时 spawn <span class="str">"opencode serve --hostname 127.0.0.1 --port 0"</span>
 2. POST /session         -&gt; 创建会话
 3. POST /session/{id}/prompt_async  -&gt; 发送 prompt (支持 per-turn 模型选择)

@@ -16,13 +16,13 @@ use crate::common::agent::types::{AgentConfig, ChatStart};
 pub mod acp;
 pub mod acp_config;
 pub mod deepseek;
+pub mod opencode;
 pub mod pi_rpc;
-pub mod serve;
 pub mod session_config;
 
 pub use acp::AcpAdapter;
 pub use deepseek::DeepSeekHarnessAdapter;
-pub use serve::ServeAdapter;
+pub use opencode::ServeAdapter;
 
 use crate::common::error::AppError;
 
