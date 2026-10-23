@@ -263,7 +263,10 @@ describe('no transport picker remains', () => {
   it('AgentForm renders no select for chat transport', () => {
     const src = readFileSync(resolve(__dirname, '../AgentForm.tsx'), 'utf8');
     expect(src).not.toContain('CHAT Transport');
-    expect(src).not.toContain('<select');
+    // 传输没有下拉。其它 `<select>`（如 Detection 的 kind）是合法的 ——
+    // 断言的是「CHAT 区不存在传输选择器」，不是「全文件没有 select」。
+    expect(src).not.toContain('chatTransportOptions');
+    expect(src).not.toContain('CHAT_OPTIONS');
     // 启动命令与环境变量各一个控件区。
     expect(src).toContain('CHAT Launch');
     expect(src).toContain('CHAT Env');

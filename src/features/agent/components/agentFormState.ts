@@ -39,7 +39,8 @@ export function emptyFormState(): FormState {
     postPromptArgs: [],
     modelListArgs: [],
     skillPath: '',
-    detectionCmd: '',
+    detectionType: 'command',
+    detectionTarget: '',
     deploySkills: '{{projectPath}}/.agent/skills',
     deployCommands: '',
     deployMcp: '',
@@ -65,7 +66,10 @@ export interface FormState {
   postPromptArgs: string[];
   modelListArgs: string[];
   skillPath: string;
-  detectionCmd: string;
+  /** 安装检测方式（后端 `Detection` 的判别式）。 */
+  detectionType: 'command' | 'directory';
+  /** 检测目标（命令名或目录模板）。 */
+  detectionTarget: string;
   deploySkills: string;
   deployCommands: string;
   deployMcp: string;
@@ -92,7 +96,8 @@ export function toFormState(form: AgentConfig): FormState {
     postPromptArgs: [...(form.post_prompt_args ?? [])],
     modelListArgs: [...(form.model_list_args ?? [])],
     skillPath: form.skill_path ?? '',
-    detectionCmd: form.detection?.type === 'command' ? form.detection.target : '',
+    detectionType: form.detection?.type ?? 'command',
+    detectionTarget: form.detection?.target ?? '',
     deploySkills: form.deploy?.skills ?? '{{projectPath}}/.agent/skills',
     deployCommands: form.deploy?.commands ?? '',
     deployMcp: form.deploy?.mcp_config ?? '',

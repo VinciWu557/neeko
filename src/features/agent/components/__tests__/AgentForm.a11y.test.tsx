@@ -64,7 +64,7 @@ describe('AgentForm labels are associated', () => {
       /^Commands Template/,
       /^MCP Config Template/,
       /^Global Skill Path/,
-      /^Install detection command/,
+      /^Install detection/,
     ]) {
       expect(screen.getByLabelText(label)).toBeInTheDocument();
     }

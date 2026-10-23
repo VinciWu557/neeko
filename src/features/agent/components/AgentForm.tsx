@@ -10,6 +10,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { AgentConfig } from '@/shared/types/agent';
+import { transportOf } from '@/shared/types/agent';
 import { PRESET_AGENT_ICONS } from '@/shared/utils/agents';
 import { Button, Input, Textarea } from '@/ui';
 
@@ -93,6 +94,21 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
     [t.command, t.promptArgs, builtChat],
   );
 
+  /**
+   * 该 agent 的 chat 传输是否**自带会话内模型目录**（`SessionConfig`）。
+   *
+   * ACP 与 PiRpc 都属此类：模型列表由协议在会话握手时下发，id 是裸名。
+   * 此时 CLI 旁路（`model_list_args`）必须关闭 —— 它给的是 `provider/model`
+   * 复合串，写回 `set_config_option` 会被拒（spec §10.5b 实测事故）。
+   *
+   * 注意判据**不是**「能否选模型」：`serve`（`PerTurn`）也能选模型，但它的
+   * CLI 目录形状恰好与写回通道一致，必须保留（spec §10.5c）。
+   */
+  const chatIsSessionScoped = useMemo(() => {
+    const transport = builtChat ? transportOf(builtChat) : null;
+    return transport === 'acp' || transport === 'pi-rpc';
+  }, [builtChat]);
+
   /** 识别结果只算一次（两次调用会在同一帧重复解析同一份 argv）。 */
   const transportLabel = useMemo(
     () => chatTransportLabel(trimArgList(t.chatArgv), t.chatInprocess),
@@ -114,7 +130,9 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       post_prompt_args: toNullableArgs(trimArgList(t.postPromptArgs)),
       model_list_args: toNullableArgs(trimArgList(t.modelListArgs)),
       skill_path: t.skillPath.trim() || null,
-      detection: t.detectionCmd.trim() ? { type: 'command', target: t.detectionCmd.trim() } : null,
+      detection: t.detectionTarget.trim()
+        ? { type: t.detectionType, target: t.detectionTarget.trim() }
+        : null,
       deploy: {
         skills: t.deploySkills.trim() || '{{projectPath}}/.agent/skills',
         commands: t.deployCommands.trim() || null,
@@ -368,12 +386,29 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
               />
             </div>
             <div className={groupCls}>
-              <span className={labelCls}>List Models Args (one per line)</span>
-              <ArgListEditor
-                value={t.modelListArgs}
-                onChange={argSetters.modelListArgs}
-                placeholders={MODEL_LIST_PLACEHOLDERS}
-              />
+              {chatIsSessionScoped ? (
+                <>
+                  <span className={labelCls}>List Models Args</span>
+                  <p className="text-[0.7em] text-text-muted leading-relaxed">
+                    The model list comes from the agent protocol. A CLI list would return
+                    <code className="mx-1 font-mono">provider/model</code>
+                    ids that cannot be written back, so this field is disabled here.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <span className={labelCls}>List Models Args (one per line)</span>
+                  {/* 空列表时编辑器不渲染输入框（只有「+ Add」），所以用容器
+                      上的 `aria-label` 作为「该字段存在」的可定位判据。 */}
+                  <div role="group" aria-label="List Models Args">
+                    <ArgListEditor
+                      value={t.modelListArgs}
+                      onChange={argSetters.modelListArgs}
+                      placeholders={MODEL_LIST_PLACEHOLDERS}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

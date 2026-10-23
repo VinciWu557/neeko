@@ -83,16 +83,30 @@ const DeploySection: React.FC<DeploySectionProps> = ({ t, set }) => {
             />
           </div>
         </div>
+        {/* 安装检测：命令（查 PATH）或目录（查模板是否存在）。
+            两者都是后端 `Detection` 的合法变体，必须都能表达 ——
+            只给「命令」会把 `directory` 的配置静默改坏。 */}
         <div className={fieldGroup}>
-          <label className={label} htmlFor="agent-form-detection">
-            Install detection command (optional · considered installed if found in PATH)
-          </label>
+          <div className="flex items-center gap-2">
+            <label className={label} htmlFor="agent-form-detection">
+              Install detection (optional · empty = always installed)
+            </label>
+            <select
+              aria-label="Detection kind"
+              value={t.detectionType}
+              onChange={(e) => set('detectionType', e.target.value as 'command' | 'directory')}
+              className="h-7 w-28 shrink-0 rounded border border-border bg-bg-secondary px-2 text-[0.82em] text-text-primary outline-none focus:border-accent-blue"
+            >
+              <option value="command">Command</option>
+              <option value="directory">Directory</option>
+            </select>
+          </div>
           <Input
             id="agent-form-detection"
             size="sm"
-            value={t.detectionCmd}
-            onChange={(e) => set('detectionCmd', e.target.value)}
-            placeholder="myagent (empty = always considered installed)"
+            value={t.detectionTarget}
+            onChange={(e) => set('detectionTarget', e.target.value)}
+            placeholder={t.detectionType === 'command' ? 'myagent' : '~/.my-agent/skills'}
           />
         </div>
       </div>
