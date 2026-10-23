@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useAppContext } from '@/shared/contexts';
 import type { FileChange } from '@/shared/types';
 import type {
   ProjectCommands,
@@ -152,7 +151,6 @@ export function useAiCommitMessage({
   onGenerated,
 }: UseAiCommitMessageParams) {
   const [aiGenerating, setAiGenerating] = useState(false);
-  const { config } = useAppContext();
 
   // AI 按钮仅当 capabilities.canGenerateCommitMessage 且已选择 agent 时可用
   const canAiGenerate = capabilities.canGenerateCommitMessage && !!project.selectedAgent;
@@ -167,12 +165,7 @@ export function useAiCommitMessage({
     setAiGenerating(true);
     try {
       const selectedAgent = project.selectedAgent?.[0] ?? '';
-      const agentCommandOverride = config.agentCommandOverrides?.[selectedAgent] ?? null;
-      const generated = await commands.generateCommitMessage(
-        selectedAgent,
-        files,
-        agentCommandOverride,
-      );
+      const generated = await commands.generateCommitMessage(selectedAgent, files);
       onGenerated(generated.trim());
     } catch (e: unknown) {
       onShowToast?.(String(e), 'error');
@@ -184,7 +177,6 @@ export function useAiCommitMessage({
     project.selectedAgent,
     selectedFiles,
     commands,
-    config.agentCommandOverrides,
     onShowToast,
     onGenerated,
   ]);

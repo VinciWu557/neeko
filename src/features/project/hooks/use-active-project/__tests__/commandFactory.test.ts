@@ -221,12 +221,11 @@ describe('createProjectCommands (Local)', () => {
   });
 
   it('generateCommitMessage should call generate_commit_message', async () => {
-    await commands.generateCommitMessage('opencode', ['src/foo.ts'], null);
+    await commands.generateCommitMessage('opencode', ['src/foo.ts']);
     expect(mockInvoke).toHaveBeenCalledWith('generate_commit_message', {
       ...wtPayload(),
       agentId: 'opencode',
       filePaths: ['src/foo.ts'],
-      agentCommandOverride: null,
     });
   });
 });
@@ -275,11 +274,10 @@ describe('createProjectCommands with worktreePath', () => {
   });
 
   it('generateCommitMessage should pass worktreePath', async () => {
-    await commands.generateCommitMessage('opencode', ['src/foo.ts'], null);
+    await commands.generateCommitMessage('opencode', ['src/foo.ts']);
     expect(mockInvoke).toHaveBeenCalledWith('generate_commit_message', {
       workspace: { projectId, worktreePath },
       agentId: 'opencode',
-      agentCommandOverride: null,
       filePaths: ['src/foo.ts'],
     });
   });

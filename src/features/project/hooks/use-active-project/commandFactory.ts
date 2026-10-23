@@ -89,7 +89,7 @@ export function createProjectCommands(workspace: WorkspaceSession): ProjectComma
     cherryPick: (commitHash) => cherryPick(workspace, commitHash),
     revert: (commitHash) => revert(workspace, commitHash),
     createTag: (tagName, message) => createTag(workspace, tagName, message ?? ''),
-    generateCommitMessage: (agentId, filePaths, agentCommandOverride) =>
-      generateCommitMessage(workspace, agentId, agentCommandOverride ?? null, filePaths),
+    generateCommitMessage: (agentId, filePaths) =>
+      generateCommitMessage(workspace, agentId, filePaths),
   };
 }

@@ -12,28 +12,16 @@ use tauri::State;
 pub async fn generate_commit_message(
     workspace: WorkspaceSession,
     agent_id: String,
-    agent_command_override: Option<String>,
     file_paths: Vec<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<String, AppError> {
-    let _ = agent_command_override;
-
     let (agent_cmd, prompt_args, post_prompt_args) = resolve_agent_for_remote(&state, &agent_id);
     let prompt = ai_svc::build_simple_commit_prompt(&file_paths);
     let (t, repo) = state.resolve_workspace_target(&workspace).await?;
     let repo_path = repo.root().to_string();
 
     let output = match &t {
-        ExecTarget::Local => {
-            run_agent_local(
-                &state,
-                &repo_path,
-                &agent_id,
-                agent_command_override.as_deref(),
-                &file_paths,
-            )
-            .await?
-        }
+        ExecTarget::Local => run_agent_local(&state, &repo_path, &agent_id, &file_paths).await?,
         ExecTarget::Remote {
             host,
             port,
@@ -84,13 +72,12 @@ async fn run_agent_local(
     state: &AppStateWrapper,
     wd: &str,
     agent_id: &str,
-    command_override: Option<&str>,
     file_paths: &[String],
 ) -> Result<String, AppError> {
     // 同步业务逻辑（git diff / 最近提交 / agent CLI）放入 blocking 线程池，
     // 避免在 async driver 线程内执行同步命令执行。
     let sp = std::path::PathBuf::from(wd);
-    let config = resolve_agent_config(state, agent_id, command_override)?;
+    let config = resolve_agent_config(state, agent_id)?;
     let file_paths = file_paths.to_vec();
     crate::common::runtime::run_blocking(move || {
         ai_svc::generate_commit_message(&sp, &config, &file_paths)
@@ -146,7 +133,6 @@ async fn run_agent_exec(
 fn resolve_agent_config(
     state: &AppStateWrapper,
     agent_id: &str,
-    command_override: Option<&str>,
 ) -> Result<ai_svc::AgentInvokeConfig, AppError> {
     let agent_manager = state.agent_manager.lock().map_err(AppError::from)?;
     let agent = agent_manager
@@ -160,10 +146,9 @@ fn resolve_agent_config(
         ))
     })?;
 
-    let command = command_override
-        .filter(|s| !s.is_empty())
-        .unwrap_or(&agent.command)
-        .to_string();
+    // `AgentManager` 在启动时已把 `agentOverrides` 合并进内存定义，所以
+    // `agent.command` 就是用户当前生效的值 —— 不需要额外的覆盖参数。
+    let command = agent.command.clone();
 
     let post_prompt_args = agent.resolve_post_prompt_args();
     Ok(ai_svc::AgentInvokeConfig {
@@ -178,7 +163,7 @@ fn resolve_agent_for_remote(
     state: &AppStateWrapper,
     selected_agent: &str,
 ) -> (String, Vec<String>, Vec<String>) {
-    if let Ok(config) = resolve_agent_config(state, selected_agent, None) {
+    if let Ok(config) = resolve_agent_config(state, selected_agent) {
         return (
             selected_agent.to_string(),
             config.prompt_args,
@@ -193,7 +178,7 @@ fn resolve_agent_for_remote(
         .trim_end_matches(".exe")
         .trim_end_matches(".cmd");
 
-    if let Ok(config) = resolve_agent_config(state, cmd_name, None) {
+    if let Ok(config) = resolve_agent_config(state, cmd_name) {
         return (
             selected_agent.to_string(),
             config.prompt_args,

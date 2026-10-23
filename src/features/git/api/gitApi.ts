@@ -431,13 +431,13 @@ export function defaultBranch(workspace: WorkspaceSession): Promise<string> {
 export function generateCommitMessage(
   workspace: WorkspaceSession,
   agentId: string,
-  agentCommandOverride: string | null,
   filePaths: string[],
 ): Promise<string> {
+  // 命令由后端 `AgentManager` 的生效配置决定（已合并内置覆盖层），
+  // 前端不再传覆盖值 —— 那份副本是「设置页改了终端不生效」的根源之一。
   return invoke<string>('generate_commit_message', {
     workspace,
     agentId,
-    agentCommandOverride,
     filePaths,
   });
 }
