@@ -17,6 +17,22 @@ use std::future::Future;
 pub async fn discover_opencode_models(
     binary_path: Option<String>,
 ) -> Result<Vec<ModelInfo>, AppError> {
+    discover_opencode_models_with_args(binary_path, &["models", "--verbose"]).await
+}
+
+/// 同 [`discover_opencode_models`]，但由调用方给出子命令参数。
+///
+/// # 为什么需要参数化
+///
+/// opencode 2.0 **移除了** `models --verbose`（实测 `Unrecognized flag`, exit 1），
+/// 但保留了 `models`。所以「用哪条命令」是**协议版本的知识**，属于调用方
+/// （`ServeProtocol::cli_models_args`），不属于本模块 —— 这里只管执行与解析。
+///
+/// 解析仍按命令名分派（`parse_models_stdout`），因为输出格式是 agent 私有的。
+pub async fn discover_opencode_models_with_args(
+    binary_path: Option<String>,
+    args: &[&str],
+) -> Result<Vec<ModelInfo>, AppError> {
     use crate::common::executor::factory::ExecTarget;
     use crate::core::exec;
 
@@ -24,12 +40,12 @@ pub async fn discover_opencode_models(
     let target = ExecTarget::Local;
 
     log::info!(
-        "[discover_opencode_models] Executing: {} models --verbose",
-        path
+        "[discover_opencode_models] Executing: {} {}",
+        path,
+        args.join(" ")
     );
 
-    discover_opencode_models_with(|| exec::collect(&target, &path, &["models", "--verbose"], None))
-        .await
+    discover_opencode_models_with(|| exec::collect(&target, &path, args, None)).await
 }
 
 /// Injectable core of [`discover_opencode_models`]: the caller supplies how to fetch `ExecOutput`.
