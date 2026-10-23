@@ -141,6 +141,68 @@ const ProjectItem: React.FC<ProjectItemProps> = ({
 
 ---
 
+## 表单控件必须复用 `ui/` 原语（禁止裸写 `<input>`）
+
+**判据**：页面里的文本输入一律走 `@/ui` 的 `Input` / `Textarea`，不裸写原生标签。
+
+### 为什么是硬约束而不是风格偏好
+
+`ui/Input` 内部封装了三件裸标签不会自带的**行为**：
+
+| 保护 | 漏掉的后果 | 可观测性 |
+| --- | --- | --- |
+| `useImeSpaceGuard` | 中文输入法提交「拼音 候选」时把分词空格留在值里 | 用户可见，但只在特定 IME + 特定输入下出现 |
+| `noAutocorrectProps` | WebKit 句首自动大写 / 自动纠错 / 拼写检查 | macOS / Linux WebKit 下才显现 |
+| `disabled:` / focus ring | 禁用态与焦点态各页面不一致 | 视觉漂移，逐页面 review 才看得出 |
+
+三条都**难以被单元测试在裸 `<input>` 上捕获**（渲染出来的都是 textbox），所以漏了通常要靠用户报告才知道。这正是必须写成源码级护栏的原因。
+
+### 尺寸差异用 `size` 变体，不要绕开组件
+
+密集表单/行内编辑需要紧凑输入框。**加变体，不要另起一套裸标签**：
+
+```tsx
+// 错误 —— 丢了 IME 守卫、WebKit 关断、统一 focus 样式
+<input className="h-7 px-2 text-[0.82em]" value={v} onChange={...} />
+
+// 正确
+<Input size="sm" value={v} onChange={...} />
+```
+
+`size` 变体（`default` / `sm`）用 `cva` 定义，与 `Button` 同一模式。需要局部差异（如某区块换底色）时传 `className`，`cn`（tailwind-merge）会按后写覆盖前写的规则消解冲突。
+
+### 例外：`type="checkbox" | "radio" | "file"`
+
+这些不需要 IME / 自动大写 / 文本 focus 样式，裸标签是正常用法。
+
+### 可访问性：`label` 必须关联控件
+
+```tsx
+// 错误 —— 用 <label> 包自定义组件时，jsx-a11y 与读屏软件都无法关联
+<label className={groupCls}>
+  <span>Name</span>
+  <Input value={...} />
+</label>
+
+// 正确 —— 显式 htmlFor + id
+<div className={groupCls}>
+  <label htmlFor="agent-form-name">Name</label>
+  <Input id="agent-form-name" value={...} />
+</div>
+```
+
+护栏 `jsx-a11y/label-has-associated-control` 会报错（静态分析看不到 `Input` 内部渲染的 `<input>`）。测试用 `getByLabelText(/^Name/)` 取控件 —— 关联断了就取不到。
+
+### 护栏
+
+`features/agent/components/__tests__/AgentForm.a11y.test.tsx`：
+
+- 裸 `<input>` 计数必须等于 `type="checkbox"` 计数（多一个就是回潮）；
+- 每个带标签的字段都能被 `getByLabelText` 取到；
+- `input[id]` / `textarea[id]` 的 id 互不重复。
+
+> 存量：全仓仍有约 90 处裸 `<input>`（分布在 20+ 文件）。逐文件迁移是独立任务，但**新增或修改的代码不得再引入新的裸文本输入**。
+
 ## 多 Tab 面板 + 内嵌现有组件模式
 
 ### 适用场景

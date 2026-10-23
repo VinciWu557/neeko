@@ -8,42 +8,156 @@
 
 ## 1. Scope / Trigger
 
-- **Trigger**：改 `src-tauri/src/agent/chat/adapter/{acp,serve,deepseek}.rs` 或
-  `adapter/pi_rpc/`；改 `common/agent/types.rs` 的 `ChatStart`；给某个 agent
-  接上 chat 能力。
-- **前提认知**：`ChatStart` 是**能力数据**，不是 id 判定的替代品。`adapter_for`
-  按 `config.chat` 分派，任何适配器内部都不得出现 `agent_id ==` 分支
-  （护栏 `tests/unit/agent_model_dispatch_test.rs`）。
+- **Trigger**：改 `src-tauri/src/agent/chat/adapter/{acp,deepseek}.rs` 或
+  `adapter/pi_rpc/`、`adapter/opencode/`；改 `common/agent/chat_launch.rs`；
+  给某个 agent 接上 chat 能力。
+- **前提认知**：`ChatLaunch` 是**能力数据**，不是 id 判定的替代品。`adapter_for`
+  按 `ChatLaunch::transport()` 分派，任何适配器内部都不得出现 `agent_id ==`
+  分支（护栏 `tests/unit/agent_model_dispatch_test.rs`）。
 
-## 2. 四条传输
+## 2. `ChatLaunch` —— 启动配置只有一个来源
 
-| `ChatStart` | 适配器 | 传输 | 进程数 |
-| --- | --- | --- | --- |
-| `Acp { args }` | `AcpAdapter` | JSON-RPC over stdio | 1 |
-| `Serve` | `ServeAdapter` | HTTP + SSE（opencode serve） | 1（serve 本身） |
-| `Jsonl` | `DeepSeekHarnessAdapter` | 私有 NDJSON over stdio | 1 |
-| `PiRpc` | `PiRpcAdapter` | 私有 NDJSON over stdio | 1 |
-| `Mock` | `AcpAdapter::mock` | 进程内 | 0 |
+```rust
+pub struct ChatLaunch {
+    pub program: Option<String>,          // argv[0]；None = 沿用 AgentConfig::command
+    pub args: Vec<String>,                // argv[1..]
+    pub env: BTreeMap<String, String>,    // 仅 chat 进程
+    pub inprocess: bool,                  // 进程内实现，不 spawn 子进程
+}
+```
 
-**`Jsonl` 与 `PiRpc` 不共用一个变体**：两者都是「私有 NDJSON」，但命令形状与事件
-类型完全不同（DeepSeek Harness 是 `{type:...}` 单层；Pi 有 `response` 配对层 +
-`assistantMessageEvent` 嵌套）。共用一个变体会让适配器里出现「解码后再按 kind
+**传输不是字段，是派生物**。`ChatLaunch::transport()` 从 `program + args` 的
+**完整 token** 流识别：
+
+| 命中的 token | 传输 |
+| --- | --- |
+| `acp` | `Acp` |
+| `serve` | `Serve` |
+| `--jsonl` / `stream-json` | `Jsonl` |
+| `--mode rpc`（相邻两 token）或裸 `rpc` | `PiRpc` |
+| 以上都没有（含空） | `Acp`（默认，唯一通用协议） |
+
+判定顺序即优先级。**必须用完整 token 比较，不得子串匹配** —— `--preserve` 与
+`--observe` 都含 "serve"，子串匹配会把它们判成 Serve 传输。
+
+### 2.0 两个必须显式化的边界（不是可推导的）
+
+两个事故都是同一病因：**把「数据」退化成「从其他字段推断」，于是推断规则覆盖了
+它本不覆盖的情况**。
+
+#### 2.0.1 序列化往返：判别式只能用旧格式独有的键
+
+`program` / `args` / `env` 全部 `skip_serializing_if` 省略，所以 `{}` 与
+`{"args":[…]}` 都是**我们自己的 `Serialize` 输出**。旧判别式用「有没有 `program`」
+区分新旧格式 → 这两份输出被判成旧对象而解析失败。
+
+后果是「保存即损坏」：内置 `pi`（`{"args":["--mode","rpc"]}`）与 `mockAgent`（`{}`）
+一旦被用户覆盖保存，下次启动就被 `boot::load_custom_agents` 与
+`app_state::agent_manager_with_overrides` 当作损坏条目 `warn` + `continue` 静默丢弃。
+
+**现在的唯一判据是 `transport` 键**（只有旧格式 B 会写它）。护栏：
+`every_launch_round_trips_through_its_own_output` +
+`builtin_launch_shapes_round_trip` + `every_builtin_agent_survives_a_persistence_round_trip`。
+
+> 教训：**“能读旧配置”不是兼容性充要条件，“能读自己写的东西”才是**。后者被破坏时
+> 没有任何运行时错误 —— 只有用户配置消失。
+
+#### 2.0.2 进程内实现是显式字段，不从空命令行推断
+
+「没有可执行文件」有两种互不相干的原因：
+
+| 原因 | 想要的行为 |
+| --- | --- |
+| **设计如此**（`mockAgent`） | 路由到 `AcpAdapter::mock()` |
+| **填漏了 / 暂时禁用**（用户清空 `command`） | 报错，而不是偷偷降级 |
+
+按「命令行推为空」推断会把后者静默变成前者，得到一个「能连上但永远不回话」的
+会话 —— 正是本类型要消灭的失败模式。所以 `inprocess` 是**字段**：
+`AgentConfig::is_inprocess_chat()` 只读它，不读 `chat_cmd_vec()`。
+
+同理，前端表单必须把 `inprocess` 作为独立状态（`chatInprocess`）传递 —— 否则
+`mockAgent` 经表单往返会退化成「无 CHAT 能力」（`buildChatLaunch` 对空命令返回 `null`）。
+
+### 2.1 历史包袱：为什么不再是枚举
+
+旧的 `ChatStart` 枚举（`Acp{args}` / `Serve` / `Jsonl` / `Mock` / `PiRpc`）把
+「用哪个协议」和「怎么启动它」混在一起，且启动参数还拆在
+`AgentConfig::chat_command` / `chat_args` 里。四份来源合并成一个命令行，产生了
+三个语义歧义：
+
+1. `chat_command` 一旦设置就**吞掉** `args`（理由：那些参数描述另一个进程）。
+2. `Acp.args` 与 `chat_args` 都在 `argv` 尾部，谁先谁后无原则可依。
+3. `Serve` 干脆不读配置，**硬编码 `"opencode"`**。
+
+随之而来的是设置页出现一个传输下拉，让用户去声明一个他无法改变的事实：
+内置 11 个 agent 里只有 3 个有 chat 能力，其中 **0 个用 ACP**。选错只会得到
+跑不起来的配置，且表单给不出任何提示。现在的 UI 是一行启动命令 + 识别结果。
+
+## 3. 四条传输
+
+| 传输 | 适配器 | 协议 | 进程数 | 典型启动命令 |
+| --- | --- | --- | --- | --- |
+| `Acp` | `AcpAdapter` | JSON-RPC over stdio | 1 | `opencode acp` · `gemini` |
+| `Serve` | `ServeAdapter` | HTTP + SSE | 1（serve 本身） | `opencode serve` |
+| `Jsonl` | `DeepSeekHarnessAdapter` | 私有 NDJSON over stdio | 1 | `<bin> --jsonl` |
+| `PiRpc` | `PiRpcAdapter` | 私有 NDJSON over stdio | 1 | `pi --mode rpc` |
+
+**`Jsonl` 与 `PiRpc` 不共用一个传输标识**：两者都是「私有 NDJSON」，但命令形状与
+事件类型完全不同（DeepSeek Harness 是 `{type:...}` 单层；Pi 有 `response` 配对层 +
+`assistantMessageEvent` 嵌套）。共用一个标识会让适配器里出现「解码后再按 kind
 分支」的二段分派。
 
-## 3. 新增一条传输必须改的四处
+### 3.1 进程内实现不是传输
+
+`mockAgent` 的形状是「显式 `inprocess: true` + 无 argv」→ `AgentConfig::is_inprocess_chat()`
+判真 → `AcpAdapter::mock()`。判据不是 id 特判，新增内置实现不需要改分派。
+
+它**不能**用「`command` 为空」判定（见 §2.0.2）——那会把「用户清空了 command 的配置」
+误路由到 mock。
+
+## 4. 新增一条传输必须改的落点
 
 漏任何一处都是**静默失败**（不报错，行为错）：
 
 | # | 落点 | 漏掉的后果 |
 | --- | --- | --- |
-| 1 | `ChatStart::as_str()` | 序列化出错误字符串，读回时降级成 Acp |
-| 2 | `ChatStart` 的 `Deserialize`，**必须在 `_ => Self::Acp` 兜底之前** | `"xxx"` 被吞成 Acp，spawn 出错误命令行 |
-| 3 | `adapter_for()` 的 `match` | Rust 会编译报错（`non_exhaustive`），这一处**不会漏** |
-| 4 | 前端 `ChatTransport` + `CHAT_OPTIONS` + `CHAT_HINTS` | 下拉里选不到；或选了保存后后端不认识 |
+| 1 | `ChatLaunch::transport()` 的 token 判定 | 识别不出，永远走默认 ACP |
+| 2 | `ChatTransport` 变体 + `as_str()` | 日志/错误里的标识缺失 |
+| 3 | `adapter_for()` 的 `match` | Rust 编译报错（这一处**不会漏**） |
+| 4 | 前端 `transportOf()`（`shared/types/agent.ts`）+ `TRANSPORT_LABELS` | UI 上的识别结果与实际不符 |
 
-护栏：`src/features/agent/components/__tests__/chatTransportOptions.test.ts`
-读后端源码断言 ① 每个前端选项都有对应 `as_str()` 臂 ② `"pi-rpc"` 分支位于
-`_ => Self::Acp` 兜底之前。**两条都做过变异验证**。
+护栏：`src/features/agent/components/__tests__/chatLaunch.test.ts` 的
+`agrees with the backend recogniser on every token` 读 `chat_launch.rs` 源码，
+断言 ① 两端 token 集合一致 ② 后端只用 `tokens.contains`（不子串匹配）
+③ `acp` 判定在 `serve` 之前。**三条都做过变异验证**。
+
+## 4b. 环境变量的两层
+
+| 字段 | 作用域 | 消费点 |
+| --- | --- | --- |
+| `AgentConfig::env` | agent 全局（TUI + chat） | 保留；当前无 TUI spawn 消费点 |
+| `ChatLaunch::env` | **仅** chat 进程 | `AgentConfig::chat_env()` |
+
+```
+生效环境 = 父进程继承 ∪ AgentConfig.env ∪ ChatLaunch.env   (靠后覆盖靠前)
+```
+
+合并**只在 `AgentConfig::chat_env()` 里发生**。四个 adapter 的 spawn 入口各不相同
+（`spawn` / `spawn_with` 历史差异），各拼一份必然漂移。
+
+**内部必需变量最后写入**：`OPENCODE_SERVER_PASSWORD` 由 `connection::merged_env`
+在用户 env 之后插入，用户改不动 —— 它是内部协议细节，填错只得到 401，而 401 的
+根因从 UI 上看不出来。护栏：`connection::merged_env_tests`。
+
+## 4c. exec spawn 只有一个入口
+
+`core::exec::spawn(target, cmd, args, SpawnSpec)` —— 目录 / 环境变量 / 进程组语义
+全走 `SpawnSpec`。历史上 `spawn` / `spawn_with` / `spawn_with_env` 三个 facade
+只是 `SpawnOptions` 的三种参数组合，造出了「cwd + env 同时要」的语法窟窿
+（`pi_rpc` 要 cwd、chat adapter 都要 env）。
+
+`SpawnSpec::kill_tree` **默认 `false`**：显式优于隐式，迫使调用方思考进程组语义。
+受管长驻进程（LSP / DAP / chat adapter）应显式 `.kill_tree()`。
 
 ## 4. Pi rpc 的协议事实（一手实测 pi 1.3.0）
 
@@ -162,8 +276,8 @@ spawn 时带参数或旧版本行为。**pi 1.3.0 实测 `非 JSON 行: 0`**。
 
 ## 5. 新增传输的检查清单
 
-1. `ChatStart` 变体 + `as_str()` + `Deserialize`（**兜底之前**）+ `adapter_for`
-2. 前端 `ChatTransport` / `CHAT_OPTIONS` / `CHAT_HINTS`
+1. `ChatLaunch::transport()` 的 token 判定 + `ChatTransport` 变体 + `as_str()` + `adapter_for`
+2. 前端 `transportOf()` / `TRANSPORT_LABELS`（没有选项列表 —— 传输是派生物）
 3. `pi_rpc/` 式目录拆分（不要单文件 —— `deepseek.rs` 已 900+ 行）
 4. `mod.rs` 保持极薄（红线 9）：只 `mod` 声明 + `pub use`
 5. 纯函数翻译层（事件 → `StreamEvent`）单独成文件，这样「事件序列」类时序 bug
@@ -175,7 +289,9 @@ spawn 时带参数或旧版本行为。**pi 1.3.0 实测 `非 JSON 行: 0`**。
 
 | 错误 | 后果 |
 | --- | --- |
-| 新变体分支写在 `_ => Self::Acp` 之后 | 静默降级成 ACP，spawn 出错误命令行 |
+| token 判定写成子串匹配 | `--preserve` / `--observe` 被判成 Serve 传输 |
+| `acp` 判定排在 `serve` 之后 | `opencode serve acp` 静默走错传输 |
+| 未知传输字符串兜底成 ACP | 拼错的 `"acpp"` 悄悄当 ACP spawn（**已改为报错**） |
 | 用 `agent_end` 判回合结束 | 压缩/重试场景提前结束，后续输出丢失 |
 | 响应也广播给事件流 | 前端把回包渲染成对话事件 |
 | `extension_ui_request` 一律当审批 | 启动时弹出一串无意义审批 |

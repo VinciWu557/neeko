@@ -231,3 +231,33 @@ const name = project!.name;
 // 正确 —— 处理 null 情况
 const name = project?.name ?? "Unknown";
 ```
+
+### 5. 把有序序列投影成「分隔符拼接的一行文本」
+
+```tsx
+// 错误 —— argv ↔ 一行文本 的投影不幂等
+const text = args.join(' ');              // ['--sys','hello world'] → "--sys hello world"
+const args = text.trim().split(/\s+/);    // → ['--sys','hello','world']
+```
+
+**判据是「投影是否单射」**：只要两个不同的源值会映射到同一个文本，反向解析就必然有损，
+而表单的「读初始值 → 写回」会把这个损失**静默**落到用户配置上（打开设置页再保存一次就变了）。
+
+实测过的错误修法：
+
+| 做法 | 为什么不行 |
+| --- | --- |
+| 换更聪明的分词器（引号感知） | 只是把损失减小；`['a"b', "c'd"]` 这类值仍无法用单一引号语法表达 |
+| `shell-quote` | 会做 shell 展开（`$HOME/x` → `/x`、`&amp;&amp;` → 运算符节点）。argv 是直传进程的，语义不对 |
+| `string-argv` | 语义正确但无 formatter；引号内不反转义，同时含两种引号的值无法表达 |
+
+**正解是换载体**：表单态直接持有 `string[]`，参数边界由**控件结构**表达
+（`ArgListEditor`：一行一个输入框），不需要解析、引号规则或转义，往返天然无损。
+
+**不适用的情况**：投影本来幂等时不必上数组。例：`Record<string,string>` ↔ 多行
+`KEY=value`（`formatEnvText` / `parseEnvText`）是幂等的 —— 它承载「多行」这个天然布局，
+不是一个会丢边界的有序序列，保持文本态更省认知。
+
+**反回潮护栏**：`features/agent/components/__tests__/chatLaunch.test.ts` 的
+「argv is never projected back to a single line」读源码断言不存在
+`split(/\s+/)` / `.join(' ')` 式的 argv 处理。
