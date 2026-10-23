@@ -1,5 +1,6 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
+import { setAgentLoader, useAgentStore } from '@/shared/store/agentStore';
 import type { AgentConfig } from '@/shared/types';
 import type { ModelInfo } from '@/shared/types/agent';
 import type { SessionConfigOption } from '@/shared/types/agentChat';
@@ -69,6 +70,30 @@ export function removeAgent(agentId: string): Promise<void> {
   return invoke<void>('remove_agent', { agentId });
 }
 
+/**
+ * 保存 agent —— **唯一**写入口（落盘 + 刷新缓存）。
+ *
+ * 内置 agent 走后端覆盖层、自定义走 `customAgents`，由 `add_agent` 分流；
+ * 这里只负责「落盘成功后再刷新」，顺序不可交换：
+ *
+ * - 先刷新后落盘 → 刷新读到的是旧值，界面短暂回退；
+ * - 落盘失败也刷新 → 用一份与用户提交值不同的快照覆盖界面，看起来像保存了。
+ *
+ * 刷新点放在 API 层而不是调用方：调用方有 5 个（内置表单 / 自定义表单 /
+ * skill_path 行内 / enabled 开关 / Reset），让每个都记得刷新就是重演
+ * 「同步点分散」的原始错误。
+ */
+export async function saveAgent(agent: AgentConfig): Promise<void> {
+  await invoke<void>('add_agent', { agent });
+  await useAgentStore.getState().refresh();
+}
+
+/** 重置内置 agent 为出厂值（清除覆盖）—— 落盘 + 刷新缓存。 */
+export async function resetAgent(agentId: string): Promise<void> {
+  await invoke<void>('remove_agent', { agentId });
+  await useAgentStore.getState().refresh();
+}
+
 export function setProjectAgents(projectId: ProjectId, agentIds: string[]): Promise<void> {
   return invoke<void>('set_project_agents', { projectId, agentIds });
 }
@@ -97,3 +122,8 @@ export function resolveAgentIconSrc(icon: string | null | undefined): string | n
   if (!icon) return null;
   return convertFileSrc(icon);
 }
+
+// 把取数函数注入 store（依赖方向：features → shared，单向）。
+// `agentStore` 自己不能 import 本模块 —— 本模块要 import 它做写后刷新，
+// 双向引用会成环（`import/no-cycle` 会报错，且 ESM 循环求值很脆）。
+setAgentLoader(listAgents);

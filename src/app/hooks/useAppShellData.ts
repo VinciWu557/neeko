@@ -17,7 +17,7 @@ import {
   useWorkspaceState,
 } from '@/features/project';
 import { useSessionBootstrap, useSessionPersistence } from '@/features/session';
-import { useAppConfig } from '@/features/settings';
+import { useAgentPreload, useAppConfig } from '@/features/settings';
 import { useApplyProjectSkills } from '@/features/skill';
 import { CLOSE_TAB_EVENT } from '@/shared/events';
 import { useKeyboardShortcuts } from '@/shared/hooks/useKeyboardShortcuts';
@@ -52,6 +52,8 @@ export interface UseAppShellDataResult extends AppShellData {
  */
 export function useAppShellData(): UseAppShellDataResult {
   const { config, saveConfig, customThemes } = useAppConfig();
+  // agent 配置缓存的启动期预热（终端在未命中时不启动 agent，见 agentStore）。
+  useAgentPreload();
   const showToast = useCallback((message: string, type: 'info' | 'error' = 'info') => {
     useNotificationStore.getState().addNotification({
       type: type === 'error' ? 'error' : 'info',
@@ -156,7 +158,6 @@ export function useAppShellData(): UseAppShellDataResult {
     saveSession: session.saveSession,
   });
   const agentActionsWrap = useAgentActions({
-    agentCommandOverrides: config.agentCommandOverrides,
     handleOpenIde,
     showToast,
     saveSession: session.saveSession,
