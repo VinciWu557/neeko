@@ -1,15 +1,19 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 
+import { useAgentStore } from '@/shared/store/agentStore';
 import { useDockStore } from '@/shared/store/dockStore';
 import type { AppConfig, AgentConfig } from '@/shared/types';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 import { loadConfig as loadSessionConfig, patchConfig } from '../../session/api/sessionApi';
-import { checkAgentsInstalled, listAgents, setProjectAgents } from '../api/agentApi';
+import { checkAgentsInstalled, setProjectAgents } from '../api/agentApi';
 
 import AgentIcon from './AgentIcon';
 
 type MenuMode = 'none' | 'main' | 'terminal' | 'chat' | 'browser';
+
+/** 未加载时的稳定空数组 —— 避免每次渲染产生新引用而打穿 memo。 */
+const EMPTY_AGENTS: AgentConfig[] = [];
 interface AgentSelectorProps {
   projectId: ProjectId;
   currentAgentId: string | null;
@@ -135,7 +139,6 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   skipBackendPersist = false,
   onShowToast,
 }) => {
-  const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(currentAgentId);
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const [activeMode, setActiveMode] = useState<MenuMode>('none');
@@ -149,15 +152,6 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const addMenuRef = useRef<HTMLDivElement>(null);
-
-  const loadAgents = async () => {
-    try {
-      const agentList = await listAgents();
-      setAgents(agentList);
-    } catch (error) {
-      console.error('Failed to load agents:', error);
-    }
-  };
 
   const loadConfig = async () => {
     try {
@@ -179,10 +173,14 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
     }
   };
 
-  // Load agents on mount (deferred to avoid sync setState in effect)
+  // agent 列表来自唯一缓存；`ensure` 幂等，重复挂载不重复请求。
+  const agents = useAgentStore((s) => s.agents) ?? EMPTY_AGENTS;
+  const ensureAgents = useAgentStore((s) => s.ensure);
   useEffect(() => {
-    Promise.resolve().then(() => loadAgents());
-  }, []);
+    Promise.resolve().then(() =>
+      ensureAgents().catch((error) => console.error('Failed to load agents:', error)),
+    );
+  }, [ensureAgents]);
 
   // Load config on mount (deferred to avoid sync setState in effect)
   useEffect(() => {

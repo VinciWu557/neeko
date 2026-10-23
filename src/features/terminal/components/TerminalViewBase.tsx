@@ -4,6 +4,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { Terminal } from '@xterm/xterm';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
+import { resolveAgent } from '@/shared/store/agentStore';
 import { observeContainerSize } from '@/shared/utils/containerObserver';
 import { createDrainTransportScheduler } from '@/shared/utils/drainLoop';
 import { safeUnlisten } from '@/shared/utils/safeUnlisten';
@@ -22,7 +23,6 @@ import {
   resolveTerminalLineHeight,
 } from '@/shared/utils/typography';
 
-import { getAgent } from '../../agent/api/agentApi';
 import { drainTerminal, drainTerminalWait } from '../api/terminalApi';
 import type { TerminalStrategy, CacheEntry } from '../strategies/types';
 import { createFitScheduler, type FitScheduler } from '../utils/fitScheduler';
@@ -50,7 +50,6 @@ interface TerminalViewBaseProps {
   taskCommand?: string | null;
   taskConfigId?: string | null;
   taskRebuildKey?: number;
-  agentCommandOverride?: string;
   onStatusChange?: (status: 'Idle' | 'Running' | 'Failed') => void;
 }
 
@@ -60,7 +59,6 @@ export default React.memo(function TerminalViewBase({
   taskCommand,
   taskConfigId,
   taskRebuildKey = 0,
-  agentCommandOverride,
   onStatusChange,
 }: TerminalViewBaseProps) {
   const { cacheKey, fontSize, fontFamily: fontFamilyProp } = strategy;
@@ -251,20 +249,22 @@ export default React.memo(function TerminalViewBase({
 
           // 当 taskCommand 已设置时（如 resume），跳过 auto-launch
           if (tabAgentId && !taskCommand) {
-            const cmdOverride = agentCommandOverride;
             setTimeout(async () => {
               if (!entry.sessionId) return;
-              try {
-                const agent = await getAgent(tabAgentId);
-                const cmd = cmdOverride ?? agent.command;
-                const cmdStr = [cmd, ...agent.args].join(' ') + '\r';
-                const bytes = Array.from(new TextEncoder().encode(cmdStr));
-                // 静默豁免：终端输入，尽力而为，失败无需上报
-                emit(terminalInputEvent(entry.sessionId), bytes).catch(() => {});
-                onStatusChange?.('Running');
-              } catch (err) {
-                console.error('[Terminal] Auto-launch agent failed:', err);
+              // 命令的唯一来源是 agent 缓存（后端 `AgentManager` 的快照）。
+              // 用 `resolveAgent`（未加载则触发一次加载再取），而不是只在
+              // 缓存里找 —— 启动期会话恢复可能早于 preload 完成，只查缓存会
+              // 让用户得到一个空终端。
+              const agent = await resolveAgent(tabAgentId);
+              if (!agent) {
+                console.warn('[Terminal] agent not in cache, skipping auto-launch:', tabAgentId);
+                return;
               }
+              const cmdStr = [agent.command, ...agent.args].join(' ') + '\r';
+              const bytes = Array.from(new TextEncoder().encode(cmdStr));
+              // 静默豁免：终端输入，尽力而为，失败无需上报
+              emit(terminalInputEvent(entry.sessionId), bytes).catch(() => {});
+              onStatusChange?.('Running');
             }, agentDelayMsVal);
           }
 
@@ -444,7 +444,6 @@ export default React.memo(function TerminalViewBase({
     tabAgentId,
     taskCommand,
     taskConfigId,
-    agentCommandOverride,
     onStatusChange,
     scheduleFit,
     // 字体属性：syncFont 在 effect 体内同步执行，须作为依赖（原本是独立 effect 的依赖）

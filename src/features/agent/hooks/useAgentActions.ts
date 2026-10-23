@@ -13,7 +13,6 @@ import type { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { setProjectIde } from '../../project/api/projectApi';
 
 interface UseAgentActionsParams {
-  agentCommandOverrides?: Record<string, string>;
   handleOpenIde: (project: { id: string; selected_ide: string | null }) => Promise<void>;
   showToast: (message: string, type?: 'info' | 'error') => void;
   saveSession: SaveSessionFn;
@@ -32,7 +31,6 @@ interface UseAgentActionsResult {
 }
 
 export function useAgentActions({
-  agentCommandOverrides,
   handleOpenIde,
   showToast,
   saveSession,
@@ -73,13 +71,13 @@ export function useAgentActions({
       if (!target) return;
 
       if (agent) {
-        void switchAgentInTerminal(session, target.tab.id, agent.id, agentCommandOverrides);
+        void switchAgentInTerminal(session, target.tab.id, agent.id);
         return;
       }
 
       setTimeout(() => refreshTerminalForSession(session, target.tab.id), 50);
     },
-    [agentCommandOverrides],
+    [],
   );
 
   const handleOpenIdeCallback = useCallback(

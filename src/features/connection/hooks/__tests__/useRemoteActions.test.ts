@@ -346,7 +346,6 @@ describe('useRemoteActions', () => {
         expect.objectContaining({ projectId: 'rp1', worktreePath: null }),
         'rp1-term',
         'claude-code',
-        {},
       );
     });
 

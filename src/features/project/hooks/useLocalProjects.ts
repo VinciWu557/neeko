@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/shallow';
 // eslint-disable-next-line import/no-restricted-paths -- useLocalProjects cleans terminal caches on project close
 import { destroyTerminalsForProject } from '@/features/terminal';
 import { bumpGitRefresh } from '@/shared/hooks/useGitRefresh';
+import { useAgentStore } from '@/shared/store/agentStore';
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import {
@@ -19,8 +20,9 @@ import { getMacAppNameByCommand, resolveIdeLaunchCommand } from '@/shared/utils/
 import { randomAvatarColor } from '@/shared/utils/projectAvatar';
 import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 
-// eslint-disable-next-line import/no-restricted-paths -- useLocalProjects needs agent API for listing agents
-import { listAgents } from '../../agent/api/agentApi';
+/** 未加载时的稳定空数组 —— 避免每次渲染产生新引用而打穿 memo。 */
+const EMPTY_AGENTS: AgentConfig[] = [];
+
 // eslint-disable-next-line import/no-restricted-paths -- useLocalProjects needs git API for branch/worktree info
 import { getGitBranchInfo } from '../../git/api/gitApi';
 // eslint-disable-next-line import/no-restricted-paths -- useLocalProjects reuses the gated refresh entry for workspace status
@@ -70,7 +72,6 @@ export function useLocalProjects() {
   }, []);
 
   const [loading, setLoading] = useState(false);
-  const [agents, setAgents] = useState<AgentConfig[]>([]);
 
   const loadProjects = useCallback(async () => {
     try {
@@ -83,10 +84,12 @@ export function useLocalProjects() {
     }
   }, [setProjects]);
 
+  // agent 列表来自唯一缓存（`ensure` 幂等）。这里保留同名的稳定回调，
+  // 让上层的「启动后重试」编排不变，但数据源不再是本地 useState 副本。
+  const agents = useAgentStore((s) => s.agents) ?? EMPTY_AGENTS;
   const loadAgents = useCallback(async () => {
     try {
-      const agentList = await listAgents();
-      setAgents(agentList);
+      await useAgentStore.getState().ensure();
     } catch (error) {
       console.error('[App] Failed to load agents:', error);
     }

@@ -2,6 +2,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useLspStore } from '@/features/lsp/store/lspStore';
+import { useAgentStore } from '@/shared/store/agentStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { Project } from '@/shared/types';
@@ -9,7 +10,7 @@ import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { Input, Button, Separator } from '@/ui';
 
-import { setProjectAgents, listAgents } from '../../agent/api/agentApi';
+import { setProjectAgents } from '../../agent/api/agentApi';
 import {
   renameProject,
   changeProjectPath,
@@ -43,15 +44,18 @@ const ProjectPanel: React.FC<ProjectPanelProps> = ({ projectId, customIdes, onPr
     Promise.resolve().then(() => setName(project?.name ?? ''));
   }, [project?.name]);
 
-  const [agents, setAgents] = useState<{ id: string; name: string }[]>([]);
-
   const projectPath = project?.path ?? null;
 
+  // 从唯一缓存取「已启用 agent」（`ensure` 幂等，不重复请求）。
+  const agentSnapshot = useAgentStore((s) => s.agents);
+  const ensureAgents = useAgentStore((s) => s.ensure);
   useEffect(() => {
-    listAgents()
-      .then((list) => setAgents(list.filter((a) => a.enabled)))
-      .catch((err) => reportFrontendError('settings.listAgents', err));
-  }, []);
+    void ensureAgents().catch((err) => reportFrontendError('settings.ensureAgents', err));
+  }, [ensureAgents]);
+  const agents = useMemo(
+    () => (agentSnapshot ?? []).filter((a) => a.enabled).map((a) => ({ id: a.id, name: a.name })),
+    [agentSnapshot],
+  );
 
   const patchProject = useCallback(
     (patch: Partial<Project>) => {

@@ -1,8 +1,8 @@
 import React, { useMemo, useEffect, useState } from 'react';
 
-import { listAgents } from '@/features/agent/api/agentApi';
 import { getSkillsForTagGroup } from '@/features/skill/api/skillApi';
 import { useSkillStore } from '@/features/skill/store';
+import { useAgentStore } from '@/shared/store/agentStore';
 
 import DiscoveredSkillsList from './DiscoveredSkillsList';
 import SkillHeader from './SkillHeader';
@@ -76,11 +76,17 @@ const LocalSkillContent: React.FC<LocalSkillContentProps> = React.memo(({ setDia
     };
   }, [activeTagGroupIds, fetchSkillsForTagGroup, skills, tagGroupSkillsVersion]);
 
+  // agent 列表来自唯一缓存（`ensure` 幂等）；不在组件内维护第二份快照。
+  /** @type {import('@/shared/types').AgentConfig[]} */
+  const agentSnapshot = useAgentStore((s) => s.agents);
+  const ensureAgents = useAgentStore((s) => s.ensure);
   useEffect(() => {
-    void listAgents().then((agents) => {
-      setAgents(agents.map((a) => ({ id: a.id, icon: a.icon ?? null, name: a.name })));
-    });
-  }, []);
+    void ensureAgents().catch((e) => console.error('[Skill] Failed to load agents:', e));
+  }, [ensureAgents]);
+  useEffect(() => {
+    if (!agentSnapshot) return;
+    setAgents(agentSnapshot.map((a) => ({ id: a.id, icon: a.icon ?? null, name: a.name })));
+  }, [agentSnapshot]);
 
   useEffect(() => {
     if (tagGroups.length === 0) {

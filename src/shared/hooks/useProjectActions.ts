@@ -253,7 +253,7 @@ export function useProjectActions({
       // `updateProjectAgent` 恒只调一次（我一度在这里加了 early-return，
       // 会让 agent 非空但无终端时把它调两遍 —— 已修）。
       if (agent && target) {
-        void switchAgentInTerminal(session, target.tab.id, agent.id, config.agentCommandOverrides);
+        void switchAgentInTerminal(session, target.tab.id, agent.id);
       }
       updateProjectAgent(agent);
       if (!agent && target) {

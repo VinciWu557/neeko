@@ -289,7 +289,6 @@ describe('useWslActions', () => {
         expect.objectContaining({ projectId: 'wp1', worktreePath: null }),
         'wp1-term',
         'claude-code',
-        {},
       );
     });
 

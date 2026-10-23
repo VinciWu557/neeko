@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { listAgents, resolveAgentIconSrc, setProjectAgents } from '@/features/agent/api/agentApi';
+import { resolveAgentIconSrc, setProjectAgents } from '@/features/agent/api/agentApi';
 import {
   getProjectSkills,
   getSkillsForTagGroup,
@@ -33,6 +33,7 @@ import { useSkillStore } from '@/features/skill/store';
 import { bindProjectTagGroups } from '@/features/skill/utils/bindProjectTagGroups';
 import { cn } from '@/lib/utils';
 import DeleteConfirmDialog from '@/shared/components/DeleteConfirmDialog';
+import { useAgentStore } from '@/shared/store/agentStore';
 import { useNotificationStore } from '@/shared/store/notificationStore';
 import { useProjectStore } from '@/shared/store/projectStore';
 import type { ManagedSkillDto, ProjectDiskSkill } from '@/shared/types';
@@ -96,6 +97,7 @@ function displayPath(path: string | undefined | null): string {
 }
 
 const ProjectSkillContent: React.FC<ProjectSkillContentProps> = React.memo(({ setDialog }) => {
+  const ensureAgents = useAgentStore((s) => s.ensure);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
   const activeProject = useProjectStore((s) => s.activeProject);
   const librarySkills = useSkillStore((s) => s.skills);
@@ -205,10 +207,10 @@ const ProjectSkillContent: React.FC<ProjectSkillContentProps> = React.memo(({ se
   useEffect(() => {
     void refreshSkills();
     void refreshTagGroups();
-    void listAgents()
-      .then((list) =>
+    void ensureAgents()
+      .then(() =>
         setAgents(
-          list
+          (useAgentStore.getState().agents ?? [])
             .filter((a) => a.enabled)
             .map((a) => ({
               id: a.id,

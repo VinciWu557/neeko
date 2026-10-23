@@ -3,6 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { useLocalProjects } from '@/features/project/hooks/useLocalProjects';
+import { setAgentLoader, useAgentStore } from '@/shared/store/agentStore';
 import { useEditorStore } from '@/shared/store/editorStore';
 import { useGitStore } from '@/shared/store/gitStore';
 import { useProjectStore } from '@/shared/store/projectStore';
@@ -57,6 +58,8 @@ describe('useLocalProjects', () => {
       { id: 'claude', name: 'Claude', command: 'claude', args: [], icon: null, enabled: true },
     ];
     mockInvoke.mockResolvedValue(agents);
+    // 生产里由 `features/agent/api` 注入 loader；测试直接指向 mock IPC。
+    setAgentLoader(() => mockInvoke('list_agents') as never);
 
     const { result } = renderHook(() => useLocalProjects());
 
@@ -64,7 +67,8 @@ describe('useLocalProjects', () => {
       await result.current.loadAgents();
     });
 
-    expect(result.current.agents).toHaveLength(1);
+    // agent 列表的唯一来源是 `agentStore`（hook 不再持有本地快照）。
+    expect(useAgentStore.getState().agents).toHaveLength(1);
     expect(mockInvoke).toHaveBeenCalledWith('list_agents');
   });
 

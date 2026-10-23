@@ -2,6 +2,7 @@
 import type { FitAddon } from '@xterm/addon-fit';
 import type { Terminal } from '@xterm/xterm';
 
+import { resolveAgent } from '@/shared/store/agentStore';
 import { reportFrontendError } from '@/shared/utils/errorReporting';
 import { safeDisposeTerminal } from '@/shared/utils/terminal';
 import { terminalInputEvent } from '@/shared/utils/terminalEvents';
@@ -9,7 +10,6 @@ import type { TerminalInputController } from '@/shared/utils/terminalInput';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
-import { getAgent } from '../../agent/api/agentApi';
 import { closeTerminalSession } from '../api/terminalApi';
 
 import {
@@ -260,7 +260,6 @@ export async function switchAgentInSessionTerminal(
   session: WorkspaceSession,
   tabId: string,
   agentId: string,
-  agentCommandOverrides?: Record<string, string>,
 ): Promise<void> {
   const resolvedKey = terminalAddress(session, tabId);
   const bk = backendForKey(resolvedKey);
@@ -268,11 +267,15 @@ export async function switchAgentInSessionTerminal(
 
   const wrapper = bk.wrapperRefs.get(resolvedKey);
   if (!wrapper) {
-    const agent = await getAgent(agentId).catch(() => null);
-    if (agent) {
-      const cmd = agentCommandOverrides?.[agent.id] ?? agent.command;
-      bk.launchAgentInTerminal(resolvedKey, cmd, agent.args);
+    // 命令的唯一来源是 agent 缓存（后端 `AgentManager` 的快照）。
+    // 未命中 = 缓存还没加载或该 agent 已被删除 —— 此时**不启动**，
+    // 而不是猜一个命令（旧的 `override ?? agent.command` 正是漂移源头）。
+    const agent = await resolveAgent(agentId);
+    if (!agent) {
+      console.warn('[Terminal] agent not in cache, skipping launch:', agentId);
+      return;
     }
+    bk.launchAgentInTerminal(resolvedKey, agent.command, agent.args);
     return;
   }
 

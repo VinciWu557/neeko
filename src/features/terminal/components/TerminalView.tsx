@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 
-import { useAppContext, useEditorContext } from '@/shared/contexts';
+import { useEditorContext } from '@/shared/contexts';
 import { useEditorStore } from '@/shared/store/editorStore';
 import type { AuthMethod } from '@/shared/types';
 
@@ -24,7 +24,6 @@ export interface TerminalViewProps {
 }
 
 function TerminalView({ paneId, tabSpaceKey, remoteConfig }: TerminalViewProps) {
-  const { config } = useAppContext();
   const { activeTabId = null, tabs, onTabStatusChange } = useEditorContext();
   const strategy = useTerminalStrategy({
     paneId,
@@ -33,8 +32,6 @@ function TerminalView({ paneId, tabSpaceKey, remoteConfig }: TerminalViewProps) 
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const tabAgentId = activeTab?.agentId ?? null;
-
-  const agentCommandOverride = config.agentCommandOverrides?.[tabAgentId ?? ''];
 
   // Task terminal fields — read from full Tab data in editorStore
   const fullTabData = useEditorStore((s) => {
@@ -65,7 +62,6 @@ function TerminalView({ paneId, tabSpaceKey, remoteConfig }: TerminalViewProps) 
       taskCommand={taskCommand}
       taskConfigId={taskConfigId}
       taskRebuildKey={taskRebuildKey}
-      agentCommandOverride={agentCommandOverride}
       onStatusChange={handleStatusChange}
     />
   );

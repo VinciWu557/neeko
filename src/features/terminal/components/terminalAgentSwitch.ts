@@ -22,12 +22,11 @@ export async function switchAgentInTerminal(
    *  「Map 插入顺序首个」这条第二口径已随本任务删除）。 */
   tabId: string,
   agentId: string,
-  agentCommandOverrides?: Record<string, string>,
 ): Promise<void> {
   // 目标 agent 先落到 tab 身份：重建后 pane 依 tab.agentId 自动启动该 agent。
   useEditorStore.getState().updateTab(session.key, tabId, { agentId });
   // ⚠️ 非目标（决议 Q6）：本函数只清该 tab **p1** 的 PTY。分屏后 p2 里跑的旧 agent
   //    进程不会被打断 —— 用户可见「一个 tab 两个 agent」。修复方向（activePaneId
   //    落 tab 身份）见 .trellis/tasks/10-13-agent-insert-addressing-arbitration/design.md §4。
-  await switchAgentInSessionTerminal(session, tabId, agentId, agentCommandOverrides);
+  await switchAgentInSessionTerminal(session, tabId, agentId);
 }

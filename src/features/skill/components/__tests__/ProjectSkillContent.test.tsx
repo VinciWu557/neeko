@@ -2,6 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setAgentLoader, useAgentStore } from '@/shared/store/agentStore';
 import { invoke } from '@/testing/tauriCore';
 
 import { createManagedSkill, createTagGroup } from '../../../../testing/factories';
@@ -79,6 +80,9 @@ beforeEach(() => {
   mockImportSkillsToProject.mockResolvedValue(0);
   mockGetSkillsForTagGroup.mockResolvedValue([]);
   mockSetProjectAgents.mockResolvedValue(undefined);
+  // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+  useAgentStore.setState({ agents: null, loading: false });
+  setAgentLoader(() => mockInvoke('list_agents') as never);
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_agents') {
       return [
@@ -146,6 +150,9 @@ describe('ProjectSkillContent', () => {
   });
 
   it('renders scanned project skills as cards', async () => {
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -218,6 +225,9 @@ describe('ProjectSkillContent', () => {
 
   it('filters skills by agent', async () => {
     const user = userEvent.setup();
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -318,6 +328,9 @@ describe('ProjectSkillContent', () => {
       .mockResolvedValueOnce([createTagGroup({ id: 'tg-1', name: 'Backend', skill_count: 4 })]);
     mockImportSkillsToProject.mockResolvedValue(2);
     // Multiple capable agents available; sync must use project.selected_agent only
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -427,6 +440,9 @@ describe('ProjectSkillContent', () => {
       if (id === 'tg-2') return [createManagedSkill({ id: 's2', name: 'help' })];
       return [];
     });
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -509,6 +525,9 @@ describe('ProjectSkillContent', () => {
       if (id === 'tg-2') return [createManagedSkill({ id: 's2', name: 'help' })];
       return [];
     });
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -595,6 +614,9 @@ describe('ProjectSkillContent', () => {
         createManagedSkill({ id: 's-ssh', name: 'market-skill', source_type: 'skillssh' }),
       ],
     });
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -733,6 +755,9 @@ describe('ProjectSkillContent', () => {
     mockGetSkillsForTagGroup.mockResolvedValue([
       createManagedSkill({ id: 's1', name: 'code-review' }),
     ]);
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -805,6 +830,9 @@ describe('ProjectSkillContent', () => {
       projects: [{ ...project, selected_agents: [] } as never],
     });
     mockGetProjectTagGroups.mockResolvedValue([]);
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -854,6 +882,9 @@ describe('ProjectSkillContent', () => {
   it('only shows linked agents on skill cards, not unlinked capable agents', async () => {
     mockGetProjectTagGroups.mockResolvedValue([]);
     mockImportSkillsToProject.mockResolvedValue(1);
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -915,6 +946,9 @@ describe('ProjectSkillContent', () => {
       activeProject: { ...project, selected_agents: [] } as never,
       projects: [{ ...project, selected_agents: [] } as never],
     });
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -963,6 +997,9 @@ describe('ProjectSkillContent', () => {
       activeProject: { ...project, selected_agents: [] } as never,
       projects: [{ ...project, selected_agents: [] } as never],
     });
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') {
         return [
@@ -1023,6 +1060,9 @@ describe('ProjectSkillContent', () => {
       command: id,
       skill_path: `.${id}/skills`,
     }));
+    // store 的 loader 在模块加载时绑定，测试里重置为当前 mock 实现。
+    useAgentStore.setState({ agents: null, loading: false });
+    setAgentLoader(() => mockInvoke('list_agents') as never);
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_agents') return manyAgents;
       if (cmd === 'get_project_skills_cmd') return [];
