@@ -79,6 +79,13 @@ export interface AgentConfig {
   icon?: string | null;
   enabled: boolean;
   is_builtin?: boolean;
+  /**
+   * 该内置 agent 是否被用户覆盖过（仅后端设置）。
+   *
+   * 由 `AgentManager` 的覆盖表派生 —— 前端不再自己保管键集合（那曾是一份
+   * 需要与后端同步的副本）。Reset 按钮据此决定是否显示。
+   */
+  is_overridden?: boolean;
   /** Executable command path（CLI 能力基础；空 = 无终端 TUI，如 mockAgent）。 */
   command: string;
   args: string[];

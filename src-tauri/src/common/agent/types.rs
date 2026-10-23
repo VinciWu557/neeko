@@ -130,6 +130,15 @@ pub struct AgentConfig {
     /// 是否为内置 agent。仅由后端设置，前端无法伪造。
     #[serde(default)]
     pub is_builtin: bool,
+    /// 该内置 agent 是否被用户覆盖过（仅后端设置，**派生自 `AgentManager` 的
+    /// 覆盖表**，不从配置内容推断）。
+    ///
+    /// 存在的理由：前端曾经为这个判断自己保管 `AppConfig.agentOverrides` 键集合，
+    /// 于是「谁是真相」又多了一份。后端本就知道答案，直接算给它。
+    ///
+    /// 自定义 agent 恒为 `false`（删掉它就是删掉，谈不上"覆盖"）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_overridden: bool,
     /// Executable command path（CLI 能力基础；空 = 无终端 TUI，如 mockAgent）。
     pub command: String,
     /// Arguments to pass to the command.
@@ -378,6 +387,9 @@ fn convert(raw: RawAgentConfig) -> AgentConfig {
         icon: raw.icon,
         enabled: raw.enabled,
         is_builtin: raw.is_builtin,
+        // 反序列化得到的 `AgentConfig` 不知道覆盖状态 —— 它由 `AgentManager`
+        // 在 `overrides()` 时填充。写进配置文件的 `is_overridden` 无意义。
+        is_overridden: false,
         command: raw.command,
         args: raw.args,
         env: raw.env,

@@ -12,6 +12,15 @@ use std::future::Future;
 /// `remove_agent` 对内置 id 恢复出厂值（清除覆盖）；用户自定义走追加/去重。
 pub struct AgentManager {
     agents: Vec<AgentConfig>,
+    /// 被用户覆盖过的内置 agent id。
+    ///
+    /// 为什么是独立字段而不是「比较当前值 vs 出厂值」：出厂定义会随版本升级变化，
+    /// 值相等与否不能回答「用户有没有动过它」—— 用户恰好改回原值也算动过，
+    /// 而升级后默认值变了则会让一次真实覆盖静默消失。
+    ///
+    /// 这个信息**只存后端**：前端曾经为它保管 `AppConfig.agentOverrides` 键集合，
+    /// 于是又多了一份需要同步的真相。
+    overridden: std::collections::HashSet<String>,
 }
 
 impl Default for AgentManager {
@@ -27,6 +36,7 @@ impl AgentManager {
     pub fn new() -> Self {
         Self {
             agents: crate::agent::builtin::default_configs(),
+            overridden: std::collections::HashSet::new(),
         }
     }
 
@@ -40,6 +50,7 @@ impl AgentManager {
                 let mut applied = cfg.clone();
                 applied.is_builtin = true;
                 *slot = applied;
+                self.overridden.insert(id.clone());
             }
         }
     }
@@ -50,10 +61,20 @@ impl AgentManager {
         self.agents.iter().any(|a| a.id == agent_id && a.is_builtin)
     }
 
-    /// Return all registered agents.
-    #[allow(clippy::must_use_candidate)]
-    pub fn get_agents(&self) -> &[AgentConfig] {
-        &self.agents
+    /// Return all registered agents —— **带上覆盖标记的视图**。
+    ///
+    /// `is_overridden` 是派生值，只在这里填：它是「谁说真相」的一部分，不该由
+    /// 前端保管键集合，也不该由调用方各自补。
+    #[must_use]
+    pub fn get_agents(&self) -> Vec<AgentConfig> {
+        self.agents
+            .iter()
+            .map(|a| {
+                let mut out = a.clone();
+                out.is_overridden = self.overridden.contains(&a.id);
+                out
+            })
+            .collect()
     }
 
     /// Get an agent by ID.
@@ -72,6 +93,7 @@ impl AgentManager {
     /// 「防御契约」）。所有进入 `AgentManager` 的路径（Tauri 命令 / 启动反序列化
     /// 持久化文件 / 未来的新入口）都经本函数，伪造值在此被统一消解。
     pub fn add_agent(&mut self, mut agent: AgentConfig) {
+        let slot_id = agent.id.clone();
         if let Some(slot) = self
             .agents
             .iter_mut()
@@ -79,6 +101,7 @@ impl AgentManager {
         {
             agent.is_builtin = true;
             *slot = agent;
+            self.overridden.insert(slot_id);
             return;
         }
         agent.is_builtin = false;
@@ -102,6 +125,7 @@ impl AgentManager {
                 {
                     *slot = d;
                 }
+                self.overridden.remove(agent_id);
                 return;
             }
         }
@@ -415,6 +439,65 @@ mod tests {
         let agent = manager.get_agent("opencode").unwrap();
         assert_eq!(agent.command, "opencode");
         assert_eq!(agent.name, "OpenCode");
+    }
+
+    /// `is_overridden` 必须由 `AgentManager` 自己回答 —— 前端不再保管键集合。
+    ///
+    /// 判据是「谁拥有这个知识」：后端知道 `add_agent`/`remove_agent`/启动恢复
+    /// 都做了什么，前端只能靠旁路记录去猜。
+    #[test]
+    fn get_agents_reports_override_state() {
+        let mut manager = AgentManager::new();
+
+        // 出厂状态：全部非覆盖。
+        let before = manager.get_agents();
+        assert!(before.iter().all(|a| !a.is_overridden));
+
+        // 覆盖一个内置 agent。
+        manager.add_agent(AgentConfig {
+            id: "gemini".into(),
+            name: "Gemini Custom".into(),
+            command: "gemini-custom".into(),
+            ..Default::default()
+        });
+        let after = manager.get_agents();
+        let gemini = after.iter().find(|a| a.id == "gemini").unwrap();
+        assert!(gemini.is_overridden, "覆盖后必须标记");
+        assert!(gemini.is_builtin, "覆盖不改变内置身份");
+        assert!(
+            after
+                .iter()
+                .filter(|a| a.id != "gemini")
+                .all(|a| !a.is_overridden),
+            "其它 agent 不受影响"
+        );
+
+        // 恢复出厂 → 标记清除。
+        manager.remove_agent("gemini");
+        let restored = manager.get_agents();
+        let gemini = restored.iter().find(|a| a.id == "gemini").unwrap();
+        assert!(!gemini.is_overridden, "Reset 后标记必须清除");
+        assert_eq!(gemini.command, "gemini", "回到出厂命令");
+    }
+
+    /// 自定义 agent 恒不标记为「覆盖」—— 删掉它就是删掉，谈不上覆盖。
+    #[test]
+    fn custom_agents_are_never_marked_overridden() {
+        let mut manager = AgentManager::new();
+        manager.add_agent(AgentConfig {
+            id: "mine".into(),
+            name: "Mine".into(),
+            command: "mine".into(),
+            ..Default::default()
+        });
+
+        let mine = manager
+            .get_agents()
+            .into_iter()
+            .find(|a| a.id == "mine")
+            .unwrap();
+        assert!(!mine.is_builtin);
+        assert!(!mine.is_overridden);
     }
 
     #[test]

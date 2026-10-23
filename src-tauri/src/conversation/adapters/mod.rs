@@ -206,8 +206,9 @@ mod registry_tests {
     #[test]
     fn should_align_history_adapter_ids_with_default_agents() {
         let manager = AgentManager::new();
+        let agents = manager.get_agents();
         let agent_ids: std::collections::HashSet<&str> =
-            manager.get_agents().iter().map(|a| a.id.as_str()).collect();
+            agents.iter().map(|a| a.id.as_str()).collect();
 
         for adapter in all_adapters() {
             let id = adapter.agent_id();
