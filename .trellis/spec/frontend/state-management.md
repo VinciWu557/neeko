@@ -1889,3 +1889,95 @@ return () => {
 **禁止**：让命令式翻转函数兼任幂等确保 —— 二者的错误行为正好互补（前者收起不该收的，
 后者永不响应重复点击）。文件树侧的落地形态是 `store.expandDir`（确保）与 `store.toggleDir`
 （翻转），仅后者可在行点击里调用。
+
+---
+
+## 场景：Agent 配置单源化 2026-10-23
+
+> 与上面 Project/File 那次同源：**为「响应快」另存的第二份副本，最终都会与真相漂移。**
+
+### 1. Scope / Trigger
+
+- Trigger：给 agent 配置加字段、改「设置页 ↔ 终端」的数据流、看到 `agentOverrides` / `agentCommandOverrides`。
+- Scope：`src/shared/store/agentStore.ts`、`src/features/agent/api/agentApi.ts`、
+  `src/features/settings/components/`、`src/features/terminal/components/`。
+
+### 2. 唯一的真相与唯一的缓存
+
+```
+后端 AgentManager（唯一真相：出厂定义 + ~/.neeko/config.json 的 agentOverrides 合并结果）
+      ↓ list_agents
+前端 agentStore（唯一缓存，只读）
+      ↓
+设置页 / 终端 / Skill 页 / 项目设置
+```
+
+`agentStore.agents` 是 `AgentConfig[] | null`：`null` = 未加载，`[]` = 后端确实没有。
+`byId` **同步**（终端在 PTY 回调里调它，不能 await），未命中返回 `undefined` ——
+调用方据此**不启动** agent，而不是猜一个命令。
+
+### 3. 写路径只有两个出口
+
+```ts
+// src/features/agent/api/agentApi.ts
+saveAgent(agent)      // invoke('add_agent') → agentStore.refresh()
+resetAgent(agentId)   // invoke('remove_agent') → agentStore.refresh()
+```
+
+顺序不可交换：先刷新会读到旧值（界面短暂回退），落盘失败也刷新会掩盖失败。
+刷新点放在 API 层而不是调用方 —— 调用方有 5 个，让每个都记得刷新就是重演
+「同步点分散」的原始错误。
+
+### 4. 被删除的两份副本（不得复活）
+
+| 已删 | 曾是 | 症状 |
+| --- | --- | --- |
+| `config.agentCommandOverrides` | 终端读的唯一来源 | 设置页保存只更新另外两份 ⇒ 终端跑旧命令 |
+| 双击命令行行内编辑 | 只写前端 config | 完全不落盘，重启即丢 |
+| `getEffectiveAgentCommand` / `saveAgentOverride` / `startEditAgent` | 维护副本与后端的同步 | 副本没了，它们失去意义 |
+
+`config.agentOverrides` **保留但降级为键集合**：后端没有「某内置 agent 是否被覆盖」
+字段，Reset 按钮需要它。**不要从它的 value 里读任何配置字段。**
+
+### 5. 三条不变量（`agentStore`）
+
+| 不变量 | 解决的问题 |
+| --- | --- |
+| **幂等加载** `ensure()` | 任意消费方都可调、只请求一次 ⇒ **不需要副本** |
+| **generation 守卫** | 乱序响应不覆盖新快照（同 git status 方案） |
+| **失败不清空** | 瞬时 IPC 故障不丢全部 agent |
+
+另有 `resolveAgent(id)`：缓存为空时**先等一次加载再取**。终端在 PTY 就绪回调里用它，
+而不是直接查快照 —— 启动期会话恢复可能早于 preload 完成，直查会把「还没加载」
+误判成「不存在」，用户得到空终端。
+
+### 6. 护栏（机器门禁，不靠 review）
+
+**`check_agent_config_single_source`**（`tools/guards/checks/`，29 条护栏之一）三条判据：
+
+| 判据 | 违规后果 |
+| --- | --- |
+| `src/` 无 `agentCommandOverrides` / `agentOverrides` 标识符 | 副本复活 ⇒ 多份真相 |
+| 只有 `features/agent/api/agentApi.ts` 可 `invoke('add_agent'/'remove_agent')` | 绕过 `saveAgent` ⇒ 缓存不刷新、界面停留旧值 |
+| 终端文件必须用 `resolveAgent`，不得 `getState().byId(...)` | 「尚未加载」被当成「不存在」⇒ 空终端 |
+
+护栏自测 11 条（`tools/guards/tests/test_check_agent_config_single_source.py`），
+三条判据**都做过真实仓库变异验证**（改回旧写法 → guard 变红）。
+
+单元测试侧的对应覆盖：
+
+| 测试 | 断言 |
+| --- | --- |
+| `shared/store/__tests__/agentStore.test.ts` | 初值 `null`（不是 `[]`）；**陈旧响应被丢弃**；`ensure` 并发只请求一次；失败保留上次快照 |
+| `features/agent/api/__tests__/agentApi.save.test.ts` | 落盘**后**才刷新；失败不刷新；内置 `is_builtin` 保留 |
+
+**为什么判据必须落在源码上**：这类漂移的运行时表现是「某个值没更新」，而各份副本
+各自的单元测试永远会通过。实测两处事故（见上表）行为测试一次都没抓到。
+
+### 6. 依赖方向（`shared/` 不得依赖 `features/`）
+
+`agentStore` 需要 `list_agents`，而 `agentApi` 需要 `agentStore` 做写后刷新 —— 直接互相
+import 会成环（`import/no-cycle`）。解法是**注入**：`agentApi` 在模块加载时调
+`useAgentStore.getState().setLoader(listAgents)`，依赖方向单向（features → shared）。
+
+`shared/` 也不能直接 `invoke`（`no-restricted-imports` 禁止绕过 API 层）。

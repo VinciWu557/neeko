@@ -588,6 +588,15 @@ icon 等）照旧生效，「有没有 CLI 旁路」由能力位说了算。
 + `session_model_capability_overrides_the_cli_bypass`（消费点裁决顺序
 `scoped < guarded < cmd`）。两条都做过变异验证。
 
+> **2026-10-23 更新**：上面提到的「用户旧快照仍会把 `--list-models` 带回来」这个
+> 隐患，其**前端成因已消除** —— 前端不再持有 `agentOverrides` 的配置副本（只留键
+> 集合给 Reset 按钮判断），生效配置一律读 `agentStore`（后端合并后的结果）。见
+> `.trellis/spec/frontend/state-management.md`「Agent 配置单源化」。
+>
+> 同理，表单现在会在 `transport ∈ {acp, pi-rpc}`（`SessionConfig`）时**隐藏**
+> `List Models Args` 输入框并给出说明 —— 用户不再有机会填出那个冲突。
+> 护栏：`AgentForm.modelListGate.test.tsx`（4 条，含「serve 必须保留」的反例）。
+
 ### 10.6 静态护栏只能防「整段删除」，防不住「条件被短路」
 
 第一版的能力位护栏读源码做字符串匹配（`expect(CHAT).toContain('configWritable')`）。
