@@ -485,3 +485,144 @@ icon 等）照旧生效，「有没有 CLI 旁路」由能力位说了算。
 补充一条同类陷阱：判据选错会让变异漏抓。第一版用「agent 名文案」判断模型
 选择器是否存在，而旁边的 agent 切换器渲染同一个名字 → 变异漏抓。改用
 `queryByTitle('Select model')`（只有 `ModelPicker` 有这个 title）后才有效。
+
+---
+
+## 11. opencode serve 的双栈：同一份代码支持 1.x 与 2.x
+
+> 一手证据：`.trellis/tasks/10-20-opencode-2x-serve-dual-stack/research/opencode-2x-protocol.md`
+> 实现：`src-tauri/src/agent/chat/adapter/opencode/`
+
+opencode 2.0 重写了 serve 的握手与 HTTP/SSE 协议。这不是"新增了几个端点"，
+而是**四层同时变了**（就绪行 / 鉴权 / 端点 / 事件面）。
+
+### 11.1 分派依据必须是能力，不是版本号
+
+```
+GET /api/info  →  200 application/json  ⇒ V2
+               →  200 text/html         ⇒ V1
+               →  其它 / 连接失败        ⇒ V1
+```
+
+**为什么不能用版本号字符串**：`1.19.0` 与 `opencode v2.0.32` 格式不同，且
+1.18–1.20 的小版本没穷举。
+
+**为什么必须看 Content-Type 而不是状态码**：1.19 对 `/api/info` 也返回 **200**
+（未匹配路由回落 SPA `index.html`）。只看状态码会把 1.x 判成 2.x，此后所有
+`/api/*` 请求都打在 SPA 上，得到「200 + HTML」的**假成功**。
+
+护栏：`detect_protocol_uses_content_type_not_status`。变异（只看状态码）确认变红。
+
+### 11.2 就绪握手：前缀不参与匹配 + 主动注入密码
+
+```
+1.19:  opencode server listening on http://127.0.0.1:4605
+2.0 :  server listening on http://127.0.0.1:60656          ← 无 opencode 前缀
+```
+
+判据是 **`"listening on "` + `starts_with("http")`**，前缀不参与匹配 ——
+未来任何前缀变化都不该再打断就绪检测，而 URL 形态才是这条输出的语义本体。
+
+**鉴权改为主动注入**：spawn 时设 `OPENCODE_SERVER_PASSWORD=<Neeko 生成的 uuid>`。
+
+| 注入与否 | 1.19 | 2.0 |
+| --- | --- | --- |
+| 未注入 | 警告 `server is unsecured` | **强制** Basic 认证 + 打印随机 `server password` 行 |
+| 注入后 | 要求 Basic（用户名必须 `opencode`） | 要求 Basic，且不再打印密码行 |
+
+恒带 Basic 头：认 env 的版本据此通过，不认的版本忽略该头（无副作用）。
+`extract_server_password` 只作为「注入未生效」时的兜底。
+
+护栏：`extract_listening_url_accepts_both_prefixes` / `base64_encodes_basic_credentials`
+（RFC 4648 向量）。变异（改回带前缀的 MARKER）确认变红。
+
+### 11.3 端点表：差异只有一个来源
+
+`ServeProtocol` 是**唯一**分派点，其余方法都基于 `prefix()`（`""` / `"/api"`）。
+
+| 能力 | V1 | V2 |
+| --- | --- | --- |
+| 建会话 | `POST /session?directory=` | `POST /api/session`（目录在 body） |
+| 发 prompt | `.../prompt_async` | `.../prompt` |
+| 切模型 | 无（per-prompt 参数） | `POST /api/session/{id}/model` |
+| 中止 | `.../abort` | `.../interrupt` |
+| 权限回执 | `/session/{id}/permissions/{rid}` | `/api/session/{id}/permission/{rid}/reply` |
+| 提问回执 | `/question/{rid}/reply?directory=` | `/api/session/{id}/form/{fid}/reply` |
+| SSE | `/event?directory=` | `/api/event`（**不接受** query） |
+| 模型列表 | **`/api/model`** | `/api/model` |
+
+### 11.4 四个「200 但什么都没做」的陷阱
+
+这四条都不会报错，只能靠回读或断言发现。它们是本任务的主要风险来源。
+
+| 陷阱 | 后果 | 发现方式 |
+| --- | --- | --- |
+| 2.0 忽略 `?directory=` | 会话落到 serve cwd，工具在错误目录跑 | 建会话后 `GET /api/session/{id}` 校验 `location.directory` |
+| 2.0 静默丢弃 `permission` 字段 | **confirm 模式变 auto**，无人审批就改文件 | 回读 `permissions` 非空 |
+| 2.0 静默忽略 prompt 里的 `model` | 切模型不生效（用户以为换了） | 切模型必须先走 `/model` 端点 |
+| 2.0 移除 `models --verbose` | 模型列表**为空** + 刷 ERROR | 回落参数按协议选：V2 只传 `models` |
+
+`verify_v2_session`（`adapter.rs`）在建会话后强制回读这两项，失败 WARN 不阻断
+（用户至少能对话，但故障不再无声）。
+
+### 11.5 事件面：两套模块，一个出口
+
+`events_v1.rs` / `events_v2.rs` 各自翻译，都产出同一份 `StreamEvent`。
+**前端协议零改动**。
+
+| 方面 | V1 | V2 |
+| --- | --- | --- |
+| 载荷位置 | `properties` | `data` |
+| 流式载体 | `message.part.delta` + `part_kinds` 反查类型 | `session.text.delta` / `session.reasoning.delta`（**类型在事件名里**） |
+| 工具 | 一个 `part` 的 `state.status` 状态机 | `input.started` → `called` → `success`/`failed`（三个独立事件） |
+| 回合结束 | `session.idle` | `session.execution.{succeeded,failed,interrupted}` |
+| 提问 | `question.asked` | `form.created` + `metadata.kind=="question"` |
+| todo | `todo.updated` | **没有** ⇒ 永不产生 `TodoUpdated` |
+
+**包络归一化**：`ServeEvent.properties` 用 `#[serde(alias = "data")]` 承接 V2 的
+`data`。归一化放在反序列化层，翻译器与泵循环就不需要知道自己在读哪个版本。
+
+**V2 需要 `tool_names` 缓存**：`session.tool.called` 只带 `id` + `input`，
+名字在前一个事件 `session.tool.input.started` 里。
+
+**禁止伪造 `TodoUpdated`**：2.0 已无该事件。前端 `TodoListCard` 自然空着是
+诚实降级；用 tool 事件拼一份 todo 快照会让用户看到一个永不更新的假计划。
+
+### 11.6 共享而不是各写一份
+
+| 共享点 | 位置 | 理由 |
+| --- | --- | --- |
+| 工具标题渲染 | `tool_title.rs` | 「bash 显示命令 / read 显示路径 / task 显示 `Type Task: desc`」与协议无关；两版用户看到同一张卡片 |
+| 端点选择 | `protocol.rs` | 差异只允许一个来源 |
+| `Translator` | `pump.rs` | 把「协议分派 + 各自的状态」收进一个类型，泵循环只与它对话 |
+| `PumpTarget` | `pump.rs` | 五个定位参数总是一起出现；合成一个类型后「漏传」在类型层不可能 |
+
+### 11.7 禁止模式
+
+- ❌ 解析 `opencode --version` 做分支（格式两版不同，小版本未穷举）
+- ❌ 「`/api/*` 能通」当 v2 判据（1.19 已实现部分 v2 路由）
+- ❌ 只看状态码判协议（1.19 的 `/api/info` 也是 200）
+- ❌ 按 `prefix()` 拼模型列表路径（两版都是 `/api/model`，V1 拼成 `/model` 会拿到 HTML）
+- ❌ 在 V2 上传 `models --verbose`（必失败）
+- ❌ 用 tool 事件伪造 todo 快照
+
+### 11.8 验收实测（2026-10-23，双二进制）
+
+用真 `opencode serve` 跑完整链路，1.19.0 与 2.0.32 各一次：
+
+| AC | 1.19.0 | 2.0.32 |
+| --- | --- | --- |
+| 就绪解析 | PASS | PASS（无前缀） |
+| 鉴权 | PASS | PASS |
+| 协议探测 | → V1（`text/html`） | → V2（`application/json`） |
+| 建会话 | PASS | PASS + `directory` 匹配 + `permissions` 非空 |
+| 模型列表 | 206 条 | 167 条 |
+| 切模型 | per-prompt | PASS（`204`；`modelID` 反证 `400`） |
+| 中止 | `/abort` 200 | `/interrupt` 200 |
+| resume 不存在 | 404 | 404 |
+
+> **文本流未端到端验证**：本机所有 provider 的 API key 已过期
+> （`api_key_expired`），`session.step.failed` 是唯一能拿到的下游结果。
+> 失败路径的翻译有真实抓包样本锁定
+> （`real_v2_failure_envelope_maps_to_error_turn_end`），成功路径（text/tool/execution.succeeded）
+> 目前只有 schema 级单测。**换可用 key 后需复验 AC5/AC6/AC7。**
