@@ -54,7 +54,7 @@ pub fn list_chat_agents(state: State<AppStateWrapper>) -> Result<Vec<AgentConfig
 ///
 /// # 分派依据是传输类型，不是 agent id
 ///
-/// 能力挂在 `ChatStart` 上（`adapter_for` 已经按它分派），因此新增一个支持模型的
+/// 能力挂在 `ChatLaunch` 上（`adapter_for` 按 `transport()` 分派），因此新增一个支持模型的
 /// agent **不需要**改动本函数 —— 这正是旧实现缺失的性质：
 ///
 /// ```ignore

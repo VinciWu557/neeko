@@ -41,25 +41,86 @@ pub(super) static SERVE_CONNECTION: OnceCell<Arc<ServeConnection>> = OnceCell::c
 /// Lazily start `opencode serve` once per process and return the shared
 /// connection. Subsequent sessions reuse the same server (no kill on zero
 /// sessions — the server lives as long as the app).
-pub(super) async fn serve_connection() -> Result<&'static Arc<ServeConnection>, AppError> {
-    SERVE_CONNECTION.get_or_try_init(start_serve).await
+///
+/// # `cmd` / `env` 只对**首次**调用生效
+///
+/// serve 是**进程级单例**（`SERVE_CONNECTION`）：一个 `opencode serve` 服务所有
+/// 会话，daemon 不随会话数归零而退出。所以第二个会话改的启动命令不会重启它 ——
+/// 这是既有行为，不是遗漏。需要每会话不同程序时得先做多实例管理。
+pub(super) async fn serve_connection(
+    cmd: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<&'static Arc<ServeConnection>, AppError> {
+    let cmd = cmd.to_vec();
+    let env = env.clone();
+    SERVE_CONNECTION
+        .get_or_try_init(|| start_serve(&cmd, &env))
+        .await
 }
+
+/// 合并 serve 进程的环境变量 —— **内部必需项最后写入**。
+///
+/// `OPENCODE_SERVER_PASSWORD` 由我们生成（2.0 需要它才能过 Basic 认证，
+/// 1.x 注入后只是不再警告）。它是**内部协议细节**：用户填错只会得到一个 401，
+/// 而 401 的根因从 UI 上看不出来。所以它必须在用户 env 之后插入 ——
+/// 用户改不动它。
+///
+/// 抽成纯函数是为了能直测：起真进程验证「用户写错密码也不生效」既慢又脆。
+pub(super) fn merged_env(
+    user_env: &std::collections::BTreeMap<String, String>,
+    password: &str,
+) -> Vec<(String, String)> {
+    let mut merged: Vec<(String, String)> = user_env
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    // 后写者胜：同键时覆盖用户的。
+    merged.retain(|(k, _)| k != OPENCODE_SERVER_PASSWORD);
+    merged.push((OPENCODE_SERVER_PASSWORD.to_string(), password.to_string()));
+    merged
+}
+
+/// 内部注入的 serve 认证变量名。
+const OPENCODE_SERVER_PASSWORD: &str = "OPENCODE_SERVER_PASSWORD";
 
 /// Spawn `opencode serve` via the unified exec facade (AGENTS.md red line 1),
 /// wait for its listening URL, and keep the child alive + drained.
-pub(super) async fn start_serve() -> Result<Arc<ServeConnection>, AppError> {
-    log::info!("[ServeAdapter] starting `opencode serve`");
+pub(super) async fn start_serve(
+    cmd: &[String],
+    env: &std::collections::BTreeMap<String, String>,
+) -> Result<Arc<ServeConnection>, AppError> {
+    let program = cmd
+        .first()
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| AppError::InvalidInput("serve: empty command".into()))?;
+    log::info!("[ServeAdapter] starting `{program} serve`");
+
     // 密码由我们生成并注入：2.0 需要它才能通过 Basic 认证，1.x 注入后只是不报警告。
     // 不依赖 2.0 的随机 `server password` 行 —— 那是未注入时才有的行为。
     let password = uuid::Uuid::new_v4().simple().to_string();
-    let mut child = exec::spawn_with_env(
+    let env_pairs = merged_env(env, &password);
+
+    // 用户参数在前，`--hostname`/`--port` 在后：serve 的端口由我们控制
+    //（用户不需要关心），但其余子命令（如 `serve --print-logs`）仍可自定义。
+    let mut args: Vec<String> = cmd[1..].to_vec();
+    args.push("--hostname".into());
+    args.push("127.0.0.1".into());
+    args.push("--port".into());
+    args.push("0".into());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env_refs: Vec<(&str, &str)> = env_pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+
+    let mut child = exec::spawn(
         &ExecTarget::Local,
-        "opencode",
-        &["serve", "--hostname", "127.0.0.1", "--port", "0"],
-        &[("OPENCODE_SERVER_PASSWORD", password.as_str())],
+        program,
+        &arg_refs,
+        exec::SpawnSpec::new().with_env(&env_refs).kill_tree(),
     )
     .await
-    .map_err(|e| AppError::Io(format!("failed to spawn `opencode serve`: {e}")))?;
+    .map_err(|e| AppError::Io(format!("failed to spawn `{program} serve`: {e}")))?;
     let stdout = child
         .stdout
         .take()
@@ -287,4 +348,56 @@ pub(super) async fn fetch_json(client: &reqwest::Client, url: &str) -> Option<se
         return None;
     }
     resp.json().await.ok()
+}
+
+#[cfg(test)]
+mod merged_env_tests {
+    use super::{merged_env, OPENCODE_SERVER_PASSWORD};
+    use std::collections::BTreeMap;
+
+    fn user_env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    /// 用户的普通变量要带上。
+    #[test]
+    fn user_vars_are_forwarded() {
+        let got = merged_env(&user_env(&[("DEBUG", "1")]), "internal");
+        assert!(got.contains(&("DEBUG".to_string(), "1".to_string())));
+    }
+
+    /// **内部密码不可被用户覆盖** —— 用户填错只会得到 401，而 401 的根因
+    /// 从 UI 上看不出来。所以内部项必须最后写入。
+    #[test]
+    fn user_cannot_override_the_serve_password() {
+        let got = merged_env(
+            &user_env(&[(OPENCODE_SERVER_PASSWORD, "wrong")]),
+            "internal",
+        );
+        let passwords: Vec<&str> = got
+            .iter()
+            .filter(|(k, _)| k == OPENCODE_SERVER_PASSWORD)
+            .map(|(_, v)| v.as_str())
+            .collect();
+        // 只留一份，且是内部值。
+        assert_eq!(passwords, vec!["internal"]);
+    }
+
+    /// 密码变量恰好只出现一次（不是「用户值在前、内部值在后」的重复项）。
+    #[test]
+    fn password_appears_exactly_once() {
+        let got = merged_env(
+            &user_env(&[(OPENCODE_SERVER_PASSWORD, "wrong")]),
+            "internal",
+        );
+        assert_eq!(
+            got.iter()
+                .filter(|(k, _)| k == OPENCODE_SERVER_PASSWORD)
+                .count(),
+            1
+        );
+    }
 }

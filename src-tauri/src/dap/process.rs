@@ -24,9 +24,16 @@ pub async fn spawn_adapter(
     spawn: &AdapterSpawn,
 ) -> Result<AdapterProcess, AppError> {
     let args_refs: Vec<&str> = spawn.args.iter().map(|s| s.as_str()).collect();
-    let mut child = exec::spawn_with(target, &spawn.program, &args_refs, Some(project_path))
-        .await
-        .map_err(|e| AppError::Dap(format!("Failed to spawn {}: {e}", spawn.program)))?;
+    let mut child = exec::spawn(
+        target,
+        &spawn.program,
+        &args_refs,
+        exec::SpawnSpec::new()
+            .with_cwd(Some(project_path))
+            .kill_tree(),
+    )
+    .await
+    .map_err(|e| AppError::Dap(format!("Failed to spawn {}: {e}", spawn.program)))?;
 
     let (async_stdin, async_stdout, async_stderr) = child.take_stdio();
     let async_stdin = async_stdin.ok_or_else(|| AppError::Dap("adapter has no stdin".into()))?;

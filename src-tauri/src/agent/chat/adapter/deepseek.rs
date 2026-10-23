@@ -23,13 +23,15 @@ use crate::core::exec;
 pub struct DeepSeekHarnessAdapter {
     /// Command to spawn (resolved from AgentConfig).
     cmd: Vec<String>,
+    /// 注入给子进程的环境变量（追加，不替换继承）。
+    env: std::collections::BTreeMap<String, String>,
 }
 
 impl DeepSeekHarnessAdapter {
     /// Create a new adapter with the given command.
     #[must_use]
-    pub const fn new(cmd: Vec<String>) -> Self {
-        Self { cmd }
+    pub const fn new(cmd: Vec<String>, env: std::collections::BTreeMap<String, String>) -> Self {
+        Self { cmd, env }
     }
 }
 
@@ -61,9 +63,19 @@ impl AgentAdapter for DeepSeekHarnessAdapter {
         let target = ExecTarget::Local;
         let program = &self.cmd[0];
         let args: Vec<&str> = self.cmd[1..].iter().map(|s| s.as_str()).collect();
-        let child = exec::spawn(&target, program, &args)
-            .await
-            .map_err(|e| AppError::Io(format!("failed to spawn harness: {e}")))?;
+        let env_ref: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let child = exec::spawn(
+            &target,
+            program,
+            &args,
+            exec::SpawnSpec::new().with_env(&env_ref).kill_tree(),
+        )
+        .await
+        .map_err(|e| AppError::Io(format!("failed to spawn harness: {e}")))?;
         let stdout = child
             .stdout
             .map(BufReader::new)

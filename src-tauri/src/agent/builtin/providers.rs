@@ -5,7 +5,8 @@
 
 use std::collections::HashMap;
 
-use crate::common::agent::types::{AgentConfig, ChatStart, DeploySpec, Detection};
+use crate::common::agent::chat_launch::ChatLaunch;
+use crate::common::agent::types::{AgentConfig, DeploySpec, Detection};
 
 /// 返回全部内置 AgentConfig（11 个）。
 #[must_use]
@@ -22,8 +23,6 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             args: vec![],
             env: HashMap::new(),
             chat: None,
-            chat_command: None,
-            chat_args: None,
             prompt_args: Some(vec!["--bare".into(), "-p".into()]),
             interactive_prompt_args: None,
             post_prompt_args: Some(vec!["--dangerously-skip-permissions".into()]),
@@ -49,7 +48,11 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             // 交互式（TUI）形态：opencode --prompt "<prompt>"（打开 CLI 并预填 prompt）
             Some(&["--prompt"]),
             None,
-            Some(ChatStart::Serve),
+            Some(ChatLaunch {
+                program: Some("opencode".into()),
+                args: vec!["serve".into()],
+                ..Default::default()
+            }),
             "~/.config/opencode/skills",
         ),
         shell_agent(
@@ -116,7 +119,10 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             None,
             None,
             // 私有 rpc 协议（单进程，不依赖 pi-acp 中间层）。
-            Some(ChatStart::PiRpc),
+            Some(ChatLaunch {
+                args: vec!["--mode".into(), "rpc".into()],
+                ..Default::default()
+            }),
             "~/.pi/skills",
         ),
         shell_agent(
@@ -154,9 +160,11 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             command: String::new(),
             args: vec![],
             env: HashMap::new(),
-            chat: Some(ChatStart::Mock),
-            chat_command: None,
-            chat_args: None,
+            // 进程内实现（无 argv，不 spawn 子进程）—— 显式声明，不从空 command 推断。
+            chat: Some(ChatLaunch {
+                inprocess: true,
+                ..Default::default()
+            }),
             prompt_args: None,
             interactive_prompt_args: None,
             post_prompt_args: None,
@@ -198,7 +206,7 @@ fn shell_agent(
     prompt_args: Option<&[&'static str]>,
     interactive_prompt_args: Option<&[&'static str]>,
     post_prompt_args: Option<&[&'static str]>,
-    chat: Option<ChatStart>,
+    chat: Option<ChatLaunch>,
     skill_path: &'static str,
 ) -> AgentConfig {
     AgentConfig {
@@ -212,8 +220,6 @@ fn shell_agent(
         env: HashMap::new(),
         chat,
         // 内置定义不拆分 chat 可执行文件/参数（需要时由调用方后置覆盖）。
-        chat_command: None,
-        chat_args: None,
         prompt_args: prompt_args.map(|a| a.iter().map(|s| (*s).into()).collect()),
         interactive_prompt_args: interactive_prompt_args
             .map(|a| a.iter().map(|s| (*s).into()).collect()),

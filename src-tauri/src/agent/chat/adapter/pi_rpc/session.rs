@@ -110,6 +110,7 @@ impl PiSession {
         cmd: &[String],
         ctx: &AgentContext,
         caps: ChatCapabilities,
+        env: &std::collections::BTreeMap<String, String>,
     ) -> Result<Self, AppError> {
         let program = cmd
             .first()
@@ -118,7 +119,9 @@ impl PiSession {
         // `AgentConfig` 的 chat 参数（那是用户表达「怎么启动我」的唯一通道）。
         let extra: Vec<&str> = cmd[1..].iter().map(String::as_str).collect();
 
-        let proc = PiRpcProcess::spawn(program, &ctx.project_id, &extra).await?;
+        let env_ref: Vec<(&str, &str)> =
+            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let proc = PiRpcProcess::spawn(program, &ctx.project_id, &extra, &env_ref).await?;
         Self::start_with(proc, ctx, caps).await
     }
 

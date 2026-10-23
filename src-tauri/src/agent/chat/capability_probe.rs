@@ -159,7 +159,7 @@ mod tests {
     /// 而 harness 没有任何审批实现。现在两份真相已合并。
     #[tokio::test]
     async fn deepseek_declares_no_config_and_carries_none() {
-        let adapter = DeepSeekHarnessAdapter::new(vec!["/bin/true".into()]);
+        let adapter = DeepSeekHarnessAdapter::new(vec!["/bin/true".into()], Default::default());
         let caps = adapter.chat_capabilities();
         assert_eq!(caps.config, ConfigCapability::None);
         assert!(!caps.approvals, "harness has no approval implementation");

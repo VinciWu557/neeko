@@ -401,12 +401,14 @@ pub struct AcpAdapter {
     io: AcpIo,
     /// Wire format override. `None` = auto-detect based on command name.
     wire_format: Option<WireFormat>,
+    /// 注入给子进程的环境变量（追加，不替换继承）。
+    env: std::collections::BTreeMap<String, String>,
 }
 
 impl AcpAdapter {
     /// Create an ACP adapter that spawns the given command.
     #[must_use]
-    pub fn new(cmd: Vec<String>) -> Self {
+    pub fn new(cmd: Vec<String>, env: std::collections::BTreeMap<String, String>) -> Self {
         // Auto-detect wire format based on command name.
         let wire_format = if cmd
             .first()
@@ -418,6 +420,7 @@ impl AcpAdapter {
         };
         Self {
             io: AcpIo::Spawn(cmd),
+            env,
             wire_format,
         }
     }
@@ -428,6 +431,7 @@ impl AcpAdapter {
         Self {
             io: AcpIo::Mock,
             wire_format: None,
+            env: std::collections::BTreeMap::new(),
         }
     }
 
@@ -436,6 +440,7 @@ impl AcpAdapter {
     pub const fn with_wire_format(cmd: Vec<String>, format: WireFormat) -> Self {
         Self {
             io: AcpIo::Spawn(cmd),
+            env: std::collections::BTreeMap::new(),
             wire_format: Some(format),
         }
     }
@@ -478,7 +483,19 @@ impl AgentAdapter for AcpAdapter {
                 let program = &cmd[0];
                 let args: Vec<&str> = cmd[1..].iter().map(|s| s.as_str()).collect();
                 log::info!("[AcpAdapter::create] Spawning: {} {:?}", program, args);
-                let child = exec::spawn(&target, program, &args).await.map_err(|e| {
+                let env_ref: Vec<(&str, &str)> = self
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                let child = exec::spawn(
+                    &target,
+                    program,
+                    &args,
+                    exec::SpawnSpec::new().with_env(&env_ref).kill_tree(),
+                )
+                .await
+                .map_err(|e| {
                     log::error!("[AcpAdapter::create] Failed to spawn: {e}");
                     AppError::Io(format!("failed to spawn acp agent: {e}"))
                 })?;

@@ -7,124 +7,13 @@
 //!
 //! CLI / CHAT / Headless 是三个正交能力：
 //! - CLI：`command` 非空（终端 Tab + PTY 跑 agent 自带 TUI）；
-//! - CHAT：`chat: Option<ChatStart>`（`kind:'agent-chat'` Tab + adapter 驱动）；
+//! - CHAT：`chat: Option<ChatLaunch>`（`kind:'agent-chat'` Tab + adapter 驱动）；
 //! - Headless：`prompt_args`（程序化单轮，如 AI commit）。
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// CHAT 能力 = 传输协议 + 启动方式（自包含，`AgentProvider::chat_adapter` 直接
-/// match，无需按 agent id 特判）。序列化为小写字符串（`"acp"|"serve"|"jsonl"|"mock"`），
-/// 兼容旧配置 `chat_transport` 字面量。
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum ChatStart {
-    /// Agent Client Protocol over JSON-RPC stdio（子进程）。
-    /// `args` 为二进制后附加的 ACP 子命令参数（opencode 需 `["acp"]`；二进制本身
-    /// 即 ACP 则空）。**会随配置持久化** —— 这是让任意 agent 声明 ACP 启动方式的
-    /// 唯一通道；内置定义仍可直接提供，用户配置可覆盖。
-    Acp {
-        /// ACP 子命令参数（opencode: `["acp"]`）。
-        args: Vec<String>,
-    },
-    /// opencode serve：HTTP + SSE，支持按会话/轮次选择模型。
-    Serve,
-    /// JSON-Lines stdio（自定义协议，保留供未来 agent 声明）。
-    Jsonl,
-    /// 进程内 mock（mockAgent，无子进程）。
-    Mock,
-    /// Pi 的**私有** rpc 协议：`pi --mode rpc`（NDJSON over stdio）。
-    ///
-    /// 与 `Jsonl` 不是一回事 —— `Jsonl` 是 DeepSeek Harness 的私有协议，
-    /// 两者的命令形状与事件类型完全不同，共用一个变体会让适配器里出现
-    /// 「解码后再按 kind 分支」的二段分派。
-    PiRpc,
-}
-
-impl ChatStart {
-    /// 传输的协议标识（小写字符串）。
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Acp { .. } => "acp",
-            Self::Serve => "serve",
-            Self::Jsonl => "jsonl",
-            Self::Mock => "mock",
-            Self::PiRpc => "pi-rpc",
-        }
-    }
-}
-
-impl Serialize for ChatStart {
-    /// ACP 且带启动参数时写对象形态 `{"transport":"acp","args":[...]}`，
-    /// 其余（含 args 为空的 ACP）写裸字符串。
-    ///
-    /// 优先写字符串的理由：已有用户的 config.json 就是这种形态，无参数时
-    /// 不制造 diff；对象形态只在**确实有信息要带**时出现。
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Acp { args } if !args.is_empty() => {
-                use serde::ser::SerializeMap;
-                let mut map = serializer.serialize_map(Some(2))?;
-                map.serialize_entry("transport", self.as_str())?;
-                map.serialize_entry("args", args)?;
-                map.end()
-            }
-            _ => serializer.serialize_str(self.as_str()),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ChatStart {
-    /// 接受两种形态：
-    ///
-    /// - **裸字符串**（旧格式）：`"acp" | "serve" | "jsonl" | "mock"`。
-    ///   未知字符串沿用旧语义当作 `acp`（不带 args），保证老配置与未来新增
-    ///   传输名都不会让整个 `AgentConfig` 反序列化失败。
-    /// - **对象**（新格式）：`{"transport":"acp","args":[...]}`。
-    ///   目前只有 ACP 需要携带启动参数 —— 其余传输的启动方式由 `command` 决定。
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error as _;
-
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        if let Some(s) = value.as_str() {
-            return Ok(match s {
-                "serve" => Self::Serve,
-                "jsonl" => Self::Jsonl,
-                "mock" => Self::Mock,
-                // ⚠️ 新变体必须写在下面这条兜底**之前**。兜底接收一切未列举的
-                // 字符串，写在它之后的分支永远命中不到 —— 而且不报错，只会把
-                // agent 悄悄当成 ACP 去 spawn。
-                "pi-rpc" => Self::PiRpc,
-                // "acp" 及未知值 → Acp（args 由内置定义提供）。
-                _ => Self::Acp { args: Vec::new() },
-            });
-        }
-
-        let obj = value
-            .as_object()
-            .ok_or_else(|| D::Error::custom("ChatStart must be a string or an object"))?;
-        let transport = obj
-            .get("transport")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| D::Error::custom("ChatStart object requires a string 'transport'"))?;
-
-        match transport {
-            "acp" => {
-                let args = obj
-                    .get("args")
-                    .map(|v| serde_json::from_value::<Vec<String>>(v.clone()))
-                    .transpose()
-                    .map_err(D::Error::custom)?
-                    .unwrap_or_default();
-                Ok(Self::Acp { args })
-            }
-            other => Err(D::Error::custom(format!(
-                "transport '{other}' does not accept a structured form (only 'acp' does)"
-            ))),
-        }
-    }
-}
+use super::chat_launch::{ChatLaunch, ChatTransport};
 
 /// 安装检测方式。
 ///
@@ -221,7 +110,14 @@ pub struct ModelInfo {
 /// Agent 配置 —— 唯一数据结构（内置 + 自定义同构，设置页编辑/持久化的对象）。
 ///
 /// 能力正交：CLI = `command` 非空；CHAT = `chat: Some(_)`；Headless = `prompt_args`.
+///
+/// # 反序列化走 `RawAgentConfig`
+///
+/// 旧配置把 chat 启动信息拆在 `chat` / `chat_command` / `chat_args` 三个字段里，
+/// `RawAgentConfig` 保留这三个影子字段，由 [`convert`] 合并进
+/// [`ChatLaunch`] 后丢弃。这样迁移逻辑只有一个入口，且旧文件永远可读。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(from = "RawAgentConfig")]
 pub struct AgentConfig {
     /// Unique identifier for this agent.
     pub id: String,
@@ -240,26 +136,12 @@ pub struct AgentConfig {
     pub args: Vec<String>,
     /// Environment variables for the agent process.
     pub env: HashMap<String, String>,
-    /// CHAT 能力：传输协议 + 启动方式（`None` = 无 CHAT 能力）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat: Option<ChatStart>,
-    /// CHAT 会话进程的**可执行文件**覆盖（`None` = 沿用 [`Self::command`]）。
+    /// CHAT 能力：启动配置（`None` = 无 CHAT 能力）。
     ///
-    /// 真实需求：同一个 agent 的 TUI 与 chat 可能不是同一个二进制 ——
-    /// `pi` 走自己的 rpc，而 `pi-acp` 是把它包成 ACP 的独立入口。
-    ///
-    /// **一旦设置，CLI 的 [`Self::args`] 不再被 chat 继承**：那些参数描述的是
-    /// 另一个进程（如 TUI 的 `--approve`），套到别的二进制上轻则报错重则改行为。
-    /// 需要给 chat 传参请用 [`Self::chat_args`]。
+    /// 可执行文件、参数、环境变量都在 [`ChatLaunch`] 里 —— 一处定义，
+    /// 传输由 [`ChatLaunch::transport`] 从参数 token 识别。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_command: Option<String>,
-    /// CHAT 会话进程的附加参数，追加在可执行文件之后。
-    ///
-    /// 与 [`Self::args`] 分开的理由：后者是**终端 TUI 的启动参数**
-    ///（`terminalCache.ts` 用它起 TUI），两者要的是不同参数。
-    /// 共用一份会让「TUI 要 `--approve`、chat 要 `--provider x`」无解。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chat_args: Option<Vec<String>>,
+    pub chat: Option<ChatLaunch>,
     /// prompt 前置参数（Headless 能力），如 `["--bare", "-p"]` 表示
     /// `command --bare -p "<prompt>" [post_prompt_args]`。None = 无 Headless 能力。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -333,35 +215,69 @@ impl AgentConfig {
         v
     }
 
-    /// 拼装 **chat 会话进程**的启动参数。
-    ///
-    /// 与 [`Self::cmd_vec`] 的区别：这里服务的是 chat 传输，不是终端 TUI。
+    /// 拼装 **chat 会话进程**的启动命令（可执行文件 + 参数）。
     ///
     /// | 配置 | 结果 |
     /// | --- | --- |
-    /// | 无覆盖 | `command + args`（旧行为，向后兼容） |
-    /// | 有 `chat_command` | `chat_command + chat_args`（**不继承** `args`） |
-    /// | 只有 `chat_args` | `command + args + chat_args` |
+    /// | `chat` 为 `None` | `command + args`（无 CHAT 能力时退化为 CLI 命令） |
+    /// | `chat.program` 有值 | `program + chat.args`（**不继承** CLI 的 `args`） |
+    /// | `chat.program` 为空 | `command + args + chat.args` |
     ///
-    /// 空白 `chat_command` 视为未设置 —— 否则 `argv[0]` 是空串，
-    /// spawn 会在难以定位的地方失败。
+    /// 空白 `program` 视为未设置 —— 否则 `argv[0]` 是空串，spawn 会在难以定位
+    /// 的地方失败。
     #[must_use]
     pub fn chat_cmd_vec(&self) -> Vec<String> {
-        let override_cmd = self
-            .chat_command
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
+        let Some(launch) = &self.chat else {
+            return self.cmd_vec();
+        };
 
-        let mut v = match override_cmd {
+        let mut v = match launch.program_filtered() {
             // 覆盖了可执行文件 → 它是另一个进程，不继承 CLI 的 args。
-            Some(cmd) => vec![cmd.to_string()],
+            Some(program) => vec![program.to_string()],
             None => self.cmd_vec(),
         };
-        if let Some(extra) = &self.chat_args {
-            v.extend(extra.iter().filter(|a| !a.is_empty()).cloned());
-        }
+        v.extend(launch.args_filtered().cloned());
         v
+    }
+
+    /// 该 agent 的 CHAT 能力是否由**进程内实现**提供（`mockAgent`）。
+    ///
+    /// 读 [`ChatLaunch::inprocess`] 显式声明，**不从**「命令行是否为空」推断。
+    /// 两者不等价：用户可以把 `command` 清空却保留 chat 声明（“暂时禁用 CLI”），
+    /// 那不是一个进程内实现，按空推断会把它静默路由到 mock adapter。
+    #[must_use]
+    pub fn is_inprocess_chat(&self) -> bool {
+        self.chat.as_ref().is_some_and(|launch| launch.inprocess)
+    }
+
+    /// 该 agent 的 chat 传输（`chat` 为空时为 `None`）。
+    #[must_use]
+    pub fn chat_transport(&self) -> Option<ChatTransport> {
+        self.chat.as_ref().map(ChatLaunch::transport)
+    }
+
+    /// chat 进程生效的环境变量 —— **唯一**合并入口。
+    ///
+    /// 合并顺序（靠后覆盖靠前）：
+    /// `self.env`（agent 全局，TUI 与 chat 共享）∪ `chat.env`（仅 chat）。
+    ///
+    /// 这是**追加**，不是替换：父进程的环境仍完整继承（`SpawnOptions.env`
+    /// 的实现是逐项 `cmd.env(k, v)`）。四个 adapter 的 spawn 入口各不相同，
+    /// 各拼一份必然漂移，所以合并只在这里发生。
+    ///
+    /// 内部必需变量（如 `OPENCODE_SERVER_PASSWORD`）由 adapter 在本结果
+    /// **之后**插入，因此用户改不动它们。
+    #[must_use]
+    pub fn chat_env(&self) -> std::collections::BTreeMap<String, String> {
+        let mut env: std::collections::BTreeMap<String, String> = self
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        if let Some(launch) = &self.chat {
+            env.extend(launch.env.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        env
     }
 
     /// Resolve prompt prefix args. Returns None if agent doesn't support prompt mode.
@@ -377,110 +293,123 @@ impl AgentConfig {
     }
 }
 
-#[cfg(test)]
-mod chat_start_serde_tests {
-    use super::ChatStart;
+/// 旧结构的完整镜像 —— **唯一**迁移入口。
+///
+/// 只用于反序列化：`chat_command` / `chat_args` 在此接收旧值，由 [`convert`]
+/// 合并进 [`ChatLaunch`] 后丢弃。字段顺序与 `AgentConfig` 无关（`serde` 按名取），
+/// 这里保留的是 **旧文件里可能出现的全部键**。
+#[derive(Deserialize)]
+struct RawAgentConfig {
+    id: String,
+    name: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    is_builtin: bool,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    /// 旧：`"acp"` / `{"transport":"acp","args":[…]}` —— 由 `ChatLaunch` 迁移。
+    #[serde(default)]
+    chat: Option<ChatLaunch>,
+    /// 旧：chat 专用可执行文件覆盖 → 并入 `ChatLaunch::program`。
+    #[serde(default)]
+    chat_command: Option<String>,
+    /// 旧：chat 附加参数 → 追加进 `ChatLaunch::args`。
+    #[serde(default)]
+    chat_args: Option<Vec<String>>,
+    #[serde(default)]
+    prompt_args: Option<Vec<String>>,
+    #[serde(default)]
+    interactive_prompt_args: Option<Vec<String>>,
+    #[serde(default)]
+    post_prompt_args: Option<Vec<String>>,
+    #[serde(default)]
+    model_list_args: Option<Vec<String>>,
+    #[serde(default)]
+    skill_path: Option<String>,
+    #[serde(default)]
+    detection: Option<Detection>,
+    #[serde(default)]
+    deploy: DeploySpec,
+}
 
-    /// 旧配置写的是裸字符串。**必须继续可读** —— 已有用户的 config.json 里就是这种形态。
-    #[test]
-    fn reads_legacy_bare_string_acp() {
-        let parsed: ChatStart = serde_json::from_str(r#""acp""#).expect("legacy acp");
-        assert_eq!(parsed, ChatStart::Acp { args: vec![] });
-    }
-
-    #[test]
-    fn reads_legacy_bare_string_variants() {
-        assert_eq!(
-            serde_json::from_str::<ChatStart>(r#""serve""#).unwrap(),
-            ChatStart::Serve
-        );
-        assert_eq!(
-            serde_json::from_str::<ChatStart>(r#""jsonl""#).unwrap(),
-            ChatStart::Jsonl
-        );
-        assert_eq!(
-            serde_json::from_str::<ChatStart>(r#""mock""#).unwrap(),
-            ChatStart::Mock
-        );
-    }
-
-    /// 新形态：对象承载 ACP 启动参数。这是「给任意 agent 配 ACP 命令」的前提。
-    #[test]
-    fn reads_object_form_with_args() {
-        let parsed: ChatStart =
-            serde_json::from_str(r#"{"transport":"acp","args":["--acp"]}"#).expect("object acp");
-        assert_eq!(
-            parsed,
-            ChatStart::Acp {
-                args: vec!["--acp".to_string()]
+/// 旧形态 → 新形态。三条迁移规则：
+///
+/// 1. `chat` 本身由 [`ChatLaunch`] 的 `Deserialize` 迁移（裸字符串 → program/args）。
+/// 2. `chat_command` 非空白时**覆盖** `program`（它描述的是另一个二进制）。
+/// 3. `chat_args` **追加**在 args 尾部，过滤空串。
+///
+/// 三者都为空时 `chat` 保持 `None` —— 无 CHAT 能力，不因为存在空的旧字段而
+/// 凭空造出一个 `chat`。
+fn convert(raw: RawAgentConfig) -> AgentConfig {
+    let chat = match raw.chat {
+        Some(mut launch) => {
+            if let Some(cmd) = raw
+                .chat_command
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                launch.program = Some(cmd.to_string());
             }
-        );
-    }
+            if let Some(extra) = raw.chat_args {
+                launch
+                    .args
+                    .extend(extra.into_iter().filter(|a| !a.is_empty()));
+            }
+            // 即便迁移后无 argv 也要保留 `Some` —— 旧 `mockAgent`（`"mock"` → `inprocess`）
+            // 就是这么声明的，丢弃会改变它的能力集合。
+            Some(launch)
+        }
+        // 只有 `chat_command` / `chat_args` 而没有 `chat`：旧配置不可能出现
+        //（adapter 只在 `chat.is_some()` 时才被创建），忽略以免造出幽灵能力。
+        None => None,
+    };
 
-    /// args 为空时写字符串：保持 config.json 的 diff 最小，也不改变既有用户文件形态。
-    #[test]
-    fn writes_bare_string_when_args_are_empty() {
-        let json = serde_json::to_string(&ChatStart::Acp { args: vec![] }).unwrap();
-        assert_eq!(json, r#""acp""#);
+    AgentConfig {
+        id: raw.id,
+        name: raw.name,
+        icon: raw.icon,
+        enabled: raw.enabled,
+        is_builtin: raw.is_builtin,
+        command: raw.command,
+        args: raw.args,
+        env: raw.env,
+        chat,
+        prompt_args: raw.prompt_args,
+        interactive_prompt_args: raw.interactive_prompt_args,
+        post_prompt_args: raw.post_prompt_args,
+        model_list_args: raw.model_list_args,
+        skill_path: raw.skill_path,
+        detection: raw.detection,
+        deploy: raw.deploy,
     }
+}
 
-    /// args 非空才写对象 —— 这是信息的唯一承载处，不能丢。
-    #[test]
-    fn writes_object_form_when_args_are_present() {
-        let json = serde_json::to_string(&ChatStart::Acp {
-            args: vec!["--acp".to_string(), "--verbose".to_string()],
-        })
-        .unwrap();
-        assert_eq!(json, r#"{"transport":"acp","args":["--acp","--verbose"]}"#);
-    }
-
-    /// 往返不变量：序列化再反序列化必须回到同一值（含 args）。
-    #[test]
-    fn round_trips_acp_args() {
-        let original = ChatStart::Acp {
-            args: vec!["--acp".to_string()],
-        };
-        let json = serde_json::to_string(&original).unwrap();
-        let back: ChatStart = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, original);
-    }
-
-    /// 未知字符串沿用旧语义（当作 acp、无 args），不 panic、不报错。
-    #[test]
-    fn unknown_string_still_parses_as_acp() {
-        let parsed: ChatStart = serde_json::from_str(r#""something-new""#).unwrap();
-        assert_eq!(parsed, ChatStart::Acp { args: vec![] });
-    }
-
-    /// `"pi-rpc"` 必须解析成自己的变体，**不能被 `_ => Acp` 兜底吞掉**。
-    ///
-    /// 这是本类型的结构性陷阱：反序列化末尾的 `_ => Self::Acp { args }` 会接收
-    /// 一切未列举的字符串。新变体的分支只要写在它之后，就永远命中不到 —— 而且
-    /// 不会编译报错，只会悄悄把 Pi 当成 ACP agent 去 spawn。
-    #[test]
-    fn reads_pi_rpc() {
-        let parsed: ChatStart = serde_json::from_str(r#""pi-rpc""#).unwrap();
-        assert_eq!(parsed, ChatStart::PiRpc);
-    }
-
-    /// 往返：`PiRpc` 无额外参数 → 裸字符串。
-    #[test]
-    fn writes_pi_rpc_as_bare_string() {
-        let json = serde_json::to_string(&ChatStart::PiRpc).unwrap();
-        assert_eq!(json, r#""pi-rpc""#);
-    }
-
-    #[test]
-    fn round_trips_pi_rpc() {
-        let json = serde_json::to_string(&ChatStart::PiRpc).unwrap();
-        let back: ChatStart = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, ChatStart::PiRpc);
+impl From<RawAgentConfig> for AgentConfig {
+    fn from(raw: RawAgentConfig) -> Self {
+        convert(raw)
     }
 }
 
 #[cfg(test)]
 mod chat_launch_tests {
     use super::*;
+    use crate::common::agent::chat_launch::{ChatLaunch, ChatTransport};
+
+    fn launch(program: Option<&str>, args: &[&str]) -> ChatLaunch {
+        ChatLaunch {
+            program: program.map(str::to_string),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
 
     fn base() -> AgentConfig {
         AgentConfig {
@@ -492,29 +421,30 @@ mod chat_launch_tests {
         }
     }
 
-    /// 没有 chat 专用覆盖时，chat 启动沿用 `command + args`（旧行为不变）。
+    // ── chat_cmd_vec：四种组合必须与旧实现逐条等价 ──────────────────────
+
+    /// 无 `chat` 配置时退化为 CLI 命令（旧行为不变）。
     #[test]
-    fn chat_launch_falls_back_to_the_cli_command() {
-        let cfg = base();
-        assert_eq!(cfg.chat_cmd_vec(), vec!["pi", "--approve"]);
+    fn chat_cmd_falls_back_to_the_cli_command() {
+        assert_eq!(base().chat_cmd_vec(), vec!["pi", "--approve"]);
     }
 
-    /// `chat_command` 覆盖可执行文件 —— `pi` 走 TUI、`pi-acp` 走 ACP 是真实需求。
+    /// `program` 覆盖可执行文件 —— `pi` 走 TUI、`pi-acp` 走 ACP 是真实需求。
+    /// 覆盖后**不再继承** CLI 的 args：它们描述的是另一个进程。
     #[test]
-    fn chat_command_overrides_the_executable() {
+    fn program_overrides_the_executable_without_inheriting_cli_args() {
         let cfg = AgentConfig {
-            chat_command: Some("pi-acp".into()),
+            chat: Some(launch(Some("pi-acp"), &[])),
             ..base()
         };
-        // 覆盖后不再继承 CLI 的 args：它们描述的是另一个进程。
         assert_eq!(cfg.chat_cmd_vec(), vec!["pi-acp"]);
     }
 
-    /// `chat_args` 追加在 chat 启动命令之后。
+    /// `chat.args` 追加在命令之后（program 为空时继承 CLI 命令）。
     #[test]
-    fn chat_args_are_appended_to_the_chat_command() {
+    fn args_append_to_the_inherited_cli_command() {
         let cfg = AgentConfig {
-            chat_args: Some(vec!["--provider".into(), "x".into()]),
+            chat: Some(launch(None, &["--provider", "x"])),
             ..base()
         };
         assert_eq!(
@@ -523,35 +453,190 @@ mod chat_launch_tests {
         );
     }
 
-    /// 两者同时存在：覆盖可执行文件 + 自己的参数，互不污染。
+    /// program + args 同时存在：互不污染。
     #[test]
-    fn chat_command_and_args_compose() {
+    fn program_and_args_compose() {
         let cfg = AgentConfig {
-            chat_command: Some("pi-acp".into()),
-            chat_args: Some(vec!["--verbose".into()]),
+            chat: Some(launch(Some("pi-acp"), &["--verbose"])),
             ..base()
         };
         assert_eq!(cfg.chat_cmd_vec(), vec!["pi-acp", "--verbose"]);
     }
 
-    /// 空 `chat_command` 视为「没写」，而不是「可执行文件叫空串」。
-    /// 否则构造出的 argv[0] 是 `""`，spawn 会失败在难以定位的地方。
+    /// 空 `program` 视为「没写」，而不是「可执行文件叫空串」。
+    /// 否则 argv[0] 是 `""`，spawn 会失败在难以定位的地方。
     #[test]
-    fn empty_chat_command_is_ignored() {
+    fn blank_program_is_ignored() {
         let cfg = AgentConfig {
-            chat_command: Some("   ".into()),
+            chat: Some(launch(Some("   "), &[])),
             ..base()
         };
         assert_eq!(cfg.chat_cmd_vec(), vec!["pi", "--approve"]);
     }
 
-    /// `chat_args` 为空数组时不产生痕迹。
+    /// 空 args 不产生痕迹。
     #[test]
-    fn empty_chat_args_are_a_no_op() {
+    fn empty_args_are_a_no_op() {
         let cfg = AgentConfig {
-            chat_args: Some(vec![]),
+            chat: Some(launch(None, &[])),
             ..base()
         };
         assert_eq!(cfg.chat_cmd_vec(), vec!["pi", "--approve"]);
+    }
+
+    // ── chat_env：合并矩阵 ───────────────────────────────────────────
+
+    fn cfg_with_env(global: &[(&str, &str)], chat: &[(&str, &str)]) -> AgentConfig {
+        let mut env = ChatLaunch::default();
+        for (k, v) in chat {
+            env.env.insert((*k).into(), (*v).into());
+        }
+        AgentConfig {
+            env: global
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                .collect(),
+            chat: Some(env),
+            ..base()
+        }
+    }
+
+    /// 合并矩阵：全局 ∪ chat，靠后覆盖靠前。
+    #[test]
+    fn chat_env_merges_global_then_launch() {
+        // 两者都空
+        let cfg = AgentConfig {
+            chat: Some(ChatLaunch::default()),
+            ..base()
+        };
+        assert!(cfg.chat_env().is_empty());
+
+        // 只有全局
+        let got = cfg_with_env(&[("A", "1")], &[]).chat_env();
+        assert_eq!(got.get("A").map(String::as_str), Some("1"));
+
+        // 只有 chat
+        let got = cfg_with_env(&[], &[("B", "2")]).chat_env();
+        assert_eq!(got.get("B").map(String::as_str), Some("2"));
+
+        // 两者都有 → 并存
+        let got = cfg_with_env(&[("A", "1")], &[("B", "2")]).chat_env();
+        assert_eq!(got.get("A").map(String::as_str), Some("1"));
+        assert_eq!(got.get("B").map(String::as_str), Some("2"));
+
+        // 同名 → chat 胜
+        let got = cfg_with_env(&[("K", "old")], &[("K", "new")]).chat_env();
+        assert_eq!(got.get("K").map(String::as_str), Some("new"));
+    }
+
+    /// 没有 `chat` 时全局 env 仍然生效（chat_env 不是「chat 专属」的过滤器）。
+    #[test]
+    fn chat_env_includes_global_without_chat_capability() {
+        let cfg = AgentConfig {
+            env: [("A".to_string(), "1".to_string())].into_iter().collect(),
+            chat: None,
+            ..base()
+        };
+        assert_eq!(cfg.chat_env().get("A").map(String::as_str), Some("1"));
+    }
+
+    // ── 反序列化迁移矩阵（经 `AgentConfig`，即真实 config.json 路径）─────
+
+    fn parse_agent(chat_json: &str) -> AgentConfig {
+        let json = format!(r#"{{"id":"x","name":"X","command":"x","chat":{chat_json}}}"#);
+        serde_json::from_str(&json).expect("migrate agent")
+    }
+
+    /// R4 迁移矩阵：六种旧形态经完整 `AgentConfig` 反序列化后成立。
+    #[test]
+    fn legacy_chat_forms_migrate_losslessly() {
+        // "acp" → 无附加参数，默认 ACP
+        let cfg = parse_agent(r#""acp""#);
+        let l = cfg.chat.clone().expect("acp keeps capability");
+        assert_eq!(l.program, None);
+        assert!(l.args.is_empty());
+        assert_eq!(l.transport(), ChatTransport::Acp);
+        assert_eq!(cfg.chat_cmd_vec(), vec!["x"]);
+
+        // "serve" → opencode serve
+        let cfg = parse_agent(r#""serve""#);
+        let l = cfg.chat.clone().expect("serve");
+        assert_eq!(l.program.as_deref(), Some("opencode"));
+        assert_eq!(cfg.chat_cmd_vec(), vec!["opencode", "serve"]);
+        assert_eq!(l.transport(), ChatTransport::Serve);
+
+        // "jsonl" → --jsonl
+        let cfg = parse_agent(r#""jsonl""#);
+        assert_eq!(cfg.chat_cmd_vec(), vec!["x", "--jsonl"]);
+        assert_eq!(cfg.chat.as_ref().unwrap().transport(), ChatTransport::Jsonl);
+
+        // "pi-rpc" → --mode rpc
+        let cfg = parse_agent(r#""pi-rpc""#);
+        assert_eq!(cfg.chat_cmd_vec(), vec!["x", "--mode", "rpc"]);
+        assert_eq!(cfg.chat.as_ref().unwrap().transport(), ChatTransport::PiRpc);
+
+        // "mock" → 无附加参数（mock 降级为测试桩，但仍保留 CHAT 能力）
+        let cfg = parse_agent(r#""mock""#);
+        assert!(cfg.chat.is_some());
+        assert_eq!(cfg.chat_cmd_vec(), vec!["x"]);
+    }
+
+    /// 旧对象形态 + `chat_command` + `chat_args` 三者合一的完整迁移。
+    #[test]
+    fn legacy_object_form_with_command_and_args_migrates() {
+        let json = r#"{
+            "id":"x","name":"X","command":"pi","args":["--approve"],
+            "chat":{"transport":"acp","args":["--acp"]},
+            "chat_command":"pi-acp","chat_args":["--verbose",""]
+        }"#;
+        let cfg: AgentConfig = serde_json::from_str(json).expect("legacy triple");
+
+        let l = cfg.chat.as_ref().expect("chat");
+        // chat_command 覆盖 program
+        assert_eq!(l.program.as_deref(), Some("pi-acp"));
+        // 对象形态的 args + chat_args（空串被过滤）
+        assert_eq!(l.args, vec!["--acp", "--verbose"]);
+        // 覆盖后不继承 CLI 的 args
+        assert_eq!(cfg.chat_cmd_vec(), vec!["pi-acp", "--acp", "--verbose"]);
+    }
+
+    /// 旧 `chat_args` 在 program 为空时追加在继承的 CLI 命令之后。
+    #[test]
+    fn legacy_chat_args_append_to_inherited_command() {
+        let json = r#"{
+            "id":"x","name":"X","command":"pi","args":["--approve"],
+            "chat":"acp","chat_args":["--provider","x"]
+        }"#;
+        let cfg: AgentConfig = serde_json::from_str(json).expect("legacy args");
+        assert_eq!(
+            cfg.chat_cmd_vec(),
+            vec!["pi", "--approve", "--provider", "x"]
+        );
+    }
+
+    /// 旧配置缺 `env` 字段 → 默认为空 map，而不是反序列化失败。
+    #[test]
+    fn legacy_config_without_env_parses() {
+        let json = r#"{"id":"x","name":"X","command":"x"}"#;
+        let cfg: AgentConfig = serde_json::from_str(json).expect("no env");
+        assert!(cfg.env.is_empty());
+        assert!(cfg.chat.is_none());
+    }
+
+    /// **全局 `env` 必须原样透传** —— 它不属于 chat，不能被迁移层清空。
+    #[test]
+    fn global_env_survives_migration() {
+        let json = r#"{"id":"x","name":"X","command":"x","env":{"A":"1"},"chat":"acp"}"#;
+        let cfg: AgentConfig = serde_json::from_str(json).expect("global env");
+        assert_eq!(cfg.env.get("A").map(String::as_str), Some("1"));
+    }
+
+    /// 未声明的旧字符串会让整份配置反序列化失败（D1）—— 这是刻意的：
+    /// 拼错的 transport 比起「静默当 ACP 跑起来」更容易被发现。
+    #[test]
+    fn unknown_transport_string_fails_the_whole_config() {
+        let json = r#"{"id":"x","name":"X","command":"x","chat":"acpp"}"#;
+        let err = serde_json::from_str::<AgentConfig>(json).unwrap_err();
+        assert!(err.to_string().contains("acpp"));
     }
 }

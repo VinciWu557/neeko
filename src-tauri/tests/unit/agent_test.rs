@@ -76,8 +76,6 @@ fn add_custom_agent() {
         is_builtin: false,
         skill_path: None,
         chat: None,
-        chat_command: None,
-        chat_args: None,
         detection: None,
         deploy: Default::default(),
     });
@@ -108,8 +106,6 @@ fn add_agent_with_builtin_id_overrides_in_place() {
         is_builtin: false,
         skill_path: None,
         chat: None,
-        chat_command: None,
-        chat_args: None,
         detection: None,
         deploy: Default::default(),
     });
@@ -140,8 +136,6 @@ fn remove_agent() {
         is_builtin: false,
         skill_path: None,
         chat: None,
-        chat_command: None,
-        chat_args: None,
         detection: None,
         deploy: Default::default(),
     });
@@ -172,8 +166,6 @@ fn remove_default_agent_resets_to_factory() {
         is_builtin: false,
         skill_path: None,
         chat: None,
-        chat_command: None,
-        chat_args: None,
         detection: None,
         deploy: Default::default(),
     });

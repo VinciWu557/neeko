@@ -239,9 +239,14 @@ mod tests {
         assert!(spawn.args.iter().any(|a| a == "dap"));
 
         let args: Vec<&str> = spawn.args.iter().map(|s| s.as_str()).collect();
-        let mut child = exec::spawn(&ExecTarget::Local, &spawn.program, &args)
-            .await
-            .expect("spawn dlv dap");
+        let mut child = exec::spawn(
+            &ExecTarget::Local,
+            &spawn.program,
+            &args,
+            exec::SpawnSpec::new().kill_tree(),
+        )
+        .await
+        .expect("spawn dlv dap");
         let stdout = child.stdout.take().expect("dlv stdout");
         let mut reader = tokio::io::BufReader::new(stdout);
         let mut line = String::new();

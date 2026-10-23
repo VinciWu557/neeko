@@ -1,4 +1,4 @@
-//! [`PiRpcAdapter`] —— 把 `ChatStart::PiRpc` 接到 [`PiSession`] 上。
+//! [`PiRpcAdapter`] —— 把 `pi --mode rpc` 传输接到 [`PiSession`] 上。
 //!
 //! 只做两件事：把 `AgentConfig` 的启动命令交给会话，声明本传输的能力。
 //! 协议细节在 `process.rs` / `translate.rs` / `session.rs`，配置投影在 `config.rs`。
@@ -14,13 +14,15 @@ use crate::common::error::AppError;
 pub struct PiRpcAdapter {
     /// 完整的启动命令（`command` + 用户配置的 `args`）。
     cmd: Vec<String>,
+    /// 注入给子进程的环境变量（追加，不替换继承）。
+    env: std::collections::BTreeMap<String, String>,
 }
 
 impl PiRpcAdapter {
-    /// 用 `AgentConfig::cmd_vec()` 构造。
+    /// 用 `AgentConfig::chat_cmd_vec()` + `chat_env()` 构造。
     #[must_use]
-    pub const fn new(cmd: Vec<String>) -> Self {
-        Self { cmd }
+    pub const fn new(cmd: Vec<String>, env: std::collections::BTreeMap<String, String>) -> Self {
+        Self { cmd, env }
     }
 }
 
@@ -50,7 +52,7 @@ impl AgentAdapter for PiRpcAdapter {
 
     async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError> {
         Ok(Box::new(
-            PiSession::start(&self.cmd, ctx, self.chat_capabilities()).await?,
+            PiSession::start(&self.cmd, ctx, self.chat_capabilities(), &self.env).await?,
         ))
     }
 }

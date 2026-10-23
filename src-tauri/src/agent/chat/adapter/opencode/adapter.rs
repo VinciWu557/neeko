@@ -14,14 +14,24 @@ use super::request::attach_streaming;
 ///
 /// 一个进程级的 `opencode serve` 被所有会话共享（见 `connection.rs` 的
 /// `OnceCell`）。模型切换走**每轮请求参数**，不产生 `config_option_update`。
+///
+/// # `cmd` / `env` 只对首次生成的 serve 进程生效
+///
+/// serve 是进程级单例：第一个会话触发的 spawn 决定了程序名、参数与环境变量，
+/// 后续会话复用同一个 server。见 `connection::serve_connection`。
 #[derive(Default)]
-pub struct ServeAdapter;
+pub struct ServeAdapter {
+    /// 完整的 serve 启动命令（`argv[0]` + `serve` 子命令等）。
+    cmd: Vec<String>,
+    /// 注入给 serve 进程的环境变量（内部密码在其后覆盖）。
+    env: std::collections::BTreeMap<String, String>,
+}
 
 impl ServeAdapter {
     /// Create a serve-backed adapter.
     #[must_use]
-    pub const fn new() -> Self {
-        Self
+    pub const fn new(cmd: Vec<String>, env: std::collections::BTreeMap<String, String>) -> Self {
+        Self { cmd, env }
     }
 }
 
@@ -63,7 +73,7 @@ impl AgentAdapter for ServeAdapter {
     /// 错误版本上甚至还会尝试拉起 managed service（无外部 service 时端口冲突 → exit 1）。
     async fn list_models(&self, config: &AgentConfig) -> Result<Vec<ModelInfo>, AppError> {
         // 主路径：HTTP，两版通用。
-        if let Ok(conn) = serve_connection().await {
+        if let Ok(conn) = serve_connection(&self.cmd, &self.env).await {
             let url = format!("{}{}", conn.base_url, conn.protocol.models_path());
             if let Some(json) = fetch_json(&conn.client, &url).await {
                 let models = models_from_api_response(&json);
@@ -78,7 +88,7 @@ impl AgentAdapter for ServeAdapter {
         //
         // 拿不到连接时按 V1 处理：这是既有用户盘面，且 1.x 的 --verbose 路径
         // 是历史上唯一可用的那条。
-        let protocol = match serve_connection().await {
+        let protocol = match serve_connection(&self.cmd, &self.env).await {
             Ok(conn) => conn.protocol,
             Err(_) => ServeProtocol::V1,
         };
@@ -88,7 +98,7 @@ impl AgentAdapter for ServeAdapter {
     }
 
     async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError> {
-        let conn = serve_connection().await?;
+        let conn = serve_connection(&self.cmd, &self.env).await?;
         let protocol = conn.protocol;
 
         // ── 1. Create the serve session ───────────────────────────────────
@@ -147,7 +157,7 @@ impl AgentAdapter for ServeAdapter {
                 "resume requires a non-empty native session id".into(),
             ));
         }
-        let conn = serve_connection().await?;
+        let conn = serve_connection(&self.cmd, &self.env).await?;
 
         // resume 前探测存在性：1.x 老会话在 2.0 下是 404（迁移单向，不可 resume）。
         // 不探测的话 `attach_streaming` 只会在 SSE 上静默等待一条永不到来的事件。

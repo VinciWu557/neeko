@@ -30,49 +30,74 @@ pub async fn run(target: &ExecTarget, cmd: &str, args: &[&str]) -> Result<String
     }
 }
 
-/// Spawn a long-lived process (stdio pipes) on `target`.
+/// `spawn` 的可选参数 bundle。
 ///
-/// 声明 `kill_tree`：facade 的 spawn 面向**受管长驻进程**（LSP 服务器 / DAP
-/// adapter / 调试目标），其形态多为包装器脚本 + 服务进程，`kill()` 必须能连带
-/// 清理后代，否则孤儿持锁。短命令走 `collect*`，不带该语义。
-pub async fn spawn(target: &ExecTarget, cmd: &str, args: &[&str]) -> Result<ExecChild, ExecError> {
-    create_executor(target)
-        .spawn_with(SpawnOptions::new(cmd, args).with_kill_tree())
-        .await
+/// 为什么不直接加位置参数：三个可选项里两个的常态值是 `None` / 空 slice，
+/// `spawn(t, c, a, None, &[], true)` 读不出哪个是哪个；而且每加一个可选项
+/// 都要改所有调用点。让调用点只写它关心的：`SpawnSpec::new().with_env(&env)`。
+#[derive(Default, Clone, Copy)]
+pub struct SpawnSpec<'a> {
+    /// 工作目录。`None` = 执行环境默认。
+    pub cwd: Option<&'a str>,
+    /// 额外环境变量（追加，**不替换**继承）。
+    pub env: &'a [(&'a str, &'a str)],
+    /// 是否连后代一起杀。默认 `false` —— 显式优于隐式：让调用方必须思考
+    /// 进程组语义，而不是跟着 facade 的默认值漂。
+    pub kill_tree: bool,
 }
 
-/// Spawn with optional working directory in the target environment.
-pub async fn spawn_with(
+impl<'a> SpawnSpec<'a> {
+    /// 全默认值：无目录、无额外环境变量、不带进程组清理。
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            cwd: None,
+            env: &[],
+            kill_tree: false,
+        }
+    }
+
+    /// 指定工作目录（`None` 保持执行环境默认）。
+    #[must_use]
+    pub const fn with_cwd(mut self, cwd: Option<&'a str>) -> Self {
+        self.cwd = cwd;
+        self
+    }
+
+    /// 追加环境变量（不替换继承的父进程环境）。
+    #[must_use]
+    pub const fn with_env(mut self, env: &'a [(&'a str, &'a str)]) -> Self {
+        self.env = env;
+        self
+    }
+
+    /// 连后代一起清理（包装器脚本 → 服务进程时必须开）。
+    #[must_use]
+    pub const fn kill_tree(mut self) -> Self {
+        self.kill_tree = true;
+        self
+    }
+}
+
+/// Spawn a long-lived process (stdio pipes) on `target` —— **唯一** spawn 入口。
+///
+/// 目录、环境变量、进程组语义全部走 [`SpawnSpec`]。
+///
+/// 受管长驻进程（LSP 服务器 / DAP adapter / chat adapter）应显式
+/// `.kill_tree()`：它们的形态多为包装器脚本 + 服务进程，`kill()` 必须能连带
+/// 清理后代，否则孤儿持锁。短命令走 `collect*`，不带该语义。
+pub async fn spawn(
     target: &ExecTarget,
     cmd: &str,
     args: &[&str],
-    current_dir: Option<&str>,
+    spec: SpawnSpec<'_>,
 ) -> Result<ExecChild, ExecError> {
     spawn_target(
         target,
         SpawnOptions::new(cmd, args)
-            .with_current_dir_if(current_dir)
-            .with_kill_tree(),
-    )
-    .await
-}
-
-/// Spawn a long-lived process with extra environment variables.
-///
-/// 与 [`spawn`] 的唯一差别是注入 `env`；`kill_tree` 同样恒开（长驻受管进程）。
-/// `spawn_target` 对 Local 走 `with_default_env` 合并语义，注入的变量不会被默认值覆盖。
-///
-/// 用途：`opencode serve` 的 `OPENCODE_SERVER_PASSWORD` —— 两版都认这个环境变量，
-/// 注入后 2.0 不再打印随机密码行、1.x 不再警告 `server is unsecured`，密码由调用方持有。
-pub async fn spawn_with_env(
-    target: &ExecTarget,
-    cmd: &str,
-    args: &[&str],
-    env: &[(&str, &str)],
-) -> Result<ExecChild, ExecError> {
-    spawn_target(
-        target,
-        SpawnOptions::new(cmd, args).with_kill_tree().with_env(env),
+            .with_current_dir_if(spec.cwd)
+            .with_env(spec.env)
+            .with_kill_tree_if(spec.kill_tree),
     )
     .await
 }
@@ -343,6 +368,50 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    /// **合并的直接理由**：合并前没有「cwd + env 同时传」的入口。
+    /// `pi-rpc` 需要 cwd，chat adapter 需要 env，两者必然要同时出现。
+    ///
+    /// 变异验证：`spawn` 里删掉 `.with_env(spec.env)` 或
+    /// `.with_current_dir_if(spec.cwd)` → 本用例红。
+    #[tokio::test]
+    async fn spawn_spec_combines_cwd_and_env() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let dir_name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let child = spawn(
+            &ExecTarget::Local,
+            "sh",
+            &["-c", "pwd; [ \"$NEEKO_SPEC_ENV\" = \"42\" ] && echo ENV_OK"],
+            SpawnSpec::new()
+                .with_cwd(Some(dir.path().to_str().unwrap()))
+                .with_env(&[("NEEKO_SPEC_ENV", "42")])
+                .kill_tree(),
+        )
+        .await
+        .expect("spawn");
+        let output = collect_child_output(child).await.expect("collect");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("ENV_OK"), "env not applied: {stdout}");
+        assert!(stdout.contains(&dir_name), "cwd not applied: {stdout}");
+    }
+
+    /// `kill_tree` 默认 `false` —— 不传就不改进程组语义。
+    #[test]
+    fn spawn_spec_defaults_leave_kill_tree_off() {
+        let spec = SpawnSpec::new();
+        assert!(!spec.kill_tree);
+        assert!(spec.cwd.is_none());
+        assert!(spec.env.is_empty());
+
+        assert!(SpawnSpec::new().kill_tree().kill_tree);
+        assert_eq!(SpawnSpec::new().with_cwd(Some("/tmp")).cwd, Some("/tmp"));
+        assert_eq!(SpawnSpec::new().with_env(&[("A", "1")]).env.len(), 1);
+    }
 
     /// 典型同步调用点：无 Tokio 上下文的线程（普通 `#[test]` 线程即满足）。
     #[test]

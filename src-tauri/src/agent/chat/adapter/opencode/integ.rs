@@ -28,7 +28,7 @@ async fn serve_round_trip_streams_text_delta() {
         prompt: "Reply with exactly: hello".into(),
         model_id: None,
     };
-    let adapter = ServeAdapter::new();
+    let adapter = ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default());
     let mut session = adapter.create(&ctx).await.expect("create session");
     let mut saw_text = false;
     for _ in 0..300 {

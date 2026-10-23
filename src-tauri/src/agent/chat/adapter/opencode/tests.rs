@@ -1839,11 +1839,13 @@ async fn serve_client_actually_bypasses_system_proxy() {
 
     // 起一个真 serve（随机端口，带密码）
     let password = "test-password-for-proxy-check";
-    let mut child = crate::core::exec::spawn_with_env(
+    let mut child = crate::core::exec::spawn(
         &ExecTarget::Local,
         "opencode",
         &["serve", "--hostname", "127.0.0.1", "--port", "0"],
-        &[("OPENCODE_SERVER_PASSWORD", password)],
+        crate::core::exec::SpawnSpec::new()
+            .with_env(&[("OPENCODE_SERVER_PASSWORD", password)])
+            .kill_tree(),
     )
     .await
     .expect("spawn opencode serve");

@@ -12,7 +12,8 @@ use tokio::sync::mpsc;
 
 use crate::agent::chat::capabilities::ChatCapabilities;
 use crate::agent::chat::events::{SessionRequest, StreamEvent};
-use crate::common::agent::types::{AgentConfig, ChatStart};
+use crate::common::agent::chat_launch::ChatTransport;
+use crate::common::agent::types::AgentConfig;
 pub mod acp;
 pub mod acp_config;
 pub mod deepseek;
@@ -64,32 +65,38 @@ impl AgentKind {
 
 /// Build the adapter for an agent from its `AgentConfig`。
 ///
-/// 分派依据 `config.chat`（CHAT 能力数据，自包含启动方式，零 id 特判）：
-/// - `None` → 该 agent 无 CHAT 能力（返回 `Unsupported`）；
-/// - `Mock` → [`AcpAdapter::mock`]（进程内，无子进程）；
-/// - `Acp { args }` → [`AcpAdapter`]（`command + args` 启动，opencode 的
-///   `["opencode","acp"]` 由内置定义提供）；
+/// 分派依据是 `config.chat` 推出的传输（`ChatLaunch::transport`），零 id 特判：
+/// - `chat` 为 `None` → 该 agent 无 CHAT 能力（`Unsupported`）；
+/// - 无程序可 spawn 但声称有 chat → [`AcpAdapter::mock`]（进程内桩）；
+/// - `Acp` → [`AcpAdapter`]（`opencode acp` 这类子命令由 `ChatLaunch::args` 携带）；
 /// - `Serve` → [`ServeAdapter`]（opencode serve 的 REST + SSE 传输）；
 /// - `Jsonl` → [`DeepSeekHarnessAdapter`]（stdio JSON-Lines）；
-/// - `PiRpc` → [`PiRpcAdapter`]（pi 的私有 `--mode rpc` 协议，单进程）。
+/// - `PiRpc` → [`PiRpcAdapter`]（pi 的私有 `--mode rpc` 协议）。
+///
+/// 所有分支的启动命令都来自同一个 [`AgentConfig::chat_cmd_vec`]，
+/// 环境变量来自同一个 [`AgentConfig::chat_env`] —— 分派只决定「用哪个 adapter
+/// 解读这套字节流」，不决定「怎么启动它」。
 pub fn adapter_for(config: &AgentConfig) -> Result<Box<dyn AgentAdapter>, AppError> {
-    match &config.chat {
-        None => Err(AppError::Unsupported(format!(
+    let Some(launch) = &config.chat else {
+        return Err(AppError::Unsupported(format!(
             "agent '{}' has no CHAT capability (terminal/headless only)",
             config.id
-        ))),
-        Some(ChatStart::Mock) => Ok(Box::new(AcpAdapter::mock())),
-        Some(ChatStart::Acp { args }) => {
-            // `chat_cmd_vec()` 已含 chat 专用可执行文件与参数；`ChatStart::Acp`
-            // 的 `args` 是传输级附加（如 opencode 的 `["acp"]`），语义不同，仍追加。
-            let mut cmd = config.chat_cmd_vec();
-            cmd.extend(args.iter().cloned());
-            Ok(Box::new(AcpAdapter::new(cmd)))
-        }
-        Some(ChatStart::Serve) => Ok(Box::new(ServeAdapter::new())),
-        Some(ChatStart::Jsonl) => Ok(Box::new(DeepSeekHarnessAdapter::new(config.chat_cmd_vec()))),
-        Some(ChatStart::PiRpc) => Ok(Box::new(pi_rpc::PiRpcAdapter::new(config.chat_cmd_vec()))),
+        )));
+    };
+
+    // 进程内桩：没有可执行文件可 spawn（见 `AgentConfig::is_inprocess_chat`）。
+    if config.is_inprocess_chat() {
+        return Ok(Box::new(AcpAdapter::mock()));
     }
+
+    let cmd = config.chat_cmd_vec();
+    let env = config.chat_env();
+    Ok(match launch.transport() {
+        ChatTransport::Acp => Box::new(AcpAdapter::new(cmd, env)),
+        ChatTransport::Serve => Box::new(ServeAdapter::new(cmd, env)),
+        ChatTransport::Jsonl => Box::new(DeepSeekHarnessAdapter::new(cmd, env)),
+        ChatTransport::PiRpc => Box::new(pi_rpc::PiRpcAdapter::new(cmd, env)),
+    })
 }
 
 /// Binds a session to its working context (A4 — protocolised G4).
@@ -346,8 +353,9 @@ mod tests {
 #[cfg(test)]
 mod adapter_for_tests {
     use super::*;
+    use crate::common::agent::chat_launch::ChatLaunch;
 
-    fn cfg(chat: ChatStart) -> AgentConfig {
+    fn cfg(chat: ChatLaunch) -> AgentConfig {
         AgentConfig {
             id: "t".into(),
             name: "T".into(),
@@ -358,26 +366,104 @@ mod adapter_for_tests {
         }
     }
 
-    /// `adapter_for` 确实能构造出适配器（含 PiRpc / Jsonl 两条 chat_cmd_vec 路径）。
+    fn launch(program: Option<&str>, args: &[&str]) -> ChatLaunch {
+        ChatLaunch {
+            program: program.map(str::to_string),
+            args: args.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// 分派注释里写的不变量：mock 分支只看 `inprocess` 声明，不看命令行。
+    #[test]
+    fn mock_branch_reads_the_explicit_declaration() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent/chat/adapter.rs"
+        ))
+        .expect("read adapter.rs");
+        let production = src.split("#[cfg(test)]").next().expect("production");
+        assert!(
+            production.contains("config.is_inprocess_chat()"),
+            "adapter_for must consult the explicit inprocess declaration"
+        );
+    }
+
+    /// `adapter_for` 对每种传输都能构造出适配器。
+    ///
+    /// 传输不再由枚举表达，而是**识别**出来的 —— 所以这里传入的是启动命令的
+    /// 各种真实形态（`opencode serve` / `pi --mode rpc` / …）。
     #[test]
     fn builds_an_adapter_for_every_chat_transport() {
         for chat in [
-            ChatStart::Mock,
-            ChatStart::Serve,
-            ChatStart::Jsonl,
-            ChatStart::PiRpc,
-            ChatStart::Acp {
-                args: vec!["acp".into()],
-            },
+            launch(Some("opencode"), &["serve"]),
+            launch(None, &["--jsonl"]),
+            launch(None, &["--mode", "rpc"]),
+            launch(Some("opencode"), &["acp"]),
+            launch(None, &[]),
         ] {
-            assert!(adapter_for(&cfg(chat.clone())).is_ok(), "{chat:?}");
+            let transport = chat.transport();
+            assert!(
+                adapter_for(&cfg(chat)).is_ok(),
+                "no adapter for transport {transport:?}"
+            );
         }
+    }
+
+    /// 进程内实现：`inprocess: true` 显式声明 → mock adapter。
+    ///
+    /// 判据是自洽的（`AgentConfig::is_inprocess_chat`），不是 id 特判 ——
+    /// 新增一个内置桩不需要改分派逻辑。
+    #[test]
+    fn inprocess_chat_yields_the_mock_adapter() {
+        let config = AgentConfig {
+            id: "stub".into(),
+            name: "Stub".into(),
+            command: String::new(),
+            chat: Some(ChatLaunch {
+                inprocess: true,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(config.is_inprocess_chat());
+        assert!(adapter_for(&config).is_ok());
+    }
+
+    /// **空命令行不等于进程内实现**：用户清空 `command` 但没声明 `inprocess`
+    /// 时，不能静默路由到 mock adapter —— 那会得到一个「能连上但永远不回话」
+    /// 的会话。
+    ///
+    /// 变异验证：把 `is_inprocess_chat` 改回「命令行推为空」→ 本用例红。
+    #[test]
+    fn blank_command_without_declaration_is_not_inprocess() {
+        let config = AgentConfig {
+            id: "broken".into(),
+            name: "Broken".into(),
+            command: String::new(),
+            chat: Some(launch(None, &[])),
+            ..Default::default()
+        };
+        assert!(!config.is_inprocess_chat());
+    }
+
+    /// 有可执行文件就不是桩 —— 即使 args 为空（`gemini` 本身就是 ACP）。
+    #[test]
+    fn a_real_command_is_not_an_inprocess_stub() {
+        let config = AgentConfig {
+            id: "gemini".into(),
+            name: "Gemini".into(),
+            command: "gemini".into(),
+            chat: Some(launch(None, &[])),
+            ..Default::default()
+        };
+        assert!(!config.is_inprocess_chat());
     }
 
     /// **静态护栏**：chat 分支必须用 `chat_cmd_vec()`，不能回退到 CLI 的 `cmd_vec()`。
     ///
     /// 变异验证：把 `PiRpcAdapter::new(config.chat_cmd_vec())` 改回
-    /// `config.cmd_vec()` → 本用例红。回退的后果是 `chat_command` 覆盖静默失效
+    /// `config.cmd_vec()` → 本用例红。回退的后果是 `ChatLaunch::program` 覆盖静默失效
     /// —— 用户配了 `pi-acp`，实际仍 spawn `pi`，且没有任何报错。
     #[test]
     fn chat_branches_use_the_chat_command_vector() {
@@ -394,7 +480,7 @@ mod adapter_for_tests {
 
         assert!(
             production.contains("config.chat_cmd_vec()"),
-            "adapter_for must call chat_cmd_vec() so chat_command takes effect"
+            "adapter_for must call chat_cmd_vec() so ChatLaunch::program takes effect"
         );
         for stale in [
             "DeepSeekHarnessAdapter::new(config.cmd_vec())",

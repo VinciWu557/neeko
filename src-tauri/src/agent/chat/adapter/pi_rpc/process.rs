@@ -57,7 +57,7 @@ impl PiRpcProcess {
     /// # 顺序：适配器参数放**最后**
     ///
     /// pi 解析重复选项是**后写者胜**（实测：`--mode json --mode rpc` → rpc；
-    /// `--mode rpc --mode json` → json）。用户在 `chat_args` 里写 `--mode json`
+    /// `--mode rpc --mode json` → json）。用户在启动参数里写 `--mode json`
     /// 就会把整条通道从 rpc 切成 json，协议层直接失效且没有任何报错。
     /// 所以我们自己的 `--mode rpc` 必须压在用户参数**之后**。
     ///
@@ -65,19 +65,32 @@ impl PiRpcProcess {
     /// `--provider` 之类。
     ///
     /// `--no-themes`：rpc 模式拿不到主题，加载它只是拖慢启动。
-    pub async fn spawn(command: &str, cwd: &str, extra: &[&str]) -> Result<Self, AppError> {
+    pub async fn spawn(
+        command: &str,
+        cwd: &str,
+        extra: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<Self, AppError> {
         let args = launch_args(extra);
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
-        let child = exec::spawn_with(&ExecTarget::Local, command, &arg_refs, Some(cwd))
-            .await
-            .map_err(|e| {
-                // ENOENT 时给可操作的提示，而不是让后面某次写 stdin 报 EPIPE。
-                AppError::Io(format!(
-                    "failed to start `{command} --mode rpc`: {e}. \
+        let child = exec::spawn(
+            &ExecTarget::Local,
+            command,
+            &arg_refs,
+            exec::SpawnSpec::new()
+                .with_cwd(Some(cwd))
+                .with_env(env)
+                .kill_tree(),
+        )
+        .await
+        .map_err(|e| {
+            // ENOENT 时给可操作的提示，而不是让后面某次写 stdin 报 EPIPE。
+            AppError::Io(format!(
+                "failed to start `{command} --mode rpc`: {e}. \
                  Is pi installed and on PATH? (npm i -g @earendil-works/pi-coding-agent)"
-                ))
-            })?;
+            ))
+        })?;
 
         let mut child = child;
         let (stdin, stdout, _stderr) = child.take_stdio();
@@ -314,7 +327,7 @@ mod tests {
 
     /// **顺序护栏**：适配器参数必须排在用户参数之后。
     ///
-    /// pi 对重复选项是后写者胜。用户在 `chat_args` 里写了 `--mode json` 时，
+    /// pi 对重复选项是后写者胜。用户在启动参数里写了 `--mode json` 时，
     /// 若 `--mode rpc` 排在它前面就会被覆盖 —— 通道切成 json，整个 rpc 协议
     /// 失效且没有任何报错（表现为「Pi 连上了但永远没有回复」）。
     ///
