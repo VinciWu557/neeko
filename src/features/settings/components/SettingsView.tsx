@@ -2,14 +2,13 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 
 import { useAppContext } from '@/shared/contexts';
 import { useScrollMemory } from '@/shared/hooks/useScrollMemory';
+import { useAgentStore } from '@/shared/store/agentStore';
 import { useAppViewStore } from '@/shared/store/appViewStore';
 import { useProjectStore } from '@/shared/store/projectStore';
-import type { AgentConfig, AppConfig } from '@/shared/types';
+import type { AppConfig } from '@/shared/types';
 import { buildScrollKey } from '@/shared/utils/scrollMemory';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 import { Island } from '@/ui/Island';
-
-import { listAgents } from '../../agent/api/agentApi';
 
 import AboutPanel from './AboutPanel';
 import AgentsPanel from './AgentsPanel';
@@ -36,30 +35,23 @@ function SettingsView() {
   const projects = useProjectStore((s) => s.projects);
   const [activeNav, setActiveNav] = useState<SettingsNavId>('appearance');
   const [searchQuery, setSearchQuery] = useState('');
-  const [builtinAgents, setBuiltinAgents] = useState<AgentConfig[]>([]);
-  const [allAgents, setAllAgents] = useState<AgentConfig[]>([]);
 
   // 滚动记忆：按导航项各自记忆；离开设置（卸载）后返回也恢复上次位置。
   const scrollRef = useScrollMemory<HTMLDivElement>(
     buildScrollKey(SCROLL_SURFACE, null, activeNav),
   );
+  // agent 列表来自唯一缓存（`ensure` 幂等，重复调用只请求一次）。
+  // 不再用 `useState` + `listAgents()` 维护本地快照 —— 那是同类副本。
+  const agentSnapshot = useAgentStore((s) => s.agents);
+  const ensureAgents = useAgentStore((s) => s.ensure);
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const all = await listAgents();
-        if (alive) {
-          setBuiltinAgents(all.filter((a) => a.is_builtin === true));
-          setAllAgents(all);
-        }
-      } catch (e) {
-        console.error('[SettingsView] Failed to list agents:', e);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+    void ensureAgents().catch((e) => console.error('[SettingsView] Failed to load agents:', e));
+  }, [ensureAgents]);
+  const builtinAgents = useMemo(
+    () => (agentSnapshot ?? []).filter((a) => a.is_builtin === true),
+    [agentSnapshot],
+  );
+  const allAgents = agentSnapshot ?? [];
 
   const handleBack = useCallback(() => {
     setAppView('normal');
@@ -167,30 +159,19 @@ function SettingsView() {
           <AgentsPanel
             config={config}
             builtinAgents={builtinAgents}
-            editingPresetId={state.editingPresetId}
-            editingValue={state.editingValue}
             skillPathEditingAgentId={state.skillPathEditingAgentId}
             skillPathInputValue={state.skillPathInputValue}
             onConfigChange={onConfigChange}
-            onEditingValueChange={state.setEditingValue}
             onSkillPathInputValueChange={state.setSkillPathInputValue}
-            onSaveAgent={(agent) => {
-              void state.saveCustomAgent(agent);
-            }}
+            onSaveAgent={state.saveCustomAgent}
             onRemoveAgent={(agentId) => {
               void state.removeCustomAgentById(agentId);
             }}
-            onSaveBuiltinAgent={(agent) => {
-              void state.saveBuiltinOverride(agent);
-            }}
+            onSaveBuiltinAgent={state.saveBuiltinOverride}
             onResetBuiltinAgent={(agentId) => {
               void state.resetBuiltinOverride(agentId);
             }}
             getEffectiveAgent={state.getEffectiveAgent}
-            onStartEditAgent={state.startEditAgent}
-            onSaveAgentOverride={state.saveAgentOverride}
-            onCancelPresetEdit={state.cancelPresetEdit}
-            getEffectiveAgentCommand={state.getEffectiveAgentCommand}
             onSelectSkillPath={(agent) => {
               void state.selectSkillPath(agent);
             }}
@@ -210,13 +191,13 @@ function SettingsView() {
             newIdeCommand={state.newIdeCommand}
             onConfigChange={onConfigChange}
             onEditingValueChange={state.setEditingValue}
+            onCancelPresetEdit={state.cancelPresetEdit}
             onNewIdeNameChange={state.setNewIdeName}
             onNewIdeCommandChange={state.setNewIdeCommand}
             onAddCustomIde={state.addCustomIde}
             onRemoveCustomIde={state.removeCustomIde}
             onStartEditPreset={state.startEditPreset}
             onSavePresetOverride={state.savePresetOverride}
-            onCancelPresetEdit={state.cancelPresetEdit}
             getEffectiveCommand={state.getEffectiveCommand}
           />
         );

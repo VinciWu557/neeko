@@ -40,8 +40,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   uiFontFamily: '',
   customIdes: [],
   ideCommandOverrides: {},
-  agentCommandOverrides: {},
-  agentOverrides: {},
   customAgents: [],
   agentSelectorShowPresetBar: true,
   agentSelectorCompactMode: false,
@@ -167,14 +165,6 @@ export function normalizeLoadedConfig(loaded: unknown): LoadedAppConfig {
       saved.ideCommandOverrides && typeof saved.ideCommandOverrides === 'object'
         ? saved.ideCommandOverrides
         : DEFAULT_CONFIG.ideCommandOverrides,
-    agentCommandOverrides:
-      saved.agentCommandOverrides && typeof saved.agentCommandOverrides === 'object'
-        ? saved.agentCommandOverrides
-        : DEFAULT_CONFIG.agentCommandOverrides,
-    agentOverrides:
-      saved.agentOverrides && typeof saved.agentOverrides === 'object'
-        ? saved.agentOverrides
-        : DEFAULT_CONFIG.agentOverrides,
     customAgents: Array.isArray(saved.customAgents)
       ? saved.customAgents
       : DEFAULT_CONFIG.customAgents,

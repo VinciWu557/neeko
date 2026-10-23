@@ -1,11 +1,12 @@
 import { open } from '@tauri-apps/plugin-dialog';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useAgentStore } from '@/shared/store/agentStore';
 import type { AgentConfig, AppConfig, DiffMode } from '@/shared/types';
 import { IDE_PRESETS, getIdeCommand } from '@/shared/utils/idePresets';
 import type { IdePreset } from '@/shared/utils/idePresets';
 
-import { addAgent, removeAgent } from '../../agent/api/agentApi';
+import { resetAgent, saveAgent } from '../../agent/api/agentApi';
 import { getSystemFonts, resetSystemFonts } from '../api/settingsApi';
 
 import { BUILTIN_FONTS, PRESET_SHELLS, type SettingsNavId } from './constants';
@@ -21,7 +22,6 @@ interface UseSettingsPanelStateParams {
 export function useSettingsPanelState({
   config,
   activeNav,
-  builtinAgents,
   onConfigChange,
   onClose,
 }: UseSettingsPanelStateParams) {
@@ -181,92 +181,46 @@ export function useSettingsPanelState({
     return [...agents, updated];
   }
 
-  /** 新建/编辑自定义 Agent（AgentForm 提交）：更新 customAgents + 持久化 add_agent。 */
-  const saveCustomAgent = useCallback(
-    async (agent: AgentConfig) => {
-      const nextCustom = upsertCustomAgent(config.customAgents ?? [], agent);
-      onConfigChange({ ...config, customAgents: nextCustom });
-      try {
-        await addAgent(agent);
-      } catch (e) {
-        console.error('[Settings] Failed to save agent:', e);
-      }
-    },
-    [config, onConfigChange],
-  );
+  /**
+   * 新建/编辑自定义 Agent（AgentForm 提交）。
+   *
+   * `saveAgent` 内部落盘并刷新 `agentStore` —— 界面因此拿到的是后端生效值，
+   * 不再需要在前端另存一份。
+   */
+  const saveCustomAgent = useCallback(async (agent: AgentConfig) => {
+    await saveAgent(agent);
+  }, []);
 
   /** 删除自定义 Agent（按 id）：更新 customAgents + 持久化 remove_agent。 */
-  const removeCustomAgentById = useCallback(
-    async (agentId: string) => {
-      const nextCustom = (config.customAgents ?? []).filter((a) => a.id !== agentId);
-      onConfigChange({ ...config, customAgents: nextCustom });
-      try {
-        await removeAgent(agentId);
-      } catch (e) {
-        console.error('[Settings] Failed to remove agent:', e);
-      }
-    },
-    [config, onConfigChange],
-  );
+  const removeCustomAgentById = useCallback(async (agentId: string) => {
+    await resetAgent(agentId);
+  }, []);
 
-  /** 保存内置 Agent 覆盖（AgentForm 提交）：更新 config.agentOverrides + 后端 add_agent（覆盖层）。 */
-  const saveBuiltinOverride = useCallback(
-    async (agent: AgentConfig) => {
-      const withIdentity: AgentConfig = { ...agent, is_builtin: true };
-      const next = { ...(config.agentOverrides || {}), [agent.id]: withIdentity };
-      onConfigChange({ ...config, agentOverrides: next });
-      try {
-        await addAgent(withIdentity);
-      } catch (e) {
-        console.error('[Settings] Failed to save built-in override:', e);
-      }
-    },
-    [config, onConfigChange],
-  );
+  /**
+   * 保存内置 Agent 覆盖（AgentForm 提交）。
+   *
+   * 数据只写后端：`saveAgent` → `add_agent` 覆盖层 → 刷新 `agentStore`。
+   * 「是否被覆盖」由后端 `AgentManager` 的覆盖表回答（`is_overridden`），
+   * 前端不再保管键集合 —— 那曾是需要与后端同步的第二份真相。
+   */
+  const saveBuiltinOverride = useCallback(async (agent: AgentConfig) => {
+    await saveAgent({ ...agent, is_builtin: true });
+  }, []);
 
-  /** 重置内置 Agent 覆盖（恢复出厂）：删除 config.agentOverrides 条目 + 后端 remove_agent。 */
-  const resetBuiltinOverride = useCallback(
-    async (agentId: string) => {
-      const next = { ...(config.agentOverrides || {}) };
-      delete next[agentId];
-      onConfigChange({ ...config, agentOverrides: next });
-      try {
-        await removeAgent(agentId);
-      } catch (e) {
-        console.error('[Settings] Failed to reset built-in agent:', e);
-      }
-    },
-    [config, onConfigChange],
-  );
+  /** 重置内置 Agent 覆盖（恢复出厂）。同样只走后端。 */
+  const resetBuiltinOverride = useCallback(async (agentId: string) => {
+    await resetAgent(agentId);
+  }, []);
 
-  const startEditAgent = (agent: AgentConfig) => {
-    const current = config.agentCommandOverrides?.[agent.id] ?? agent.command;
-    setEditingPresetId(agent.id);
-    setEditingValue(current);
-  };
-
-  const saveAgentOverride = (agentId: string) => {
-    const trimmed = editingValue.trim();
-    const agent = builtinAgents.find((item) => item.id === agentId);
-    const defaultCmd = agent?.command ?? '';
-    const overrides = { ...(config.agentCommandOverrides || {}) };
-    if (trimmed && trimmed !== defaultCmd) {
-      overrides[agentId] = trimmed;
-    } else {
-      delete overrides[agentId];
-    }
-    onConfigChange({ ...config, agentCommandOverrides: overrides });
-    setEditingPresetId(null);
-  };
-
-  /** 内置 agent 的有效 command：完整覆盖优先 → 旧 command 覆盖兼容 → 出厂值。 */
-  const getEffectiveAgentCommand = (agent: AgentConfig) =>
-    config.agentOverrides?.[agent.id]?.command ??
-    config.agentCommandOverrides?.[agent.id] ??
-    agent.command;
-
-  /** 内置 agent 的有效配置（覆盖层优先，用于设置页展示与 AgentForm 编辑初始值）。 */
-  const getEffectiveAgent = (agent: AgentConfig) => config.agentOverrides?.[agent.id] ?? agent;
+  /**
+   * 内置 agent 的有效配置 —— 来自 `agentStore` 的后端快照。
+   *
+   * 后端 `AgentManager` 启动时已把内置覆盖层合并进内存定义，所以
+   * store 里的就是**生效值**。这里不再读前端那份覆盖 map 的内容
+   * （那份副本是「设置页改了终端不生效」的根源之一）。
+   */
+  const getEffectiveAgent = (agent: AgentConfig): AgentConfig =>
+    useAgentStore.getState().byId(agent.id) ?? agent;
 
   const updateAgentSkillPath = async (agent: AgentConfig, newPath: string) => {
     const trimmed = newPath.trim();
@@ -284,7 +238,7 @@ export function useSettingsPanelState({
       customAgents: upsertCustomAgent(config.customAgents, updated),
     });
     try {
-      await addAgent(updated);
+      await saveAgent(updated);
     } catch (e) {
       console.error('[Settings] Failed to update agent:', e);
     }
@@ -404,9 +358,6 @@ export function useSettingsPanelState({
     saveBuiltinOverride,
     resetBuiltinOverride,
 
-    startEditAgent,
-    saveAgentOverride,
-    getEffectiveAgentCommand,
     getEffectiveAgent,
 
     selectSkillPath,

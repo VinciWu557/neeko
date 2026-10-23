@@ -9,22 +9,15 @@ import CustomAgentsSection from './CustomAgentsSection';
 interface AgentsPanelProps {
   config: AppConfig;
   builtinAgents: AgentConfig[];
-  editingPresetId: string | null;
-  editingValue: string;
   skillPathEditingAgentId: string | null;
   skillPathInputValue: string;
   onConfigChange: (next: AppConfig) => void;
-  onEditingValueChange: (value: string) => void;
   onSkillPathInputValueChange: (value: string) => void;
-  onSaveAgent: (agent: AgentConfig) => void;
+  onSaveAgent: (agent: AgentConfig) => Promise<void>;
   onRemoveAgent: (agentId: string) => void;
-  onSaveBuiltinAgent: (agent: AgentConfig) => void;
+  onSaveBuiltinAgent: (agent: AgentConfig) => Promise<void>;
   onResetBuiltinAgent: (agentId: string) => void;
   getEffectiveAgent: (agent: AgentConfig) => AgentConfig;
-  onStartEditAgent: (agent: AgentConfig) => void;
-  onSaveAgentOverride: (agentId: string) => void;
-  onCancelPresetEdit: () => void;
-  getEffectiveAgentCommand: (agent: AgentConfig) => string;
   onSelectSkillPath: (agent: AgentConfig) => void;
   onStartEditSkillPath: (agentId: string, currentPath: string) => void;
   onSaveSkillPath: (agent: AgentConfig) => void;
@@ -34,22 +27,15 @@ interface AgentsPanelProps {
 const AgentsPanel: React.FC<AgentsPanelProps> = ({
   config,
   builtinAgents,
-  editingPresetId,
-  editingValue,
   skillPathEditingAgentId,
   skillPathInputValue,
   onConfigChange,
-  onEditingValueChange,
   onSkillPathInputValueChange,
   onSaveAgent,
   onRemoveAgent,
   onSaveBuiltinAgent,
   onResetBuiltinAgent,
   getEffectiveAgent,
-  onStartEditAgent,
-  onSaveAgentOverride,
-  onCancelPresetEdit,
-  getEffectiveAgentCommand,
   onSelectSkillPath,
   onStartEditSkillPath,
   onSaveSkillPath,
@@ -97,19 +83,10 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
 
       {/* ── Built-in Agents ───────────────────────────────────────────── */}
       <BuiltInAgentsSection
-        config={config}
         builtinAgents={builtinAgents}
-        editingPresetId={editingPresetId}
-        editingValue={editingValue}
         skillPathEditingAgentId={skillPathEditingAgentId}
         skillPathInputValue={skillPathInputValue}
-        onConfigChange={onConfigChange}
-        onEditingValueChange={onEditingValueChange}
         onSkillPathInputValueChange={onSkillPathInputValueChange}
-        onStartEditAgent={onStartEditAgent}
-        onSaveAgentOverride={onSaveAgentOverride}
-        onCancelPresetEdit={onCancelPresetEdit}
-        getEffectiveAgentCommand={getEffectiveAgentCommand}
         getEffectiveAgent={getEffectiveAgent}
         onSaveBuiltinAgent={onSaveBuiltinAgent}
         onResetBuiltinAgent={onResetBuiltinAgent}
@@ -120,7 +97,6 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
       />
 
       <CustomAgentsSection
-        config={config}
         skillPathEditingAgentId={skillPathEditingAgentId}
         skillPathInputValue={skillPathInputValue}
         onSkillPathInputValueChange={onSkillPathInputValueChange}

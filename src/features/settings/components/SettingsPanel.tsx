@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import { CloseIcon } from '@/shared/components/icons';
 import { useAppContext } from '@/shared/contexts';
-import type { AgentConfig, AppConfig, DiffMode } from '@/shared/types';
-
-import { listAgents } from '../../agent/api/agentApi';
+import { useAgentStore } from '@/shared/store/agentStore';
+import type { AppConfig, DiffMode } from '@/shared/types';
 
 import AboutPanel from './AboutPanel';
 import AgentsPanel from './AgentsPanel';
@@ -33,24 +32,16 @@ const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(
   ({ onConfigChange, onClose, fullPage = false }) => {
     const { config, customThemes } = useAppContext();
     const [activeNav, setActiveNav] = useState<NavCategory>('appearance');
-    const [builtinAgents, setBuiltinAgents] = useState<AgentConfig[]>([]);
-
+    // agent 列表来自唯一缓存（`ensure` 幂等）；不在壳层维护第二份快照。
+    const agentSnapshot = useAgentStore((s) => s.agents);
+    const ensureAgents = useAgentStore((s) => s.ensure);
     useEffect(() => {
-      let alive = true;
-      (async () => {
-        try {
-          const all = await listAgents();
-          if (alive) {
-            setBuiltinAgents(all.filter((a) => a.is_builtin === true));
-          }
-        } catch (e) {
-          console.error('[SettingsPanel] Failed to list agents:', e);
-        }
-      })();
-      return () => {
-        alive = false;
-      };
-    }, []);
+      void ensureAgents().catch((e) => console.error('[SettingsPanel] Failed to load agents:', e));
+    }, [ensureAgents]);
+    const builtinAgents = useMemo(
+      () => (agentSnapshot ?? []).filter((a) => a.is_builtin === true),
+      [agentSnapshot],
+    );
 
     const state = useSettingsPanelState({
       config,
@@ -125,30 +116,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(
             <AgentsPanel
               config={config}
               builtinAgents={builtinAgents}
-              editingPresetId={state.editingPresetId}
-              editingValue={state.editingValue}
               skillPathEditingAgentId={state.skillPathEditingAgentId}
               skillPathInputValue={state.skillPathInputValue}
               onConfigChange={onConfigChange}
-              onEditingValueChange={state.setEditingValue}
               onSkillPathInputValueChange={state.setSkillPathInputValue}
-              onSaveAgent={(agent) => {
-                void state.saveCustomAgent(agent);
-              }}
+              onSaveAgent={state.saveCustomAgent}
               onRemoveAgent={(agentId) => {
                 void state.removeCustomAgentById(agentId);
               }}
-              onSaveBuiltinAgent={(agent) => {
-                void state.saveBuiltinOverride(agent);
-              }}
+              onSaveBuiltinAgent={state.saveBuiltinOverride}
               onResetBuiltinAgent={(agentId) => {
                 void state.resetBuiltinOverride(agentId);
               }}
               getEffectiveAgent={state.getEffectiveAgent}
-              onStartEditAgent={state.startEditAgent}
-              onSaveAgentOverride={state.saveAgentOverride}
-              onCancelPresetEdit={state.cancelPresetEdit}
-              getEffectiveAgentCommand={state.getEffectiveAgentCommand}
               onSelectSkillPath={(agent) => {
                 void state.selectSkillPath(agent);
               }}
@@ -168,13 +148,13 @@ const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(
               newIdeCommand={state.newIdeCommand}
               onConfigChange={onConfigChange}
               onEditingValueChange={state.setEditingValue}
+              onCancelPresetEdit={state.cancelPresetEdit}
               onNewIdeNameChange={state.setNewIdeName}
               onNewIdeCommandChange={state.setNewIdeCommand}
               onAddCustomIde={state.addCustomIde}
               onRemoveCustomIde={state.removeCustomIde}
               onStartEditPreset={state.startEditPreset}
               onSavePresetOverride={state.savePresetOverride}
-              onCancelPresetEdit={state.cancelPresetEdit}
               getEffectiveCommand={state.getEffectiveCommand}
             />
           );

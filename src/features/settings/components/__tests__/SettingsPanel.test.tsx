@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import SettingsPanel from '@/features/settings';
 import { AppProvider } from '@/shared/contexts';
+import { useAgentStore } from '@/shared/store/agentStore';
 import type { AppConfig } from '@/shared/types';
 import { invoke } from '@/testing/tauriCore';
 
@@ -216,22 +217,26 @@ describe('SettingsPanel', () => {
 
     it('已有自定义 Agent 时可以删除', () => {
       mockInvoke.mockResolvedValue(undefined);
-      const { onConfigChange } = renderPanel({
-        customAgents: [
-          {
-            id: 'custom:my-agent',
-            name: 'My Agent',
-            command: 'myagent',
-            args: [],
-            icon: 'cli.svg',
-            enabled: true,
-          },
-        ],
-      });
+      // 自定义 agent 列表来自 `agentStore`（`is_builtin` 为假的那批），
+      // 不再来自 `config.customAgents` —— 那份副本已无写入者。
+      useAgentStore.getState().setAgents([
+        {
+          id: 'custom:my-agent',
+          name: 'My Agent',
+          command: 'myagent',
+          args: [],
+          icon: 'cli.svg',
+          enabled: true,
+          is_builtin: false,
+        } as never,
+      ]);
+      renderPanel({});
       fireEvent.click(screen.getByRole('button', { name: 'Agents' }));
       const removeBtn = screen.getByTitle('Remove');
       fireEvent.click(removeBtn);
-      expect(onConfigChange).toHaveBeenCalledWith(expect.objectContaining({ customAgents: [] }));
+      // 删除只走后端（`resetAgent` 落盘 + 刷新 agentStore），前端不再维护
+      // `customAgents` 副本 —— 列表来自 store 快照。
+      expect(mockInvoke).toHaveBeenCalledWith('remove_agent', { agentId: 'custom:my-agent' });
     });
   });
 

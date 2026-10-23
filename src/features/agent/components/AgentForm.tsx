@@ -2,8 +2,7 @@
  * AgentForm — 自定义 Agent 的编辑表单（数据对象 = AgentConfig）。
  *
  * 分组布局：身份 / CLI 执行 / 能力（CHAT + Headless）/ 部署。
- * 顶部实时预览能力徽标（CLI / CHAT / Headless 正交能力）。
- * 保存走 `add_agent`（持久化到 customAgents）。
+ * 保存由**调用方**执行（经 `saveAgent` 统一落盘 + 刷新缓存）。
  */
 
 import { open } from '@tauri-apps/plugin-dialog';
@@ -14,18 +13,20 @@ import type { AgentConfig } from '@/shared/types/agent';
 import { PRESET_AGENT_ICONS } from '@/shared/utils/agents';
 import { Button, Input, Textarea } from '@/ui';
 
-import { addAgent, importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
+import { importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
 
 import { buildChatLaunch, chatTransportLabel } from './agentFormChat';
 import { emptyFormState, toFormState, toNullableArgs, type FormState } from './agentFormState';
 import { trimArgList } from './argList';
 import ArgListEditor from './ArgListEditor';
 import CapabilityBadges from './CapabilityBadges';
+import DeploySection from './DeploySection';
 
 interface AgentFormProps {
   /** 编辑已有 Agent（缺省 = 新建）。 */
   initial?: AgentConfig | null;
-  onSaved?: (agent: AgentConfig) => void;
+  /** 提交回调 —— **负责落盘**（调用方统一走 `saveAgent`）。 */
+  onSaved?: (agent: AgentConfig) => void | Promise<void>;
   onCancel?: () => void;
 }
 
@@ -140,9 +141,9 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       }
       setSaving(true);
       try {
-        const agent = buildConfig();
-        await addAgent(agent);
-        onSaved?.(agent);
+        // 写路径归调用方（它才知道内置/自定义，也只有它能统一走 `saveAgent`）。
+        // 表单自己调 `addAgent` 会造成一次保存两次 `add_agent`。
+        await onSaved?.(buildConfig());
       } catch (err) {
         setError(String(err));
       } finally {
@@ -378,75 +379,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         </div>
       </div>
 
-      {/* ── Deploy ───────────────────────────────────────────────────── */}
-      <div className="border border-border rounded-lg bg-bg-primary overflow-hidden">
-        <div className={cn(sectionTitle, 'px-3 pt-2 pb-1.5 bg-bg-secondary/40')}>Deploy</div>
-        <div className="p-3 pt-2 flex flex-col gap-2">
-          <div className="grid grid-cols-2 gap-2">
-            <div className={groupCls}>
-              <label className={labelCls} htmlFor="agent-form-deploy-skills">
-                Skills Template (supports {'{{'}projectPath{'}}'})
-              </label>
-              <Input
-                id="agent-form-deploy-skills"
-                size="sm"
-                value={t.deploySkills}
-                onChange={(e) => set('deploySkills', e.target.value)}
-              />
-            </div>
-            <div className={groupCls}>
-              <label className={labelCls} htmlFor="agent-form-deploy-commands">
-                Commands Template (optional)
-              </label>
-              <Input
-                id="agent-form-deploy-commands"
-                size="sm"
-                value={t.deployCommands}
-                onChange={(e) => set('deployCommands', e.target.value)}
-                placeholder="None (command deploy unsupported)"
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className={groupCls}>
-              <label className={labelCls} htmlFor="agent-form-deploy-mcp">
-                MCP Config Template (optional)
-              </label>
-              <Input
-                id="agent-form-deploy-mcp"
-                size="sm"
-                value={t.deployMcp}
-                onChange={(e) => set('deployMcp', e.target.value)}
-                placeholder="None (MCP deploy unsupported)"
-              />
-            </div>
-            <div className={groupCls}>
-              <label className={labelCls} htmlFor="agent-form-skill-path">
-                Global Skill Path (optional override)
-              </label>
-              <Input
-                id="agent-form-skill-path"
-                size="sm"
-                value={t.skillPath}
-                onChange={(e) => set('skillPath', e.target.value)}
-                placeholder="~/.my-agent/skills"
-              />
-            </div>
-          </div>
-          <div className={groupCls}>
-            <label className={labelCls} htmlFor="agent-form-detection">
-              Install detection command (optional · considered installed if found in PATH)
-            </label>
-            <Input
-              id="agent-form-detection"
-              size="sm"
-              value={t.detectionCmd}
-              onChange={(e) => set('detectionCmd', e.target.value)}
-              placeholder="myagent (empty = always considered installed)"
-            />
-          </div>
-        </div>
-      </div>
+      <DeploySection t={t} set={set} />
 
       {/* ── Footer: enabled + actions ────────────────────────────────── */}
       <div className="flex items-center justify-between gap-2">

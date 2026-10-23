@@ -4,28 +4,20 @@ import React, { useState } from 'react';
 import { AgentForm, CapabilityBadges } from '@/features/agent';
 import { cn } from '@/lib/utils';
 import { FolderIcon } from '@/shared/components/icons';
-import type { AgentConfig, AppConfig } from '@/shared/types';
+import type { AgentConfig } from '@/shared/types';
 import { getAgentIconSrc } from '@/shared/utils/agents';
 import { Input } from '@/ui';
 
 interface BuiltInAgentsSectionProps {
-  config: AppConfig;
   builtinAgents: AgentConfig[];
-  editingPresetId: string | null;
-  editingValue: string;
   skillPathEditingAgentId: string | null;
   skillPathInputValue: string;
-  onConfigChange: (next: AppConfig) => void;
-  onEditingValueChange: (value: string) => void;
   onSkillPathInputValueChange: (value: string) => void;
-  onStartEditAgent: (agent: AgentConfig) => void;
-  onSaveAgentOverride: (agentId: string) => void;
-  onCancelPresetEdit: () => void;
-  getEffectiveAgentCommand: (agent: AgentConfig) => string;
-  /** 内置 agent 的有效配置（覆盖层优先）。 */
+  /** 内置 agent 的有效配置（来自 `agentStore` 的后端快照）。 */
   getEffectiveAgent: (agent: AgentConfig) => AgentConfig;
-  /** 保存内置覆盖（agentOverrides + 后端覆盖层）。 */
-  onSaveBuiltinAgent: (agent: AgentConfig) => void;
+  /** 保存内置覆盖（后端覆盖层 → 刷新 agentStore）。 */
+  /** 保存内置 agent 覆盖（落盘 + 刷新缓存）。 */
+  onSaveBuiltinAgent: (agent: AgentConfig) => Promise<void>;
   /** 重置内置覆盖（恢复出厂）。 */
   onResetBuiltinAgent: (agentId: string) => void;
   onSelectSkillPath: (agent: AgentConfig) => void;
@@ -35,18 +27,10 @@ interface BuiltInAgentsSectionProps {
 }
 
 const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
-  config,
   builtinAgents,
-  editingPresetId,
   skillPathEditingAgentId,
   skillPathInputValue,
-  onConfigChange,
-  onEditingValueChange,
   onSkillPathInputValueChange,
-  onStartEditAgent,
-  onSaveAgentOverride,
-  onCancelPresetEdit,
-  getEffectiveAgentCommand,
   getEffectiveAgent,
   onSaveBuiltinAgent,
   onResetBuiltinAgent,
@@ -58,12 +42,13 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
   /** 正在通过 AgentForm 编辑的内置 agent（null = 未在编辑）。 */
   const [editingBuiltin, setEditingBuiltin] = useState<AgentConfig | null>(null);
 
+  // 「是否被覆盖」来自后端快照的 `is_overridden`（`AgentManager` 的覆盖表派生），
+  // 前端不保管键集合。
+  const isAgentOverridden = (agent: AgentConfig) => agent.is_overridden === true;
+
+  // Reset 只需清后端的覆盖层 —— `resetAgent` 落盘后会刷新 agentStore，
+  // 界面随之回到出厂值。前端不再维护副本，所以这里没有要同步的第二处。
   const handleReset = (agent: AgentConfig) => {
-    const overrides = { ...(config.agentOverrides || {}) };
-    delete overrides[agent.id];
-    const cmdOverrides = { ...(config.agentCommandOverrides || {}) };
-    delete cmdOverrides[agent.id];
-    onConfigChange({ ...config, agentOverrides: overrides, agentCommandOverrides: cmdOverrides });
     onResetBuiltinAgent(agent.id);
   };
 
@@ -80,8 +65,8 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
         <div className="w-full border border-border rounded-lg bg-bg-primary overflow-hidden">
           <AgentForm
             initial={getEffectiveAgent(editingBuiltin)}
-            onSaved={(agent) => {
-              onSaveBuiltinAgent(agent);
+            onSaved={async (agent) => {
+              await onSaveBuiltinAgent(agent);
               setEditingBuiltin(null);
             }}
             onCancel={() => setEditingBuiltin(null)}
@@ -93,10 +78,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
         {builtinAgents.map((agent) => {
           const effectiveAgent = getEffectiveAgent(agent);
           const iconSrc = getAgentIconSrc(effectiveAgent.icon);
-          const isEditing = editingPresetId === agent.id;
-          const effectiveCmd = getEffectiveAgentCommand(agent);
-          const isOverridden =
-            !!config.agentOverrides?.[agent.id] || !!config.agentCommandOverrides?.[agent.id];
+          const isOverridden = isAgentOverridden(agent);
           const skillPathValue = effectiveAgent.skill_path ?? '';
           const hasSkillPath = !!skillPathValue;
 
@@ -119,47 +101,27 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
                   {effectiveAgent.name}
                 </span>
 
-                {isEditing ? (
-                  <Input
-                    className="flex-1 min-w-0 py-0.5 px-1.5 text-[0.82em]"
-                    spellCheck={false}
-                    onChange={(e) => onEditingValueChange(e.target.value)}
-                    onBlur={() => onSaveAgentOverride(agent.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        onSaveAgentOverride(agent.id);
-                      }
-                      if (e.key === 'Escape') {
-                        onCancelPresetEdit();
-                      }
-                    }}
-                  />
-                ) : (
-                  <span
-                    className={cn(
-                      'text-text-muted font-mono text-[0.82em] flex-1 min-w-[80px] overflow-hidden text-ellipsis whitespace-nowrap cursor-text rounded py-px px-1 transition-colors duration-150 hover:bg-bg-hover hover:text-text-secondary',
-                      isOverridden && '!text-accent-blue',
-                    )}
-                    title="Double-click to edit"
-                    onDoubleClick={() => onStartEditAgent(agent)}
-                  >
-                    {effectiveCmd}
-                  </span>
-                )}
+                <span
+                  className={cn(
+                    'text-text-muted font-mono text-[0.82em] flex-1 min-w-[80px] overflow-hidden text-ellipsis whitespace-nowrap',
+                    isOverridden && '!text-accent-blue',
+                  )}
+                  title="Edit via the pencil button"
+                >
+                  {effectiveAgent.command}
+                </span>
 
-                {!isEditing && <CapabilityBadges agent={effectiveAgent} className="shrink-0" />}
+                <CapabilityBadges agent={effectiveAgent} className="shrink-0" />
 
-                {!isEditing && (
-                  <button
-                    className="bg-none border-none text-text-muted cursor-pointer p-1 rounded shrink-0 transition-colors duration-150 hover:text-accent-blue hover:bg-bg-hover"
-                    onClick={() => setEditingBuiltin(agent)}
-                    title="Edit built-in agent"
-                  >
-                    <Pencil size={13} />
-                  </button>
-                )}
+                <button
+                  className="bg-none border-none text-text-muted cursor-pointer p-1 rounded shrink-0 transition-colors duration-150 hover:text-accent-blue hover:bg-bg-hover"
+                  onClick={() => setEditingBuiltin(agent)}
+                  title="Edit built-in agent"
+                >
+                  <Pencil size={13} />
+                </button>
 
-                {isOverridden && !isEditing && (
+                {isOverridden && (
                   <button
                     className="bg-none border-none text-text-muted cursor-pointer text-[0.93em] py-0.5 px-1 rounded shrink-0 transition-colors duration-150 leading-none hover:text-accent-blue"
                     title="Reset to default"

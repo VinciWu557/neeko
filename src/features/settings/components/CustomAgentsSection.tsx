@@ -5,15 +5,16 @@ import { AgentForm, CapabilityBadges } from '@/features/agent';
 import { resolveAgentIconSrc } from '@/features/agent/api/agentApi';
 import { cn } from '@/lib/utils';
 import { FolderIcon, PlusIcon, TrashIcon } from '@/shared/components/icons';
-import type { AgentConfig, AppConfig } from '@/shared/types';
+import { useAgentStore } from '@/shared/store/agentStore';
+import type { AgentConfig } from '@/shared/types';
 import { Button } from '@/ui';
 
 interface CustomAgentsSectionProps {
-  config: AppConfig;
   skillPathEditingAgentId: string | null;
   skillPathInputValue: string;
   onSkillPathInputValueChange: (value: string) => void;
-  onSaveAgent: (agent: AgentConfig) => void;
+  /** 保存自定义 agent（落盘 + 刷新缓存）。 */
+  onSaveAgent: (agent: AgentConfig) => Promise<void>;
   onRemoveAgent: (agentId: string) => void;
   onSelectSkillPath: (agent: AgentConfig) => void;
   onStartEditSkillPath: (agentId: string, currentPath: string) => void;
@@ -22,7 +23,6 @@ interface CustomAgentsSectionProps {
 }
 
 const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
-  config,
   skillPathEditingAgentId,
   skillPathInputValue,
   onSkillPathInputValueChange,
@@ -35,7 +35,10 @@ const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
 }) => {
   const [formOpen, setFormOpen] = useState(false);
   const [editingAgent, setEditingAgent] = useState<AgentConfig | null>(null);
-  const customAgents = config.customAgents ?? [];
+  // 自定义 agent = 后端快照里 `is_builtin` 为假的那批。**不读**
+  // `config.customAgents` —— 那份副本已无写入者，读它会让新建/删除不反映。
+  const customAgents = useAgentStore((s) => s.agents)?.filter((a) => !a.is_builtin) ?? [];
+  useAgentStore((s) => s.ensure)();
 
   const openCreate = () => {
     setEditingAgent(null);
@@ -78,8 +81,8 @@ const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
         <div className="w-full border border-border rounded-lg bg-bg-primary overflow-hidden">
           <AgentForm
             initial={editingAgent}
-            onSaved={(agent) => {
-              onSaveAgent(agent);
+            onSaved={async (agent) => {
+              await onSaveAgent(agent);
               closeForm();
             }}
             onCancel={closeForm}
