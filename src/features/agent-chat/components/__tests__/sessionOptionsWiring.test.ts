@@ -28,6 +28,14 @@ const CHAT = readFileSync(resolve(ROOT, 'agent-chat/components/ChatComposer.tsx'
 const SELECTORS = readFileSync(resolve(ROOT, 'agent-chat/components/ParamSelectors.tsx'), 'utf8');
 const CONSTANTS = readFileSync(resolve(ROOT, 'agent-chat/components/constants.ts'), 'utf8');
 
+/** 剥掉注释 —— 否则历史注释里提到的已删判据会让「不得复活」断言假红/假绿。 */
+function codeOnly(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join('\n');
+}
+
 describe('session option driven selectors', () => {
   it('must not hardcode mode or thinking-level options anywhere', () => {
     // 旧实现的形状：一个带 `id`/`desc`/`icon` 的常量数组
@@ -78,17 +86,29 @@ describe('session option driven selectors', () => {
   // `AgentAdapter::chat_capabilities()` 派生（design.md P1）。
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** 控件可见性必须由能力位门控，不能只靠 `mode`/`thoughtLevel` 是否为 null。 */
-  it('should gate config controls on the capability bit, not on data presence', () => {
-    expect(CHAT).toContain('configWritable');
+  /**
+   * 控件可见性必须由**唯一判据**门控，且该判据不能只看「模型怎么传」。
+   *
+   * # 2026-10-23 修正
+   *
+   * 原实现用 `sessionConfigView === 'ready'`。serve 的模型是 `per-turn`
+   * （永远不等于 `'ready'`）但它**产出** configOptions（模式 / 思考等级），
+   * 于是两个控件永不渲染 —— 真实故障。
+   *
+   * 现在的判据是 `showsConfigControls(availability, options.length)`：
+   * 问「有没有配置项可写」，与「模型是 per-turn 还是 session_config」解耦。
+   *
+   * 变异验证：改回 `sessionConfigView === 'ready'` → 本用例红。
+   */
+  it('should gate config controls on option presence, not on the model transport', () => {
+    expect(CHAT).toContain('showsConfigControls');
     expect(CHAT).toContain('sessionConfigView');
-    // 两个取值的调用点必须先看 configWritable
-    expect(CHAT).toMatch(
-      /const mode = configWritable \? modeOptionOf\(sessionConfigOptions\) : null/,
-    );
-    expect(CHAT).toMatch(
-      /const thoughtLevel = configWritable \? thoughtLevelOptionOf\(sessionConfigOptions\) : null/,
-    );
+    // 两个取值的调用点必须先看 showConfigControls
+    expect(CHAT).toMatch(/const mode = showConfigControls \? modeOptionOf\(/);
+    expect(CHAT).toMatch(/const thoughtLevel = showConfigControls \? thoughtLevelOptionOf\(/);
+    // 旧的单一 'ready' 判据**不得**复活（对剥注释后的代码断言 —— 注释里解释
+    // 历史原因时会提到它，那不是违规）
+    expect(codeOnly(CHAT)).not.toContain("sessionConfigView === 'ready'");
   });
 
   /**
@@ -96,11 +116,11 @@ describe('session option driven selectors', () => {
    *（serve 走每轮请求参数）。所以模型选择器看 `capability !== 'none'`，
    * 配置类控件才看 `supported`。
    */
-  it('should keep the model picker for per_turn transports but hide config controls', () => {
-    // 模型列表与配置类控件的判据**不同**：前者 `no-config` 才隐藏，
-    // 后者只有 `ready` 才渲染。两者都从同一个 union 派生。
+  it('should keep the model picker for per_turn transports and still show config controls', () => {
+    // 模型列表：`no-config` 才隐藏（per-turn 也能选模型）。
+    // 配置控件：看 options 存在性 —— 所以 per-turn 传输**也能**有模式/档位。
     expect(CHAT).toContain('showsModelPicker(');
-    expect(CHAT).toContain("sessionConfigView === 'ready'");
+    expect(CHAT).toContain('showsConfigControls(');
   });
 
   /**

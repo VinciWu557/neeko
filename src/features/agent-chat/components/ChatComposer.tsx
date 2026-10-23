@@ -4,7 +4,7 @@ import type { ChangeEvent, KeyboardEvent } from 'react';
 import type { ModelConfigOption, ModelInfo } from '@/features/agent/api/agentApi';
 import type { AgentConfig } from '@/shared/types/agent';
 import type { SessionConfigOption } from '@/shared/types/agentChat';
-import { showsModelPicker, writabilityOf } from '@/shared/utils/modelTarget';
+import { showsConfigControls, showsModelPicker, writabilityOf } from '@/shared/utils/modelTarget';
 import type { ModelAvailability } from '@/shared/utils/modelTarget';
 import { noAutocorrectProps } from '@/ui/inputDefaults';
 
@@ -151,15 +151,21 @@ export default function ChatComposer({
   onConfigChange,
   sessionConfigView,
 }: ChatComposerProps) {
-  // 三个判据全部从**同一个 union** 派生（`shared/utils/modelTarget.ts`）。
-  // 早期它们各自 switch `{phase, capability}` 两个维度 —— 四份实现必然漂移，
-  // 曾出现「渲染说能点、写入拿不到目标」的矛盾。
-  // 配置类控件（模式/档位/model_config）只能走 `set_config_option`。
-  const configWritable = sessionConfigView === 'ready';
-  // 模型列表：`no-config` 隐藏，其余显示（不可写时禁用并给出原因）。
-  const showModelPicker = showsModelPicker(sessionConfigView ?? 'no-config');
-  const mode = configWritable ? modeOptionOf(sessionConfigOptions) : null;
-  const thoughtLevel = configWritable ? thoughtLevelOptionOf(sessionConfigOptions) : null;
+  // 两个判据都从**同一个 union** 派生（`shared/utils/modelTarget.ts`），但问的是
+  // 两件不同的事：
+  //
+  // - 模型选择器：`no-config` 才隐藏（模型随每轮下发也能选）
+  // - 配置控件：**有配置项且会话就绪**才渲染，与模型怎么传无关
+  //
+  // 2026-10-23 修正：这里曾用 `sessionConfigView === 'ready'` 同时门控两者。
+  // serve 的模型是 `per-turn`（永远不等于 `'ready'`）但它**产出** configOptions，
+  // 于是模式/思考等级永不渲染 —— 用户看到「opencode 支持 plan/build，界面上却没有」。
+  const availability = sessionConfigView ?? 'no-config';
+  const showModelPicker = showsModelPicker(availability);
+  const configOptions = sessionConfigOptions ?? [];
+  const showConfigControls = showsConfigControls(availability, configOptions.length);
+  const mode = showConfigControls ? modeOptionOf(configOptions) : null;
+  const thoughtLevel = showConfigControls ? thoughtLevelOptionOf(configOptions) : null;
   return (
     <div className="wa-composer">
       <div className="wa-box">
@@ -215,13 +221,12 @@ export default function ChatComposer({
                 selected={selectedModel}
                 onChange={onModelChange}
                 agent={selectedAgent}
-                configOptions={configWritable ? modelConfigOptionsOf(sessionConfigOptions) : []}
+                configOptions={showConfigControls ? modelConfigOptionsOf(configOptions) : []}
                 onConfigChange={onConfigChange}
                 writability={writabilityOf(sessionConfigView ?? 'no-config')}
                 disabled={streaming}
               />
             )}
-            <div className="composer-divider" />
             {mode && (
               <AgentModeSelector
                 option={mode}
@@ -243,7 +248,6 @@ export default function ChatComposer({
                 model={contextWindow.model}
               />
             )}
-            <div className="composer-divider" />
             <button className="composer-btn" title="Attach files" onClick={onOpenAttachDrop}>
               <Paperclip size={16} />
             </button>

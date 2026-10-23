@@ -8,6 +8,7 @@ import {
   modelKeyOf,
   modelWriteOf,
   resolveModelById,
+  showsConfigControls,
   showsModelPicker,
   writabilityOf,
   type ModelAvailability,
@@ -189,5 +190,55 @@ describe('resolveModelById — 裸 id 歧义消解', () => {
     expect(hasModelId(dupes, 'deepseek-v4-pro')).toBe(true);
     expect(hasModelId(dupes, 'solo')).toBe(true);
     expect(hasModelId(dupes, 'nope')).toBe(false);
+  });
+});
+
+// ─── 配置类控件的可见性判据（2026-10-23）────────────────────────────────
+//
+// 历史上 `ChatComposer` 用 `sessionConfigView === 'ready'` 门控模式/档位，
+// 因为当时只有 `SessionConfig` 传输会产出 configOptions。
+//
+// serve 打破了这个前提：它的 **模型** 是 per-turn（`ConfigCapability::PerTurn`），
+// 但它**确实**产出 configOptions（模式 / 思考等级）。于是：
+//
+//   modelAvailabilityOf('per_turn', 'ready') === 'per-turn'
+//   → `=== 'ready'` 为 false → 模式/档位永不渲染      ← 真实故障
+//
+// 正确的判据是「**有没有配置项可写**」，与「模型怎么传」解耦：
+// 配置项的存在性由 `sessionConfigOptions.length` 回答，
+// 会话是否就绪由 `availability !== 'pending'` 回答。
+
+describe('showsConfigControls', () => {
+  /** 有配置项 + 会话就绪 → 渲染（与模型是 per-turn 还是 session_config 无关）。 */
+  it('should show config controls whenever options exist and the session is ready', () => {
+    // serve：PerTurn 但产出了 options
+    expect(showsConfigControls('per-turn', 2)).toBe(true);
+    // ACP：SessionConfig 且有 options
+    expect(showsConfigControls('ready', 2)).toBe(true);
+  });
+
+  /**
+   * **这条是真实故障的回归**：`per-turn` 曾被当成「没有配置项」。
+   *
+   * 变异验证：把判据改回 `availability === 'ready'` → 本用例红。
+   */
+  it('should not gate on the model transport kind', () => {
+    expect(showsConfigControls('per-turn', 1)).toBe(true);
+  });
+
+  /** 没有配置项 → 不渲染（显示一个点不动的下拉比不显示更糟）。 */
+  it('should hide config controls when the agent provides none', () => {
+    expect(showsConfigControls('ready', 0)).toBe(false);
+    expect(showsConfigControls('per-turn', 0)).toBe(false);
+  });
+
+  /** 会话未就绪 → 不渲染（那时的 options 是上一会话的残留）。 */
+  it('should hide config controls before the session is ready', () => {
+    expect(showsConfigControls('pending', 5)).toBe(false);
+  });
+
+  /** 无配置通道的传输 → 不渲染。 */
+  it('should hide config controls when the transport has no config channel', () => {
+    expect(showsConfigControls('no-config', 5)).toBe(false);
   });
 });

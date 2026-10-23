@@ -93,10 +93,32 @@ describe('ChatComposer 能力位门控', () => {
    * `per_turn`（serve）：配置类控件隐藏（它没有 set_config_option），
    * 但**模型选择器仍在**（走每轮请求参数）。
    */
-  it('should hide config controls but keep the model picker for per_turn', () => {
+  /**
+   * `per-turn` **也能有配置控件** —— 判据是「有没有配置项」，不是「模型怎么传」。
+   *
+   * # 2026-10-23 修正
+   *
+   * 这条曾经断言 `per-turn` 隐藏配置控件。当时的依据是「只有 `SessionConfig`
+   * 传输产出 `configOptions`」—— serve 打破了这个前提：它的**模型**是 per-turn
+   *（`ConfigCapability::PerTurn`），但它**确实**下发模式（plan/build）与
+   * 思考等级。于是旧判据让两个控件永不渲染，用户的原话是
+   * 「opencode 明明支持 plan/build，界面上没有」。
+   *
+   * 现在：模型选择器看 `no-config`（per-turn 照常显示），
+   * 配置控件看 `showsConfigControls(availability, options.length)`。
+   */
+  it('should keep both the model picker and config controls for per_turn', () => {
     renderComposer('per-turn', [MODE_OPTION]);
+    // serve 产出了 options → 配置控件必须显示
+    expect(hasModeSelector()).toBe(true);
+    // 模型选择器同样在：per_turn 走每轮请求参数。
+    expect(hasModelPicker()).toBe(true);
+  });
+
+  /** 没有配置项时 `per-turn` 仍不显示 —— 不渲染点了没反应的控件。 */
+  it('should hide config controls for per_turn when the agent provides none', () => {
+    renderComposer('per-turn', []);
     expect(hasModeSelector()).toBe(false);
-    // 模型选择器**仍在**：per_turn 走每轮请求参数。
     expect(hasModelPicker()).toBe(true);
   });
 

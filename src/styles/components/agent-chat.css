@@ -291,7 +291,6 @@
   .composer-footer { display:flex; align-items:center; gap:6px; padding:6px 12px 10px; }
   .composer-left { display:flex; align-items:center; gap:6px; row-gap:4px; min-width:0; flex:1; flex-wrap:wrap; }
   .composer-right { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
-  .composer-divider { width:1px; height:16px; background:var(--border); margin:0 2px; }
   .composer-btn { display:flex; align-items:center; justify-content:center; width:26px; height:26px; background:transparent; border:none; border-radius:6px; color:var(--text-secondary); cursor:pointer; transition:background 120ms, color 120ms; }
   .composer-btn:hover { background:var(--bg-hover); color:var(--text-primary); }
   /* 发送按钮：默认透明（disabled/stop），可发送时实心蓝（主题化 hover） */

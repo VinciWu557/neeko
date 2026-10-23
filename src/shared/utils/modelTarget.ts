@@ -69,6 +69,38 @@ export function showsModelPicker(a: ModelAvailability): boolean {
 }
 
 /**
+ * 配置类控件（模式 / 思考等级 / `model_config`）**是否渲染**。
+ *
+ * # 为什么不能用 `availability === 'ready'`
+ *
+ * `ModelAvailability` 描述的是「**模型**是怎么传的」。配置项是**另一个维度**：
+ *
+ * | 传输 | 模型 | 配置项 |
+ * | --- | --- | --- |
+ * | ACP | `SessionConfig`（走 `set_config_option`） | 有 |
+ * | serve | `PerTurn`（随每轮请求下发） | **有**（模式 / 思考等级） |
+ * | Claude Code CLI | `None` | 无 |
+ *
+ * 2026-10-23 的真实故障：serve 的模型是 `per-turn`，`chat_capabilities()`
+ * 报 `ConfigCapability::PerTurn`，而旧判据是 `sessionConfigView === 'ready'`
+ * —— 于是 `modelAvailabilityOf('per_turn','ready') === 'per-turn'` 永远不等于
+ * `'ready'`，模式与思考等级**永不渲染**。用户看到的是「opencode 明明支持
+ * plan/build 和思考等级，但界面上没有」。
+ *
+ * # 判据分成两问
+ *
+ * 1. **有没有配置项**：`options.length > 0` —— 这是唯一的事实来源。
+ * 2. **会话是否就绪**：`pending` 时 options 可能是上一会话的残留，不能用。
+ *
+ * 两者正交于「模型怎么传」，所以不再从 `ModelAvailability` 单一派生出
+ * `'ready'` 这一个值。
+ */
+export function showsConfigControls(a: ModelAvailability, optionCount: number): boolean {
+  if (a === 'pending' || a === 'no-config') return false;
+  return optionCount > 0;
+}
+
+/**
  * 可写性**三态**：`'loading'` 是暂时的、`'read-only'` 是上限。
  *
  * 用布尔会丢掉这层信息，用户看到一串灰模型无法区分二者。
