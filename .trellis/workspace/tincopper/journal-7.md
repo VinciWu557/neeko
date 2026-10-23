@@ -100,3 +100,25 @@
 
 - 新任务：PiRpcAdapter（单进程接 pi --mode rpc，约 1600 行）
 - 记录三个协议坑：agent_settled 判据 / stdout 前导行 / --no-themes
+
+
+## Session 317: Split the opencode dual-stack work into six atomic commits
+<!-- trellis-session: v=2 fp=45461b8f92cebb25 -->
+
+**Date**: 2026-10-23
+**Task**: Split the opencode dual-stack work into six atomic commits
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `69df2ff0` | docs(spec): record the opencode serve dual-stack protocol facts |
+
+### Status
+
+[OK] **Completed**
