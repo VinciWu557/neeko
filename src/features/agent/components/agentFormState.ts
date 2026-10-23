@@ -1,26 +1,30 @@
 /**
- * Agent 表单的文本态：`AgentConfig` ⇄ 可编辑字符串的双向投影。
+ * Agent 表单的编辑态：`AgentConfig` ⇄ 可编辑控件的双向投影。
  *
  * # 为什么单独成文件
  *
  * `AgentForm.tsx` 受 `check_component_size` 的 ratchet 约束（只许缩小）。
  * 而这些纯函数与组件本身无关：它们不碰 React，只做数据形状转换，可以脱离
- * 组件单独测。和同目录的 `agentFormChat.ts`（CHAT 传输的形态转换）是同一族。
+ * 组件单独测。和同目录的 `agentFormChat.ts`（CHAT 启动配置）是同一族。
  *
- * # 为什么要文本态
+ * # 为什么 argv 字段直接是 `string[]`
  *
- * 数组字段（`args` / `chat_args`）在 `<input>` 里只能以字符串承载；
- * 表单态直接存 `AgentConfig` 会让每个 onChange 都要 parse 一次。
+ * 旧实现把它们压成空格分隔的一行文本。那条投影**不幂等**（见 `argList.ts`
+ * 的表），于是每次「打开设置页 → 保存」都在静默改写用户配置。
+ *
+ * 判据是**投影是否单射**：
+ * - `argv`（`args` / chat 启动命令 / 三件套）→ 文本 是**有损**的，必须存数组；
+ * - `env`（`KEY=value` 多行）→ 对象的投影是幂等的（除了设计上就要 trim 的
+ *   首尾空白），保留文本态即可 —— 它承载的是「多行」这个天然布局，不是一个
+ *   会丢边界的序列。
  */
 
 import type { AgentConfig } from '@/shared/types/agent';
-import { chatAcpArgsOf, chatTransportOf } from '@/shared/types/agent';
 
-import { argsTextOf } from './agentFormArgs';
-import type { ChatTransport } from './agentFormChat';
+import { formatChatLaunch, formatEnvText } from './agentFormChat';
 
-/** 新建时的空白配置。 */
-export function emptyForm(): AgentConfig {
+/** 新建时的空白编辑态。 */
+export function emptyFormState(): FormState {
   return {
     id: '',
     name: '',
@@ -28,37 +32,38 @@ export function emptyForm(): AgentConfig {
     enabled: true,
     command: '',
     args: [],
-    env: {},
-    chat: null,
-    chat_command: null,
-    chat_args: null,
-    prompt_args: null,
-    post_prompt_args: null,
-    model_list_args: null,
-    skill_path: null,
-    detection: null,
-    deploy: { skills: '{{projectPath}}/.agent/skills', commands: null, mcp_config: null },
+    chatArgv: [],
+    chatEnvText: '',
+    chatInprocess: false,
+    promptArgs: [],
+    postPromptArgs: [],
+    modelListArgs: [],
+    skillPath: '',
+    detectionCmd: '',
+    deploySkills: '{{projectPath}}/.agent/skills',
+    deployCommands: '',
+    deployMcp: '',
   };
 }
 
-/** 表单的文本态字段（数组字段以可编辑字符串承载）。 */
-export interface FormTextState {
+/** 表单的编辑态字段。argv 类字段是数组，不做有损投影。 */
+export interface FormState {
   id: string;
   name: string;
   command: string;
-  argsText: string;
+  /** CLI 参数（终端 TUI 的 `args`）。 */
+  args: string[];
   icon: string;
   enabled: boolean;
-  chat: ChatTransport | '';
-  /** ACP 子命令参数（空格分隔）；仅 chat === 'acp' 时有意义。 */
-  acpArgsText: string;
-  /** chat 会话进程的可执行文件覆盖（空 = 沿用 command）。 */
-  chatCommand: string;
-  /** chat 会话进程的附加参数（空格分隔）。 */
-  chatArgsText: string;
-  promptArgsText: string;
-  postPromptArgsText: string;
-  modelListArgsText: string;
+  /** chat 启动命令的 argv（`program` + `args`）；空 = 无 CHAT 能力。 */
+  chatArgv: string[];
+  /** chat 专属环境变量（多行 `KEY=value`；该投影幂等，保留文本态）。 */
+  chatEnvText: string;
+  /** 该 chat 由进程内实现提供（无 argv）；与空命令行互斥。 */
+  chatInprocess: boolean;
+  promptArgs: string[];
+  postPromptArgs: string[];
+  modelListArgs: string[];
   skillPath: string;
   detectionCmd: string;
   deploySkills: string;
@@ -66,20 +71,26 @@ export interface FormTextState {
   deployMcp: string;
 }
 
-/** `AgentConfig` → 文本态。 */
-export function toTextState(form: AgentConfig): FormTextState {
+/** 空数组 → `null`（后端契约：`None` 表示「没有这个能力」）。 */
+export function toNullableArgs(args: readonly string[]): string[] | null {
+  return args.length > 0 ? [...args] : null;
+}
+
+/** `AgentConfig` → 编辑态。 */
+export function toFormState(form: AgentConfig): FormState {
   return {
     id: form.id,
     name: form.name,
     command: form.command,
-    argsText: form.args?.join(' ') ?? '',
+    args: [...(form.args ?? [])],
     icon: form.icon ?? 'cli.svg',
     enabled: form.enabled,
-    chat: (chatTransportOf(form.chat) ?? '') as ChatTransport | '',
-    acpArgsText: chatAcpArgsOf(form.chat).join(' '),
-    chatCommand: form.chat_command ?? '',
-    chatArgsText: form.chat_args?.join(' ') ?? '',
-    ...argsTextOf(form),
+    chatArgv: formatChatLaunch(form.chat, form.command),
+    chatEnvText: formatEnvText(form.chat?.env),
+    chatInprocess: form.chat?.inprocess === true,
+    promptArgs: [...(form.prompt_args ?? [])],
+    postPromptArgs: [...(form.post_prompt_args ?? [])],
+    modelListArgs: [...(form.model_list_args ?? [])],
     skillPath: form.skill_path ?? '',
     detectionCmd: form.detection?.type === 'command' ? form.detection.target : '',
     deploySkills: form.deploy?.skills ?? '{{projectPath}}/.agent/skills',

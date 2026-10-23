@@ -12,15 +12,15 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import type { AgentConfig } from '@/shared/types/agent';
 import { PRESET_AGENT_ICONS } from '@/shared/utils/agents';
-import { Button } from '@/ui';
+import { Button, Input, Textarea } from '@/ui';
 
 import { addAgent, importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
 
-import { argsFromText, splitArgs, splitCsv } from './agentFormArgs';
-import { buildChatStart, CHAT_HINTS, CHAT_OPTIONS, type ChatTransport } from './agentFormChat';
-import { emptyForm, toTextState, type FormTextState } from './agentFormState';
+import { buildChatLaunch, chatTransportLabel } from './agentFormChat';
+import { emptyFormState, toFormState, toNullableArgs, type FormState } from './agentFormState';
+import { trimArgList } from './argList';
+import ArgListEditor from './ArgListEditor';
 import CapabilityBadges from './CapabilityBadges';
-import ChatLaunchFields from './ChatLaunchFields';
 
 interface AgentFormProps {
   /** 编辑已有 Agent（缺省 = 新建）。 */
@@ -29,44 +29,89 @@ interface AgentFormProps {
   onCancel?: () => void;
 }
 
+/**
+ * argv 编辑器的占位符。
+ *
+ * **必须是模块常量**：`ArgListEditor` 包了 `React.memo`，而 memo 做的是逐 prop
+ * 浅比较 —— 内联数组字面量每次渲染都是新引用，会让 memo 全程失效。把这几个
+ * 字面量提到模块作用域，props 身份才稳定。
+ */
+const ARGS_PLACEHOLDERS = ['--flag', 'value'] as const;
+const PROMPT_PLACEHOLDERS = ['-p', '--bare'] as const;
+const POST_PROMPT_PLACEHOLDERS = ['--dangerously-skip-permissions'] as const;
+const MODEL_LIST_PLACEHOLDERS = ['--list-models'] as const;
+const CHAT_ARG_PLACEHOLDERS = ['acp'] as const;
+
 const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => {
-  const [t, setT] = useState<FormTextState>(() =>
-    initial ? toTextState(initial) : { ...toTextState(emptyForm()) },
-  );
+  const [t, setT] = useState<FormState>(() => (initial ? toFormState(initial) : emptyFormState()));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const set = useCallback(<K extends keyof FormTextState>(key: K, value: FormTextState[K]) => {
+  const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
     setT((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  /** 能力预览（由当前文本态实时计算：command 非空 → CLI；chat 选中 → CHAT；promptArgs 非空 → Headless）。 */
+  /** chat 首行占位符取决于 `command` —— 派生而非内联，否则 memo 再次失效。 */
+  const chatPlaceholders = useMemo<readonly string[]>(
+    () => (t.command ? [t.command] : CHAT_ARG_PLACEHOLDERS),
+    [t.command],
+  );
+
+  /**
+   * 每个 argv 字段的稳定 setter。
+   *
+   * `React.memo(ArgListEditor)` 只有在 `onChange` 身份稳定时才省下重渲染 ——
+   * 内联箭头每次渲染都是新函数，memo 会全程失效。这些 setter 依赖恒定的 `set`，
+   * 因此身份也是恒定的。
+   */
+  const argSetters = useMemo(
+    () => ({
+      args: (next: string[]) => set('args', next),
+      chatArgv: (next: string[]) => set('chatArgv', next),
+      promptArgs: (next: string[]) => set('promptArgs', next),
+      postPromptArgs: (next: string[]) => set('postPromptArgs', next),
+      modelListArgs: (next: string[]) => set('modelListArgs', next),
+    }),
+    [set],
+  );
+
+  /** 提交用的 chat（`null` = 无 CHAT 能力）。预览、校验、env 显隐都复用它，
+   *  避免「判据说有能力、落库却是 null」的两套语义。 */
+  const builtChat = useMemo(
+    () => buildChatLaunch(trimArgList(t.chatArgv), t.chatEnvText, t.chatInprocess),
+    [t.chatArgv, t.chatEnvText, t.chatInprocess],
+  );
+
+  /** 能力预览 —— `chat` 直接取提交值的真值，不存在第二套判据。 */
   const preview = useMemo(
     () => ({
       cli: t.command.trim().length > 0,
-      chat: t.chat !== '',
-      headless: t.promptArgsText.trim().length > 0,
+      chat: builtChat !== null,
+      headless: trimArgList(t.promptArgs).length > 0,
     }),
-    [t.command, t.chat, t.promptArgsText],
+    [t.command, t.promptArgs, builtChat],
   );
 
-  /** 组装提交用的 AgentConfig。 */
+  /** 识别结果只算一次（两次调用会在同一帧重复解析同一份 argv）。 */
+  const transportLabel = useMemo(
+    () => chatTransportLabel(trimArgList(t.chatArgv), t.chatInprocess),
+    [t.chatArgv, t.chatInprocess],
+  );
+
+  /** 组装提交用的 AgentConfig。尾部未填的冗余空行在提交边界裁掉。 */
   const buildConfig = useCallback((): AgentConfig => {
-    const promptArgs = t.promptArgsText.trim() ? splitCsv(t.promptArgsText) : null;
     return {
       id: t.id.trim(),
       name: t.name.trim(),
       icon: t.icon || 'cli.svg',
       enabled: t.enabled,
       command: t.command.trim(),
-      args: splitArgs(t.argsText),
+      args: trimArgList(t.args),
       env: initial?.env ?? {},
-      chat: buildChatStart(t.chat, t.acpArgsText, splitArgs),
-      // 只在写了值时写入，避免给所有 agent 制造 `null` 噪音（与后端 skip_serializing_if 对齐）。
-      chat_command: t.chatCommand.trim() || null,
-      chat_args: t.chatArgsText.trim() ? splitArgs(t.chatArgsText) : null,
-      prompt_args: promptArgs,
-      ...argsFromText(t),
+      chat: builtChat,
+      prompt_args: toNullableArgs(trimArgList(t.promptArgs)),
+      post_prompt_args: toNullableArgs(trimArgList(t.postPromptArgs)),
+      model_list_args: toNullableArgs(trimArgList(t.modelListArgs)),
       skill_path: t.skillPath.trim() || null,
       detection: t.detectionCmd.trim() ? { type: 'command', target: t.detectionCmd.trim() } : null,
       deploy: {
@@ -75,7 +120,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         mcp_config: t.deployMcp.trim() || null,
       },
     };
-  }, [t, initial]);
+  }, [t, initial, builtChat]);
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
@@ -89,7 +134,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         setError('Agent name is required');
         return;
       }
-      if (!t.command.trim() && !t.chat) {
+      if (!t.command.trim() && builtChat === null) {
         setError('Requires at least one of Command (CLI) or CHAT capability');
         return;
       }
@@ -104,7 +149,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         setSaving(false);
       }
     },
-    [t, buildConfig, onSaved],
+    [t, buildConfig, onSaved, builtChat],
   );
 
   const handleUploadIcon = useCallback(async () => {
@@ -126,8 +171,6 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
     }
   }, [set]);
 
-  const fieldCls =
-    'h-7 bg-bg-secondary border border-border rounded px-2 text-[0.82em] text-text-primary placeholder:text-text-muted outline-none focus:border-accent-blue transition-colors duration-150';
   const labelCls = 'text-[0.72em] text-text-muted font-medium';
   const groupCls = 'flex flex-col gap-1.5';
   const sectionTitle = 'text-[0.75em] font-semibold text-text-secondary uppercase tracking-wider';
@@ -146,7 +189,7 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         <CapabilityBadges
           agent={{
             command: preview.cli ? t.command : '',
-            chat: buildChatStart(t.chat, t.acpArgsText, splitArgs),
+            chat: builtChat,
             prompt_args: preview.headless ? [] : null,
           }}
         />
@@ -169,27 +212,31 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       <div className="border border-border rounded-lg bg-bg-primary overflow-hidden">
         <div className={cn(sectionTitle, 'px-3 pt-2 pb-1.5 bg-bg-secondary/40')}>Identity</div>
         <div className="p-3 pt-2 grid grid-cols-2 gap-2">
-          <label className={groupCls}>
-            <span className={labelCls}>ID *</span>
-            <input
-              type="text"
+          <div className={groupCls}>
+            <label className={labelCls} htmlFor="agent-form-id">
+              ID *
+            </label>
+            <Input
+              id="agent-form-id"
+              size="sm"
               value={t.id}
               disabled={Boolean(initial)}
               onChange={(e) => set('id', e.target.value.trim())}
               placeholder="my-agent"
-              className={cn(fieldCls, 'font-mono', initial && 'opacity-50 cursor-not-allowed')}
             />
-          </label>
-          <label className={groupCls}>
-            <span className={labelCls}>Name *</span>
-            <input
-              type="text"
+          </div>
+          <div className={groupCls}>
+            <label className={labelCls} htmlFor="agent-form-name">
+              Name *
+            </label>
+            <Input
+              id="agent-form-name"
+              size="sm"
               value={t.name}
               onChange={(e) => set('name', e.target.value)}
               placeholder="My Agent"
-              className={fieldCls}
             />
-          </label>
+          </div>
         </div>
         <div className="px-3 pb-3 -mt-1 flex items-center gap-2">
           <span className={labelCls}>Icon:</span>
@@ -231,26 +278,26 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       <div className="border border-border rounded-lg bg-bg-primary overflow-hidden">
         <div className={cn(sectionTitle, 'px-3 pt-2 pb-1.5 bg-bg-secondary/40')}>CLI Execution</div>
         <div className="p-3 pt-2 grid grid-cols-2 gap-2">
-          <label className={groupCls}>
-            <span className={labelCls}>Command * (terminal TUI launch)</span>
-            <input
-              type="text"
+          <div className={groupCls}>
+            <label className={labelCls} htmlFor="agent-form-command">
+              Command * (terminal TUI launch)
+            </label>
+            <Input
+              id="agent-form-command"
+              size="sm"
               value={t.command}
               onChange={(e) => set('command', e.target.value)}
               placeholder="myagent"
-              className={cn(fieldCls, 'font-mono')}
             />
-          </label>
-          <label className={groupCls}>
-            <span className={labelCls}>Args (space-separated)</span>
-            <input
-              type="text"
-              value={t.argsText}
-              onChange={(e) => set('argsText', e.target.value)}
-              placeholder="--flag value"
-              className={cn(fieldCls, 'font-mono')}
+          </div>
+          <div className={groupCls}>
+            <span className={labelCls}>Args (one per line)</span>
+            <ArgListEditor
+              value={t.args}
+              onChange={argSetters.args}
+              placeholders={ARGS_PLACEHOLDERS}
             />
-          </label>
+          </div>
         </div>
         <div className="px-3 pb-3 -mt-0.5">
           <span className="text-[0.7em] text-text-muted">
@@ -263,86 +310,70 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       <div className="border border-border rounded-lg bg-bg-primary overflow-hidden">
         <div className={cn(sectionTitle, 'px-3 pt-2 pb-1.5 bg-bg-secondary/40')}>Capabilities</div>
         <div className="p-3 pt-2 flex flex-col gap-2">
-          <div className="grid grid-cols-2 gap-2">
-            <label className={groupCls}>
-              <span className={labelCls}>CHAT Transport</span>
-              <select
-                value={t.chat}
-                onChange={(e) => set('chat', e.target.value as ChatTransport | '')}
-                className={cn(fieldCls, 'bg-bg-secondary')}
-              >
-                <option value="">None (—)</option>
-                {CHAT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {t.chat === 'acp' ? (
-              <label className={groupCls}>
-                <span className={labelCls}>ACP Args (space-separated)</span>
-                <input
-                  type="text"
-                  value={t.acpArgsText}
-                  onChange={(e) => set('acpArgsText', e.target.value)}
-                  placeholder="acp"
-                  className={cn(fieldCls, 'bg-bg-secondary font-mono')}
-                />
-              </label>
-            ) : (
-              <div className="hidden" />
-            )}
+          {/* CHAT 启动配置：argv（程序名 + 参数各一行）+ 环境变量。
+              没有传输下拉 —— 传输由 argv 识别（`chatTransportLabel`）。 */}
+          <div className={groupCls}>
+            <span className={labelCls}>CHAT Launch (first = program · empty = no CHAT)</span>
+            <ArgListEditor
+              value={t.chatArgv}
+              onChange={argSetters.chatArgv}
+              placeholders={chatPlaceholders}
+              disabled={t.chatInprocess}
+              inputClassName="bg-bg-secondary"
+            />
           </div>
-          {t.chat && (
-            <div className="text-[0.7em] text-text-muted -mt-1">
-              {CHAT_HINTS[t.chat as ChatTransport]}
+          {/* 进程内实现没有 argv 可填，但**确有** CHAT 能力 —— 两者必须显式区分。 */}
+          <label className="flex items-center gap-1.5 text-[0.72em] text-text-muted">
+            <input
+              type="checkbox"
+              checked={t.chatInprocess}
+              onChange={(e) => set('chatInprocess', e.target.checked)}
+            />
+            In-process (no subprocess · e.g. mockAgent)
+          </label>
+          {transportLabel && (
+            <div className="text-[0.7em] text-text-muted -mt-1">Detected: {transportLabel}</div>
+          )}
+          {builtChat !== null && (
+            <div className={groupCls}>
+              <label className={labelCls} htmlFor="agent-form-chat-env">
+                CHAT Env (one KEY=value per line)
+              </label>
+              <Textarea
+                id="agent-form-chat-env"
+                value={t.chatEnvText}
+                onChange={(e) => set('chatEnvText', e.target.value)}
+                rows={2}
+                placeholder={'ANTHROPIC_API_KEY=sk-…'}
+                className="bg-bg-secondary text-[0.82em] min-h-0 py-1"
+              />
             </div>
           )}
-          {/* chat 专用启动配置：只在有 CHAT 能力时才有意义。 */}
-          {t.chat && (
-            <ChatLaunchFields
-              cliCommand={t.command}
-              chatCommand={t.chatCommand}
-              chatArgsText={t.chatArgsText}
-              onChatCommandChange={(v) => set('chatCommand', v)}
-              onChatArgsChange={(v) => set('chatArgsText', v)}
-              fieldCls={fieldCls}
-              labelCls={labelCls}
-              groupCls={groupCls}
-            />
-          )}
           <div className="grid grid-cols-2 gap-2">
-            <label className={groupCls}>
-              <span className={labelCls}>Prompt Args (Headless · comma-separated)</span>
-              <input
-                type="text"
-                value={t.promptArgsText}
-                onChange={(e) => set('promptArgsText', e.target.value)}
-                placeholder="-p, --bare"
-                className={cn(fieldCls, 'font-mono')}
+            <div className={groupCls}>
+              <span className={labelCls}>Prompt Args (Headless · one per line)</span>
+              <ArgListEditor
+                value={t.promptArgs}
+                onChange={argSetters.promptArgs}
+                placeholders={PROMPT_PLACEHOLDERS}
               />
-            </label>
-            <label className={groupCls}>
-              <span className={labelCls}>Post Prompt Args (comma-separated)</span>
-              <input
-                type="text"
-                value={t.postPromptArgsText}
-                onChange={(e) => set('postPromptArgsText', e.target.value)}
-                placeholder="--dangerously-skip-permissions"
-                className={cn(fieldCls, 'font-mono')}
+            </div>
+            <div className={groupCls}>
+              <span className={labelCls}>Post Prompt Args (one per line)</span>
+              <ArgListEditor
+                value={t.postPromptArgs}
+                onChange={argSetters.postPromptArgs}
+                placeholders={POST_PROMPT_PLACEHOLDERS}
               />
-            </label>
-            <label className={groupCls}>
-              <span className={labelCls}>List Models Args</span>
-              <input
-                type="text"
-                value={t.modelListArgsText}
-                onChange={(e) => set('modelListArgsText', e.target.value)}
-                placeholder="--list-models"
-                className={cn(fieldCls, 'font-mono')}
+            </div>
+            <div className={groupCls}>
+              <span className={labelCls}>List Models Args (one per line)</span>
+              <ArgListEditor
+                value={t.modelListArgs}
+                onChange={argSetters.modelListArgs}
+                placeholders={MODEL_LIST_PLACEHOLDERS}
               />
-            </label>
+            </div>
           </div>
         </div>
       </div>
@@ -352,62 +383,68 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
         <div className={cn(sectionTitle, 'px-3 pt-2 pb-1.5 bg-bg-secondary/40')}>Deploy</div>
         <div className="p-3 pt-2 flex flex-col gap-2">
           <div className="grid grid-cols-2 gap-2">
-            <label className={groupCls}>
-              <span className={labelCls}>
+            <div className={groupCls}>
+              <label className={labelCls} htmlFor="agent-form-deploy-skills">
                 Skills Template (supports {'{{'}projectPath{'}}'})
-              </span>
-              <input
-                type="text"
+              </label>
+              <Input
+                id="agent-form-deploy-skills"
+                size="sm"
                 value={t.deploySkills}
                 onChange={(e) => set('deploySkills', e.target.value)}
-                className={cn(fieldCls, 'font-mono')}
               />
-            </label>
-            <label className={groupCls}>
-              <span className={labelCls}>Commands Template (optional)</span>
-              <input
-                type="text"
+            </div>
+            <div className={groupCls}>
+              <label className={labelCls} htmlFor="agent-form-deploy-commands">
+                Commands Template (optional)
+              </label>
+              <Input
+                id="agent-form-deploy-commands"
+                size="sm"
                 value={t.deployCommands}
                 onChange={(e) => set('deployCommands', e.target.value)}
                 placeholder="None (command deploy unsupported)"
-                className={cn(fieldCls, 'font-mono')}
               />
-            </label>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <label className={groupCls}>
-              <span className={labelCls}>MCP Config Template (optional)</span>
-              <input
-                type="text"
+            <div className={groupCls}>
+              <label className={labelCls} htmlFor="agent-form-deploy-mcp">
+                MCP Config Template (optional)
+              </label>
+              <Input
+                id="agent-form-deploy-mcp"
+                size="sm"
                 value={t.deployMcp}
                 onChange={(e) => set('deployMcp', e.target.value)}
                 placeholder="None (MCP deploy unsupported)"
-                className={cn(fieldCls, 'font-mono')}
               />
-            </label>
-            <label className={groupCls}>
-              <span className={labelCls}>Global Skill Path (optional override)</span>
-              <input
-                type="text"
+            </div>
+            <div className={groupCls}>
+              <label className={labelCls} htmlFor="agent-form-skill-path">
+                Global Skill Path (optional override)
+              </label>
+              <Input
+                id="agent-form-skill-path"
+                size="sm"
                 value={t.skillPath}
                 onChange={(e) => set('skillPath', e.target.value)}
                 placeholder="~/.my-agent/skills"
-                className={cn(fieldCls, 'font-mono')}
               />
-            </label>
+            </div>
           </div>
-          <label className={groupCls}>
-            <span className={labelCls}>
+          <div className={groupCls}>
+            <label className={labelCls} htmlFor="agent-form-detection">
               Install detection command (optional · considered installed if found in PATH)
-            </span>
-            <input
-              type="text"
+            </label>
+            <Input
+              id="agent-form-detection"
+              size="sm"
               value={t.detectionCmd}
               onChange={(e) => set('detectionCmd', e.target.value)}
               placeholder="myagent (empty = always considered installed)"
-              className={cn(fieldCls, 'font-mono')}
             />
-          </label>
+          </div>
         </div>
       </div>
 

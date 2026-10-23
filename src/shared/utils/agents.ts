@@ -75,7 +75,7 @@ export const DEFAULT_TRANSLATION_AGENT_ID = 'opencode';
  */
 export interface TranslatableAgentShape {
   id: string;
-  /** 非空即声明了 chat 能力（`ChatStart` 联合类型）。 */
+  /** 非空即声明了 chat 能力（`ChatLaunch`）。 */
   chat?: unknown;
   /** 缺省视为启用（历史配置没有这个字段）。 */
   enabled?: boolean;

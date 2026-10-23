@@ -1,51 +1,107 @@
-import type { ChatStart } from '@/shared/types/agent';
+import type { ChatLaunch, ChatTransport } from '@/shared/types/agent';
+import { transportOf } from '@/shared/types/agent';
 
 /**
- * Agent 表单里 CHAT 传输相关的定义与形态转换。
+ * Agent 表单里 CHAT 启动配置的读写。
  *
- * # 为什么表单态不用 `ChatStart`
+ * # 为什么表单态是 argv 数组
  *
- * `ChatStart` 现在是联合类型：裸字符串（旧格式）或 `{ transport: 'acp', args }`
- * （ACP 需要附加子命令）。若表单态直接用它，`<select>` 的 value 就得在两种形态间
- * 来回转换，每次 onChange 都要先判形态 —— 而 `<select>` 只接受字符串。
+ * `ChatLaunch` 是 `{program, args, env}`，而 UI 需要可编辑的形态。这里**不做**
+ * 「数组 → 一行文本」的投影：那条投影不幂等（`['--sys','hello world']` 会变成
+ * `['--sys','hello','world']`），会让「打开设置页 → 保存」静默改写用户配置。
  *
- * 拆成「传输名 + args 文本」后，形态转换只发生在两个边界：
- * 读（`toTransport` / `toAcpArgsText`）与写（`buildChatStart`）。
+ * 因此 argv 以数组形态贯穿表单、传输识别与提交 —— 形态转换只剩两件事：
+ * 数组首项 ↔ `program`，其余 ↔ `args`。
+ *
+ * 这里**没有传输选项列表** —— 传输是从 argv 识别出来的（`transportOf`），
+ * 不是用户可声明的。历史上那个下拉（acp/serve/jsonl/mock/pi-rpc）让用户去
+ * 声明一个他无法改变的事实，选错只会得到跑不起来的配置。
  */
 
-/** 表单内部只处理传输标识字符串。 */
-export type ChatTransport = 'acp' | 'serve' | 'jsonl' | 'mock' | 'pi-rpc';
-
-/** 传输下拉的选项。 */
-export const CHAT_OPTIONS: { value: ChatTransport; label: string; hint: string }[] = [
-  { value: 'acp', label: 'ACP', hint: 'JSON-RPC stdio subprocess' },
-  { value: 'serve', label: 'Serve', hint: 'opencode serve · HTTP+SSE' },
-  { value: 'jsonl', label: 'JSON-Lines', hint: 'Custom stdio protocol' },
-  { value: 'mock', label: 'Mock', hint: 'In-process mock (no subprocess)' },
-  { value: 'pi-rpc', label: 'Pi RPC', hint: 'pi --mode rpc · private NDJSON' },
-];
-
-/** 选中传输后的说明文案。 */
-export const CHAT_HINTS: Record<ChatTransport, string> = {
-  acp: 'Agent Client Protocol over JSON-RPC stdio (subprocess)',
-  serve: 'opencode serve HTTP + SSE transport',
-  jsonl: 'Custom JSON-Lines stdio protocol',
-  mock: 'In-process ACP mock, no command required',
-  'pi-rpc': 'Pi private rpc protocol (`pi --mode rpc`) — single process, no ACP',
+/** 传输的展示文案（识别结果用，不是选项列表）。 */
+export const TRANSPORT_LABELS: Record<ChatTransport, string> = {
+  acp: 'ACP · JSON-RPC stdio',
+  serve: 'opencode serve · HTTP + SSE',
+  jsonl: 'JSON-Lines stdio',
+  'pi-rpc': 'Pi rpc · private NDJSON',
 };
 
-/** 表单态 → 持久化形态。
+/** 表单态（argv，首项是程序名）→ `ChatLaunch`；空 → `null`（无 CHAT 能力）。 */
+export function buildChatLaunch(
+  argv: readonly string[],
+  envText: string,
+  inprocess = false,
+): ChatLaunch | null {
+  const env = parseEnvText(envText);
+  const withEnv = Object.keys(env).length > 0 ? { env } : {};
+
+  // 进程内实现：没有 argv，但有 CHAT 能力 —— 与「空命令 = 无能力」必须区分。
+  if (inprocess) return { inprocess: true, ...withEnv };
+
+  const [program, ...args] = argv;
+  if (program === undefined) return null; // 无 argv → 无 CHAT 能力，env 一并丢弃
+
+  return { program, args, ...withEnv };
+}
+
+/**
+ * `ChatLaunch` → 表单态 argv（`program` + `args`）。
  *
- * ACP 有参数时写对象形态（`{transport, args}`），否则写裸字符串 —— 与后端
- * `Serialize` 的取舍一致（无参数不制造 diff），也让旧配置继续可读。
+ * `program` 缺省时回落到 `command`：两者同一个二进制是最常见的情形，把回落
+ * 结果**显示出来**让用户看得见自己要跑什么，而不是留一行空白。
  */
-export function buildChatStart(
-  transport: ChatTransport | '',
-  acpArgsText: string,
-  splitArgs: (text: string) => string[],
-): ChatStart | null {
-  if (!transport) return null;
-  if (transport !== 'acp') return transport;
-  const args = splitArgs(acpArgsText);
-  return args.length > 0 ? { transport: 'acp', args } : 'acp';
+export function formatChatLaunch(
+  launch: ChatLaunch | null | undefined,
+  fallbackCommand: string,
+): string[] {
+  if (!launch) return [];
+  // 进程内实现没有 argv；`inprocess` 由独立复选框承载。
+  if (launch.inprocess) return [];
+  const program = (launch.program ?? '').trim() || fallbackCommand;
+  return program ? [program, ...(launch.args ?? [])] : [...(launch.args ?? [])];
+}
+
+/**
+ * 多行 `KEY=value` → 对象。
+ *
+ * 规则（每条都有测试）：
+ * - 忽略空行与 `#` 开头的**整行**注释（`KEY=#v` 的值就是 `#v`）；
+ * - **只按第一个 `=` 切分** —— `URL=http://x?a=b` 的值必须保留；
+ * - key / value 去两边空白；key 为空则整行忽略；
+ * - 重复 key 后者胜（与 shell 一致）。
+ */
+export function parseEnvText(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue; // 没有 `=` 或 key 为空
+
+    const key = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1).trim();
+    if (!key) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** 对象 → 多行文本（键序稳定，便于往返测试与 diff）。 */
+export function formatEnvText(env: Record<string, string> | null | undefined): string {
+  if (!env) return '';
+  return Object.keys(env)
+    .sort()
+    .map((k) => `${k}=${env[k]}`)
+    .join('\n');
+}
+
+/** argv 识别出的传输标签（无 CHAT 能力 → `null`）。 */
+export function chatTransportLabel(argv: readonly string[], inprocess = false): string | null {
+  // 进程内实现没有 argv 可识别 —— 但它确有 CHAT 能力，标签要如实说出来。
+  if (inprocess) return TRANSPORT_LABELS.acp;
+  const [program, ...args] = argv;
+  if (program === undefined) return null;
+  const transport = transportOf({ program, args });
+  return transport ? TRANSPORT_LABELS[transport] : null;
 }
