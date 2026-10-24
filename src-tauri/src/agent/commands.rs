@@ -31,25 +31,6 @@ pub fn get_agent(agent_id: String, state: State<AppStateWrapper>) -> Result<Agen
         .ok_or_else(|| AppError::NotFound(format!("Agent not found: {}", agent_id)))
 }
 
-/// List agents that support Agent Chat（声明了 CHAT 能力）。
-///
-/// 前端 Agent Chat 页面的 agent 列表单一事实源：只有 `chat: Some(_)` 的
-/// agent 才会出现，避免把仅终端 TUI 的 agent 误展示在页面选择器里。
-#[tauri::command]
-pub fn list_chat_agents(state: State<AppStateWrapper>) -> Result<Vec<AgentConfig>, AppError> {
-    state
-        .agent_manager
-        .lock()
-        .map_err(AppError::from)
-        .map(|am| {
-            am.get_agents()
-                .iter()
-                .filter(|a| a.chat.is_some())
-                .cloned()
-                .collect()
-        })
-}
-
 /// List the models an agent offers, for the chat / settings model pickers.
 ///
 /// # 分派依据是传输类型，不是 agent id

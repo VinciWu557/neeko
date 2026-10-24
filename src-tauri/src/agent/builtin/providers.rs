@@ -18,6 +18,7 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             name: "Claude Code".into(),
             icon: Some("claude-code.png".into()),
             enabled: true,
+            chat_enabled: None,
             is_builtin: true,
             is_overridden: false,
             command: "claude".into(),
@@ -156,6 +157,7 @@ pub fn builtin_configs() -> Vec<AgentConfig> {
             name: "MockAgent".into(),
             // 复用应用自身图标 —— 之前指向不存在的 `mock.png`，界面上是空白。
             icon: Some("mock-agent.png".into()),
+            chat_enabled: None,
             enabled: true,
             is_builtin: true,
             is_overridden: false,
@@ -216,6 +218,7 @@ fn shell_agent(
         name: name.into(),
         icon: Some(icon.into()),
         enabled: true,
+        chat_enabled: None,
         is_builtin: true,
         is_overridden: false,
         command: command.into(),

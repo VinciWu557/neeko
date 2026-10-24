@@ -127,7 +127,6 @@ macro_rules! neeko_invoke_handler {
             // ── agent ────────────────────────────────────────────────────────
             $crate::agent::commands::list_agents,
             $crate::agent::commands::get_agent,
-            $crate::agent::commands::list_chat_agents,
             $crate::agent::commands::list_agent_models,
             $crate::agent::commands::add_agent,
             $crate::agent::commands::remove_agent,

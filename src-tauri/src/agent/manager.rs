@@ -44,11 +44,26 @@ impl AgentManager {
     ///
     /// 覆盖值原位替换对应 builtin 元素；未知 id 忽略（防御）。覆盖不改变
     /// agent 的内置身份（`is_builtin` 恒保持 true，防止前端列表过滤丢失）。
+    ///
+    /// # `chat` 是出厂事实，不可被覆盖层改写
+    ///
+    /// 覆盖层是用户编辑时的**整份快照**（`AgentConfig` 多数字段非 `Option`，
+    /// 序列化后丢失 presence）。所以旧快照里必然躺着当时那份 `chat` ——
+    /// 如果让它生效，出厂定义的任何后续修正都会被永久挡回（spec §10.5d 事故：
+    /// Pi 的 `--list-models` 就是这样被旧快照复活的）。
+    ///
+    /// 因此这里强制 `applied.chat = factory_chat`。用户的真实诉求「用不用它」
+    /// 由 `chat_enabled`（纯偏好字段）承载，那个字段照旧取覆盖层的值。
+    ///
+    /// **幂等**：`factory_chat` 取自当前 `slot`，而 `slot.chat` 每次都被还原成
+    /// 出厂值，所以连续调用两次结果相同。
     pub fn restore_overrides(&mut self, overrides: &HashMap<String, AgentConfig>) {
         for (id, cfg) in overrides {
             if let Some(slot) = self.agents.iter_mut().find(|a| a.id == *id && a.is_builtin) {
+                let factory_chat = slot.chat.clone();
                 let mut applied = cfg.clone();
                 applied.is_builtin = true;
+                applied.chat = factory_chat;
                 *slot = applied;
                 self.overridden.insert(id.clone());
             }
@@ -183,6 +198,7 @@ impl AgentManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common::agent::chat_launch::ChatLaunch;
 
     #[test]
     fn should_initialize_with_eleven_presets() {
@@ -526,6 +542,90 @@ mod tests {
         )]);
         manager.restore_overrides(&bad);
         assert!(manager.get_agent("nonexistent").is_none());
+    }
+
+    /// **`chat` 是出厂事实，覆盖层改不动它。**
+    ///
+    /// 覆盖层是整份快照，旧文件里必然躺着当时那份 `chat`。让它生效 = 出厂
+    /// 协议的后续修正被永久挡回（spec §10.5d 事故形态）。
+    ///
+    /// 变异验证：删掉 `applied.chat = factory_chat` → 本用例红。
+    #[test]
+    fn override_cannot_rewrite_the_builtin_chat_protocol() {
+        let mut manager = AgentManager::new();
+        let factory = manager.get_agent("pi").expect("builtin pi").chat.clone();
+        assert!(factory.is_some(), "pi 出厂就有 chat");
+
+        // 旧快照里塞一个**完全不同**的协议，并关掉 chat。
+        let overrides = HashMap::from([(
+            "pi".to_string(),
+            AgentConfig {
+                id: "pi".into(),
+                name: "Pi".into(),
+                chat: Some(ChatLaunch {
+                    program: Some("someone-elses-acp".into()),
+                    args: vec!["acp".into()],
+                    ..Default::default()
+                }),
+                chat_enabled: Some(false),
+                ..Default::default()
+            },
+        )]);
+        manager.restore_overrides(&overrides);
+
+        let agent = manager.get_agent("pi").unwrap();
+        assert_eq!(agent.chat, factory, "出厂协议不得被覆盖层改写");
+        assert_eq!(agent.chat_enabled, Some(false), "用户偏好照旧生效");
+        assert!(!agent.is_chat_agent(), "关掉后不再算 chat agent");
+    }
+
+    /// 覆盖层的其余字段（`command` / `args` / `deploy` / `detection`）**仍然生效**。
+    ///
+    /// 这条是「只有 `chat` 被锁」的反向保证 —— 别为了锁 `chat` 把整份覆盖废掉。
+    #[test]
+    fn override_still_applies_everything_but_chat() {
+        let mut manager = AgentManager::new();
+        let overrides = HashMap::from([(
+            "pi".to_string(),
+            AgentConfig {
+                id: "pi".into(),
+                name: "Pi Renamed".into(),
+                command: "pi-custom".into(),
+                args: vec!["--mine".into()],
+                prompt_args: Some(vec!["-p".into()]),
+                ..Default::default()
+            },
+        )]);
+        manager.restore_overrides(&overrides);
+
+        let agent = manager.get_agent("pi").unwrap();
+        assert_eq!(agent.name, "Pi Renamed");
+        assert_eq!(agent.command, "pi-custom");
+        assert_eq!(agent.args, vec!["--mine"]);
+        assert_eq!(agent.prompt_args, Some(vec!["-p".into()]));
+        assert!(agent.chat.is_some(), "chat 仍是出厂值");
+    }
+
+    /// **幂等**：连续恢复两次结果相同（启动期只调一次，但语义必须成立）。
+    #[test]
+    fn restore_overrides_is_idempotent() {
+        let mut manager = AgentManager::new();
+        let overrides = HashMap::from([(
+            "opencode".to_string(),
+            AgentConfig {
+                id: "opencode".into(),
+                name: "OC".into(),
+                command: "oc".into(),
+                chat: Some(ChatLaunch::default()),
+                ..Default::default()
+            },
+        )]);
+        manager.restore_overrides(&overrides.clone().into_iter().collect());
+        let once = manager.get_agent("opencode").unwrap().clone();
+        manager.restore_overrides(&overrides);
+        let twice = manager.get_agent("opencode").unwrap().clone();
+        assert_eq!(once.chat, twice.chat);
+        assert_eq!(once.command, twice.command);
     }
 
     #[test]
