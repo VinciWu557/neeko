@@ -23,7 +23,7 @@ use crate::agent::chat::adapter::acp_config;
 use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
 use crate::agent::chat::capabilities::{ChatCapabilities, ConfigCapability};
 use crate::agent::chat::events::{
-    Capabilities, ContextManifest, DoneReason, SessionRequest, StreamEvent, TurnEndReason,
+    Capabilities, ContextManifest, DoneReason, SessionRequest, StreamEvent, TurnEndReason, Usage,
 };
 use crate::agent::chat::mock;
 use crate::common::agent::chat_launch::WireFormat;
@@ -101,10 +101,27 @@ fn parse_content_length(header: &str) -> Option<usize> {
 
 // ── Protocol translation (pure, testable) ───────────────────────────────────
 
+/// `session/update` 通知的变体名（`update.sessionUpdate`）。
+fn session_update_kind(params: &serde_json::Value) -> Option<&str> {
+    params
+        .pointer("/update/sessionUpdate")
+        .and_then(serde_json::Value::as_str)
+}
+
 /// Translate a `session/update` notification into a [`StreamEvent`].
-fn translate_notification(session_id: &str, params: &serde_json::Value) -> Option<StreamEvent> {
+///
+/// `current_model` 只被 `usage_update` 变体消费：载荷不携带模型名，由调用点
+/// 注入会话当前模型（`acp_config::current_model_from_config`，与 pi_rpc 同源，
+/// 模型切换后保持新鲜）。
+fn translate_notification(
+    session_id: &str,
+    params: &serde_json::Value,
+    current_model: Option<&str>,
+) -> Option<StreamEvent> {
     let update = params.get("update")?;
-    let kind = update.get("sessionUpdate")?.as_str()?;
+    // 变体名只从 `session_update_kind` 一处读 —— `handle_inbound` 的窥探分支
+    // 与这里的 match 臂共用同一个键，避免两处字面量漂移。
+    let kind = session_update_kind(params)?;
     match kind {
         "agent_thought_chunk" => {
             let content = update.get("content")?;
@@ -232,8 +249,49 @@ fn translate_notification(session_id: &str, params: &serde_json::Value) -> Optio
                 .unwrap_or("")
                 .into(),
         }),
+        // RFDS session-usage（Completed 2026-06-05）：agent 主动推送当前上下文
+        // 占用。`used`/`size` 均 required，缺任一忽略该条；无有意义窗口上限的
+        // agent 不发该变体。`cost` 本期忽略（协议无对应字段，未来扩展点）。
+        "usage_update" => {
+            let used = update.get("used").and_then(token_count)?;
+            let size = update.get("size").and_then(token_count)?;
+            Some(StreamEvent::Meta {
+                session_id: session_id.into(),
+                model: current_model.map(str::to_string),
+                // 协议无 cache 计数（拆分在 draft RFD end-turn-token-usage），
+                // cache 字段留 None —— 前端命中率行按缺失降级。
+                usage: Some(Usage {
+                    input_tokens: None,
+                    output_tokens: None,
+                    context_tokens: Some(used),
+                    context_limit: Some(size),
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                }),
+            })
+        }
         _ => None,
     }
+}
+
+/// 解析 token 计数字段。
+///
+/// JSON number 可能由浮点类型产生，`as_u64` 对 `53000.0` 直接失败 —— 静默丢
+/// 整条 usage 更新的失败模式难排障，失败后回退 `as_f64` 截断。负数 / NaN /
+/// 无穷不是合法计数（饱和转换会把它们变 0），返回 `None` 拒绝。
+fn token_count(v: &serde_json::Value) -> Option<u64> {
+    if let Some(n) = v.as_u64() {
+        return Some(n);
+    }
+    let f = v.as_f64()?;
+    if !(f.is_finite() && f >= 0.0) {
+        return None;
+    }
+    // 刻意截断：协议值实际总是整数，浮点只是 JSON 生产者的类型形态；
+    // 符号损失已由上面的 `f >= 0.0` 门控排除。
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let n = f as u64;
+    Some(n)
 }
 
 /// Translate a `session/request_permission` request (server → client) into a
@@ -843,9 +901,20 @@ fn handle_inbound(
             return Vec::new();
         };
         return match method {
-            "session/update" => translate_notification(session_id, params)
-                .into_iter()
-                .collect(),
+            "session/update" => {
+                // snapshot 是全量配置深克隆，而 session/update 同时承载高频的
+                // text delta —— 先窥探变体名，只在 usage_update（唯一消费
+                // current_model 的分支，与 translate_notification 的对应 match
+                // 臂同键）时才取快照。
+                let current_model = if session_update_kind(params) == Some("usage_update") {
+                    acp_config::current_model_from_config(&configs.snapshot())
+                } else {
+                    None
+                };
+                translate_notification(session_id, params, current_model.as_deref())
+                    .into_iter()
+                    .collect()
+            }
             "session/request_permission" => {
                 let id = v.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
                 translate_permission_request(session_id, id, params, pending)
@@ -1132,7 +1201,7 @@ mod tests {
                 "content": { "type": "text", "text": "hello" }
             }
         });
-        let ev = translate_notification("s1", &params).expect("event");
+        let ev = translate_notification("s1", &params, None).expect("event");
         assert_eq!(
             ev,
             StreamEvent::TextDelta {
@@ -1151,7 +1220,103 @@ mod tests {
                 "content": { "type": "image", "image": "base64..." }
             }
         });
-        assert!(translate_notification("s1", &params).is_none());
+        assert!(translate_notification("s1", &params, None).is_none());
+    }
+
+    // ── usage_update（RFDS session-usage，Completed 2026-06-05）────────────
+
+    /// 全量映射：used/size → context_tokens/context_limit，model 由调用点注入。
+    /// ACP 无 cache 计数字段（拆分在 draft RFD `end-turn-token-usage`），
+    /// cache 字段必须为 `None` —— 前端命中率行据此降级，禁止假数据。
+    #[test]
+    fn usage_update_maps_used_and_size_into_meta() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "usage_update", "used": 53000, "size": 200000 }
+        });
+        let ev = translate_notification("s1", &params, Some("claude-sonnet")).expect("event");
+        assert_eq!(
+            ev,
+            StreamEvent::Meta {
+                session_id: "s1".into(),
+                model: Some("claude-sonnet".into()),
+                usage: Some(Usage {
+                    input_tokens: None,
+                    output_tokens: None,
+                    context_tokens: Some(53_000),
+                    context_limit: Some(200_000),
+                    cache_read_tokens: None,
+                    cache_write_tokens: None,
+                }),
+            }
+        );
+    }
+
+    /// `used`/`size` 均 required：缺任一 → 整条忽略（与其它分支容错一致）。
+    #[test]
+    fn usage_update_without_size_is_ignored() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "usage_update", "used": 53000 }
+        });
+        assert!(translate_notification("s1", &params, Some("m")).is_none());
+    }
+
+    #[test]
+    fn usage_update_without_used_is_ignored() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "usage_update", "size": 200000 }
+        });
+        assert!(translate_notification("s1", &params, Some("m")).is_none());
+    }
+
+    /// JSON number 可能由浮点类型产生：`as_u64` 对 `53000.0` 直接失败会静默
+    /// 丢掉整条更新，必须回退 `as_f64` 截断。
+    #[test]
+    fn usage_update_tolerates_float_counts() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "usage_update", "used": 53000.0, "size": 200000.0 }
+        });
+        let ev = translate_notification("s1", &params, None).expect("event");
+        match ev {
+            StreamEvent::Meta {
+                usage: Some(usage), ..
+            } => {
+                assert_eq!(usage.context_tokens, Some(53_000));
+                assert_eq!(usage.context_limit, Some(200_000));
+            }
+            other => panic!("expected Meta with usage, got {other:?}"),
+        }
+    }
+
+    /// 会话当前模型未知 → Meta.model 为 None（model 是展示字段，不阻塞计量器）。
+    #[test]
+    fn usage_update_without_model_yields_meta_without_model() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "usage_update", "used": 1, "size": 2 }
+        });
+        let ev = translate_notification("s1", &params, None).expect("event");
+        match ev {
+            StreamEvent::Meta { model, usage, .. } => {
+                assert_eq!(model, None);
+                assert_eq!(usage.expect("usage").context_tokens, Some(1));
+            }
+            other => panic!("expected Meta, got {other:?}"),
+        }
+    }
+
+    /// 负数不是合法 token 计数：饱和转换会把 `-1.0 as u64` 静默变 0，必须拒绝。
+    /// （NaN/无穷在 serde_json 的 Number 里无法构造，同一条防线对它们只是防御。）
+    #[test]
+    fn usage_update_rejects_negative_counts() {
+        let params = serde_json::json!({
+            "sessionId": "s1",
+            "update": { "sessionUpdate": "usage_update", "used": -1.0, "size": 200000 }
+        });
+        assert!(translate_notification("s1", &params, None).is_none());
     }
 
     #[test]

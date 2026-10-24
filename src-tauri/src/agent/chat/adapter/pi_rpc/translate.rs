@@ -19,6 +19,11 @@ pub struct Translation {
     pub events: Vec<StreamEvent>,
     /// 若是审批请求，记下 `(request_id, 回答形状)` 供 `Approve` 回写时查。
     pub approval: Option<(String, ApprovalKind)>,
+    /// 是否是 `agent_settled`（回合的稳定终点）。
+    ///
+    /// 与 `approval` 同模式：translate 是纯函数、不能发请求，会话层看到这个
+    /// 标记后自行拉取 `get_session_stats`（上下文用量遥测）。
+    pub settled: bool,
 }
 
 impl Translation {
@@ -27,6 +32,16 @@ impl Translation {
         Self {
             events,
             approval: None,
+            settled: false,
+        }
+    }
+
+    /// `agent_settled`：回合稳定终点 + 终止事件。
+    const fn settled_turn(events: Vec<StreamEvent>) -> Self {
+        Self {
+            events,
+            approval: None,
+            settled: true,
         }
     }
 }
@@ -57,7 +72,7 @@ pub fn translate(session_id: &str, ev: &Value) -> Translation {
         // 回合结束，都会让后续输出被当成「回合外」而丢掉。
         //
         // 唯一的终止信号是 `agent_settled`。
-        "agent_settled" => Translation::events(vec![StreamEvent::TurnEnd {
+        "agent_settled" => Translation::settled_turn(vec![StreamEvent::TurnEnd {
             session_id: session_id.into(),
             turn_id: String::new(),
             reason: settled_reason(ev),
@@ -393,6 +408,7 @@ fn translate_ui_request(session_id: &str, ev: &Value) -> Translation {
     Translation {
         events: vec![event],
         approval: Some((id.to_string(), answer_kind)),
+        settled: false,
     }
 }
 
@@ -616,6 +632,39 @@ mod tests {
         assert!(evs("s1", &json!({"type": "totally-new"})).is_empty());
         assert!(evs("s1", &json!({})).is_empty());
         assert!(evs("s1", &json!("not-an-object")).is_empty());
+    }
+
+    // ── settled 标记（会话层拉取 get_session_stats 的触发器） ────────
+
+    /// `agent_settled` 是回合稳定终点，也是拉取会话统计的唯一时机 ——
+    /// 会话层靠这个标记决定何时发 `get_session_stats`。
+    #[test]
+    fn agent_settled_marks_the_translation_settled() {
+        let t = translate("s1", &json!({"type": "agent_settled", "aborted": false}));
+        assert!(t.settled, "agent_settled must mark the translation settled");
+        // `turn_end` / `agent_end` 在重试/压缩时会发多次，不能当稳定终点。
+        for kind in ["turn_end", "agent_end", "auto_compaction_end"] {
+            assert!(
+                !translate("s1", &json!({"type": kind})).settled,
+                "{kind} must not be settled"
+            );
+        }
+    }
+
+    /// 其余一切事件（含审批、未识别事件）都不得置 settled。
+    #[test]
+    fn ordinary_events_are_not_settled() {
+        let events = [
+            json!({"type": "agent_start"}),
+            json!({"type": "message_update",
+                   "assistantMessageEvent": {"type": "text_delta", "delta": "a"}}),
+            json!({"type": "extension_ui_request", "id": "r1", "method": "confirm",
+                   "message": "ok?"}),
+            json!({"type": "totally-new"}),
+        ];
+        for ev in &events {
+            assert!(!translate("s1", ev).settled, "{ev} must not be settled");
+        }
     }
 }
 

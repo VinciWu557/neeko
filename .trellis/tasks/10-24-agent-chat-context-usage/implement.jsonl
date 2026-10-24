@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/10-24-agent-chat-context-usage/research/usage-data-sources.md", "reason": "各传输用量数据源结论 + pi get_session_stats 字段语义与命中率口径 — 实现的唯一数据依据"}
+{"file": ".trellis/spec/backend/agent-chat-transports.md", "reason": "chat 传输协议与 adapter 分层契约（translate 纯函数 / session 泵 / Translation 标记模式）"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "组件红线：测试、样式与交互约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS 类型镜像与 Rust 协议同步的约定"}
+{"file": ".trellis/spec/backend/type-safety.md", "reason": "serde 向后兼容与 Option 字段约定"}

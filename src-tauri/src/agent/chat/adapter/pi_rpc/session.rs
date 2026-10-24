@@ -15,6 +15,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -33,9 +34,17 @@ use crate::agent::chat::adapter::session_config::{
 use crate::agent::chat::adapter::{AgentContext, AgentSession};
 use crate::agent::chat::capabilities::ChatCapabilities;
 use crate::agent::chat::events::{
-    Capabilities, ContextManifest, SessionRequest, StreamEvent, TurnEndReason,
+    Capabilities, ContextManifest, SessionRequest, StreamEvent, TurnEndReason, Usage,
 };
 use crate::common::error::AppError;
+
+/// `get_session_stats` 的专用超时。
+///
+/// 刻意短于 `process::AUX_TIMEOUT`（5s）：stats 拉取是**best-effort 遥测**，
+/// 且落在事件空闲窗口（见 [`PiSession::next`]）—— 用户在空档期发出下一条
+/// 消息时，新话轮的流式事件要排队等这次 RPC 落幕，旧版 pi 对未知命令不回应
+/// 的场景下 5s 会把新回合首字拖到不可接受；2s 上限把损害框在该窗口内。
+const STATS_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// 一条 pi 会话。
 pub struct PiSession {
@@ -59,6 +68,12 @@ pub struct PiSession {
     /// 取决于是 `confirm`（`confirmed`）还是 `select`（`value`）。这个形状只在
     /// 请求本身里，`allow` 带不过来 —— 必须在发出审批时记下。
     pending_approvals: Arc<StdMutex<std::collections::HashMap<String, ApprovalKind>>>,
+    /// 会话配置状态（与请求 pump 共享）。
+    ///
+    /// `next()` 需要从中读**当前模型**（`get_session_stats` 的响应里没有模型名，
+    /// `Meta.model` 只能取这份共享状态 —— pump 切完模型会 `replace` 它，所以
+    /// 这里读到的一直是新鲜值）。
+    configs: Arc<ConfigOptionsState>,
     /// **本轮是否已报过错误**（跨事件事实，`absorb` 维护，`agent_settled` 消费）。
     ///
     /// 为什么不能放在 `translate`：它是纯函数，只看得到一条 pi 事件；而失败与
@@ -69,6 +84,13 @@ pub struct PiSession {
     /// 「任务完成」—— `notify.rs` 明确要求二者互斥（`TurnEnd{error}` 留给
     /// Error / SessionDone 事件，避免双发）。
     turn_failed: bool,
+    /// **待拉的会话统计**（`agent_settled` 置位，空闲窗口消费）。
+    ///
+    /// 为什么不就地拉取：`agent_settled` 的翻译分支里 TurnEnd 刚入队，就地
+    /// `await` 会让它的交付串行等一次遥测 RPC —— 必要数据（回合终点，延迟
+    /// 敏感）被可选数据（usage，可慢）阻塞。置位后由下一次 `next()` 在
+    /// `pending` 排空、即将阻塞读进程时拉取，延迟落在回合间空档，对用户不可见。
+    stats_pull_pending: bool,
     /// 已就绪、待 `next()` 取走的事件队列。
     ///
     /// **两个生产者**：
@@ -248,7 +270,9 @@ impl PiSession {
             session_id: ctx.session_id.clone(),
             native_session_id,
             pending_approvals,
+            configs,
             turn_failed: false,
+            stats_pull_pending: false,
             pending,
             request_events: Some(request_events),
             request_tx,
@@ -496,6 +520,42 @@ async fn answer_ui_request(
     proc.send(response).await
 }
 
+/// `get_session_stats` 的 `data` → `Meta` 事件（纯函数，单独可测）。
+///
+/// 字段映射（pi docs `rpc-commands.md` §get_session_stats）：
+///
+/// | pi 字段 | `Usage` 字段 |
+/// | --- | --- |
+/// | `contextUsage.tokens` | `context_tokens`（当前占用估计） |
+/// | `contextUsage.contextWindow` | `context_limit` |
+/// | `tokens.input` / `output` | `input_tokens` / `output_tokens`（会话累计） |
+/// | `tokens.cacheRead` / `cacheWrite` | `cache_read_tokens` / `cache_write_tokens` |
+///
+/// - `tokens` 缺失 → `None`：没有任何 token 计数的 stats 不值得发一条空 Meta。
+/// - `contextUsage` 整体缺失仍产出 Meta（pi 在无模型/无窗口信息时省略它）。
+/// - `contextUsage.tokens` / `percent` 为 `null` 是 compaction 后的正常降级
+///   （到新 assistant 响应前 pi 给不出估计）—— `as_u64` 把 `null` 当缺失，
+///   正好是要的语义。
+/// - `percent` 不复用：前端自算百分比（单一真相，舍入口径不漂移）。
+fn meta_from_stats(session_id: &str, model: &str, data: &Value) -> Option<StreamEvent> {
+    let tokens = data.get("tokens")?;
+    let usage = Usage {
+        input_tokens: tokens.get("input").and_then(Value::as_u64),
+        output_tokens: tokens.get("output").and_then(Value::as_u64),
+        context_tokens: data.pointer("/contextUsage/tokens").and_then(Value::as_u64),
+        context_limit: data
+            .pointer("/contextUsage/contextWindow")
+            .and_then(Value::as_u64),
+        cache_read_tokens: tokens.get("cacheRead").and_then(Value::as_u64),
+        cache_write_tokens: tokens.get("cacheWrite").and_then(Value::as_u64),
+    };
+    Some(StreamEvent::Meta {
+        session_id: session_id.to_string(),
+        model: (!model.is_empty()).then(|| model.to_string()),
+        usage: Some(usage),
+    })
+}
+
 /// 重新拉取档位并产出 `ConfigOptionUpdate`。
 ///
 /// **档位是动态的**：实测 `get_available_thinking_levels` 返回
@@ -540,6 +600,32 @@ impl AgentSession for PiSession {
                 return Some(Ok(ev));
             }
 
+            // stats 拉取落在**事件空闲窗口**：`pending` 排空、即将阻塞等新事件
+            // 时才发 `get_session_stats`。TurnEnd（必要数据）因此不等遥测；
+            // 拉取期间的延迟发生在回合间空档，用户不可见。会话流已关闭时跳过
+            //（写向死进程只会白等一次超时）。失败只 debug 日志：遥测缺失不等于
+            // 回合失败，**不发 Error 事件**（旧版 pi 没有 `get_session_stats`
+            // 时表现为「无计量器」，无害）。
+            if self.stats_pull_pending && self.events.is_some() {
+                self.stats_pull_pending = false;
+                let model = current_model_from_config(&self.configs.snapshot()).unwrap_or_default();
+                match self
+                    .proc
+                    .request(json!({"type": "get_session_stats"}), Some(STATS_TIMEOUT))
+                    .await
+                {
+                    Ok(data) => {
+                        if let Some(meta) = meta_from_stats(&self.session_id, &model, &data) {
+                            self.pending.push_back(meta);
+                        }
+                    }
+                    Err(e) => {
+                        log::debug!("[pi-rpc] session stats unavailable, skipping meta: {e}");
+                    }
+                }
+                continue;
+            }
+
             // 两路来源：进程事件流 + pump 产出（ConfigOptionUpdate / 请求错误）。
             // 只等进程那一侧会让 pump 的事件永远交付不出去。
             //
@@ -578,7 +664,15 @@ impl AgentSession for PiSession {
                             m.insert(id, kind);
                         }
                     }
+                    let settled = translated.settled;
                     self.absorb(translated.events);
+                    // `agent_settled` = 回合稳定终点 → 标记待拉会话统计（上下文
+                    // 用量的唯一真实数据源）。**不就地拉取**：TurnEnd 刚入队，
+                    // 就地 await 会把它的交付串行等在一次遥测 RPC 上 —— 拉取
+                    // 由下一轮循环顶部的空闲窗口分支消费（见 next 开头）。
+                    if settled {
+                        self.stats_pull_pending = true;
+                    }
                 }
             }
         }
@@ -701,9 +795,30 @@ mod tests {
         (proc, handle)
     }
 
+    /// 假 pi 对 `get_session_stats` 的回法：`Full` 回满额数据，`Failure` 模拟
+    /// 旧版 pi 无此命令（`success: false`），`Silent` 模拟更恶劣的旧版——
+    /// 对未知命令**连错误信封都不回**（请求只能等超时）。
+    #[derive(Clone, Copy)]
+    enum StatsReply {
+        Full,
+        Failure,
+        Silent,
+    }
+
     /// 同上，额外回传「pi 收到的命令」，供回写断言（如 `extension_ui_response`）。
     fn fake_pi_recording(
         events: Vec<Value>,
+    ) -> (
+        PiRpcProcess,
+        tokio::task::JoinHandle<()>,
+        tokio::sync::mpsc::UnboundedReceiver<Value>,
+    ) {
+        fake_pi_replying(events, StatsReply::Full)
+    }
+
+    fn fake_pi_replying(
+        events: Vec<Value>,
+        stats: StatsReply,
     ) -> (
         PiRpcProcess,
         tokio::task::JoinHandle<()>,
@@ -737,12 +852,28 @@ mod tests {
                         "thinkingLevel": "high",
                         "sessionId": "01a15cec-9454-7596-9016-6069189d7d4e"
                     }),
+                    // pi docs rpc-commands.md §get_session_stats 的实测形状。
+                    "get_session_stats" => json!({
+                        "tokens": {"input": 1234, "output": 567,
+                                   "cacheRead": 197_400, "cacheWrite": 1_200,
+                                   "total": 199_201},
+                        "contextUsage": {"tokens": 205_000, "contextWindow": 1_000_000,
+                                          "percent": 20.5}
+                    }),
                     _ => json!({}),
                 };
-                let resp = json!({
-                    "type": "response", "id": id, "command": kind,
-                    "success": true, "data": data
-                });
+                // Silent 模拟对未知命令完全不回应的旧版 pi（拉取只能等超时）。
+                if kind == "get_session_stats" && matches!(stats, StatsReply::Silent) {
+                    continue;
+                }
+                // Failure 模拟旧版 pi：命令不存在（错误在响应信封，不在 data）。
+                let resp = if kind == "get_session_stats" && matches!(stats, StatsReply::Failure) {
+                    json!({"type": "response", "id": id, "command": kind,
+                               "success": false, "error": "unknown command"})
+                } else {
+                    json!({"type": "response", "id": id, "command": kind,
+                               "success": true, "data": data})
+                };
                 if write_half
                     .write_all(format!("{resp}\n").as_bytes())
                     .await
@@ -995,9 +1126,13 @@ mod tests {
         // **有界读取**（与 `next_drains_every_translated_event` 同形）：
         // `while let Some(_) = session.next().await` 依赖事件流关闭，而假 pi
         // 不会关流 —— 那种写法会让用例永久阻塞。
-        for _ in 0..3 {
+        // settle 后现在还会交付 `Meta`（get_session_stats 遥测，与本用例无关），
+        // 跳过即可；guard 上限防死循环。
+        let mut guard = 0;
+        while reasons.len() < 2 && guard < 8 {
+            guard += 1;
             match session.next().await.expect("event").expect("ok") {
-                StreamEvent::Error { .. } => {}
+                StreamEvent::Meta { .. } | StreamEvent::Error { .. } => {}
                 StreamEvent::TurnEnd { reason, .. } => reasons.push(reason),
                 other => panic!("unexpected {other:?}"),
             }
@@ -1460,6 +1595,176 @@ mod tests {
         assert!(
             session.pending.is_empty(),
             "切到当前值不应产生任何事件（多余的往返会让 UI 闪一下）"
+        );
+    }
+
+    // ── get_session_stats → Meta（上下文用量遥测） ──────────────────
+
+    /// 满额载荷：全部字段映射到 `Usage`。
+    #[test]
+    fn meta_from_stats_maps_the_full_payload() {
+        let data = json!({
+            "tokens": {"input": 1234, "output": 567,
+                       "cacheRead": 197_400, "cacheWrite": 1_200},
+            "contextUsage": {"tokens": 205_000, "contextWindow": 1_000_000,
+                              "percent": 20.5}
+        });
+        let Some(StreamEvent::Meta {
+            session_id,
+            model,
+            usage,
+        }) = meta_from_stats("s1", "auto/dv4", &data)
+        else {
+            panic!("full payload must produce a Meta event");
+        };
+        assert_eq!(session_id, "s1");
+        assert_eq!(model.as_deref(), Some("auto/dv4"));
+        let usage = usage.expect("usage");
+        assert_eq!(usage.input_tokens, Some(1234));
+        assert_eq!(usage.output_tokens, Some(567));
+        assert_eq!(usage.context_tokens, Some(205_000));
+        assert_eq!(usage.context_limit, Some(1_000_000));
+        assert_eq!(usage.cache_read_tokens, Some(197_400));
+        assert_eq!(usage.cache_write_tokens, Some(1_200));
+    }
+
+    /// `contextUsage` 整体缺失（无模型/无窗口信息时 pi 省略它）仍产出 Meta ——
+    /// 只有累计 token 也有价值（命中率、已用回退）。
+    #[test]
+    fn meta_from_stats_without_context_usage_still_reports_tokens() {
+        let data = json!({
+            "tokens": {"input": 10, "output": 20, "cacheRead": 5, "cacheWrite": 1}
+        });
+        let Some(StreamEvent::Meta { usage, .. }) = meta_from_stats("s1", "m", &data) else {
+            panic!("cumulative tokens alone must still produce a Meta event");
+        };
+        let usage = usage.expect("usage");
+        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.output_tokens, Some(20));
+        assert_eq!(usage.context_tokens, None);
+        assert_eq!(usage.context_limit, None);
+    }
+
+    /// `tokens` 缺失返回 `None` —— 一条没有任何 token 数据的 stats 不值得发空 Meta。
+    #[test]
+    fn meta_from_stats_without_tokens_returns_none() {
+        let data = json!({"contextUsage": {"tokens": 1, "contextWindow": 2}});
+        assert!(meta_from_stats("s1", "m", &data).is_none());
+        // 空对象同理。
+        assert!(meta_from_stats("s1", "m", &json!({})).is_none());
+    }
+
+    /// compaction 后 `contextUsage.tokens/percent` 为 null 是**正常降级**
+    ///（到新 assistant 响应前 pi 给不出估计）—— 按字段缺失处理，不丢弃整条。
+    #[test]
+    fn meta_from_stats_treats_null_context_fields_as_missing() {
+        let data = json!({
+            "tokens": {"input": 1, "output": 2},
+            "contextUsage": {"tokens": null, "contextWindow": 1_000_000, "percent": null}
+        });
+        let Some(StreamEvent::Meta { usage, .. }) = meta_from_stats("s1", "m", &data) else {
+            panic!("must not drop the whole Meta on compaction-null context tokens");
+        };
+        let usage = usage.expect("usage");
+        assert_eq!(usage.context_tokens, None);
+        assert_eq!(usage.context_limit, Some(1_000_000));
+    }
+
+    /// `model` 为空串时 `Meta.model` 为 `None`（未知模型的诚实降级）。
+    #[test]
+    fn meta_from_stats_with_empty_model_reports_none() {
+        let data = json!({"tokens": {"input": 1}});
+        let Some(StreamEvent::Meta { model, .. }) = meta_from_stats("s1", "", &data) else {
+            panic!("must produce Meta");
+        };
+        assert!(model.is_none());
+    }
+
+    /// **接入护栏**：`agent_settled` 后 `next()` 必须拉取 `get_session_stats`
+    /// 并把产物作为 `Meta` 交付 —— 这是前端计量器的唯一真实数据源。
+    ///
+    /// model 取会话当前模型（握手 `get_state` 缓存的那份）。
+    #[tokio::test]
+    async fn settled_turn_pulls_session_stats_into_a_meta_event() {
+        let (proc, _fake) = fake_pi_with_events(vec![json!({
+            "type": "agent_settled", "aborted": false
+        })]);
+        let mut session = PiSession::start_with(proc, &ctx(), test_caps())
+            .await
+            .expect("start");
+        let _ = session.next().await; // SessionStart
+        let _ = session.next().await; // ContextInit
+
+        match session.next().await.expect("event").expect("ok") {
+            StreamEvent::TurnEnd { reason, .. } => assert_eq!(reason, TurnEndReason::Completed),
+            other => panic!("expected TurnEnd after settle, got {other:?}"),
+        }
+        match session.next().await.expect("meta").expect("ok") {
+            StreamEvent::Meta { model, usage, .. } => {
+                assert_eq!(
+                    model.as_deref(),
+                    Some("auto/deepseek-v4.1-flash"),
+                    "model must come from the session's current selection"
+                );
+                let usage = usage.expect("usage");
+                assert_eq!(usage.context_tokens, Some(205_000));
+                assert_eq!(usage.context_limit, Some(1_000_000));
+                assert_eq!(usage.cache_read_tokens, Some(197_400));
+            }
+            other => panic!("expected Meta after the settled turn, got {other:?}"),
+        }
+    }
+
+    /// **统计拉不到不打断对话流**：旧版 pi 无 `get_session_stats` → 只跳过本次
+    /// Meta，**不发 Error 事件**（遥测缺失不等于回合失败）。
+    #[tokio::test]
+    async fn stats_failure_does_not_surface_an_error_event() {
+        let (proc, _fake, _cmds) = fake_pi_replying(
+            vec![json!({"type": "agent_settled", "aborted": false})],
+            StatsReply::Failure,
+        );
+        let mut session = PiSession::start_with(proc, &ctx(), test_caps())
+            .await
+            .expect("start");
+        let _ = session.next().await; // SessionStart
+        let _ = session.next().await; // ContextInit
+
+        match session.next().await.expect("event").expect("ok") {
+            StreamEvent::TurnEnd { .. } => {}
+            other => panic!("expected TurnEnd, got {other:?}"),
+        }
+        // 有界读取：没有 Meta、也没有 Error —— 下一轮 next() 只能等到超时。
+        let next = tokio::time::timeout(Duration::from_millis(300), session.next()).await;
+        assert!(
+            next.is_err(),
+            "stats failure must not emit Meta or Error; got {next:?}"
+        );
+    }
+
+    /// **解耦护栏**：`agent_settled` 后 TurnEnd 必须立即交付，不等 stats RPC ——
+    /// 拉取被推迟到事件空闲窗口（`pending` 排空后的循环顶部），回合终点的
+    /// 交付延迟与遥测延迟解耦。假 pi 对 `get_session_stats` 连错误信封都不回
+    ///（比 `Failure` 更恶劣，旧请求只能等超时），TurnEnd 仍须在远小于
+    /// `STATS_TIMEOUT` 的窗口内到达。
+    #[tokio::test]
+    async fn turn_end_is_delivered_without_waiting_for_stats() {
+        let (proc, _fake, _cmds) = fake_pi_replying(
+            vec![json!({"type": "agent_settled", "aborted": false})],
+            StatsReply::Silent,
+        );
+        let mut session = PiSession::start_with(proc, &ctx(), test_caps())
+            .await
+            .expect("start");
+        let _ = session.next().await; // SessionStart
+        let _ = session.next().await; // ContextInit
+
+        let ev = tokio::time::timeout(Duration::from_millis(300), session.next())
+            .await
+            .expect("TurnEnd must not wait for the stats rpc")
+            .expect("ok");
+        assert!(
+            matches!(ev, Ok(StreamEvent::TurnEnd { .. })),
+            "expected TurnEnd right after settle, got {ev:?}"
         );
     }
 }

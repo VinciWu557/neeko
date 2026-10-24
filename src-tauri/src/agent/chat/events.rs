@@ -127,6 +127,21 @@ pub struct Usage {
     pub input_tokens: Option<u64>,
     /// Output (completion) token count, if reported by the agent.
     pub output_tokens: Option<u64>,
+    /// 当前上下文占用（pi `get_session_stats.contextUsage.tokens`）。
+    ///
+    /// 与 [`Self::input_tokens`]（会话累计）不同口径：这是当前窗口的实时估计，
+    /// compaction 后到新 assistant 响应前可能为 `null`（正常降级，非错误）。
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
+    /// 模型上下文窗口上限（pi `contextUsage.contextWindow`）。
+    #[serde(default)]
+    pub context_limit: Option<u64>,
+    /// 会话累计缓存读取 token（pi `tokens.cacheRead`）。
+    #[serde(default)]
+    pub cache_read_tokens: Option<u64>,
+    /// 会话累计缓存写入 token（pi `tokens.cacheWrite`）。
+    #[serde(default)]
+    pub cache_write_tokens: Option<u64>,
 }
 
 /// A single todo item in the agent's live plan (opencode `todo.updated`).
@@ -543,6 +558,61 @@ mod tests {
     fn unknown_type_rejected() {
         let bad = r#"{"type":"nonexistent_event","session_id":"s1"}"#;
         serde_json::from_str::<StreamEvent>(bad).expect_err("should reject unknown type");
+    }
+
+    /// `Usage` 的上下文/缓存字段 roundtrip（pi `get_session_stats` 语义）。
+    #[test]
+    fn usage_context_and_cache_fields_roundtrip() {
+        let usage = Usage {
+            input_tokens: Some(1234),
+            output_tokens: Some(567),
+            context_tokens: Some(205_000),
+            context_limit: Some(1_000_000),
+            cache_read_tokens: Some(197_400),
+            cache_write_tokens: Some(1_200),
+        };
+        let json = serde_json::to_string(&usage).expect("serialize");
+        assert!(json.contains("\"context_tokens\":205000"));
+        assert!(json.contains("\"context_limit\":1000000"));
+        assert!(json.contains("\"cache_read_tokens\":197400"));
+        assert!(json.contains("\"cache_write_tokens\":1200"));
+
+        let back: Usage = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, usage);
+    }
+
+    /// 旧 JSON（无新字段）必须能反序列化，四个新字段全为 `None`（向后兼容红线）。
+    #[test]
+    fn usage_legacy_json_deserializes_with_new_fields_none() {
+        let legacy = r#"{"input_tokens":1,"output_tokens":2}"#;
+        let usage: Usage = serde_json::from_str(legacy).expect("legacy JSON must deserialize");
+        assert_eq!(usage.input_tokens, Some(1));
+        assert_eq!(usage.output_tokens, Some(2));
+        assert_eq!(usage.context_tokens, None);
+        assert_eq!(usage.context_limit, None);
+        assert_eq!(usage.cache_read_tokens, None);
+        assert_eq!(usage.cache_write_tokens, None);
+    }
+
+    /// `Meta` 事件携带新 usage 字段 roundtrip（C1 线上格式）。
+    #[test]
+    fn meta_event_roundtrips_usage_with_context_fields() {
+        let ev = StreamEvent::Meta {
+            session_id: "s1".into(),
+            model: Some("auto/dv4".into()),
+            usage: Some(Usage {
+                input_tokens: Some(1234),
+                output_tokens: None,
+                context_tokens: Some(205_000),
+                context_limit: Some(1_000_000),
+                cache_read_tokens: Some(197_400),
+                cache_write_tokens: Some(1_200),
+            }),
+        };
+        let json = serde_json::to_string(&ev).expect("serialize");
+        assert!(json.contains(r#""type":"meta""#));
+        let back: StreamEvent = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, ev);
     }
 }
 
