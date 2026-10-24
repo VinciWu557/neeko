@@ -40,6 +40,24 @@
 - 能力位门控不变：`capabilities.commands` 为 false 不挂 slash 源、连查询都不发（R2 of 10-21）
 - **静态护栏保留**：前端不得硬编码命令清单
 
+### R3b 文件附件的单一表示（2026-10-24 追加，B 方案）
+
+文件附件**不再有独立 state**：唯一表示是编辑器文档（file chip）。
+
+- `@` 提及、「Attach files」按钮、文件拖拽**三个入口汇合**到同一条路径（插入文档）
+- 请求的 `files` 由 `docToRequestFiles(doc)` **投影**得出（首现顺序去重）
+- 不变量：**chip 在文档里存在 ⇔ 该文件随消息发送**（退格删 chip 即不再发送）
+- 顶部 `.wa-at` 附件 chips 区退役（文件由 chip 表达；skill 无文本表示，仍由
+  `useChatAttachments` 的 skill 槽承载）
+
+### R3c 弹层分组与搜索（2026-10-24 追加）
+
+- 候选按**分组**渲染（Skills / Commands / Extensions / Files），每组带图标、标题、
+  计数；组顺序固定，不依赖数据到达顺序
+- 搜索**按空格分词**：每个 token 都必须命中（value / label / sublabel / 关键词），
+  而不是整串子串匹配；命中 label 前缀的排前
+- 高亮行必须滚入可视区（方向键在长列表里要能看见高亮在哪）
+
 ### R4 受控往返：草稿按 tab 存/恢复
 
 输入草稿持久化进 tab data（现状 textarea 走 `setInput` + store）。Tiptap 是非受控

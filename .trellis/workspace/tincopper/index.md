@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 330
+- **Total Sessions**: 331
 - **Last Active**: 2026-10-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~458 | Active |
+| `journal-7.md` | ~482 | Active |
 | `journal-6.md` | ~1955 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 331 | 2026-10-24 | composer 附件单一表示（B 方案）+ 弹层分组/图标/多词搜索 | - | `feat/composer-token-editor` |
 | 330 | 2026-10-24 | composer 富文本 token 化：Tiptap chip 落地（阶段 0-5） | - | `feat/composer-token-editor` |
 | 329 | 2026-10-24 | 补全追加：composer 高亮 token 层（AC11，阶段 6） | - | `feat/mention-slash-palette` |
 | 328 | 2026-10-24 | Agent Chat slash/@ 补全：能力位修订方案落地（阶段 0-5） | - | `feat/mention-slash-palette` |

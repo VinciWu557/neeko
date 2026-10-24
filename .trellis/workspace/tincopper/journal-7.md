@@ -456,3 +456,27 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Next Steps
 
 - 真机待验：AC2 pi 展开 /命令、AC6 CJK IME macOS+Windows 矩阵、chip 视觉对比度、@ 附件链路端到端
+
+
+## Session 331: composer 附件单一表示（B 方案）+ 弹层分组/图标/多词搜索
+<!-- trellis-session: v=2 fp=d803a27bc09d7e4f -->
+
+**Date**: 2026-10-24
+**Task**: composer 附件单一表示（B 方案）+ 弹层分组/图标/多词搜索
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+文件附件改为文档投影：删掉 useChatAttachments 的文件槽与 .wa-at chips 区，三个入口（@ 提及/附件按钮/拖拽）汇合到编辑器，请求的 files 由 docToRequestFiles 投影（chip 存在⇔随消息发送，修掉退格删 chip 后仍发送的缺陷）。弹层改分组渲染（Skills/Commands/Extensions/Files，带图标+标题+计数+吸顶），搜索改按 token 逐词匹配（含 description 与目录片段），高亮行 scrollIntoView。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 14/14；test:fe 646 文件 / 5992 用例全绿；新增 files 投影 golden（顺序/同名不同目录/去重/删 chip 即不再发送/空文档）与 searchPaletteItems/groupPaletteItems/groupOfSource 用例
+
+### Status
+
+[OK] **Completed**
