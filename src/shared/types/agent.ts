@@ -20,10 +20,56 @@ export interface ChatLaunch {
    * 详见后端 `ChatLaunch::inprocess`。
    */
   inprocess?: boolean;
+  /**
+   * ACP 的 JSON-RPC 帧格式。省略 = `content-length`（协议默认）。
+   *
+   * 它是**配置**，不是推断结果：`AcpAdapter` 曾按可执行文件名猜 NDJSON，
+   * 用户把二进制改名或包一层 wrapper 就会静默换错帧（服务端解析失败、
+   * 握手永远无响应、且没有任何报错）。
+   */
+  wire_format?: WireFormat | null;
 }
+
+/** ACP 帧格式（与后端 `WireFormat` 对齐）。 */
+export type WireFormat = 'content-length' | 'ndjson';
 
 /** 传输协议 —— 派生物，由启动命令识别。 */
 export type ChatTransport = 'acp' | 'serve' | 'jsonl' | 'pi-rpc';
+
+/**
+ * 传输识别规则表 —— **顺序即优先级**，必须与后端
+ * `common/agent/chat_launch.rs::TRANSPORT_RULES` 逐项一致。
+ *
+ * 跨栈护栏 `transports.test.ts` 读后端源码断言这份表的 `id` 有序序列相同。
+ * 单表化的收益：`transportOf` 与 `TRANSPORT_LABELS` 都从这里派生，新增协议
+ * 只改这一处（而不是「识别逻辑 + 文案表」两处各改一遍）。
+ */
+export interface TransportDef {
+  id: ChatTransport;
+  /** 完整 token 判据（单 token）。 */
+  tokens: string[];
+  /** 相邻两 token 的组合判据（如 `--mode rpc`）。 */
+  tokenPairs?: [string, string][];
+  /** 展示文案（识别结果用，**不是**选项列表）。 */
+  label: string;
+}
+
+export const TRANSPORTS: readonly TransportDef[] = [
+  { id: 'acp', tokens: ['acp'], label: 'ACP · JSON-RPC stdio' },
+  { id: 'serve', tokens: ['serve'], label: 'opencode serve · HTTP + SSE' },
+  { id: 'jsonl', tokens: ['--jsonl', 'stream-json'], label: 'JSON-Lines stdio' },
+  {
+    id: 'pi-rpc',
+    tokens: ['rpc'],
+    tokenPairs: [['--mode', 'rpc']],
+    label: 'Pi rpc · private NDJSON',
+  },
+] as const;
+
+/** 传输标识 → 展示文案。从 `TRANSPORTS` 派生，不单独维护。 */
+export const TRANSPORT_LABELS: Record<ChatTransport, string> = Object.fromEntries(
+  TRANSPORTS.map((d) => [d.id, d.label]),
+) as Record<ChatTransport, string>;
 
 /**
  * 从启动命令的**完整 token** 识别传输 —— 必须与后端
@@ -31,20 +77,24 @@ export type ChatTransport = 'acp' | 'serve' | 'jsonl' | 'pi-rpc';
  *
  * 只认完整 token：`--preserve` 含 "serve"、`--observe` 也含，子串匹配会判错。
  */
+function hasTokenPair(tokens: string[], a: string, b: string): boolean {
+  for (let i = 0; i + 1 < tokens.length; i += 1) {
+    if (tokens[i] === a && tokens[i + 1] === b) return true;
+  }
+  return false;
+}
+
 export function transportOf(chat: ChatLaunch | null | undefined): ChatTransport | null {
   if (!chat) return null;
   const tokens: string[] = [];
   if (chat.program) tokens.push(chat.program);
   for (const a of chat.args ?? []) tokens.push(a);
 
-  if (tokens.includes('acp')) return 'acp';
-  if (tokens.includes('serve')) return 'serve';
-  if (tokens.includes('--jsonl') || tokens.includes('stream-json')) return 'jsonl';
-  // `--mode rpc`（相邻两 token）或裸 `rpc`。
-  for (let i = 0; i + 1 < tokens.length; i += 1) {
-    if (tokens[i] === '--mode' && tokens[i + 1] === 'rpc') return 'pi-rpc';
+  // 表的顺序即优先级（与后端一致）：`opencode serve acp` 以 acp 为准。
+  for (const def of TRANSPORTS) {
+    if (def.tokens.some((t) => tokens.includes(t))) return def.id;
+    if (def.tokenPairs?.some(([a, b]) => hasTokenPair(tokens, a, b))) return def.id;
   }
-  if (tokens.includes('rpc')) return 'pi-rpc';
   // 默认 ACP：唯一通用协议，也是「没写特殊子命令的 CLI」最可能的行为。
   return 'acp';
 }
@@ -90,8 +140,17 @@ export interface AgentConfig {
   command: string;
   args: string[];
   env: Record<string, string>;
-  /** CHAT 能力（None = 无 CHAT 能力）。 */
+  /** CHAT 能力（None = 无 CHAT 能力）。**出厂事实**：协议与参数，内置不可覆盖。 */
   chat?: ChatLaunch | null;
+  /**
+   * 用户是否启用 CHAT 能力。省略 = 跟随出厂定义。
+   *
+   * 与 `chat` 分成两个字段：`chat` 是出厂事实（内置不可被覆盖层改写），
+   * 用户的真实诉求只有「用不用它」—— 那是三态偏好。
+   * 压成 `boolean` 会让 `undefined`（跟随默认）在第一次保存后变成 `true`，
+   * 此后出厂默认的任何变化都追不上。
+   */
+  chat_enabled?: boolean | null;
   /** prompt 前置参数（Headless 能力；None = 无）。 */
   prompt_args?: string[] | null;
   /** 交互式（TUI）prompt 前置参数（如 opencode `--prompt`：打开 CLI 并预填 prompt）；None = 无交互形态，回落 headless prompt_args。 */
@@ -113,11 +172,27 @@ export interface AgentConfig {
   deploy?: DeploySpec;
 }
 
+/**
+ * 该 agent 的 CHAT 能力是否可用 —— **唯一**判据。
+ *
+ * 与后端 `AgentConfig::is_chat_agent()` 逐字对齐：
+ * `chat.is_some() && chat_enabled != Some(false)`。
+ *
+ * 禁止再写 `Boolean(agent.chat)`：那会把用户主动关闭的 agent 当成可用，
+ * 于是列表里那一项看起来完全正常，选中后 `adapter_for` 才报错。
+ */
+export function isChatEnabled(agent: {
+  chat?: ChatLaunch | null;
+  chat_enabled?: boolean | null;
+}): boolean {
+  return Boolean(agent.chat) && agent.chat_enabled !== false;
+}
+
 /** 派生能力标记（前端计算）。 */
 export function agentCapabilities(agent: AgentConfig) {
   return {
     cli: (agent.command ?? '').length > 0,
-    chat: Boolean(agent.chat),
+    chat: isChatEnabled(agent),
     headless: Boolean(agent.prompt_args),
   };
 }

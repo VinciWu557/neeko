@@ -77,12 +77,19 @@ export interface TranslatableAgentShape {
   id: string;
   /** 非空即声明了 chat 能力（`ChatLaunch`）。 */
   chat?: unknown;
+  /**
+   * 用户是否启用 CHAT。缺省 = 跟随出厂定义。
+   *
+   * 必须参与判据：用户关掉 chat 后该 agent 不该再出现在「可用于翻译」里，
+   * 否则选中它会得到 `adapter_for` 的 Unsupported。
+   */
+  chat_enabled?: boolean | null;
   /** 缺省视为启用（历史配置没有这个字段）。 */
   enabled?: boolean;
 }
 
 export function isTranslatableAgent(agent: TranslatableAgentShape): boolean {
-  return agent.enabled !== false && Boolean(agent.chat);
+  return agent.enabled !== false && Boolean(agent.chat) && agent.chat_enabled !== false;
 }
 
 /**

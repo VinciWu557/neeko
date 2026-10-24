@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, beforeAll, afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readFileContent } from '@/features/file/api/fileApi';
+import { useAgentStore } from '@/shared/store/agentStore';
 import { useWorkspaceStore } from '@/shared/store/workspaceStore';
 import type { SequencedEvent, StreamEvent } from '@/shared/types/agentChat';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -16,18 +17,45 @@ function mkSession(projectId: string) {
   return WorkspaceSession.of(projectId, null);
 }
 
+/**
+ * 可对话 agent 列表。
+ *
+ * `useChatAgents` 从 **agentStore** 派生（唯一事实源是 `list_agents` 快照），
+ * 所以这份数据要通过 `useAgentStore.setState` 注入（见 `seedChatAgents`）。
+ *
+ * `chat` 不可省略：`isChatEnabled` 读它就是 false，列表会空。
+ */
+const CHAT_AGENTS = [
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    command: 'opencode',
+    args: [],
+    env: {},
+    enabled: true,
+    chat: { program: 'opencode', args: ['serve'] },
+  },
+  {
+    id: 'claude-code',
+    name: 'Claude Code',
+    command: 'claude',
+    args: [],
+    env: {},
+    enabled: true,
+    chat: { args: ['acp'] },
+  },
+  {
+    id: 'mockAgent',
+    name: 'Mock Agent',
+    command: '',
+    args: [],
+    env: {},
+    enabled: true,
+    chat: { inprocess: true },
+  },
+] as never[];
+
 vi.mock('@/features/agent/api/agentApi', () => ({
-  // `mockAgent` 必须在列表里：切 agent 的用例会切到它。
-  // 列表里没有的 id 会走 fallback（`useChatAgents` → 列表首项），
-  // 那是**真实行为**（用户选不到列表外的 agent），但会让「切 agent」这类
-  // 用例测不到它想测的东西 —— 落定 id 没变，会话自然不会重置。
-  listChatAgents: vi.fn(() =>
-    Promise.resolve([
-      { id: 'opencode', name: 'OpenCode', version: '1.0' },
-      { id: 'claude-code', name: 'Claude Code', version: '1.0' },
-      { id: 'mockAgent', name: 'Mock Agent', version: '1.0' },
-    ]),
-  ),
   listAgentModels: vi.fn(() => Promise.resolve([])),
   // AgentBadge 渲染 agent CLI 图标时消费
   resolveAgentIconSrc: vi.fn(() => null),
@@ -118,9 +146,11 @@ function emitEvent(payload: StreamEvent) {
   act(() => flushRaf());
 }
 
-/** 渲染视图并冲刷异步 promise（listChatAgents / listen 等），避免 act 警告。 */
+/** 渲染视图并冲刷异步 promise（listen 等在途请求），避免 act 警告。 */
 async function renderView(projectId = 'test-project') {
   const session = WorkspaceSession.of(projectId, null);
+  // `useChatAgents` 从 agentStore 派生 —— 每次渲染前把列表灌进去。
+  useAgentStore.setState({ agents: CHAT_AGENTS as never, loading: false });
   const utils = render(
     <AgentChatTabView
       tabKey={session.key}

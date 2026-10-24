@@ -16,11 +16,6 @@ export function listAgents(): Promise<AgentConfig[]> {
   return invoke<AgentConfig[]>('list_agents');
 }
 
-/** List agents that support Agent Chat (declared chat_transport). */
-export function listChatAgents(): Promise<AgentConfig[]> {
-  return invoke<AgentConfig[]>('list_chat_agents');
-}
-
 /** List models an agent supports in Agent Chat. */
 /**
  * `list_agent_models` 的返回类型。

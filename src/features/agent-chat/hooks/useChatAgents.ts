@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 
-import { listChatAgents } from '@/features/agent/api/agentApi';
-import type { AgentConfig } from '@/shared/types/agent';
+import { useAgentStore } from '@/shared/store/agentStore';
+import { isChatEnabled, type AgentConfig } from '@/shared/types/agent';
 
 /**
  * 可对话 agent 列表 + 当前选中项的派生视图。
@@ -34,21 +34,14 @@ export interface ChatAgentsState {
 }
 
 export function useChatAgents(agentId: string | undefined): ChatAgentsState {
-  const [chatAgents, setChatAgents] = useState<AgentConfig[]>([]);
-
-  useEffect(() => {
-    let disposed = false;
-    void listChatAgents()
-      .then((agents) => {
-        if (!disposed) setChatAgents(agents);
-      })
-      .catch(() => {
-        if (!disposed) setChatAgents([]);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, []);
+  // 从 **agentStore** 派生，而不是自己 `listChatAgents()` 一次。
+  //
+  // 曾经是「空依赖 useEffect + 独立 useState」：只在挂载时拉一次，于是
+  // 用户在设置里关掉某个 agent 的 chat 后保存，这个列表仍是旧的 ——
+  // 选中那一项才由 `adapter_for` 报错，而它看起来完全正常。
+  // 现在 `saveAgent()` 的 refresh 直接反映到这里。
+  const all = useAgentStore((s) => s.agents);
+  const chatAgents = useMemo(() => (all ?? []).filter(isChatEnabled), [all]);
 
   const selectedAgent = useMemo(() => {
     // 1. 命中真实数据
