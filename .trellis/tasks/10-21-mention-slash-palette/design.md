@@ -203,3 +203,29 @@ VS Code / Claude Code 的 composer 把 `/命令` 与 `@文件` 渲染成带色 t
 
 **无障碍与性能**：镜像层 `aria-hidden` + `pointer-events: none`；tokenize
 只在 text 变化时重算（useMemo），不逐渲染扫描。
+
+### WebKit IME 腐坏的三层加固（2026-10-24 真机冒烟）
+
+真机（WKWebView）中文输入法组合期间按方向键，输入框出现豆腐块（tofu）。键盘链路
+（`useComposerPalette.handleKeyDown` → `ChatComposer` → `AgentChatTabView` → 全局
+快捷键 capture）与弹层状态机均已排查排除（只读不写）。根因判断：**WebKit 对
+「`color: transparent` 的受控 textarea + IME 组合文本（marked text）」的组合期
+绘制腐坏** —— 与 react-simple-code-editor 在 Safari/WKWebView 上的中文 IME
+乱码同类。三层互为冗余的加固，各自独立成立、各自缓解同一症状类：
+
+1. **CSS**：`-webkit-text-fill-color: transparent` 替代 `color: transparent`
+   （WebKit 的 IME marked text 绘制走 text-fill-color 路径，社区标准修法）；
+   `.composing` 期间恢复 `currentColor`；`::placeholder` 显式补 fill-color
+   （否则被继承隐藏）。
+2. **组合结束重同步**（`ComposerPalette` 的 `onCompositionEnd`）：WebKit 上末次
+   input 与 compositionend 的顺序可能颠倒 —— 受控值丢 change、与 DOM 值分叉。
+   组合结束后以 DOM 值为准经 `onReplaceText` 写回并保留光标位（走既有
+   `pendingCursorRef` 通道；`compositionProps` 依赖为 `[]`，用每次渲染同步的
+   ref 转发 `input` 与回调避免闭包过期）。
+3. **镜像层组合期 `visibility: hidden` 而非卸载**（`ComposerMirror`）：
+   unmount/remount 本身是组合期 DOM 抖动源，且重挂载后 scrollTop 归零
+   （原重组补偿 effect 就是在擦这个屁股）—— 常驻后滚动同步天然连续，补偿
+   effect 连同其测试一并删除。
+
+任一层失效（1 只治绘制路径、2 只治受控值分叉、3 只治 DOM 结构抖动），其余两层
+仍能兜住。变异验证：去 2 → 重同步用例红；去 3（恢复卸载）→ 组合期镜像两用例红。
