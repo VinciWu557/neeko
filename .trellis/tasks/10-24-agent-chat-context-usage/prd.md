@@ -19,7 +19,10 @@
 - R2 **PiRpc adapter 采集**：每回合结束后（`agent_settled`）调用 pi RPC
   `get_session_stats`，把 `contextUsage {tokens, contextWindow}` 与累计
   `tokens {input, output, cacheRead, cacheWrite}` 翻译为 `Meta` 事件发射。
-  这是四种传输中唯一有全量数据的（见 design.md 能力矩阵）。
+- R2b **Acp adapter 采集**（2026-10-24 修订新增）：监听 `session/update` 的
+  `usage_update` 变体（ACP RFDS session-usage，Completed 2026-06-05），
+  `used → context_tokens`、`size → context_limit`，model 取会话当前模型。
+  无 cache 字段 → 命中率行降级隐藏。旧 agent 不发该变体 → 无计量器（兼容）。
 - R3 **前端弹层重设计**（`ContextWindowMeter`）：
   - 头部：「上下文容量」+ 右侧 `20.5万/100万（20.5%）` 格式；
   - 横向用量进度条，颜色分级沿用现有阈值（>70% 黄 / >90% 红）；
@@ -35,17 +38,20 @@
 
 - 分项占比图例（消息/系统工具/MCP 工具/技能/系统提示词/其他）—— CLI 协议不提供，估算策略待后续任务决策
 - 底部统计区与 sparkline 趋势图（参考图中被模糊的区域）
-- Acp / Serve(opencode) / Jsonl(DeepSeek) 三种传输的用量采集（协议侧无数据，后续按传输逐个评估）
+- ACP `usage_update` 的 `cost` 字段消费（协议无对应字段，未来扩展点）
+- Serve(opencode) / Jsonl(DeepSeek) 两种传输的用量采集（协议侧无数据，后续按传输逐个评估）
 - `ChatComposer` 入口位置调整（环形按钮保留在 composer-left）
 
 ## Acceptance Criteria
 
 - [ ] Rust：`Usage` 新字段 roundtrip 测试 + 旧 JSON（无新字段）反序列化向后兼容测试通过
 - [ ] Rust：pi_rpc `get_session_stats` 响应 → `Meta` 事件翻译的单元测试通过（含 `contextUsage` 缺失的降级）
+- [ ] Rust：acp `usage_update` → `Meta` 事件翻译的单元测试通过（含 size 缺失时忽略、model 注入）
 - [ ] 前端：`contextWindowOf` 新语义测试（`context_tokens` 优先、`context_limit` 缺失、cache 派生）通过
 - [ ] 前端：`ContextWindowMeter` 渲染测试（万单位格式化、百分比、命中率行、降级隐藏分支）通过
 - [ ] `pnpm check:quick` 通过
 - [ ] 真实 pi 会话中弹层显示进度条与命中率（手动验证，截图记录）
+- [ ] 真实 ACP agent（如 claude-code / gemini，需其版本支持 usage_update）中弹层显示进度条（手动验证）
 
 ## Notes
 

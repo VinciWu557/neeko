@@ -19,8 +19,8 @@ ZCode 弹层（用户提供）首期还原三块：
 
 | 传输 | 用量数据源 | 首期结论 |
 | --- | --- | --- |
-| **PiRpc**（pi agent） | RPC `get_session_stats`：`contextUsage {tokens, contextWindow, percent}` + 累计 `tokens {input, output, cacheRead, cacheWrite}`；assistant message 亦带 per-turn `usage` | **全量支持**，本任务唯一采集点 |
-| Acp（claude-code/gemini/qoder/…） | ACP `session/update` 无 usage 变体 | 不采集，UI 降级 |
+| **PiRpc**（pi agent） | RPC `get_session_stats`：`contextUsage {tokens, contextWindow, percent}` + 累计 `tokens {input, output, cacheRead, cacheWrite}`；assistant message 亦带 per-turn `usage` | **全量支持**（含命中率） |
+| **Acp**（claude-code/gemini/qoder/…） | RFDS `session-usage`（Completed 2026-06-05）：`session/update` 的 `usage_update` 变体主动推送 `used`/`size`，可选 `cost` | **支持**（无 cache 字段，命中率行降级） |
 | Serve（opencode） | serve 事件流当前无 token 字段（events_v1/v2 均未解析） | 不采集，UI 降级 |
 | Jsonl（DeepSeek harness） | 协议无 usage 事件 | 不采集，UI 降级 |
 
@@ -95,6 +95,23 @@ if let Ok(data) = self.proc.request(json!({"type": "get_session_stats"}), None).
 
 错误策略：stats 请求失败/超时 → `log::debug!` 跳过本次，**不发 Error 事件**
 （遥测缺失不应打断对话流）。
+
+## 3b. Acp 采集（adapter 层，2026-10-24 修订新增）
+
+ACP 是 **agent 主动推送**（与 pi 的「回合后拉取」相反）：`session/update` 通知的
+`usage_update` 变体（RFDS session-usage，Completed 2026-06-05；旧 agent 不发，
+`_ => None` 兜底天然兼容）。落点：`src-tauri/src/agent/chat/adapter/acp.rs` 的
+`translate_notification` 加一个分支：
+
+- 映射：`update.used → context_tokens`、`update.size → context_limit`；
+- `used`/`size` 均为 required：缺任一返回 `None`（忽略该条，与其它分支容错一致）；
+  数值解析容忍 float（JSON number 若由浮点类型产生，`as_u64` 会失败，静默丢
+  更新的失败模式难排障 —— `as_u64` 失败后回退 `as_f64` 截断）；
+- model 载荷不携带：`translate_notification` 增参 `current_model: Option<&str>`，
+  由调用点 `handle_inbound` 从 `acp_config::current_model_from_config(&configs)`
+  传入（与 pi_rpc 同源同函数，模型切换后保持新鲜）；
+- `cost` 字段本期忽略（协议无对应字段，记为未来扩展点）；无 cache 字段 →
+  前端命中率行按既有降级隐藏。
 
 ## 4. 前端重设计
 

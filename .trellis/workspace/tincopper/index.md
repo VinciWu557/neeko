@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 317
-- **Last Active**: 2026-10-23
+- **Total Sessions**: 326
+- **Last Active**: 2026-10-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~124 | Active |
+| `journal-7.md` | ~348 | Active |
 | `journal-6.md` | ~1955 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,15 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 326 | 2026-10-24 | Agent Chat 图标封装为 AgentChat 组件 | - | `main` |
+| 325 | 2026-10-24 | 引导页 Agent Chat 漏网图标补齐（推荐卡片+Quick Actions） | - | `main` |
+| 324 | 2026-10-24 | 动作菜单 New Agent Chat 入口换 agent-chat.svg | - | `main` |
+| 323 | 2026-10-24 | Agent Chat Tab 图标换为 agent-chat.svg | - | `main` |
+| 322 | 2026-10-24 | 计量器悬停提示去英文（tokens → 已用） | - | `main` |
+| 321 | 2026-10-24 | 计量器入口移至附件按钮右侧 | - | `main` |
+| 320 | 2026-10-24 | 计量器按钮纯图标化：去百分比文字、16px 对齐 composer 图标 | - | `main` |
+| 319 | 2026-10-24 | ACP usage_update 接入：上下文用量采集扩展到 ACP 传输（RFDS session-usage） | - | `main` |
+| 318 | 2026-10-24 | Agent Chat 上下文用量计量器：协议扩展+PiRpc采集+弹层重做（进度条/命中率） | - | `main` |
 | 317 | 2026-10-23 | Split the opencode dual-stack work into six atomic commits | `69df2ff0` | `main` |
 | 316 | 2026-10-21 | ACP 模型选择收敛：从 5 处判据漂移到端到端验证 | `8673517b`, `5c80b3d8`, `9a6bfbcc`, `ecf07aa5`, `a8161636`, `0c02f0b8`, `fb032fb4`, `0f71e871` | `main` |
 | 315 | 2026-10-20 | 翻译设置补 agent/模型选择：判据收口与陈旧 agentId 可见化 | `eab8d5d6`, `ffa659b1`, `df8c08de`, `2e040512`, `fd61f933` | `main` |
