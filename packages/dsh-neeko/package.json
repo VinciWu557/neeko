@@ -10,6 +10,15 @@
     "websocket"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tincopper/neeko.git",
+    "directory": "packages/dsh-neeko"
+  },
+  "bugs": {
+    "url": "https://github.com/tincopper/neeko/issues"
+  },
+  "homepage": "https://github.com/tincopper/neeko/tree/main/packages/dsh-neeko#readme",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
