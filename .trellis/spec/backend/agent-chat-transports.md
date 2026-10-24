@@ -117,19 +117,78 @@ pub struct ChatLaunch {
 
 ## 4. 新增一条传输必须改的落点
 
-漏任何一处都是**静默失败**（不报错，行为错）：
+**从 4 处收敛到 3 处**（2026-10-23 `10-23-agent-chat-registry`）：
 
-| # | 落点 | 漏掉的后果 |
-| --- | --- | --- |
-| 1 | `ChatLaunch::transport()` 的 token 判定 | 识别不出，永远走默认 ACP |
-| 2 | `ChatTransport` 变体 + `as_str()` | 日志/错误里的标识缺失 |
-| 3 | `adapter_for()` 的 `match` | Rust 编译报错（这一处**不会漏**） |
-| 4 | 前端 `transportOf()`（`shared/types/agent.ts`）+ `TRANSPORT_LABELS` | UI 上的识别结果与实际不符 |
+| # | 落点 | 形态 | 漏掉的后果 |
+| --- | --- | --- | --- |
+| 1 | `common/agent/chat_launch.rs` 的 `TRANSPORT_RULES` | 一行 `rule(…)` | 识别不出，永远走默认 ACP |
+| 2 | `ChatTransport` 变体 + `ALL` | 枚举两处 | 编译报错（`ALL` 与规则表的等长断言是**编译期**失败） |
+| 3 | `agent/chat/adapter/registry.rs` 的 `PROTOCOL_BUILDS` | 一行 `build(…)` | 运行期 panic（见下方「已知代价」） |
+| 4 | 前端 `shared/types/agent.ts` 的 `TRANSPORTS` | 一行 | 跨栈护栏红（`id` 序列不符） |
 
-护栏：`src/features/agent/components/__tests__/chatLaunch.test.ts` 的
-`agrees with the backend recogniser on every token` 读 `chat_launch.rs` 源码，
-断言 ① 两端 token 集合一致 ② 后端只用 `tokens.contains`（不子串匹配）
-③ `acp` 判定在 `serve` 之前。**三条都做过变异验证**。
+### 4.0.1 为什么是两张表而不是一张
+
+| 表 | 位置 | 关注点 | 能否依赖 adapter |
+| --- | --- | --- | --- |
+| `TRANSPORT_RULES` | `common/agent/` | **怎么识别**（argv token 规则 + `id`） | 不能 —— 它是 `ChatLaunch` 自身的释义 |
+| `PROTOCOL_BUILDS` | `agent/chat/adapter/` | **怎么构造**（哪个 adapter） | 能 —— 它就是 adapter 层的东西 |
+
+合成一张放进 `common/` 会让 `common` 反向依赖 `agent::chat::adapter`，与既有的
+`adapter → common` 构成**环**（`common` 对本域的生产依赖此前为零）。分成两张后两边都单向。
+代价是「新增传输」从 2 处变 3 处，这个取舍是**有意的**。
+
+### 4.0.2 已知代价：表化**不恢复编译期穷举**
+
+改成 `match` 遍历表后，漏一条表项**不再编译报错**。这是表化的代价，用三道防线抵消：
+
+1. **编译期**：`const _: () = assert!(ChatTransport::ALL.len() == TRANSPORT_RULES.len());`
+2. **测试期**：`every_transport_variant_has_a_rule` / `rule_table_has_no_extra_entries` /
+   `every_transport_variant_has_a_build` / `both_tables_list_transports_in_the_same_order`
+3. **运行期**：`rule_for` / `build_for` 查不到直接 `panic!`，消息指向要改的文件
+
+**不要**在文档或注释里声称「`static` 表 = 集合编译期可见」—— 那是错的（曾写在 design 里，
+被评审纠正）。`static` 只让表**内容**编译期可见；枚举 ↔ 表项的映射由 `find` 在运行期完成。
+
+### 4.0.3 `adapter_for` 不得含传输分支
+
+`adapter_for` 体内容忍的只有两条前置早退（无 chat / 被用户关闭），分派一律走
+`build_for(launch.transport())`。护栏 `adapter_for_has_no_transport_branches`
+读源码断言（跳过注释行，并配平花括号取函数体）。
+
+**为什么这条重要**：加回 `match` 就把「新增传输要改分派处」重新引入，而表化的全部目的
+就是消除它。
+
+### 4.0.4 跨栈护栏走机器可读的 `id` 序列
+
+`shared/types/__tests__/transports.test.ts` 读后端 `TRANSPORT_RULES`，断言两端
+`id` **有序序列相等**（顺序即优先级）。这取代了旧的「逐 token `expect(rust).toContain('"acp"')`」
+—— 那种写法只证明「字符串出现过」，证明不了「两端判据一致」。
+
+规则细节（哪些 token）只归后端所有，前端不重复一份。
+
+### 4.0.5 ACP 帧格式是配置项，不是推断结果
+
+`ChatLaunch::wire_format`（`ContentLength` 缺省 / `Ndjson`）只有 ACP 消费。**禁止**按
+可执行文件名在 spawn 路径推断 —— 那条逻辑曾让「把 opencode 改名 / 包一层 wrapper」
+静默换错协议（握手无响应、无报错、UI 永远转圈）。护栏
+`adapter_never_guesses_the_wire_format_from_the_program_name`。
+
+**迁移期推断与运行时推断的区别**（这是最容易被误读成「bug 回来了」的地方）：
+
+| 层 | 位置 | 处理什么 | 结果去向 |
+| --- | --- | --- | --- |
+| 反序列化期 | `from_legacy_str` / `from_legacy_object` | 旧格式独有键（裸串 / `transport`） | 立即落盘（下次序列化写出） |
+| **装载期** | `AgentConfig::migrate_legacy_chat_wire_format`（`agent/boot.rs` 装载 `customAgents` 时调用，写回配置 JSON，经 `outcome.migrated` 落盘） | 当前形态快照；**command 回落**（旧推断看 `chat_cmd_vec()[0]`，program 缺省时是 command） | 下次保存落盘 |
+| 运行期 | **无 —— 禁止恢复** | — | — |
+
+「旧版本写的当前形态」与「新版本写的缺省值」按内容不可区分，区分靠**时机**：serde 层
+不做当前形态推断（保 `deserialize(serialize(x)) == x` 往返不变量），装载层只在读持久化
+快照时补。显式值（**含 `ContentLength`**）永远短路推断。推断实现只有
+`infer_legacy_wire_format` 一份。
+
+前端表达：`ChatLaunchEditor` 对 ACP 传输暴露 Wire Format 选择器；显式
+`'content-length'` 落盘是 opencode 命名二进制固定帧格式的唯一方式（否则每次装载都会被
+重新推断成 NDJSON）。
 
 ## 4b. 环境变量的两层
 
@@ -148,6 +207,28 @@ pub struct ChatLaunch {
 **内部必需变量最后写入**：`OPENCODE_SERVER_PASSWORD` 由 `connection::merged_env`
 在用户 env 之后插入，用户改不动 —— 它是内部协议细节，填错只得到 401，而 401 的
 根因从 UI 上看不出来。护栏：`connection::merged_env_tests`。
+
+### 4b.1 `!VAR` 引用：凭证不落明文
+
+`ChatLaunch::env` 是本仓第一个真正承载**凭证**的配置字段（`ANTHROPIC_API_KEY` 之类），
+而 `~/.neeko/config.json` 是明文 JSON、无加密依赖。
+
+```
+CHAT Env 里写 KEY=!ANTHROPIC_API_KEY
+```
+
+- `!` 前缀 = 「取父进程同名变量」。配置里只留变量名，**值不落盘**。
+- spawn 用 `AgentConfig::resolved_chat_env()`（展开后），序列化用 `chat_env()`（字面量）。
+- 引用的变量不存在 → **报错上抛**，不静默传空串：空串会让 agent 收到「已设置但无效」
+  的 key，表现是 401，而 401 的根因从 UI 上看不出来。
+- `!` 不在开头（`a!b`）是普通值。
+- 语法与 `docker-compose` 插值同形，用户零学习成本。
+
+护栏：`env_references_are_resolved_from_the_parent_process`（含缺变量报错）+
+`env_reference_literals_survive_serialisation`（断言明文不出现）。
+
+> **已知限制**：非 `!` 的值仍以明文存 `config.json`。完整方案（系统 Keychain /
+> Windows Credential Manager）单开任务。
 
 ## 4c. exec spawn 只有一个入口
 
@@ -464,6 +545,10 @@ match caps.config {
 | 3 | `ctx.prompt` 从未被消费 → 首轮消息丢失 | 测了 `send(Turn)`，绕过了 `create` | `create_sends_the_first_prompt_from_the_context` |
 | 4 | 静默会话的暂存事件从未被应用 | 两条路径各自实现，只测了其中一条 | `should drain buffered events after the silent session is opened` |
 | 5 | 点选模型只改本地 state → 档位不刷新 | 没有「写路径必须下发」的判据 | `should wire the composer to the pushing handler` + `sessionOptionsWiring.test.ts` |
+| 6 | 分派/识别规则改了一处而漏另一处 | 各处的表项各自合法，只有「两端一致」时才错 | `every_transport_variant_has_a_rule` / `…has_a_build` / `transports.test.ts` 的 id 序列 |
+
+> 断点 6 是 `10-23-agent-chat-registry` 新增的一类：**它不是「没实现」，而是「实现散在多处」**。
+> 收敛成两张表 + 一条跨栈 `id` 序列断言后，漏登一处必然红。
 
 ### 10.3 契约探针：声明 vs 行为
 

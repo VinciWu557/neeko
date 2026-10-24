@@ -1951,6 +1951,60 @@ resetAgent(agentId)   // invoke('remove_agent') → agentStore.refresh()
 而不是直接查快照 —— 启动期会话恢复可能早于 preload 完成，直查会把「还没加载」
 误判成「不存在」，用户得到空终端。
 
+### 5b. `chat` 是出厂事实，`chat_enabled` 是用户偏好（2026-10-23）
+
+| 字段 | 谁拥有 | 内置 agent 可否覆盖 | 语义 |
+| --- | --- | --- | --- |
+| `AgentConfig.chat` | 出厂定义（`builtin/providers.rs`） | **否** | 协议 + 参数（`ChatLaunch`） |
+| `AgentConfig.chat_enabled` | 用户 | 是 | `Some(false)` = 关掉；`None` = 跟随出厂 |
+
+**判据只有一处**：`isChatEnabled(agent)`（`shared/types/agent.ts`），镜像后端
+`AgentConfig::is_chat_agent()`：
+
+```ts
+Boolean(agent.chat) && agent.chat_enabled !== false
+```
+
+禁止再写 `Boolean(agent.chat)` —— 那会把用户主动关闭的 agent 当成可用，于是列表里
+那一项看起来完全正常，选中后 `adapter_for` 才报错。
+
+消费点（全部必须走 `isChatEnabled`）：`agentCapabilities()`、`isTranslatableAgent()`、
+`useChatAgents()`、`CapabilityBadges` 的 `Pick<…>` 必须包含 `chat_enabled`
+（漏了读不到该字段 ⇒ 关掉的 chat 仍显示为可用）。
+
+#### 三态禁止压成 boolean
+
+表单态 `chatEnabled: 'default' | 'on' | 'off'`。压成 `boolean` 会让 `undefined`
+（跟随默认）在第一次保存后变成 `true`，此后出厂默认的任何变化**永远追不上**
+（反向的「旧快照回滚出厂升级」）。
+
+#### `useChatAgents` 必须订阅 `agentStore`
+
+```ts
+// ✅
+const all = useAgentStore((s) => s.agents);
+const chatAgents = useMemo(() => (all ?? []).filter(isChatEnabled), [all]);
+
+// ❌ 空依赖 effect + 独立 useState：保存后列表不刷新
+useEffect(() => { void listChatAgents().then(setChatAgents); }, []);
+```
+
+旧写法只在挂载时拉一次快照，`saveAgent()` 的 refresh 打不到它 —— 用户关掉某 agent 的
+chat 后下拉仍是旧的，选中才报错。
+
+#### 内置 agent 的表单提交必须带回出厂 `chat`
+
+表单态里的 argv 是**投影**（`formatChatLaunch` 会把 `command` 填进 `program`）。
+用投影值提交会把 `{program: None}` 改写成 `{program: Some(command)}` ——
+「沿用 command」变成「显式指定」，出厂升级不再跟随，**而界面上看不出来**。
+
+```ts
+chat: initial?.is_builtin ? (initial.chat ?? null) : builtChat,
+```
+
+护栏：`AgentForm.builtinChat.test.tsx` 的
+`carries the factory chat through unchanged (program stays None)`（已做变异验证）。
+
 ### 6. 护栏（机器门禁，不靠 review）
 
 **`check_agent_config_single_source`**（`tools/guards/checks/`，29 条护栏之一）三条判据：
