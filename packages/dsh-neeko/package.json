@@ -1,6 +1,6 @@
 {
   "name": "dsh-neeko",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bidirectional bridge between DeepSeek Harness and the Neeko desktop shell: WebSocket server, health endpoint, protocol translation, and two-way session transport",
   "keywords": [
     "deepseek",
