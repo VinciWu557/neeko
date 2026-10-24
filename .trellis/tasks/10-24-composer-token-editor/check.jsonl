@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "复核 §17 mergeTabData 登记与真 store 用例；ratchet 未靠拆分规避；§18 护栏判据强度"}
+{"file": "src/AGENTS.md", "reason": "复核红线 12（文件 chip 附件链路）与导入防火墙"}
+{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "复核键盘契约文档与新实现的同步"}

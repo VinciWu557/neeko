@@ -1,0 +1,6 @@
+{"file": "src/AGENTS.md", "reason": "前端红线 12（FileRef 路径身份）与导入防火墙；@ 文件 chip 的附件链路必须走既有 addAttachment"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "§17 mergeTabData 穷举白名单（composerDoc 字段登记 + 真 store 测试）；§15/§18 依赖身份与护栏判据；组件规模 ratchet"}
+{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "10-21 已登记的 handleKeyDown→boolean 消费契约与弹层键盘契约；本任务替换为 suggestion 引擎后需同步更新"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "草稿进 tab data 的归属（editorStore）、禁止第二份表示（旧 input 字段单向迁移）"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "组件级测试层级与 mock 策略（编辑器 mock 边界）"}
+{"file": ".trellis/tasks/10-24-composer-token-editor/research/editor-selection.md", "reason": "选型证据与迁移风险清单（21 条一手证据）"}

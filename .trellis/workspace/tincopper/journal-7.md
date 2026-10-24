@@ -428,3 +428,31 @@ Implemented context window usage display end to end: extended Usage with context
 ### Next Steps
 
 - 真机冒烟：AC3（pi 展开 /命令）+ AC11（高亮对齐观感 / IME / 滚动条隐藏可用性）；确认后 commit + 归档
+
+
+## Session 330: composer 富文本 token 化：Tiptap chip 落地（阶段 0-5）
+<!-- trellis-session: v=2 fp=73a5f7e8d77a5bda -->
+
+**Date**: 2026-10-24
+**Task**: composer 富文本 token 化：Tiptap chip 落地（阶段 0-5）
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带图标、可整块删、类型化配色的 inline chip。新增 composer/{editorSchema,suggestionWiring,PalettePopup,ChipView,RichComposer,editorRegistry,submitComposer}；序列化 docToPromptText golden 锁死；受控回环单向闸门（setContent 次数=1）；外部投递改走 editorRegistry（setInput 对非受控编辑器静默失效）；能力位门落在 suggestion shouldShow 运行时门（保 extensions 身份稳定）。删除 ComposerMirror/paletteHighlight/findTrigger/applySelection 与镜像 CSS、三层 WebKit IME 加固。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 14/14 全绿；test:fe 646 文件 / 5980 用例全绿；变异验证 2 组（setContent 进 update → 回环用例红；shouldShow 短路 → 能力位用例红）；退役符号反向护栏（剥注释后扫描）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机待验：AC2 pi 展开 /命令、AC6 CJK IME macOS+Windows 矩阵、chip 视觉对比度、@ 附件链路端到端
