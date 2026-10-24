@@ -43,6 +43,16 @@ export function useMockEventSchedule({
       timers.push(setTimeout(() => applyEvent(ev), delay));
     };
 
+    // mock 脚本里重复最多的工具收尾事件：抽成一个局部 helper（纯数据，行为不变）。
+    const toolEnd = (delay: number, callId: string) =>
+      schedule(delay, {
+        seq: seq++,
+        type: 'tool_end',
+        session_id: sid,
+        call_id: callId,
+        status: 'done',
+      });
+
     // 1. Session start
     schedule(0, {
       seq: seq++,
@@ -50,7 +60,13 @@ export function useMockEventSchedule({
       session_id: sid,
       agent: 'mock-agent',
       model: 'mock-model-v1',
-      capabilities: { approvals: true, command_echo: true, diff: true, resume: false },
+      capabilities: {
+        approvals: true,
+        command_echo: true,
+        diff: true,
+        resume: false,
+        commands: false,
+      },
     });
 
     // 2. Context init with skills
@@ -112,13 +128,7 @@ export function useMockEventSchedule({
       output:
         'use crate::agent::chat::events::{SessionRequest, StreamEvent};\n\npub trait AgentAdapter: Send + Sync {\n    fn kind(&self) -> AgentKind;\n    async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError>;\n}',
     });
-    schedule(1600, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'read_1',
-      status: 'done',
-    });
+    toolEnd(1600, 'read_1');
 
     // 穿插2: 编辑文件
     schedule(1900, {
@@ -149,13 +159,7 @@ export function useMockEventSchedule({
       output:
         'Successfully applied edit to src-tauri/src/agent/chat/adapter.rs\n@@ -15,7 +15,9 @@\n pub trait AgentAdapter: Send + Sync {\n     fn kind(&self) -> AgentKind;\n-    async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError>;\n+    async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError>;\n+    fn capabilities(&self) -> Capabilities;\n }',
     });
-    schedule(2700, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'edit_1',
-      status: 'done',
-    });
+    toolEnd(2700, 'edit_1');
 
     // 穿插3: 执行命令
     schedule(3000, {
@@ -186,13 +190,7 @@ export function useMockEventSchedule({
       output:
         'Compiling neeko v1.0.6 (debug)\n   Finished `dev` profile [optimized] target(s) in 8.99s',
     });
-    schedule(3900, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'cmd_1',
-      status: 'done',
-    });
+    toolEnd(3900, 'cmd_1');
 
     // 穿插4: 工具分组 + skill + task + todos（覆盖全部工具卡组件）
     schedule(4100, {
@@ -223,13 +221,7 @@ export function useMockEventSchedule({
       call_id: 'read_2',
       output: '[package]\nname = "neeko"\nversion = "1.0.4"\nedition = "2021"',
     });
-    schedule(4900, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'read_2',
-      status: 'done',
-    });
+    toolEnd(4900, 'read_2');
     schedule(5100, {
       seq: seq++,
       type: 'tool_start',
@@ -246,13 +238,7 @@ export function useMockEventSchedule({
       output:
         '[dependencies]\nserde = { version = "1", features = ["derive"] }\ntokio = { version = "1", features = ["full"] }',
     });
-    schedule(5500, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'read_3',
-      status: 'done',
-    });
+    toolEnd(5500, 'read_3');
     // SkillCard（load_skill）
     schedule(5700, {
       seq: seq++,
@@ -270,13 +256,7 @@ export function useMockEventSchedule({
       output:
         '<skill_content name="codebase-design"># Codebase Design\n\n- 高内聚低耦合，feature 边界清晰\n- 组件 ≤300 行，模块间通过明确定义的接口协作\n</skill_content>',
     });
-    schedule(6100, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'skill_1',
-      status: 'done',
-    });
+    toolEnd(6100, 'skill_1');
     // TaskCard（task）
     schedule(6300, {
       seq: seq++,
@@ -294,13 +274,7 @@ export function useMockEventSchedule({
       output:
         'Step 1: 抽离 messageModel / messageCache\nStep 2: 抽离 useAgentChat hook\nStep 3: 瘦身组件至 ≤300 行',
     });
-    schedule(6700, {
-      seq: seq++,
-      type: 'tool_end',
-      session_id: sid,
-      call_id: 'task_1',
-      status: 'done',
-    });
+    toolEnd(6700, 'task_1');
     // TodoListCard（todo_updated）
     schedule(6900, {
       seq: seq++,

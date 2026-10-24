@@ -9,11 +9,12 @@ function setup() {
   const onContextInit = vi.fn();
   const flushDeltas = vi.fn();
   const setStreaming = vi.fn();
-  const appendSystemMessage = vi.fn();
+  /** 收 updater 函数的 mock：断言时对空数组求值即可看到要追加的消息。 */
+  const setMessages = vi.fn();
   const { result } = renderHook(() =>
-    useSessionLevelEvents({ onContextInit, flushDeltas, setStreaming, appendSystemMessage }),
+    useSessionLevelEvents({ onContextInit, flushDeltas, setStreaming, setMessages }),
   );
-  return { result, onContextInit, flushDeltas, setStreaming, appendSystemMessage };
+  return { result, onContextInit, flushDeltas, setStreaming, setMessages };
 }
 
 /**
@@ -93,7 +94,7 @@ describe('useSessionLevelEvents', () => {
   });
 
   it('should flush the pending deltas before reporting an error', () => {
-    const { result, flushDeltas, setStreaming, appendSystemMessage } = setup();
+    const { result, flushDeltas, setStreaming, setMessages } = setup();
     act(() => {
       result.current.handle({
         type: 'error',
@@ -104,7 +105,14 @@ describe('useSessionLevelEvents', () => {
     });
     expect(flushDeltas).toHaveBeenCalled();
     expect(setStreaming).toHaveBeenCalledWith(false);
-    expect(appendSystemMessage).toHaveBeenCalledWith('⚠ boom (E_BOOM)');
+    // 系统消息在本 hook 内追加（唯一消费者），以 updater 形式落 state。
+    expect(setMessages).toHaveBeenCalledTimes(1);
+    const updater = setMessages.mock.calls[0][0] as (
+      prev: { id: string; role: string }[],
+    ) => { id: string; role: string; blocks: unknown }[];
+    const next = updater([]);
+    expect(next).toHaveLength(1);
+    expect(next[0].role).toBe('system');
   });
 
   it.each([

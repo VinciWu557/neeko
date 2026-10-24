@@ -3,6 +3,8 @@ import React, { useMemo, useState } from 'react';
 
 import type { FileNode } from '@/shared/types/file';
 
+import { flattenFiles } from './paletteSources';
+
 /**
  * 文件选择弹窗 —— 把项目文件树摊平成可选列表。
  *
@@ -24,22 +26,6 @@ interface AttachFilePickerProps {
   attached: string[];
   onPick: (file: FileNode) => void;
   onClose: () => void;
-}
-
-/** 把文件树摊平成叶子文件（目录不参与选择）。
- *
- * 返回值是 `FileNode[]` 而非新类型：`is_dir` 已在构造时被滤成 `false`，调用方
- * 不需要再判。渲染层因此**不应**再写 `is_dir` 三目 —— 那是永不执行的分支。
- */
-function flattenFiles(nodes: FileNode[], out: FileNode[] = []): FileNode[] {
-  for (const node of nodes) {
-    if (node.is_dir) {
-      flattenFiles(node.children ?? [], out);
-    } else {
-      out.push(node);
-    }
-  }
-  return out;
 }
 
 const AttachFilePicker: React.FC<AttachFilePickerProps> = ({

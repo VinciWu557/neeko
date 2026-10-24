@@ -24,6 +24,50 @@ function setup() {
   return renderHook(() => useSessionConfigOptions(() => 'sid'));
 }
 
+/**
+ * `commands` 能力位与 config 能力位同住一份会话快照（唯一消费点）。
+ *
+ * AC1 的前端侧钉子：位为 true 才亮 `/` 入口；缺省（旧后端）与 reset 后
+ * （新会话能力未到）都必须是 false —— 不给「不支持传输弹了再说」留门。
+ */
+describe('useSessionConfigOptions — commands 能力位（AC1）', () => {
+  it('should default to false and follow the session_start snapshot', () => {
+    const { result } = setup();
+    expect(result.current.commandsEnabled).toBe(false);
+
+    act(() =>
+      result.current.applySessionStart(
+        { approvals: true, command_echo: false, diff: false, resume: false, commands: true },
+        [],
+      ),
+    );
+    expect(result.current.commandsEnabled).toBe(true);
+
+    // 缺省字段（旧后端形状）→ false，不凭空假定支持
+    act(() =>
+      result.current.applySessionStart(
+        { approvals: true, command_echo: false, diff: false, resume: false },
+        [],
+      ),
+    );
+    expect(result.current.commandsEnabled).toBe(false);
+  });
+
+  it('should go back to false on reset (new session, capability unknown)', () => {
+    const { result } = setup();
+    act(() =>
+      result.current.applySessionStart(
+        { approvals: true, command_echo: false, diff: false, resume: false, commands: true },
+        [],
+      ),
+    );
+    expect(result.current.commandsEnabled).toBe(true);
+
+    act(() => result.current.reset());
+    expect(result.current.commandsEnabled).toBe(false);
+  });
+});
+
 describe('useSessionConfigOptions — 三态（AC4）', () => {
   /**
    * 初值是 `loading` 而**不是** `unsupported`。
@@ -75,7 +119,7 @@ describe('useSessionConfigOptions — 三态（AC4）', () => {
    */
   it('should become ready when the handshake arrived without config options', () => {
     const { result } = setup();
-    act(() => result.current.applySessionStart('session_config', []));
+    act(() => result.current.applySessionStart({ config: 'session_config', commands: false }, []));
     expect(result.current.availability).toBe('ready');
   });
 

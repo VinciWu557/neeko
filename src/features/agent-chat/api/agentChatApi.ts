@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import type { ContextManifest } from '@/shared/types/agentChat';
+import type { AgentCommandEntry, ContextManifest } from '@/shared/types/agentChat';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
 /**
@@ -49,6 +49,15 @@ export function openAgentChat(req: StreamChatRequest): Promise<string> {
  */
 export function resumeAgentChat(req: StreamChatRequest, nativeSessionId: string): Promise<string> {
   return invoke<string>('agent_chat_resume', { req, nativeSessionId });
+}
+
+/** 取 agent 的 slash 命令列表（`/` 补全数据源；会话外独立查询）。
+ *
+ * 入口显隐不靠本查询报错判定 —— 由 `SessionStart.capabilities.commands`
+ * 能力位门控（能力位 false 时调用方根本不发这条查询）。
+ */
+export function listAgentCommands(agentId: string): Promise<AgentCommandEntry[]> {
+  return invoke<AgentCommandEntry[]>('list_agent_commands', { agentId });
 }
 
 /** 该 agent 的 adapter 是否支持把原生会话恢复为 Agent Chat。 */

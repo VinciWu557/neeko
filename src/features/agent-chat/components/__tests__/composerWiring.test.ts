@@ -32,6 +32,13 @@ const LIFECYCLE = readFileSync(
 const PICKER = readFileSync(resolve(ROOT, 'agent-chat/components/AttachFilePicker.tsx'), 'utf8');
 /** 暂存事件的消费逻辑（`flushPendingEvents` 抽到了这里）。 */
 const DRAIN = readFileSync(resolve(ROOT, 'agent-chat/hooks/usePendingEventDrain.ts'), 'utf8');
+/** 会话能力快照（config + commands）的唯一消费点。 */
+const CONFIG_HOOK = readFileSync(
+  resolve(ROOT, 'agent-chat/hooks/useSessionConfigOptions.ts'),
+  'utf8',
+);
+/** composer 弹层数据源装配（slash 门控 / @ 文件树）。 */
+const SOURCES_HOOK = readFileSync(resolve(ROOT, 'agent-chat/hooks/useComposerSources.ts'), 'utf8');
 
 describe('composer wiring', () => {
   it('should render the file picker, not just load the tree', () => {
@@ -128,5 +135,31 @@ describe('composer wiring', () => {
     expect(sessionCall.slice(0, 200)).toContain('agentId: settled,');
     const modelCall = HOOK.slice(HOOK.indexOf('useModelSelection({'));
     expect(modelCall.slice(0, 200)).toContain('agentId: settled,');
+  });
+
+  /**
+   * **`/` 补全入口必须由能力位门控（R2 修订版）。**
+   *
+   * 能力位链路：`SessionStart.capabilities.commands`（后端
+   * `Capabilities::from_chat_capabilities` 投影，Rust 测试钉住）→
+   * `useSessionConfigOptions` 落 state（能力快照唯一消费点）→
+   * `useComposerSources` 只在位为 true 时挂 slash 源。
+   *
+   * 变异验证：后端投影漏掉 `commands` → Rust 侧
+   * `from_chat_capabilities_projects_every_declared_field` 红（实际上直接
+   * 编译失败 —— 投影点必须逐字段点名）；前端在 sources 装配处去掉门控 →
+   * 本用例红（`/` 会对不支持传输的用户出现，然后查询报错 —— 正是修掉的
+   * 「靠试查询判定能力」形态）。
+   */
+  it('should gate the slash source on the commands capability bit (AC1)', () => {
+    // 能力快照唯一消费点：commands 缺省（旧后端）视为 false
+    expect(CONFIG_HOOK).toMatch(/caps\?\.commands === true/);
+    // useAgentChat 把整个 capabilities 交给它，不另开第二份状态
+    expect(HOOK).toContain('applySessionStart(ev.capabilities,');
+    expect(HOOK).not.toMatch(/capabilities\.commands/);
+    // 视图层：能力位 true 才挂 slash 源；查询经 useAgentCommands（按 agentId 缓存）
+    expect(VIEW).toContain('useComposerSources(');
+    expect(SOURCES_HOOK).toMatch(/if \(commandsEnabled\) next\.unshift\(createCommandSource/);
+    expect(SOURCES_HOOK).toContain('useAgentCommands(');
   });
 });

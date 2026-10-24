@@ -8,7 +8,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import { modeOptionOf, modelConfigOptionsOf, thoughtLevelOptionOf } from '../ChatComposer';
+import { modeOptionOf, modelConfigOptionsOf, thoughtLevelOptionOf } from '../composerConfigOptions';
 import { ModelConfigSection } from '../ModelConfigSection';
 
 const selectOption = (id: string, name: string, current: string) => ({

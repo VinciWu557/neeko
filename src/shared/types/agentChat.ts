@@ -8,6 +8,16 @@
 /** 配置项的**写入机制**（与后端 `ConfigCapability` 同源，`snake_case`）。 */
 export type ConfigCapability = 'session_config' | 'per_turn' | 'none';
 
+/** agent 的一条 slash 命令（`list_agent_commands` 返回；镜像后端 `AgentCommand`）。 */
+export interface AgentCommandEntry {
+  /** 命令名（插入文本是 `/name`，不含斜杠 —— agent 自己会展开）。 */
+  name: string;
+  /** 展示用说明；agent 不给时为 null。 */
+  description?: string | null;
+  /** 来源标记（pi：`prompt` / `skill` / `extension`），仅用于展示。 */
+  source?: string | null;
+}
+
 /** 会话能力声明（session_start 携带）。
  *
  * 镜像 `src-tauri/src/agent/chat/events.rs::Capabilities`。两侧字段必须同步 ——
@@ -22,6 +32,11 @@ export interface Capabilities {
   diff: boolean;
   /** 是否支持 resume_id 会话恢复。 */
   resume: boolean;
+  /**
+   * 是否能列出 slash 命令（`/` 补全入口的**唯一**判据，缺省视为 false ——
+   * 旧后端不传该字段时不能凭空假定支持）。
+   */
+  commands?: boolean;
   /**
    * 会话配置项的读写机制。
    *

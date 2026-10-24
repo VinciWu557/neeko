@@ -25,6 +25,10 @@ import { describe, expect, it } from 'vitest';
  */
 const ROOT = resolve(__dirname, '../../..');
 const CHAT = readFileSync(resolve(ROOT, 'agent-chat/components/ChatComposer.tsx'), 'utf8');
+const CONFIG_OPTIONS = readFileSync(
+  resolve(ROOT, 'agent-chat/components/composerConfigOptions.ts'),
+  'utf8',
+);
 const SELECTORS = readFileSync(resolve(ROOT, 'agent-chat/components/ParamSelectors.tsx'), 'utf8');
 const CONSTANTS = readFileSync(resolve(ROOT, 'agent-chat/components/constants.ts'), 'utf8');
 
@@ -56,8 +60,12 @@ describe('session option driven selectors', () => {
   });
 
   it('should read both options from the session config', () => {
-    expect(CHAT).toContain("o.category === 'mode'");
-    expect(CHAT).toContain("o.category === 'thought_level'");
+    // `*OptionOf` 的定义在 composerConfigOptions.ts（从 ChatComposer 外移，
+    // 为补全弹层腾 ratchet 行数预算）；调用点留在 ChatComposer，由下方用例钉住。
+    expect(CONFIG_OPTIONS).toContain("o.category === 'mode'");
+    expect(CONFIG_OPTIONS).toContain("o.category === 'thought_level'");
+    expect(CONFIG_OPTIONS).toContain("o.category === 'model_config'");
+    expect(CHAT).toContain("from './composerConfigOptions'");
   });
 
   /** 不支持时不渲染 —— 显示一个点不动的控件比不显示更糟。 */
@@ -155,6 +163,6 @@ describe('session option driven selectors', () => {
    */
   it('should read the capability bit from session_start', () => {
     const AGENT_CHAT = readFileSync(resolve(ROOT, 'agent-chat/hooks/useAgentChat.ts'), 'utf8');
-    expect(AGENT_CHAT).toContain('applySessionStart(ev.capabilities.config');
+    expect(AGENT_CHAT).toContain('applySessionStart(ev.capabilities,');
   });
 });

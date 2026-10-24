@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 
-import type { ConfigCapability, SessionConfigOption } from '@/shared/types/agentChat';
+import type { Capabilities, ConfigCapability, SessionConfigOption } from '@/shared/types/agentChat';
 import { modelAvailabilityOf, type ModelAvailability } from '@/shared/utils/modelTarget';
 
 import { setAgentConfigOption } from '../api/agentChatApi';
@@ -31,19 +31,22 @@ export interface SessionConfigState {
    * 两个维度 —— 4 处判据自然漂移。收成一个 union 后非法状态无法表达。
    */
   availability: ModelAvailability;
+  /** slash 补全入口开关（`SessionStart.capabilities.commands` 能力位，缺省 false）。 */
+  commandsEnabled: boolean;
   /** 整体替换（`session_start` / `config_option_update` 都是全量语义）。 */
   replace: (options: SessionConfigOption[]) => void;
   /** 由 `SessionStart.capabilities.config` 设置（会话建立时调用一次）。 */
   setCapability: (next: ConfigCapability) => void;
   /**
-   * 消费 `session_start` 的配置相关字段（能力位 + 选项）。
+   * 消费 `session_start` 的能力位与配置项（**整个 capabilities 快照的唯一消费点**）。
    *
    * 为什么收成一个动作：两者的**顺序是契约**（先能力后选项，否则会闪一下
    * loading 态）。分两次调用让调用方有机会写反，而写反不会报错、只表现为
-   * 一次多余渲染。
+   * 一次多余渲染。`commands` 能力位（`/` 补全入口开关）同属会话能力快照，
+   * 在这里一并落 state —— 否则它就要在 `useAgentChat` 另开一份状态与消费点。
    */
   applySessionStart: (
-    capability: ConfigCapability | undefined,
+    caps: Capabilities | undefined,
     options: SessionConfigOption[] | undefined,
   ) => void;
   /** 下发一个配置项变更。 */
@@ -78,6 +81,11 @@ export function useSessionConfigOptions(
    * `loading`，UI 表现为「模型列表永远灰着」。
    */
   const [handshaken, setHandshaken] = useState(false);
+  /**
+   * 能否弹 `/` 命令补全 —— `SessionStart.capabilities.commands` 能力位（R2：
+   * 能力位是唯一判据，不靠试查询报错）。缺省（旧后端）视为 false。
+   */
+  const [commandsEnabled, setCommandsEnabled] = useState(false);
 
   const replace = useCallback((next: SessionConfigOption[]) => {
     // 协议要求整体替换：换模型可能连带改变 thought_level 的可选项，
@@ -96,13 +104,11 @@ export function useSessionConfigOptions(
   }, []);
 
   const applySessionStart = useCallback(
-    (
-      nextCapability: ConfigCapability | undefined,
-      nextOptions: SessionConfigOption[] | undefined,
-    ) => {
+    (caps: Capabilities | undefined, nextOptions: SessionConfigOption[] | undefined) => {
       // `config` 缺失 = 旧后端事件形状。按 `session_config` 处理：既有行为
       // （ACP 是主力传输）不能因一次字段新增而全部消失。
-      setCapabilityState(nextCapability ?? 'session_config');
+      setCapabilityState(caps?.config ?? 'session_config');
+      setCommandsEnabled(caps?.commands === true);
       // 协议要求整体替换：换模型可能连带改变 thought_level 的可选项，
       // 局部合并会留下与真实状态不符的陈旧选项。
       setOptions(nextOptions ?? []);
@@ -131,6 +137,8 @@ export function useSessionConfigOptions(
     // 回到「未知」而不是「不支持」—— `reset` 的语义是「换会话了」，
     // 新会话的能力还没到，此时断言 `none` 会让控件瞬间消失再出现。
     setCapabilityState('session_config');
+    // 能力位同样归「未知」：新会话的 session_start 到达前不亮 `/` 入口。
+    setCommandsEnabled(false);
   }, []);
 
   // 握手已完成 ⟺ `session_start` 到过，或选项已经来了（`config_option_update`
@@ -141,6 +149,8 @@ export function useSessionConfigOptions(
   return {
     options,
     availability,
+    /** slash 补全入口开关（capabilities.commands 能力位）。 */
+    commandsEnabled,
     replace,
     setCapability,
     applySessionStart,

@@ -1,9 +1,9 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
 
 import type { StreamEvent } from '@/shared/types/agentChat';
 
-import type { ContextWindow, PendingUserInput } from '../components/messageModel';
-import { contextWindowOf } from '../components/messageModel';
+import type { ChatMessage, ContextWindow, PendingUserInput } from '../components/messageModel';
+import { contextWindowOf, nextBlockId, nextMsgId } from '../components/messageModel';
 
 /**
  * **会话级**状态（非话轮）：上下文、用户输入请求、计划、用量、错误。
@@ -75,10 +75,20 @@ export function useSessionLevelEvents(params: {
   /** 出错时把已排队的流式增量先冲出去（否则最后一段文本会丢）。 */
   flushDeltas: () => void;
   setStreaming: (value: boolean) => void;
-  /** 往消息流里追加一条系统消息（错误提示）。 */
-  appendSystemMessage: (text: string) => void;
+  /** 消息流 state setter（系统消息在这里追加 —— 本 hook 是唯一消费者）。 */
+  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
 }): SessionLevelEvents {
-  const { onContextInit, flushDeltas, setStreaming, appendSystemMessage } = params;
+  const { onContextInit, flushDeltas, setStreaming, setMessages } = params;
+  /** 往消息流里追加一条系统消息（错误提示等）。`setMessages` 身份稳定，无依赖负担。 */
+  const appendSystemMessage = useCallback(
+    (text: string) => {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextMsgId(), role: 'system', blocks: [{ kind: 'text', id: nextBlockId(), text }] },
+      ]);
+    },
+    [setMessages],
+  );
   const [pendingUserInput, setPendingUserInput] = useState<PendingUserInput | null>(null);
   const [proposedPlan, setProposedPlan] = useState<string | null>(null);
   const [contextWindow, setContextWindow] = useState<ContextWindow | null>(null);

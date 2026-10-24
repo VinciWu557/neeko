@@ -91,6 +91,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   const {
     options: sessionConfigOptions,
     availability,
+    commandsEnabled,
     replace: replaceConfigOptions,
     applySessionStart,
     setOption: setConfigOption,
@@ -99,15 +100,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
   /** 工作目录：后端 `AgentContext.project_id` 即项目绝对路径（cwd）。 */
   const [ctxInfo, setCtxInfo] = useState<CtxInfo | null>(null);
 
-  /** 往消息流里追加一条系统消息（错误提示等）。 */
-  const appendSystemMessage = useCallback((text: string) => {
-    setMessages((prev) => [
-      ...prev,
-      { id: nextMsgId(), role: 'system', blocks: [{ kind: 'text', id: nextBlockId(), text }] },
-    ]);
-  }, []);
-
-  /** 会话级事件（上下文 / 用户输入 / 计划 / 用量 / 错误）。见该 hook 文档。 */
+  // 系统消息追加内聚在 useSessionLevelEvents（唯一消费者）；这里传 state setter。
   const {
     handle: sessionLevelHandle,
     state: { pendingUserInput, setPendingUserInput, proposedPlan, contextWindow },
@@ -115,7 +108,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     onContextInit: setCtxInfo,
     flushDeltas,
     setStreaming,
-    appendSystemMessage,
+    setMessages,
   });
 
   // 切换 **agent** 时清空 sessionId：复用旧会话会把新 agent 的请求路由过去
@@ -188,7 +181,8 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
       if (sessionLevelHandle(ev)) return;
       switch (ev.type) {
         case 'session_start':
-          applySessionStart(ev.capabilities.config, ev.config_options);
+          // 整个能力快照（config + commands）的唯一消费点在 useSessionConfigOptions。
+          applySessionStart(ev.capabilities, ev.config_options);
           break;
         case 'config_option_update':
           // agent 主动变更（如 rate limit fallback 换模型）。协议要求视为**全量**：
@@ -467,6 +461,7 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     sessionConfigOptions,
     modelAvailability: availability,
     handleSetConfigOption: setConfigOption,
+    commandsEnabled,
     selectedAgent,
     // actions
     handleSend,
