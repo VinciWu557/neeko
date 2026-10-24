@@ -68,17 +68,36 @@
 `THINKING_LEVELS` 硬编码 → 界面正常但后端没变）。命令列表尤其危险：
 不同 agent 的命令集完全不同，硬编码一份等于只支持 pi。
 
-### R2 后端只加一条通路
+### R2 能力位判定 + 一条数据查询通路（两件事分开）
 
-在 `AgentSession` 域加一条查询（命令名待定，形如 `list_agent_commands`），
-内部转发 `get_commands` 的 `data.commands`。
+> 现状注记（2026-10-24 修订）：adapter 已从方案写作时的 1 个（pi_rpc）扩到 4 个
+> （pi_rpc / acp / opencode / deepseek）；`ChatCapabilities` 能力位体系也已落地。
 
-- 对不支持该命令的传输 → `Err(Unsupported)`，前端**不显示** `/` 补全
-- 对支持但返回空的 → 空列表，前端显示「无命令」而不是假装没有该功能
+**能不能弹 `/`** 由能力位判定，不靠「试查询报不报错」：`ChatCapabilities` 已预留
+`commands: bool`（`src-tauri/src/agent/chat/capabilities.rs`），pi_rpc/adapter.rs
+注释已写明契约——`get_commands` 存在但本仓无实现，故现为 `false`，本任务在
+**同一 diff 内**对 PiRpcAdapter 改 `true`，并投影到 `session_start.capabilities`
+（`events.rs::from_chat_capabilities` + 前端 `src/shared/types/agentChat.ts` 的
+`Capabilities` 镜像同步）。前端按该位门控 `/` 入口。这是 spec
+`agent-chat-transports.md` §10.1「能力位是唯一判据」的同源要求——历史上靠
+`configOptions` 非空推断能力正是修掉的 P1 缺陷形态。
 
-**不新建 adapter 方法之外的第二套机制**：`AgentSession` 已有
-`request_channel` / `next` / `send` 三个口子，命令查询应当是**新的一条**，
-而不是塞进 `StreamEvent`。
+**取数据**走一条新查询（命令名待定，形如 `list_agent_commands`），内部转发
+`get_commands` 的 `data.commands`：
+
+- 能力位为 false 的传输 → 查询也返回 `Err(Unsupported)`（声明与实现一致，
+  用契约测试钉住「`commands` 位为 true ⇔ 不返回 Unsupported」）
+- 支持但返回空的 → 空列表，前端显示「无命令」而不是假装没有该功能
+
+**不塞进 `StreamEvent`**：命令查询是与会话生命周期解耦的独立查询（同
+`list_agent_models` 一类），不是会话内操作。⚠️ pi_rpc/adapter.rs 现有注释预期
+「get_commands → 事件 → slash 面板」，与本决策矛盾——实现时同 diff 改写该注释，
+不留第二份指向另一方案的真相。
+
+其余三个 adapter 维持 `commands: false`（默认全关由契约测试覆盖）。acp.rs 注释
+「ACP 没有列命令方法」待复核——ACP 协议有 `available_commands_update` 通告；
+若属实属后续增量，不在本次范围，但命令数据结构（`name`/`description`）与 ACP
+形状保持对齐。
 
 ### R3 触发条件精确
 
@@ -105,7 +124,7 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC1** 输入 `/` 弹出该 agent 的命令列表；不支持命令查询的 agent 不弹
+- [ ] **AC1** 输入 `/` 弹出该 agent 的命令列表；`capabilities.commands` 为 false 的传输不弹（能力位判定，非试查询报错）
 - [ ] **AC2** 命令列表来自 `get_commands`，不是前端常量（有静态护栏）
 - [ ] **AC3** 选中命令 → 输入框出现 `/name `，发送后被 agent 执行（真机）
 - [ ] **AC4** 输入 `@` 弹出项目文件列表；继续输入按路径过滤
@@ -129,7 +148,7 @@
 | 风险 | 缓解 |
 | --- | --- |
 | 光标坐标计算在换行/滚动下出错 | 先做贴输入框的简单版，把「跟随光标」列为独立可验证项 |
-| `get_commands` 在部分 agent 上不存在 | `Err(Unsupported)` → 前端隐藏 `/` 入口（R2） |
+| `get_commands` 在部分 agent 上不存在 | 能力位 `commands: false` → 前端不显示 `/` 入口（R2），查询本身不承担能力判定 |
 | Enter 双触发（选中 vs 发送） | 弹层打开时输入框的 `onKeyDown` 必须先给弹层处理机会（AC7） |
 | 中文输入法组合期误触发 | `compositionstart/compositionend` 门控（AC8） |
 

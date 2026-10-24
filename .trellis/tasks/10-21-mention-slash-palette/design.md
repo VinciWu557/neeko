@@ -65,11 +65,29 @@ pub async fn list_agent_commands(
 | A | 加 `command_list_args`（CLI 参数，形如 `pi --list-commands`） | 需要 agent 提供 CLI 等价命令；pi **没有**（实测 `--help` 无此项） |
 | B | 短暂 spawn 一个 rpc 进程，`get_commands` 后即弃 | 一次 ~1s；但对不支持 rpc 的传输无解 |
 
-**倾向 B + 能力位**：`AgentAdapter::list_commands(&self, config)` 默认
+**决策：B + 能力位**：`AgentAdapter::list_commands(&self, config)` 默认
 `Err(Unsupported)`；`PiRpcAdapter` 覆写为「spawn → 查 → 关」。
 
-这与 `list_models` 的形状一致（默认 Unsupported，各适配器 opt-in），
-前端据此决定是否显示 `/` 入口（R2）。
+这与 `list_models` 的形状一致（默认 Unsupported，各适配器 opt-in）。但
+**「是否显示 `/` 入口」的判据不是试查询报错，而是能力位**（2026-10 后固化的
+`ChatCapabilities` 体系，spec `agent-chat-transports.md` §10.1「能力位是唯一判据」；
+靠「行为推断能力」正是模型选择控件修掉的 P1 缺陷形态）：
+
+- `ChatCapabilities.commands` 已预留（`capabilities.rs:81`），pi_rpc/adapter.rs:36-42
+  注释写明契约：本任务**同一 diff 内**对 PiRpcAdapter 改 `true`
+- 投影链：`events.rs::Capabilities::from_chat_capabilities` 加 `commands` 字段 →
+  `session_start.capabilities` → 前端 `agentChat.ts` 的 `Capabilities` 镜像同步 →
+  `useMockEventSchedule` 的 mock capabilities 同步
+- 契约测试钉住「`commands` 位为 true ⇔ `list_commands` 不返回 Unsupported」，
+  防止声明与实现分家（`capabilities.rs` 文档批评的「散装 default-impl 静默降级」）
+
+**与 adapter.rs 现有注释的矛盾必须消除**：注释预期「get_commands → 事件 →
+slash 面板」，本设计选独立查询（理由见上）。实现时同 diff 改写该注释。
+
+**4 个 adapter 的现状**（方案写作时只有 pi_rpc）：pi_rpc / acp / opencode /
+deepseek，其余三个维持 `commands: false`（默认全关由契约测试覆盖）。acp.rs
+注释「ACP 没有列命令方法」待复核——ACP 协议有 `available_commands_update`
+通告；若属实属后续增量，但本任务的命令结构（`name`/`description`）与 ACP 形状对齐。
 
 **缓存**：命令列表在会话期内不变，前端按 `agentId` 缓存一次即可（不落盘）。
 

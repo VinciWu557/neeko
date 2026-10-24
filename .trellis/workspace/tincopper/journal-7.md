@@ -372,3 +372,31 @@ Implemented context window usage display end to end: extended Usage with context
 ### Status
 
 [OK] **Completed**
+
+
+## Session 328: Agent Chat slash/@ 补全：能力位修订方案落地（阶段 0-5）
+<!-- trellis-session: v=2 fp=a8675d4be4e81fb0 -->
+
+**Date**: 2026-10-24
+**Task**: Agent Chat slash/@ 补全：能力位修订方案落地（阶段 0-5）
+**Branch**: `feat/mention-slash-palette`
+
+### Summary
+
+按 10-24 修订方案实现 / 与 @ 补全：纯函数层 paletteTrigger + ComposerPalette 骨架 + ChatComposer 接入；后端 AgentAdapter::list_commands（pi_rpc spawn 查询）+ ChatCapabilities.commands 同 diff 翻转与全链投影（events.rs → agentChat.ts → mock）+ list_agent_commands Tauri 命令；4-adapter 双向契约测试。trellis-check 修复真实缺陷：光标移动不改 change 导致弹层状态过期写回错位，keydown 消费前重校验。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] pnpm check:quick 20/20 护栏全绿；cargo test 全量 2185 通过；vitest agent-chat 域全绿（新增 40+ 用例，5 组变异验证）；AC3 真机冒烟（pi 展开 /命令）留待 tauri dev
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机冒烟 AC3；确认后 commit + 归档任务

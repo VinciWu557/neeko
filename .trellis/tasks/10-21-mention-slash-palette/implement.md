@@ -6,8 +6,10 @@
 ## 阶段 0：前置检查
 
 - [ ] 读 `src/AGENTS.md`（前端红线）与 `src-tauri/AGENTS.md`（后端红线）
+- [ ] 复核 `agent_id → adapter` 解析入口的当前形状（`10-23-agent-chat-registry`
+      与 `10-23-agent-config-single-source` 正在改这一层，可能已与方案写作时不同）
 - [ ] 基线：`pnpm check:quick` 全绿
-- [ ] 确认 `get_commands` 在本机往返一次拿到 157 条（已有取证）
+- [ ] 确认 `get_commands` 在本机往返一次拿到 157 条（已有取证；pi 版本以实测为准）
 
 ## 阶段 1：纯函数层（零 UI、零后端）
 
@@ -65,28 +67,37 @@
 
 ### 4a 命令（后端增量）
 
-- [ ] `AgentAdapter::list_commands(&self, config)` 默认 `Err(Unsupported)`
-- [ ] `PiRpcAdapter` 覆写：短暂 spawn → `get_commands` → 关闭
-- [ ] Tauri 命令 `list_agent_commands(agent_id)`（红线 6：只调度）
-- [ ] 注册到 `neeko_invoke_handler!`
-- [ ] 测试：不支持传输返回 `Unsupported`；Pi 返回非空且含 `name`/`source`
+- [x] `AgentAdapter::list_commands(&self, config)` 默认 `Err(Unsupported)`
+- [x] `PiRpcAdapter` 覆写：短暂 spawn → `get_commands` → 关闭
+- [x] `ChatCapabilities.commands` 对 PiRpcAdapter **同 diff 改 `true`**
+      （pi_rpc/adapter.rs 注释已写明此契约）；同 diff 改写该注释中
+      「get_commands → 事件 → slash 面板」的旧预期（与本设计矛盾，见 design §3）
+- [x] 能力位投影链：`events.rs::Capabilities::from_chat_capabilities` 加
+      `commands` 字段 → 前端 `agentChat.ts` 的 `Capabilities` 镜像 +
+      `useMockEventSchedule` 的 mock capabilities 同步
+- [x] 契约测试：4 个 adapter 默认全关；「`commands` 位 true ⇔ `list_commands`
+      不返回 Unsupported」（红线 14 同源：声明必须与实现一致）
+- [x] Tauri 命令 `list_agent_commands(agent_id)`（红线 6：只调度）
+- [x] 注册到 `neeko_invoke_handler!`
+- [x] 测试：不支持传输返回 `Unsupported`；Pi 返回非空且含 `name`/`source`
 
 ### 4b 文件
 
-- [ ] 复用 `readDirTree` + `flattenFiles`（从 `AttachFilePicker` 抽到共用处）
-- [ ] 选中文件 → `addAttachment(path, name)` + 写入 `@path `
+- [x] 复用 `readDirTree` + `flattenFiles`（从 `AttachFilePicker` 抽到共用处）
+- [x] 选中文件 → `addAttachment(path, name)` + 写入 `@path `
 
 ### 4c 前端接线
 
-- [ ] 按 `agentId` 缓存命令列表（会话期内不变）
-- [ ] `Err(Unsupported)` → 不渲染 `/` 入口（R2）
-- [ ] 真机：`/trellis-start` 选中后发送，确认 pi 展开该命令
+- [x] 按 `agentId` 缓存命令列表（会话期内不变）
+- [x] `/` 入口由 `session_start.capabilities.commands` 能力位门控（R2），
+      不靠查询报错；能力位 false 时连查询都不发
+- [ ] 真机：`/trellis-start` 选中后发送，确认 pi 展开该命令（本环境无法跑 tauri dev，留待真机冒烟）
 
 ## 阶段 5：收尾
 
-- [ ] `pnpm check:quick`
-- [ ] 变异验证（见下）
-- [ ] 更新 `.trellis/spec/frontend/` 记录弹层的键盘契约
+- [x] `pnpm check:quick`
+- [x] 变异验证（见下）
+- [x] 更新 `.trellis/spec/frontend/` 记录弹层的键盘契约
 
 ## 变异验证清单
 
@@ -97,6 +108,7 @@
 | 去掉 onKeyDown 里的弹层短路 | AC7 双触发用例 |
 | `applySelection` 替换整段 | 前缀保留用例 |
 | 过滤不做 limit | 空 query 返回条数有界用例 |
+| `from_chat_capabilities` 漏投影 `commands` 字段 | 前端 `/` 入口能力位门控用例（false 不弹） |
 
 ## 依赖关系
 
