@@ -346,3 +346,29 @@ ActionRegistryItem 增可选 iconSrc 字段（img 优先于 Lucide icon，参照
 ### Status
 
 [OK] **Completed**
+
+
+## Session 327: Agent Chat context usage meter: pi/acp telemetry, popover redesign, brand icon
+<!-- trellis-session: v=2 fp=cb6db091421fc2fd -->
+
+**Date**: 2026-10-24
+**Task**: Agent Chat context usage meter: pi/acp telemetry, popover redesign, brand icon
+**Branch**: `main`
+
+### Summary
+
+Implemented context window usage display end to end: extended Usage with context/cache fields (backward compatible), PiRpc pulls get_session_stats in the event idle window after agent_settled, ACP maps the usage_update push variant, frontend ContextWindowMeter reworked into a ring button with usage popover (progress bar, threshold colors, cache hit rate, graceful degradation), AgentChat brand icon adopted across tab/action menu/guide page. Spec section 4.8 documents per-transport contracts. Full test suite green; task archived.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c1ae798` | feat(agent-chat): report context usage from pi and acp |
+| `5e44390b` | feat(agent-chat): rework context meter with usage popover |
+| `20745e4` | feat(agent-chat): add a dedicated brand icon |
+| `88e4bf7` | docs(spec): document usage telemetry contracts per transport |
+| `7df766de` | chore(trellis): add 10-24-agent-chat-context-usage artifacts |
+
+### Status
+
+[OK] **Completed**
