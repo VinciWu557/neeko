@@ -1,6 +1,8 @@
 import React from 'react';
 
+import { cn } from '@/lib/utils';
 import { TRANSPORT_LABELS, type ChatTransport } from '@/shared/types/agent';
+import { ToggleGroup, ToggleGroupItem } from '@/ui';
 
 import type { ChatEnabledChoice } from './agentFormState';
 
@@ -21,7 +23,7 @@ import type { ChatEnabledChoice } from './agentFormState';
 interface BuiltinChatSectionProps {
   /** 出厂定义的传输（`TRANSPORTS` 表的识别结果）。`null` = 出厂没有 chat。 */
   transport: ChatTransport | null;
-  /** 三态开关值。 */
+  /** 三态选择器：default（跟随出厂）/ on / off。 */
   value: ChatEnabledChoice;
   onChange: (next: ChatEnabledChoice) => void;
   groupCls: string;
@@ -57,28 +59,39 @@ const BuiltinChatSection: React.FC<BuiltinChatSectionProps> = ({
           protocol, create a custom agent instead.
         </p>
       </div>
-      {/* 开关与 Reset 是**兄弟**而不是 label 包 button：HTML 的 label 内容模型
-          不允许 labelable 后代再嵌 labelable 元素，且嵌套会把 "Reset to default"
-          混进 checkbox 的可访问名。 */}
-      <div className="flex items-center gap-1.5">
-        <label className="flex items-center gap-1.5 text-[0.78em] text-text-secondary">
-          <input
-            type="checkbox"
-            checked={value !== 'off'}
-            onChange={(e) => onChange(e.target.checked ? 'on' : 'off')}
-          />
-          Enable chat
-        </label>
-        {/* 三态要能被用户改回「跟随出厂」—— 否则一次切换就永久覆盖了默认值。 */}
-        {value !== 'default' && (
-          <button
-            type="button"
-            className="text-[0.9em] text-accent-blue hover:underline"
-            onClick={() => onChange('default')}
-          >
-            Reset to default
-          </button>
-        )}
+      {/* 三态直接可见：Default = 跟随出厂（chat_enabled: null）。之前是
+          「两态 checkbox + 事后出现的 Reset 按钮」，第三态对用户隐形 ——
+          现在选中态本身就把「跟随出厂 / 显式开 / 显式关」说清楚。 */}
+      <div className={groupCls} role="group" aria-label="Enable chat">
+        <span className={labelCls}>Enable chat</span>
+        <ToggleGroup
+          type="single"
+          value={value}
+          onValueChange={(v) => {
+            if (v) onChange(v as ChatEnabledChoice);
+          }}
+          className="w-fit"
+        >
+          <ToggleGroupItem value="default" className="px-2.5 py-0.5 text-[0.72em]">
+            Default
+          </ToggleGroupItem>
+          <ToggleGroupItem value="on" className="px-2.5 py-0.5 text-[0.72em]">
+            On
+          </ToggleGroupItem>
+          <ToggleGroupItem value="off" className="px-2.5 py-0.5 text-[0.72em]">
+            Off
+          </ToggleGroupItem>
+        </ToggleGroup>
+        <p
+          className={cn(
+            'text-[0.7em] text-text-muted leading-relaxed',
+            value !== 'default' && 'italic',
+          )}
+        >
+          {value === 'default'
+            ? 'Follows the factory definition and stays in sync with app updates.'
+            : 'Overridden — pick Default to follow the factory definition again.'}
+        </p>
       </div>
     </>
   );

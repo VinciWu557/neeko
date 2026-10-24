@@ -32,11 +32,12 @@ const source = sources.join('\n');
 describe('AgentForm reuses ui controls', () => {
   it('should have no bare text inputs left', () => {
     // 允许的裸 `<input>` 只有 checkbox（不需要 IME / 自动大写 / focus ring）：
-    // ① `Agent enabled` ② 自定义 agent 的 `In-process` ③ 内置 agent 的 `Enable chat`。
+    // ① `Agent enabled` ② 自定义 agent 的 `In-process`。内置 agent 的 CHAT
+    // 开关已换 ui/ToggleGroup 三段式（三态需要可见），不再是 checkbox。
     // 新增 checkbox 时这条会红 —— 那是在强制你确认「它确实不该用 ui/Checkbox」。
     const bareInputs = source.match(/<input[\s>]/g) ?? [];
-    expect(bareInputs).toHaveLength(3);
-    expect(source.match(/type="checkbox"/g) ?? []).toHaveLength(3);
+    expect(bareInputs).toHaveLength(2);
+    expect(source.match(/type="checkbox"/g) ?? []).toHaveLength(2);
   });
 
   it('should render text fields through Input and multiline through Textarea', () => {

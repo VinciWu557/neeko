@@ -62,18 +62,21 @@ describe('built-in agent CHAT section', () => {
     expect(screen.queryByRole('group', { name: /CHAT Launch/i })).not.toBeInTheDocument();
   });
 
-  it('offers only an enable/disable toggle', () => {
+  it('offers a three-state chat enable selector', () => {
     renderForm(builtin());
 
-    const toggle = screen.getByRole('checkbox', { name: /enable chat/i });
-    expect(toggle).toBeChecked();
+    // 三态：Default（跟随出厂）/ On / Off —— 当前态直接可见，不再需要
+    // 「两态 checkbox + 救急 Reset 按钮」的隐形状态。
+    expect(screen.getByRole('radio', { name: 'Default' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'On' })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Off' })).not.toBeChecked();
   });
 
   it('offers no chat inputs for a built-in agent without a chat protocol', () => {
     renderForm(builtin({ id: 'gemini', name: 'gemini', command: 'gemini', chat: null }));
 
     expect(screen.queryByRole('group', { name: /CHAT Launch/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: /enable chat/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'On' })).not.toBeInTheDocument();
     expect(screen.getByText(/no built-in chat protocol/i)).toBeInTheDocument();
   });
 
@@ -81,7 +84,7 @@ describe('built-in agent CHAT section', () => {
     renderForm(builtin({ id: 'mine', name: 'Mine', is_builtin: false, chat: { args: ['acp'] } }));
 
     expect(screen.getByRole('group', { name: /CHAT Launch/i })).toBeInTheDocument();
-    expect(screen.queryByRole('checkbox', { name: /enable chat/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: 'On' })).not.toBeInTheDocument();
   });
 
   it('shows the factory protocol label for an in-process built-in chat', () => {
@@ -195,17 +198,40 @@ describe('built-in agent submission', () => {
     expect(saved.chat_enabled ?? null).toBeNull();
   });
 
-  it('records an explicit opt-out when the toggle is cleared', async () => {
+  it('records an explicit opt-out when Off is selected', async () => {
     const initial = builtin();
     const { onSaved } = renderForm(initial);
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /enable chat/i }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Off' }));
     await submit();
 
     const saved = onSaved.mock.calls[0]?.[0] as AgentConfig;
     expect(saved.chat_enabled).toBe(false);
     // 出厂协议不受开关影响。
     expect(saved.chat).toEqual(initial.chat);
+  });
+
+  it('records an explicit opt-in when On is selected', async () => {
+    const initial = builtin({ chat_enabled: false });
+    const { onSaved } = renderForm(initial);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'On' }));
+    await submit();
+
+    const saved = onSaved.mock.calls[0]?.[0] as AgentConfig;
+    expect(saved.chat_enabled).toBe(true);
+  });
+
+  it('returns to follow-the-factory when Default is selected', async () => {
+    // 三态的全部意义：显式 on/off 之后还能回到 null —— 出厂修正继续跟上。
+    const initial = builtin({ chat_enabled: false });
+    const { onSaved } = renderForm(initial);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Default' }));
+    await submit();
+
+    const saved = onSaved.mock.calls[0]?.[0] as AgentConfig;
+    expect(saved.chat_enabled ?? null).toBeNull();
   });
 
   it('writes no chat_enabled preference for a built-in agent without a factory chat', async () => {
