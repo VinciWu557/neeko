@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
+import type { ComponentType } from 'react';
 
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 
@@ -37,12 +38,21 @@ export interface ActionContext {
   openLibrary?: (opts?: { kind?: 'skill' | 'prompt' | 'action' }) => void;
 }
 
+/** 菜单项图标组件的最小 props 契约（Lucide 图标天然满足，品牌图标组件如 `AgentChatIcon` 同样满足）。 */
+export interface ActionIconProps {
+  size?: number | string;
+  className?: string;
+  /** JSX 里常写 `aria-hidden="true"`（字符串），与 HTML 属性取值一致。 */
+  'aria-hidden'?: boolean | 'true' | 'false';
+}
+
 export interface ActionRegistryItem {
   id: ActionId;
   group: ActionGroup;
   label: string;
   description?: string;
-  icon: LucideIcon;
+  /** Lucide 线性图标，或同形态的品牌图标组件（如 `AgentChatIcon`，接受 size/className/aria-hidden）。 */
+  icon: LucideIcon | ComponentType<ActionIconProps>;
   shortcut?: string;
   keywords: string[];
   disabled?: boolean;

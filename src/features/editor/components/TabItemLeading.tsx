@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { resolveAgentIconSrc } from '@/features/agent/api/agentApi';
+import AgentChatIcon from '@/shared/components/AgentChatIcon';
 import {
   Terminal,
   FileText,
@@ -32,6 +33,7 @@ function getTabIcon(kind: Tab['data']['kind']) {
     case 'browser':
       return Globe;
     case 'agent-chat':
+      // 专用品牌图标（img 分支优先渲染）；Bot 仅作类型完整性兜底，正常不显示。
       return Bot;
   }
 }
@@ -68,6 +70,8 @@ export function renderEditorTabLeading(tab: Tab, agents: AgentConfig[]): ReactNo
           className="shrink-0 opacity-70"
           alt=""
         />
+      ) : data.kind === 'agent-chat' ? (
+        <AgentChatIcon size={12} className="shrink-0 opacity-70" />
       ) : agentIconSrc ? (
         <img
           data-testid="agent-icon"

@@ -2,7 +2,7 @@ import { memo } from 'react';
 
 import agentChatIcon from '../../assets/agents/agent-chat.svg';
 
-interface AgentChatProps {
+interface AgentChatIconProps {
   /** 图标边长（px），与 Lucide 的 `size` 同语义。 */
   size?: number | string;
   className?: string;
@@ -16,8 +16,8 @@ interface AgentChatProps {
  *
  * Tab 标签、动作菜单/命令面板、引导页共用这一个实现 —— 换图标只改 svg 文件。
  */
-const AgentChat: React.FC<AgentChatProps> = ({ size = 18, className, ...rest }) => (
+const AgentChatIcon: React.FC<AgentChatIconProps> = ({ size = 18, className, ...rest }) => (
   <img src={agentChatIcon} width={size} height={size} className={className} alt="" {...rest} />
 );
 
-export default memo(AgentChat);
+export default memo(AgentChatIcon);

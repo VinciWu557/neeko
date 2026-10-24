@@ -1,8 +1,8 @@
 import { Library, MessageSquare, PlusCircle } from 'lucide-react';
 
 import { useLibraryStore } from '@/features/library/store/libraryStore';
+import AgentChatIcon from '@/shared/components/AgentChatIcon';
 import {
-  Bot,
   ExternalLink,
   FileIcon,
   FolderOpen,
@@ -29,7 +29,7 @@ const ACTION_ITEMS: ActionRegistryItem[] = [
     group: 'agent',
     label: 'New Agent Chat',
     description: 'Open a new Agent Chat tab to chat with an AI agent',
-    icon: Bot,
+    icon: AgentChatIcon,
     keywords: ['web', 'agent', 'chat', 'ai', 'assistant', '图形'],
     execute: (ctx) => ctx.closeMenu(),
   },

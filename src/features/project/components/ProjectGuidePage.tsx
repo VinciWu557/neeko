@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState, memo } from 'react';
 
 import { resolveProjectTargetAgentIds, useBindProjectTagGroups } from '@/features/skill';
 import { useSkillStore } from '@/features/skill/store';
+import AgentChatIcon from '@/shared/components/AgentChatIcon';
 import AgentIcon from '@/shared/components/AgentIcon';
 import { useAppContext } from '@/shared/contexts/AppContext';
 import type { AgentConfig } from '@/shared/types';
@@ -144,7 +145,8 @@ function ProjectGuidePageImpl({
         id: 'agent-chat',
         title: 'Agent Chat',
         description: 'Start a multi-turn conversation with an AI agent in a chat interface',
-        icon: <Bot size={18} />,
+        // 品牌图标（与 Tab / 动作菜单同源）；Lucide 兄弟图标是 size 18，同尺寸对齐。
+        icon: <AgentChatIcon size={18} className="shrink-0" />,
         actionLabel: 'Open Chat',
         recommended: true,
       },
