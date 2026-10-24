@@ -3,6 +3,14 @@
   "version": "1.0.9",
   "private": true,
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tincopper/neeko.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tincopper/neeko/issues"
+  },
+  "homepage": "https://github.com/tincopper/neeko#readme",
   "type": "module",
   "scripts": {
     "dev": "vite",
