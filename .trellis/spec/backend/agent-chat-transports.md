@@ -586,6 +586,14 @@ match caps.config {
    `RequestApproval`。
 3. **默认值不存在**。`chat_capabilities()` 没有默认实现：新增 adapter 必须表态，
    新增**能力字段**时所有既有 adapter 的构造点编译失败。
+4. **`commands` 位与 `list_commands` 实现是一回事**（`10-21-mention-slash-palette`）：
+   「能不能弹 `/`」由位判定（前端能力位 false 时连 `list_agent_commands` 查询都不发），
+   查询本身只承担取数据；PiRpcAdapter 覆写 `list_commands`（短暂 spawn rpc 进程查
+   `get_commands` 即弃，spec §9.4）。声明与实现的一致性由
+   `capability_probe.rs::commands_contract` 双向钉住 —— 位 false ⇔ 查询返回
+   `Unsupported`；位 true ⇔ 有真实现（用不存在二进制验证覆写存在，CI 不起真进程）。
+   ACP 的 `available_commands_update` 是**会话内**推送通告，不是会话外查询，
+   故 ACP 维持 false；若要接属会话内增量。
 
 ### 10.2 五个已知断点与对应护栏
 

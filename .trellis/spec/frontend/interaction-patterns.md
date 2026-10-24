@@ -575,3 +575,53 @@ insertToSessionTerminal(session, `${path}/`);    // 多余斜杠（目录）
 `src/features/file/components/__tests__/FilesPanel.test.tsx`（`draggable` 与 `setDragFile`）、
 `src/features/terminal/components/__tests__/terminalRouting.test.ts`（仲裁 + 编排降级链）、
 `src/features/agent-chat/api/__tests__/agentInputRegistry.test.ts`（注册表显式成败）。
+
+## Composer 补全弹层：`handleKeyDown → boolean` 消费契约（2026-10-24）
+
+输入框类补全（agent chat 的 `/` 命令与 `@` 文件提及，`ComposerPalette` +
+`useComposerPalette`）的键盘事件必须走**「弹层先收、返回是否已消费」**的契约：
+
+```tsx
+onKeyDown={(e) => {
+  if (handlePaletteKeyDown(e)) {   // true = 弹层已消费（选中 / 关闭 / 移动高亮）
+    e.preventDefault();
+    return;
+  }
+  // 否则维持输入框既有行为（Enter 发送 / Shift+Enter 换行）
+  ...
+}}
+```
+
+### 契约要点
+
+1. **返回 `boolean` 是类型契约，不是文档约定** —— 「有没有消费」由弹层自己回答，
+   调用方据此决定 `preventDefault` 并短路发送。返回 `void` 会让调用方猜，猜错
+   就是 Enter 双触发（一次按键既选中候选又发送消息，AC7 的核心缺陷形态）。
+2. **未打开 / IME 组合中恒返回 `false`** —— 不干扰既有 Enter 发送；拼音的
+   Enter 上屏绝不能被弹层吞掉（`compositionstart/end` 显式门控，不用
+   `nativeEvent.isComposing` —— React 合成事件上该字段部分浏览器滞后一帧）。
+3. **候选为空时只消费 `Escape`**，其余按键放行（Enter 交给发送路径）——
+   「支持但为空」的空态不是「弹层接管键盘」的理由。
+4. 触发与过滤**不另设增量状态**：每次 change 从「当前文本 + 光标」重新派生
+   （`paletteTrigger.findTrigger` 向前扫描最近的合法触发符，要求行首/空白后 ——
+   `src/foo` 里的 `/` 不触发），Backspace 越过触发符、输入空格自然关闭。
+   写回只替换 `[triggerIndex, cursor)` 段（`applySelection`），前缀后缀原样保留。
+
+### 数据源与能力位
+
+弹层是「骨架 + 数据源」两件套（`paletteSources.ts` 的
+`ComposerPaletteSource { kind, emptyText, getItems, onPick? }`），`/` 与 `@`
+的差异只有数据来源与选中副作用。slash 源的挂载由
+`SessionStart.capabilities.commands` 能力位唯一裁决（能力位 false 时不挂源、
+不发查询 —— 不靠试查询报错，见 spec `agent-chat-transports.md` §10.1）；
+命令列表来自 `list_agent_commands`，按 agentId 在 `useAgentCommands` 内缓存
+（会话期内不变，不落盘），**禁止前端硬编码命令清单**（静态护栏：
+`paletteSources.test.ts` 的 AC2 用例）。
+
+### 对应测试
+
+`paletteTrigger.test.ts`（纯函数：触发判据 / 写回 / 过滤）、
+`ComposerPalette.test.tsx`（骨架键盘契约）、`ChatComposerPalette.test.tsx`
+（双触发 AC7 / IME AC8 / 能力位门控 AC1 / 提及选中 AC5）、
+`useAgentCommands.test.ts`（能力位 false 不发查询 / agentId 缓存 / 失败降级空态）、
+`composerWiring.test.ts`（能力位链路静态护栏）。
