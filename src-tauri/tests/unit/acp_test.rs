@@ -137,7 +137,11 @@ async fn acp_opencode_real_roundtrip() {
         return;
     }
 
-    let adapter = AcpAdapter::new(vec!["opencode".into(), "acp".into()], Default::default());
+    let adapter = AcpAdapter::new(
+        vec!["opencode".into(), "acp".into()],
+        Default::default(),
+        None,
+    );
     let ctx = AgentContext {
         agent_id: "opencode".into(),
         session_id: "acp-opencode-test".into(),

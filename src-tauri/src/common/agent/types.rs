@@ -151,6 +151,20 @@ pub struct AgentConfig {
     /// 传输由 [`ChatLaunch::transport`] 从参数 token 识别。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<ChatLaunch>,
+    /// 用户是否启用该 agent 的 CHAT 能力。`None` = 跟随出厂定义。
+    ///
+    /// # 为什么与 `chat` 分成两个字段
+    ///
+    /// `chat` 是**出厂事实**：它承载协议与参数（`opencode serve` / `pi --mode rpc`），
+    /// 内置 agent 的值不可被覆盖层改写 —— 否则一次保存就会把出厂升级永久挡在门外
+    /// （spec §10.5d 事故的形态）。
+    ///
+    /// 用户的真实需求只有「用不用它」，那是一个**偏好**，所以单独一个三态字段：
+    /// `Some(false)` = 我不用，`Some(true)` = 我要用（即使出厂默认关着），
+    /// `None` = 跟随出厂定义。压成 `bool` 会让 `None` 在第一次保存后变成
+    /// `Some(true)`，此后出厂默认的任何变化都追不上。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_enabled: Option<bool>,
     /// prompt 前置参数（Headless 能力），如 `["--bare", "-p"]` 表示
     /// `command --bare -p "<prompt>" [post_prompt_args]`。None = 无 Headless 能力。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -200,7 +214,7 @@ impl AgentConfig {
     /// 是否具备 CHAT 能力。
     #[must_use]
     pub const fn is_chat_agent(&self) -> bool {
-        self.chat.is_some()
+        self.chat.is_some() && !matches!(self.chat_enabled, Some(false))
     }
 
     /// 是否具备 CLI 能力（有命令即可终端 TUI）。
@@ -289,6 +303,81 @@ impl AgentConfig {
         env
     }
 
+    /// 解析 `!VAR` 引用：值形如 `!ANTHROPIC_API_KEY` 表示「取父进程同名变量」。
+    ///
+    /// # 为什么需要它
+    ///
+    /// `ChatLaunch::env` 是本仓第一个真正承载**凭证**的配置字段（API key 之类），
+    /// 而 `~/.neeko/config.json` 是明文 JSON。`!` 引用让配置里只留变量名，
+    /// 值留在用户自己的 shell 环境里 —— 与 `docker-compose` 的插值语法同形，
+    /// 用户零学习成本。
+    ///
+    /// # 规则
+    ///
+    /// - 仅当值**以 `!` 开头**时按引用处理；`a!b` 是普通值（`!` 不在开头）。
+    /// - 引用的变量不存在 → **报错**，不静默传空串：空串会让 agent 收到一个
+    ///   「已设置但无效」的 key，表现是 401，而 401 从 UI 上看不出根因。
+    /// - 不是引用的值原样透传。
+    pub fn resolve_env_reference(value: &str) -> Result<String, String> {
+        match value.strip_prefix('!') {
+            None => Ok(value.to_string()),
+            Some(name) => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err("env reference '!' has no variable name".to_string());
+                }
+                std::env::var(name).map_err(|_| {
+                    format!("env reference '!{name}' is not set in the parent process")
+                })
+            }
+        }
+    }
+
+    /// `chat_env()` 的**展开版**：把 `!VAR` 引用换成父进程的真实值。
+    ///
+    /// adapter 层用这个（spawn 需要可用的 key=value）；`chat_env()` 保留字面量
+    /// 语义供序列化与展示。
+    pub fn resolved_chat_env(&self) -> Result<std::collections::BTreeMap<String, String>, String> {
+        self.chat_env()
+            .into_iter()
+            .map(|(k, v)| Self::resolve_env_reference(&v).map(|resolved| (k, resolved)))
+            .collect()
+    }
+
+    /// **装载期迁移**：旧快照的 `chat` 没有 `wire_format` 键时，按**旧运行时推断**
+    /// 的语义补齐（见 `infer_legacy_wire_format` 上方的两层应用表）。
+    ///
+    /// # 为什么 serde 不做、要在这里做
+    ///
+    /// 当前对象形态是「我们自己的序列化输出」，对它做反序列化期推断会让
+    /// `deserialize(serialize(x)) != x`（`every_launch_round_trips_through_its_own_output`
+    /// 必红）。而「旧版本写的当前形态」与「新版本写的缺省值」**按内容不可区分**
+    /// —— 区分它们靠的是时机：本方法只在**装载持久化快照**时运行，推断结果
+    /// 用户在表单可见、改得动，下次保存落盘。语义与被删除的旧运行时推断完全
+    /// 等价（`chat_cmd_vec()[0]` 含 `opencode`/`kilo` → NDJSON），因此升级是
+    /// **行为保持**的；与它的区别是：推断读的是**存储的字符串**（盘上二进制
+    /// 改名不再影响），且结果对用户可见。
+    ///
+    /// `wire_format` 只有 ACP 消费，其它传输带这个值是惰性噪音 —— 不做传输
+    /// 门控，保持与旧推断（`AcpAdapter::new` 按名猜）完全同形。
+    ///
+    /// 返回是否发生变更（调用方据此记账 / 落盘）。幂等：补齐后是显式值，
+    /// 再次调用直接短路。
+    pub fn migrate_legacy_chat_wire_format(&mut self) -> bool {
+        if self.chat.is_none() || self.chat.as_ref().is_some_and(|c| c.wire_format.is_some()) {
+            return false;
+        }
+        let first = self.chat_cmd_vec().into_iter().next().unwrap_or_default();
+        let Some(inferred) = super::chat_launch::infer_legacy_wire_format(Some(&first), None)
+        else {
+            return false;
+        };
+        if let Some(chat) = self.chat.as_mut() {
+            chat.wire_format = Some(inferred);
+        }
+        true
+    }
+
     /// Resolve prompt prefix args. Returns None if agent doesn't support prompt mode.
     #[must_use]
     pub fn resolve_prompt_args(&self) -> Option<Vec<String>> {
@@ -332,6 +421,9 @@ struct RawAgentConfig {
     /// 旧：chat 附加参数 → 追加进 `ChatLaunch::args`。
     #[serde(default)]
     chat_args: Option<Vec<String>>,
+    /// 用户偏好（本次新增）：旧配置文件里没有这个键 → `None` = 跟随出厂。
+    #[serde(default)]
+    chat_enabled: Option<bool>,
     #[serde(default)]
     prompt_args: Option<Vec<String>>,
     #[serde(default)]
@@ -394,6 +486,7 @@ fn convert(raw: RawAgentConfig) -> AgentConfig {
         args: raw.args,
         env: raw.env,
         chat,
+        chat_enabled: raw.chat_enabled,
         prompt_args: raw.prompt_args,
         interactive_prompt_args: raw.interactive_prompt_args,
         post_prompt_args: raw.post_prompt_args,
@@ -412,8 +505,141 @@ impl From<RawAgentConfig> for AgentConfig {
 
 #[cfg(test)]
 mod chat_launch_tests {
+    /// `!VAR` 引用语法 —— 见 [`Self::resolve_env_reference`]。
+    ///
+    /// 变异验证：让它返回 `Ok(String::new())` → 缺变量用例红（静默空串）。
+    #[test]
+    fn env_references_are_resolved_from_the_parent_process() {
+        // SAFETY: 单元测试内设置进程环境；名字带前缀避免与真实变量冲突。
+        unsafe { std::env::set_var("NEEKO_TEST_REF_KEY", "sk-real-value") };
+
+        assert_eq!(
+            AgentConfig::resolve_env_reference("!NEEKO_TEST_REF_KEY").unwrap(),
+            "sk-real-value"
+        );
+        // 普通值原样透传。
+        assert_eq!(
+            AgentConfig::resolve_env_reference("plain").unwrap(),
+            "plain"
+        );
+        // `!` 不在开头 → 不是引用。
+        assert_eq!(AgentConfig::resolve_env_reference("a!b").unwrap(), "a!b");
+        // 空引用名 → 报错（不是静默空串）。
+        assert!(AgentConfig::resolve_env_reference("!").is_err());
+        // 变量不存在 → **报错**，不静默传空串。
+        let err = AgentConfig::resolve_env_reference("!NEEKO_TEST_REF_MISSING").unwrap_err();
+        assert!(err.contains("NEEKO_TEST_REF_MISSING"), "{err}");
+    }
+
+    /// 引用只影响 spawn 用的展开值；序列化仍保留 `!VAR` 字面量（不落盘明文）。
+    #[test]
+    fn env_reference_literals_survive_serialisation() {
+        unsafe { std::env::set_var("NEEKO_TEST_REF_KEY2", "secret") };
+        let cfg = cfg_with_env(&[], &[("K", "!NEEKO_TEST_REF_KEY2")]);
+
+        // 配置里只有引用，没有明文。
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("secret"), "{json}");
+        assert!(json.contains("!NEEKO_TEST_REF_KEY2"), "{json}");
+
+        // spawn 用的值是展开后的。
+        assert_eq!(cfg.resolved_chat_env().unwrap().get("K").unwrap(), "secret");
+    }
+
     use super::*;
-    use crate::common::agent::chat_launch::{ChatLaunch, ChatTransport};
+    use crate::common::agent::chat_launch::{ChatLaunch, ChatTransport, WireFormat};
+
+    /// **装载期迁移**：当前形态（无 `wire_format` 键）的旧 opencode 快照补出 NDJSON。
+    ///
+    /// 这是任务验收 #6 的落点 —— 反序列化层不对当前形态推断（往返不变量），
+    /// 由 `migrate_legacy_chat_wire_format` 在装载边界补齐。
+    ///
+    /// 变异验证：删掉 `migrate_legacy_chat_wire_format` 的推断体 → 本用例红。
+    #[test]
+    fn load_time_migration_infers_wire_format_for_legacy_opencode_snapshots() {
+        // program 覆盖路径。
+        let mut with_program = AgentConfig {
+            chat: Some(ChatLaunch {
+                program: Some("opencode".into()),
+                args: vec!["acp".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(with_program.migrate_legacy_chat_wire_format());
+        assert_eq!(
+            with_program.chat.unwrap().wire_format,
+            Some(WireFormat::Ndjson)
+        );
+
+        // **command 回落路径** —— 旧运行时推断看的是 `chat_cmd_vec()[0]`，program
+        // 缺省时是 command。反序列化层（只看 program）看不到这一类，只有装载期
+        // （持有完整 `AgentConfig`）能补上。
+        let mut command_fallback = AgentConfig {
+            command: "opencode".into(),
+            chat: Some(ChatLaunch {
+                args: vec!["acp".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(command_fallback.migrate_legacy_chat_wire_format());
+        assert_eq!(
+            command_fallback.chat.unwrap().wire_format,
+            Some(WireFormat::Ndjson)
+        );
+    }
+
+    /// 显式值优先、不匹配不动、无 chat 无事 —— 三条否定路径。
+    #[test]
+    fn load_time_migration_respects_explicit_values_and_non_matching_names() {
+        let mut explicit = AgentConfig {
+            chat: Some(ChatLaunch {
+                program: Some("opencode".into()),
+                wire_format: Some(WireFormat::ContentLength),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!explicit.migrate_legacy_chat_wire_format(), "显式值优先");
+        assert_eq!(
+            explicit.chat.unwrap().wire_format,
+            Some(WireFormat::ContentLength)
+        );
+
+        let mut no_match = AgentConfig {
+            command: "pi".into(),
+            chat: Some(ChatLaunch {
+                args: vec!["--mode".into(), "rpc".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!no_match.migrate_legacy_chat_wire_format());
+        assert_eq!(no_match.chat.unwrap().wire_format, None);
+
+        let mut no_chat = AgentConfig {
+            ..Default::default()
+        };
+        assert!(!no_chat.migrate_legacy_chat_wire_format());
+    }
+
+    /// 幂等：补齐后是显式值，再次调用 no-op（返回 false，不重复记账）。
+    #[test]
+    fn load_time_migration_is_idempotent() {
+        let mut cfg = AgentConfig {
+            command: "opencode".into(),
+            chat: Some(ChatLaunch {
+                args: vec!["acp".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(cfg.migrate_legacy_chat_wire_format());
+        let once = cfg.chat.clone();
+        assert!(!cfg.migrate_legacy_chat_wire_format());
+        assert_eq!(cfg.chat, once);
+    }
 
     fn launch(program: Option<&str>, args: &[&str]) -> ChatLaunch {
         ChatLaunch {
@@ -557,6 +783,67 @@ mod chat_launch_tests {
     fn parse_agent(chat_json: &str) -> AgentConfig {
         let json = format!(r#"{{"id":"x","name":"X","command":"x","chat":{chat_json}}}"#);
         serde_json::from_str(&json).expect("migrate agent")
+    }
+
+    /// `is_chat_agent` 的三态判据 —— 唯一的「有没有 chat」判据。
+    ///
+    /// 变异验证：改回 `self.chat.is_some()` → 第一条红。
+    #[test]
+    fn is_chat_agent_respects_the_user_preference() {
+        let with_chat = |enabled: Option<bool>| AgentConfig {
+            id: "x".into(),
+            name: "X".into(),
+            chat: Some(ChatLaunch::default()),
+            chat_enabled: enabled,
+            ..Default::default()
+        };
+
+        assert!(
+            with_chat(None).is_chat_agent(),
+            "None = 跟随出厂（有 chat）"
+        );
+        assert!(with_chat(Some(true)).is_chat_agent());
+        assert!(!with_chat(Some(false)).is_chat_agent(), "用户关掉了");
+
+        // 没有 chat 就是没有 —— `chat_enabled: true` 不能凭空造出能力。
+        let no_chat = AgentConfig {
+            id: "x".into(),
+            name: "X".into(),
+            chat: None,
+            chat_enabled: Some(true),
+            ..Default::default()
+        };
+        assert!(!no_chat.is_chat_agent());
+    }
+
+    /// `chat_enabled` 缺省（旧配置）时序列化不产生 `null` 噪音，且能读回。
+    #[test]
+    fn chat_enabled_round_trips_and_stays_absent_when_none() {
+        let cfg = AgentConfig {
+            id: "x".into(),
+            name: "X".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("chat_enabled"), "{json}");
+        let back = serde_json::from_str::<AgentConfig>(&json).unwrap();
+        assert_eq!(back.chat_enabled, None);
+        assert_eq!(back.id, cfg.id);
+
+        let off = AgentConfig {
+            id: "x".into(),
+            name: "X".into(),
+            chat_enabled: Some(false),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains("\"chat_enabled\":false"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<AgentConfig>(&json)
+                .unwrap()
+                .chat_enabled,
+            Some(false)
+        );
     }
 
     /// R4 迁移矩阵：六种旧形态经完整 `AgentConfig` 反序列化后成立。

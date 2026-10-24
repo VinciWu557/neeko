@@ -63,6 +63,7 @@ pub fn load_custom_agents(
                 continue;
             };
             normalize_agent_skill_path(&mut agent, agent_json, &mut outcome);
+            migrate_agent_wire_format(&mut agent, agent_json, &mut outcome);
 
             // `AgentManager::add_agent` 是唯一入口：内置 id 原位替换（身份保留）、
             // 自定义 id 去重追加 —— 无需先 remove。
@@ -129,6 +130,33 @@ fn inject_legacy_skill_path(
         );
         outcome.migrated = true;
     }
+}
+
+/// 装载期补齐旧快照的 `wire_format`（迁移期推断，语义见
+/// `AgentConfig::migrate_legacy_chat_wire_format`），并把结果写回配置 JSON
+/// （两处同源，与 skill_path 归一同模式；调用方据 `outcome.migrated` 落盘）。
+fn migrate_agent_wire_format(
+    agent: &mut AgentConfig,
+    agent_json: &mut serde_json::Value,
+    outcome: &mut AgentBootOutcome,
+) {
+    if !agent.migrate_legacy_chat_wire_format() {
+        return;
+    }
+    // 迁移返回 true 蕴含 wire_format 已就位；let-else 只是让「不可能」成为
+    // 优雅 no-op 而不是 panic（启动路径禁止炸）。
+    let Some(wire_format) = agent.chat.as_ref().and_then(|c| c.wire_format) else {
+        return;
+    };
+    if let Some(chat_obj) = agent_json.get_mut("chat").and_then(|v| v.as_object_mut()) {
+        match serde_json::to_value(wire_format) {
+            Ok(v) => {
+                chat_obj.insert("wire_format".into(), v);
+            }
+            Err(e) => log::warn!("[boot] wire_format 写回配置失败（内存值保留）: {e}"),
+        }
+    }
+    outcome.migrated = true;
 }
 
 /// 归一化 agent 的 `skill_path`，并把结果写回配置 JSON（两处同源）。
@@ -374,6 +402,113 @@ mod tests {
             manager.get_agent(&builtin_id).expect("present").name,
             "Overridden",
             "覆盖值必须生效"
+        );
+    }
+
+    /// **装载期 wire_format 迁移（端到端）**：旧 opencode acp 快照（当前形态、无
+    /// `wire_format` 键）装载后注册值与配置 JSON 同步补出 NDJSON。
+    ///
+    /// 这是任务验收 #6 的用户可见保障：升级后该类配置**不失效**，且值在下次
+    /// 保存时落盘（用户看得见、改得动）。变异验证：删掉 `migrate_agent_wire_format`
+    /// 调用 → 本用例红。
+    #[test]
+    fn migrates_legacy_opencode_acp_wire_format_on_load() {
+        let agents = Mutex::new(AgentManager::new());
+        let mut config = serde_json::json!({
+            "customAgents": [{
+                "id": "custom:oc",
+                "name": "OC",
+                "enabled": true,
+                "command": "opencode",
+                "args": [],
+                "env": {},
+                "chat": { "program": "opencode", "args": ["acp"] },
+            }],
+        });
+
+        let outcome = load_custom_agents(&mut config, &agents);
+
+        assert!(
+            outcome.migrated,
+            "wire_format 补齐必须记账（调用方据此落盘）"
+        );
+        let registered = agents
+            .lock()
+            .expect("lock")
+            .get_agent("custom:oc")
+            .cloned()
+            .expect("agent registered");
+        assert_eq!(
+            registered.chat.unwrap().wire_format,
+            Some(crate::common::agent::chat_launch::WireFormat::Ndjson)
+        );
+        // 配置 JSON 同步写回（两处同源，落盘后用户可编辑）。
+        assert_eq!(
+            config["customAgents"][0]["chat"]["wire_format"],
+            serde_json::json!("ndjson")
+        );
+    }
+
+    /// program 缺省时按 **command** 回落推断 —— 旧运行时推断看的是
+    /// `chat_cmd_vec()[0]`，只有装载期（持有完整 AgentConfig）能看到这一类。
+    #[test]
+    fn wire_format_migration_falls_back_to_command() {
+        let agents = Mutex::new(AgentManager::new());
+        let mut config = serde_json::json!({
+            "customAgents": [{
+                "id": "custom:oc",
+                "name": "OC",
+                "enabled": true,
+                "command": "opencode",
+                "args": [],
+                "env": {},
+                "chat": { "args": ["acp"] },
+            }],
+        });
+
+        let outcome = load_custom_agents(&mut config, &agents);
+
+        assert!(outcome.migrated);
+        let registered = agents
+            .lock()
+            .expect("lock")
+            .get_agent("custom:oc")
+            .cloned()
+            .expect("agent registered");
+        assert_eq!(
+            registered.chat.unwrap().wire_format,
+            Some(crate::common::agent::chat_launch::WireFormat::Ndjson)
+        );
+    }
+
+    /// 显式值永远优先：快照已带 `wire_format` 时迁移是 no-op，也不记账。
+    #[test]
+    fn wire_format_migration_respects_explicit_values() {
+        let agents = Mutex::new(AgentManager::new());
+        let mut config = serde_json::json!({
+            "customAgents": [{
+                "id": "custom:oc",
+                "name": "OC",
+                "enabled": true,
+                "command": "opencode",
+                "args": [],
+                "env": {},
+                "chat": { "program": "opencode", "args": ["acp"], "wire_format": "content-length" },
+            }],
+        });
+
+        let outcome = load_custom_agents(&mut config, &agents);
+
+        assert!(!outcome.migrated, "显式值不得被迁移改写");
+        let registered = agents
+            .lock()
+            .expect("lock")
+            .get_agent("custom:oc")
+            .cloned()
+            .expect("agent registered");
+        assert_eq!(
+            registered.chat.unwrap().wire_format,
+            Some(crate::common::agent::chat_launch::WireFormat::ContentLength)
         );
     }
 

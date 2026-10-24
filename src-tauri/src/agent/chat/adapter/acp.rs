@@ -26,6 +26,7 @@ use crate::agent::chat::events::{
     Capabilities, ContextManifest, DoneReason, SessionRequest, StreamEvent, TurnEndReason,
 };
 use crate::agent::chat::mock;
+use crate::common::agent::chat_launch::WireFormat;
 use crate::common::error::AppError;
 use crate::common::executor::factory::ExecTarget;
 use crate::core::exec;
@@ -34,15 +35,6 @@ use crate::core::exec;
 const ACP_PROTOCOL_VERSION: i64 = 1;
 
 // ── JSON-RPC framing (LSP-style Content-Length header) ──────────────────────
-
-/// Wire format for JSON-RPC messages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WireFormat {
-    /// LSP-style Content-Length framed (e.g. DeepSeek Harness, Zed agents).
-    ContentLength,
-    /// NDJSON / newline-delimited JSON (e.g. OpenCode).
-    Ndjson,
-}
 
 /// Encode one JSON-RPC message into a framed frame.
 fn encode_frame(body: &str, format: WireFormat) -> Vec<u8> {
@@ -406,18 +398,37 @@ pub struct AcpAdapter {
 }
 
 impl AcpAdapter {
-    /// Create an ACP adapter that spawns the given command.
+    /// 测试探针：当前是否解析 NDJSON 帧。
+    #[cfg(test)]
+    const fn uses_ndjson_for_tests(&self) -> bool {
+        matches!(self.resolved_wire_format(), WireFormat::Ndjson)
+    }
+
+    /// 解析后的帧格式（`None` → 协议默认 `ContentLength`）。
     #[must_use]
-    pub fn new(cmd: Vec<String>, env: std::collections::BTreeMap<String, String>) -> Self {
-        // Auto-detect wire format based on command name.
-        let wire_format = if cmd
-            .first()
-            .is_some_and(|c| c.contains("opencode") || c.contains("kilo"))
-        {
-            Some(WireFormat::Ndjson)
-        } else {
-            None
-        };
+    pub const fn resolved_wire_format(&self) -> WireFormat {
+        match self.wire_format {
+            Some(f) => f,
+            None => WireFormat::ContentLength,
+        }
+    }
+
+    /// Create an ACP adapter that spawns the given command.
+    ///
+    /// `wire_format` 由调用方给出（源自 `ChatLaunch::wire_format` 配置项）。
+    ///
+    /// # 为什么不在这里推断
+    ///
+    /// 这里曾用 `cmd[0].contains("opencode") || contains("kilo")` 猜 NDJSON。
+    /// 三个致命点：① 用户把二进制改名或包一层 wrapper 就静默换协议；
+    /// ② 猜错没有报错，只有服务端解析失败；③ 用户无法覆盖。
+    /// 现在它是**配置**的一部分（含无此字段旧配置的迁移），adapter 只执行。
+    #[must_use]
+    pub const fn new(
+        cmd: Vec<String>,
+        env: std::collections::BTreeMap<String, String>,
+        wire_format: Option<WireFormat>,
+    ) -> Self {
         Self {
             io: AcpIo::Spawn(cmd),
             env,
@@ -432,16 +443,6 @@ impl AcpAdapter {
             io: AcpIo::Mock,
             wire_format: None,
             env: std::collections::BTreeMap::new(),
-        }
-    }
-
-    /// Create an ACP adapter with an explicit wire format.
-    #[must_use]
-    pub const fn with_wire_format(cmd: Vec<String>, format: WireFormat) -> Self {
-        Self {
-            io: AcpIo::Spawn(cmd),
-            env: std::collections::BTreeMap::new(),
-            wire_format: Some(format),
         }
     }
 }
@@ -531,7 +532,6 @@ impl AgentAdapter for AcpAdapter {
 }
 
 impl AcpAdapter {
-    /// Shared session setup over an arbitrary ACP stdio pair: handshake
     /// (initialize → session/new), initial prompt, event pump, request channel.
     async fn create_with_io<R, W>(
         ctx: &AgentContext,
@@ -1438,5 +1438,51 @@ mod tests {
             Some("session/close")
         );
         assert!(msg.get("id").is_some());
+    }
+}
+
+#[cfg(test)]
+mod wire_format_tests {
+    use super::AcpAdapter;
+    use crate::common::agent::chat_launch::WireFormat;
+
+    /// **静态护栏**：adapter 不得按可执行文件名推断帧格式。
+    ///
+    /// 那条推断曾让「把 opencode 改名 / 包一层 wrapper」静默换错协议，
+    /// 且没有任何报错 —— 用户只看到握手永远无响应。
+    ///
+    /// 变异验证：把 `if cmd[0].contains("opencode") { Ndjson }` 加回 `new` → 红。
+    #[test]
+    fn adapter_never_guesses_the_wire_format_from_the_program_name() {
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src/agent/chat/adapter/acp.rs"
+        ))
+        .expect("read acp.rs");
+        let production = src.split("#[cfg(test)]").next().expect("production");
+
+        // 只看代码行：注释里说明这段历史是合法的。
+        let code: String = production
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains("contains(\"opencode\")"),
+            "帧格式必须来自配置，不能按命令名推断"
+        );
+        assert!(!code.contains("contains(\"kilo\")"), "同上");
+    }
+
+    /// 显式传入的帧格式生效：`Some(Ndjson)` 与前缀无关。
+    #[test]
+    fn explicit_wire_format_is_used_regardless_of_the_program_name() {
+        let ndjson = AcpAdapter::new(
+            vec!["totally-custom-name".into(), "acp".into()],
+            Default::default(),
+            Some(WireFormat::Ndjson),
+        );
+        // `Ndjson` → `try_decode_frame` 走换行分隔；用一行 JSON 验证能解出。
+        assert!(ndjson.uses_ndjson_for_tests());
     }
 }

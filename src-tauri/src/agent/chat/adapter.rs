@@ -12,17 +12,19 @@ use tokio::sync::mpsc;
 
 use crate::agent::chat::capabilities::ChatCapabilities;
 use crate::agent::chat::events::{SessionRequest, StreamEvent};
-use crate::common::agent::chat_launch::ChatTransport;
 use crate::common::agent::types::AgentConfig;
 pub mod acp;
 pub mod acp_config;
 pub mod deepseek;
+pub mod launch_spec;
 pub mod opencode;
 pub mod pi_rpc;
+pub mod registry;
 pub mod session_config;
 
 pub use acp::AcpAdapter;
 pub use deepseek::DeepSeekHarnessAdapter;
+pub use launch_spec::{LaunchMode, LaunchSpec};
 pub use opencode::ServeAdapter;
 
 use crate::common::error::AppError;
@@ -84,19 +86,21 @@ pub fn adapter_for(config: &AgentConfig) -> Result<Box<dyn AgentAdapter>, AppErr
         )));
     };
 
-    // 进程内桩：没有可执行文件可 spawn（见 `AgentConfig::is_inprocess_chat`）。
-    if config.is_inprocess_chat() {
-        return Ok(Box::new(AcpAdapter::mock()));
+    if config.chat_enabled == Some(false) {
+        return Err(AppError::Unsupported(format!(
+            "agent '{}' chat is disabled by the user",
+            config.id
+        )));
     }
 
-    let cmd = config.chat_cmd_vec();
-    let env = config.chat_env();
-    Ok(match launch.transport() {
-        ChatTransport::Acp => Box::new(AcpAdapter::new(cmd, env)),
-        ChatTransport::Serve => Box::new(ServeAdapter::new(cmd, env)),
-        ChatTransport::Jsonl => Box::new(DeepSeekHarnessAdapter::new(cmd, env)),
-        ChatTransport::PiRpc => Box::new(pi_rpc::PiRpcAdapter::new(cmd, env)),
-    })
+    // 「怎么启动」一次性打包成 `LaunchSpec`，交给构造表：
+    // 本函数没有任何按传输分支的代码 —— 新增传输只需在 `registry.rs`
+    // 加一条 `BuildDef`，此处零改动。
+    let spec = crate::agent::chat::adapter::registry::launch_spec_for(config, launch)?;
+    Ok((crate::agent::chat::adapter::registry::build_for(
+        launch.transport(),
+    )
+    .build)(spec))
 }
 
 /// Binds a session to its working context (A4 — protocolised G4).
@@ -374,21 +378,6 @@ mod adapter_for_tests {
         }
     }
 
-    /// 分派注释里写的不变量：mock 分支只看 `inprocess` 声明，不看命令行。
-    #[test]
-    fn mock_branch_reads_the_explicit_declaration() {
-        let src = std::fs::read_to_string(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/src/agent/chat/adapter.rs"
-        ))
-        .expect("read adapter.rs");
-        let production = src.split("#[cfg(test)]").next().expect("production");
-        assert!(
-            production.contains("config.is_inprocess_chat()"),
-            "adapter_for must consult the explicit inprocess declaration"
-        );
-    }
-
     /// `adapter_for` 对每种传输都能构造出适配器。
     ///
     /// 传输不再由枚举表达，而是**识别**出来的 —— 所以这里传入的是启动命令的
@@ -460,33 +449,101 @@ mod adapter_for_tests {
         assert!(!config.is_inprocess_chat());
     }
 
-    /// **静态护栏**：chat 分支必须用 `chat_cmd_vec()`，不能回退到 CLI 的 `cmd_vec()`。
+    /// 用户关掉 chat 后构造 adapter 必须**报错**，不能照旧返回一个能跑的实例。
     ///
-    /// 变异验证：把 `PiRpcAdapter::new(config.chat_cmd_vec())` 改回
-    /// `config.cmd_vec()` → 本用例红。回退的后果是 `ChatLaunch::program` 覆盖静默失效
-    /// —— 用户配了 `pi-acp`，实际仍 spawn `pi`，且没有任何报错。
+    /// 消息要区分「没有能力」与「被你关了」：两者对用户的下一步动作完全不同
+    ///（前者要换 agent，后者去设置里打开）。
     #[test]
-    fn chat_branches_use_the_chat_command_vector() {
+    fn disabled_chat_is_rejected_with_a_distinct_message() {
+        let config = AgentConfig {
+            id: "pi".into(),
+            name: "Pi".into(),
+            command: "pi".into(),
+            chat: Some(ChatLaunch {
+                args: vec!["--mode".into(), "rpc".into()],
+                ..Default::default()
+            }),
+            chat_enabled: Some(false),
+            ..Default::default()
+        };
+        let Err(err) = adapter_for(&config) else {
+            panic!("disabled chat must not produce an adapter");
+        };
+        let err = err.to_string();
+        assert!(err.contains("disabled"), "{err}");
+
+        // 对照：没有 chat 时是另一条消息。
+        let no_chat = AgentConfig {
+            id: "gemini".into(),
+            name: "Gemini".into(),
+            command: "gemini".into(),
+            ..Default::default()
+        };
+        let Err(err) = adapter_for(&no_chat) else {
+            panic!("no-chat agent must not produce an adapter");
+        };
+        let err = err.to_string();
+        assert!(err.contains("no CHAT capability"), "{err}");
+    }
+
+    /// **静态护栏**：`adapter_for` 不得含任何 `ChatTransport::` 分支。
+    ///
+    /// 分派必须走构造表 —— 加回 `match` 就等于把「新增传输要改分派处」这个
+    /// OCP 违规重新引入，而本任务的整个目的就是消除它。
+    ///
+    /// 变异验证：把 `adapter_for` 改回 `match launch.transport() { … }` → 红。
+    #[test]
+    fn adapter_for_has_no_transport_branches() {
         let src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/src/agent/chat/adapter.rs"
         ))
         .expect("read adapter.rs");
-        // 只看生产代码：测试块里的字符串会自我命中。
         let production = src
             .split("#[cfg(test)]")
             .next()
             .expect("production section");
+        // 按**行首**锚定，避免命中注释/字符串里出现的函数名。
+        let body = production
+            .split("\npub fn adapter_for")
+            .nth(1)
+            .expect("adapter_for 存在");
+        // 按花括号配平取函数体（内部有嵌套块，不能按 `\n}` 切）。
+        // 从签名的第一个 `{` 之后开始数，否则 `... else { ... };` 的收尾 `}`
+        // 会在 depth 归零时提前截断。
+        let start = body.find('{').expect("body start") + 1;
+        let body = &body[start..];
+        let (mut depth, mut end) = (1i32, body.len());
+        for (i, ch) in body.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let body = &body[..end];
+        // 只判代码行：注释里提到类型名是合法的文档写法。
+        let code: String = body
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
 
         assert!(
-            production.contains("config.chat_cmd_vec()"),
-            "adapter_for must call chat_cmd_vec() so ChatLaunch::program takes effect"
+            !code.contains("ChatTransport::"),
+            "adapter_for must dispatch through the registry, not a match: {code}"
         );
-        for stale in [
-            "DeepSeekHarnessAdapter::new(config.cmd_vec())",
-            "pi_rpc::PiRpcAdapter::new(config.cmd_vec())",
-        ] {
-            assert!(!production.contains(stale), "found stale CLI form: {stale}");
-        }
+        // 前置早退只允许两条：无 chat / 被用户关闭。
+        assert_eq!(
+            body.matches("return Err(AppError::Unsupported").count(),
+            2,
+            "adapter_for 只应有 2 条前置早退"
+        );
     }
 }

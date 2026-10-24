@@ -197,6 +197,7 @@ fn agent_config_serde_roundtrip() {
         is_overridden: false,
         skill_path: None,
         chat: None,
+        chat_enabled: None,
         detection: None,
         deploy: Default::default(),
     };
