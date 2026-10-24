@@ -9,7 +9,7 @@ import type { ModelAvailability } from '@/shared/utils/modelTarget';
 import { noAutocorrectProps } from '@/ui/inputDefaults';
 
 import ContextWindowMeter from './ContextWindowMeter';
-import type { Attachment } from './messageModel';
+import type { Attachment, ContextWindow } from './messageModel';
 import { ModelPicker } from './ModelPicker';
 import { ModelSelector } from './ModelSelector';
 import { AgentModeSelector, ThinkingLevelSelector } from './ParamSelectors';
@@ -34,7 +34,7 @@ interface ChatComposerProps {
   sessionConfigView?: ModelAvailability;
   selectedModel: ModelInfo | null;
   selectedAgent: { id: string; name: string; icon?: string | null };
-  contextWindow: { used: number; total: number; model: string } | null;
+  contextWindow: ContextWindow | null;
   tabKey: string;
   tabId: string;
   onInputChange: (e: ChangeEvent<HTMLTextAreaElement>) => void;
@@ -241,13 +241,7 @@ export default function ChatComposer({
                 onSelect={(configId, value) => onConfigChange?.(configId, value)}
               />
             )}
-            {contextWindow && (
-              <ContextWindowMeter
-                used={contextWindow.used}
-                total={contextWindow.total}
-                model={contextWindow.model}
-              />
-            )}
+            {contextWindow && <ContextWindowMeter contextWindow={contextWindow} />}
             <button className="composer-btn" title="Attach files" onClick={onOpenAttachDrop}>
               <Paperclip size={16} />
             </button>

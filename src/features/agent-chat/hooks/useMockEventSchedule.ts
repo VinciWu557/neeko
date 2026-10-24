@@ -67,12 +67,7 @@ export function useMockEventSchedule({
     });
 
     // 3. Turn start
-    schedule(250, {
-      seq: seq++,
-      type: 'turn_start',
-      session_id: sid,
-      turn_id: 'mock_turn_1',
-    });
+    schedule(250, { seq: seq++, type: 'turn_start', session_id: sid, turn_id: 'mock_turn_1' });
 
     // 4. Agent loop: 文本 → 工具 → 文本（先输出意图，再执行工具，保持流式顺序）
     schedule(300, {
@@ -333,13 +328,20 @@ export function useMockEventSchedule({
         '✅ 全部完成。\n\n本轮 mockAgent 模拟了完整的工具调用链：\n\n• 文件读取（read_file，连续调用自动分组）\n• 文件编辑（带 diff 预览）\n• 命令执行（command_run）\n• skill 加载（load_skill）\n• 任务执行（task）\n• 实时清单（todo_updated）\n\n你可以继续发送消息进行多轮对话。',
     });
 
-    // Token 用量遥测
+    // Token 用量遥测（pi get_session_stats 的满额形状：进度条 + 命中率 ≈98.8%）
     schedule(7600, {
       seq: seq++,
       type: 'meta',
       session_id: sid,
       model: 'mock-model-v1',
-      usage: { input_tokens: 1234, output_tokens: 567 },
+      usage: {
+        input_tokens: 1234,
+        output_tokens: 567,
+        context_tokens: 205_000,
+        context_limit: 1_000_000,
+        cache_read_tokens: 197_400,
+        cache_write_tokens: 1200,
+      },
     });
 
     // Turn end
@@ -352,12 +354,7 @@ export function useMockEventSchedule({
     });
 
     // Session done
-    schedule(8100, {
-      seq: seq++,
-      type: 'session_done',
-      session_id: sid,
-      reason: 'completed',
-    });
+    schedule(8100, { seq: seq++, type: 'session_done', session_id: sid, reason: 'completed' });
 
     return () => {
       for (const t of timers) clearTimeout(t);

@@ -146,6 +146,14 @@ export type ErrorKind = 'agent' | 'protocol' | 'transport';
 export interface Usage {
   input_tokens?: number;
   output_tokens?: number;
+  /** 当前上下文占用（pi `contextUsage.tokens`；compaction 后暂缺）。 */
+  context_tokens?: number;
+  /** 模型上下文窗口上限（pi `contextUsage.contextWindow`）。 */
+  context_limit?: number;
+  /** 会话累计缓存读取 token（pi `tokens.cacheRead`）。 */
+  cache_read_tokens?: number;
+  /** 会话累计缓存写入 token（pi `tokens.cacheWrite`）。 */
+  cache_write_tokens?: number;
 }
 
 /** Agent 实时任务清单项（todo_updated 事件负载）。 */

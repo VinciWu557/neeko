@@ -152,28 +152,58 @@ export interface CtxInfo {
   projectPath?: string;
 }
 
-/** 上下文用量条的数据。 */
+/**
+ * 上下文用量的展示模型（`meta` 事件派生）。
+ *
+ * - `used`：`context_tokens ?? input_tokens` —— 优先当前占用估计，
+ *   compaction 后暂缺时回退会话累计 input。
+ * - `limit`：窗口上限，未知为 `null`（UI 只显已用量，不渲染百分比/进度条）。
+ * - `cacheHitRate`：三计数齐备且分母 > 0 才派生，缺失即 `undefined`
+ *   （隐藏命中率行）。
+ */
 export interface ContextWindow {
   used: number;
-  total: number;
+  limit: number | null;
   model: string;
+  /** `read / (input + read + write)`，会话累计口径。 */
+  cacheHitRate?: number;
 }
 
 /**
- * `meta` 事件 → 用量条数据；没有 `usage` 时返回 `null`（不渲染用量条）。
+ * `meta` 事件 → 用量条数据；没有可渲染的数据时返回 `null`（不渲染用量条）。
  *
- * `total` 是**已用**：input + output（不是 context window 上限 —— 那个值
- * `Usage` 事件装不下，见 `design.md`「压缩/切换/导出/统计不做」）。
+ * 每一块 UI 只渲染有真实数据支撑的内容：无 usage、或连「已用」值都拿不到
+ *（context 与 input 均缺）时返回 `null`，禁止拿 `input + output` 冒充上限
+ *（旧实现正是这个误用 —— 已删除）。
  */
 export function contextWindowOf(ev: {
-  usage?: { input_tokens?: number | null; output_tokens?: number | null } | null;
+  usage?: {
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    context_tokens?: number | null;
+    context_limit?: number | null;
+    cache_read_tokens?: number | null;
+    cache_write_tokens?: number | null;
+  } | null;
   model?: string | null;
 }): ContextWindow | null {
-  if (!ev.usage) return null;
-  const used = ev.usage.input_tokens ?? 0;
+  const usage = ev.usage;
+  if (!usage) return null;
+  const used = usage.context_tokens ?? usage.input_tokens;
+  if (used == null) return null;
+
+  const read = usage.cache_read_tokens;
+  const write = usage.cache_write_tokens;
+  const input = usage.input_tokens;
+  // 三值齐备且分母 > 0 才有命中率；缺任一项时隐藏（不猜）。
+  const denom = read != null && write != null && input != null ? input + read + write : 0;
+  const cacheHitRate =
+    denom > 0 && read != null && write != null && input != null ? read / denom : undefined;
+
   return {
     used,
-    total: used + (ev.usage.output_tokens ?? 0),
+    limit: usage.context_limit ?? null,
     model: ev.model ?? 'unknown',
+    cacheHitRate,
   };
 }

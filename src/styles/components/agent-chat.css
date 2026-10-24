@@ -364,10 +364,18 @@
 
   .attach-empty { padding:14px 12px; font-size:12px; color:var(--text-muted); text-align:center; }
 
-  /* ── 上下文环形计量 ───────────────────────────────────────────────────── */
-  .ctx-meter { display:flex; align-items:center; gap:5px; cursor:pointer; }
+  /* ── 上下文容量计量（环形按钮 + 弹层） ────────────────────────────── */
+  .ctx-meter { position:relative; display:flex; align-items:center; gap:5px; cursor:pointer; }
   .ctx-meter svg { display:block; }
-  .ctx-meter-label { font-family:var(--font-mono); font-size:10px; color:var(--text-muted); }
+  .ctx-meter-pop { position:absolute; bottom:calc(100% + 8px); left:0; z-index:60; min-width:240px; padding:10px 12px; background:var(--bg-secondary); border:1px solid var(--border); border-radius:var(--radius); box-shadow:0 12px 32px rgba(0,0,0,.4); }
+  .ctx-pop-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; font-size:12px; color:var(--text-primary); }
+  .ctx-pop-vals { font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); white-space:nowrap; }
+  .ctx-pop-bar { margin-top:8px; height:4px; border-radius:999px; background:var(--bg-tertiary); overflow:hidden; }
+  .ctx-pop-fill { height:100%; border-radius:999px; }
+  .ctx-pop-divider { margin:10px 0 8px; border-top:1px solid var(--border); }
+  .ctx-pop-row { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12px; color:var(--text-primary); }
+  .ctx-pop-val { font-family:var(--font-mono); font-size:11px; color:var(--text-secondary); }
+  .ctx-pop-foot { margin-top:8px; font-size:11px; }
 
   /* ── 审批面板 ─────────────────────────────────────────────────────────── */
   .approval-panel { border-radius:var(--radius); background:var(--bg-secondary); padding:10px 12px; margin:0 16px 8px; box-shadow:0 12px 32px rgba(0,0,0,.35); }

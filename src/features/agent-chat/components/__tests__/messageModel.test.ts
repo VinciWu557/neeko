@@ -7,7 +7,7 @@ import { contextWindowOf } from '../messageModel';
  *
  * - `used = context_tokens ?? input_tokens`（compaction 后 context 缺失回退累计 input）
  * - `limit = context_limit ?? null`（未知为 null，UI 不渲染进度条/百分比）
- * - cache 三值（read/write/input）齐备且分母 > 0 才派生 `hitRate`
+ * - `cacheHitRate`：cache 三计数齐备且分母 > 0 才派生
  * - usage 全空 / 无「已用」值 → null（不渲染计量器，禁止假数据）
  */
 describe('contextWindowOf', () => {
@@ -27,12 +27,7 @@ describe('contextWindowOf', () => {
     expect(win!.used).toBe(205_000);
     expect(win!.limit).toBe(1_000_000);
     expect(win!.model).toBe('auto/dv4');
-    expect(win!.cache).toEqual({
-      read: 197_400,
-      write: 1200,
-      input: 1234,
-      hitRate: 197_400 / (1234 + 197_400 + 1200),
-    });
+    expect(win!.cacheHitRate).toBe(197_400 / (1234 + 197_400 + 1200));
   });
 
   it('falls back to input_tokens when context_tokens is missing', () => {
@@ -50,7 +45,7 @@ describe('contextWindowOf', () => {
     });
     expect(win!.limit).toBeNull();
     // 无 cache 字段 → 不派生
-    expect(win!.cache).toBeUndefined();
+    expect(win!.cacheHitRate).toBeUndefined();
   });
 
   it('omits cache when any of the three counters is missing', () => {
@@ -58,13 +53,13 @@ describe('contextWindowOf', () => {
       model: 'm',
       usage: { input_tokens: 10, cache_read_tokens: 5 }, // 缺 write
     });
-    expect(partial!.cache).toBeUndefined();
+    expect(partial!.cacheHitRate).toBeUndefined();
 
     const zeroDenom = contextWindowOf({
       model: 'm',
       usage: { input_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 },
     });
-    expect(zeroDenom!.cache).toBeUndefined(); // 分母为 0：命中率无意义
+    expect(zeroDenom!.cacheHitRate).toBeUndefined(); // 分母为 0：命中率无意义
   });
 
   it('returns null for an empty or absent usage payload', () => {

@@ -82,12 +82,12 @@ describe('useSessionLevelEvents', () => {
         type: 'meta',
         session_id: 's1',
         model: 'pi-model',
-        usage: { input_tokens: 100, output_tokens: 20 },
+        usage: { input_tokens: 100, output_tokens: 20, context_limit: 1_000 },
       } as StreamEvent);
     });
     expect(result.current.state.contextWindow).toEqual({
-      used: 100,
-      total: 120,
+      used: 100, // context_tokens 缺失 → 回退累计 input
+      limit: 1000,
       model: 'pi-model',
     });
   });
