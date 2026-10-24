@@ -99,6 +99,25 @@
 - [x] 变异验证（见下）
 - [x] 更新 `.trellis/spec/frontend/` 记录弹层的键盘契约
 
+## 阶段 6：输入框内高亮层（2026-10-24 追加，design §10）
+
+- [x] `paletteHighlight.ts` 纯函数：`tokenizeHighlights(text) → Range[]`，
+      **复用 `findTrigger` 同一语法**扫描全部 token 区间（禁止第二套正则）；
+      配套测试：`src/foo` 不高亮、行首/空白后的 `/cmd` 与 `@path` 高亮、多 token、
+      token 不跨空白
+- [x] 护栏：对 `findTrigger` 可触发的每个位置 tokenize 必须产出覆盖区间
+      （两套判据不得漂移）
+- [x] `ChatComposer` 加镜像层：textarea 文字透明（`caret-color` 保留）+
+      同排版 div 渲染高亮 span；`aria-hidden` + `pointer-events: none`；
+      滚动同步（scroll 事件同步 scrollTop）；tokenize 用 `useMemo` 只随 text 重算
+- [x] IME 组合期：`composing` 置位时恢复 textarea 原生渲染、隐藏镜像层
+      （WebKit 下透明文字会隐藏组合文本，AC8 邻近回归）
+- [x] 组件测试：含 `@path` / `/cmd` 的文本渲染高亮 span；纯文本不高亮；
+      composing 期间镜像层不渲染
+- [x] **变异验证**：tokenize 改成「含 `@`/`/` 就高亮」→ `src/foo` 用例红；
+      去掉 composing 分支 → composing 用例红
+- [x] `pnpm check:quick` 全绿；`ChatComposer.tsx` 保持 <300 行
+
 ## 变异验证清单
 
 | 变异 | 期望变红的用例 |
@@ -109,6 +128,8 @@
 | `applySelection` 替换整段 | 前缀保留用例 |
 | 过滤不做 limit | 空 query 返回条数有界用例 |
 | `from_chat_capabilities` 漏投影 `commands` 字段 | 前端 `/` 入口能力位门控用例（false 不弹） |
+| tokenize 独立写正则（含触发符就高亮） | `src/foo` 不高亮用例 |
+| 镜像层去掉 composing 门控 | IME 组合期用例（镜像层不渲染） |
 
 ## 依赖关系
 

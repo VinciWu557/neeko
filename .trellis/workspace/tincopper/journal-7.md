@@ -400,3 +400,31 @@ Implemented context window usage display end to end: extended Usage with context
 ### Next Steps
 
 - 真机冒烟 AC3；确认后 commit + 归档任务
+
+
+## Session 329: 补全追加：composer 高亮 token 层（AC11，阶段 6）
+<!-- trellis-session: v=2 fp=300b996165c5be69 -->
+
+**Date**: 2026-10-24
+**Task**: 补全追加：composer 高亮 token 层（AC11，阶段 6）
+**Branch**: `feat/mention-slash-palette`
+
+### Summary
+
+用户反馈已插入的 /命令 与 @文件 是普通文字体验差。按 design §10 决策用镜像高亮层（textarea 文字透明 + 同排版 div 渲染 mark token），判据与触发语法同源（triggerStartAt 共享，禁止第二套正则）；IME 组合期恢复原生渲染。trellis-check 修复 4 缺陷：Windows classic 滚动条占宽导致镜像折行错位（隐藏滚动条）、组合期 Enter 直落发送路径（补 isComposing 守卫）、::selection 不透明盖住镜像字形（半透明 accent）、compositionend 重挂载 scrollTop 归零（重组补偿）。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 20/20 全绿；agent-chat 域 507 用例通过；4 组变异验证（tokenize 独立正则红、composing 门控红、IME Enter 守卫红、scrollTop 恢复红）；逐字对齐观感与 IME 真机行为待 tauri dev 确认
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 真机冒烟：AC3（pi 展开 /命令）+ AC11（高亮对齐观感 / IME / 滚动条隐藏可用性）；确认后 commit + 归档

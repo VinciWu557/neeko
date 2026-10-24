@@ -168,3 +168,38 @@ PRD 的 AC9 因此写成「跟随光标**或**明确记录为何选择贴输入�
 - 目录级提及
 - 光标级锚点跟随（先贴上沿，见 §7）
 - `library/prompt` 域接入（理由见 `10-21-pi-rpc-adapter` 阶段 7）
+
+## 10. 输入框内的高亮层（2026-10-24 补充，用户反馈）
+
+**需求**：已插入的 `/命令` 与 `@文件` 在输入框里以高亮 token 呈现（当前是普通文字，
+体验差）。业界参照：Slack / Discord 的 mention 在富文本编辑器里渲染成高亮 chip；
+VS Code / Claude Code 的 composer 把 `/命令` 与 `@文件` 渲染成带色 token —— 它们
+全部基于 contenteditable / 富文本编辑器。
+
+**决策：镜像高亮层，不换富文本编辑器。** 本仓 composer 是 textarea，键盘契约
+（`handleKeyDown → boolean`）、IME 门控、双触发防御、AC7/AC8 的全部测试都钉在
+它上面；换 contenteditable = 重写整个补全交互层，且 IME 行为重新洗牌，风险与
+收益不成比例。textarea 场景的标准做法是：
+
+- textarea 文字**透明**（`color: transparent`），`caret-color` 保留可见；
+- 下方（同 padding、同字体、同 `white-space: pre-wrap`）放一个同排版 div，
+  按 trigger 语法把 token 区间渲染成高亮 `<mark>` 风格 span。
+
+**高亮判据与触发判据同源**：token 扫描复用 `findTrigger` 的同一套语法
+（行首/空白后的 `@token` 与 `/token`）产出全部区间 —— 弹层能触发什么就高亮什么，
+**禁止写第二套正则**（两套判据漂移后会出现「高亮了但弹层不认」的矛盾形态）。
+配套护栏：对 `findTrigger` 可触发的每个位置，tokenize 必须产出覆盖区间。
+
+**三个同步点**（镜像层的老三样）：
+1. 字体 / 行高 / padding 逐字一致 —— 直接复用 textarea 的同一组 CSS 类；
+2. 换行与折行：`white-space: pre-wrap` + 同宽度（100%）+ 同 `word-break`；
+3. 滚动同步：composer 自增高正常无滚动，但 textarea 若出现 scrollTop 必须
+   同步给镜像层（scroll 事件一行同步）。
+
+**IME 组合期的特殊处理**：组合中的文字由 IME 渲染下划线与候选，若 textarea
+文字透明，WebKit 下组合文本会不可见 —— 这是 AC8 的邻近回归。处理：
+`composing` 置位时给容器加类，**恢复 textarea 文字不透明、隐藏镜像层**；
+`compositionend` 后复位。既有 `compositionProps` 已维护该状态，零新增门控。
+
+**无障碍与性能**：镜像层 `aria-hidden` + `pointer-events: none`；tokenize
+只在 text 变化时重算（useMemo），不逐渲染扫描。
