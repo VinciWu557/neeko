@@ -56,6 +56,24 @@ TERMINAL_FILES = (
 )
 DIRECT_SNAPSHOT = re.compile(r"getState\(\)\s*\.\s*byId\s*\(")
 
+# `chat` 能力判据必须包含 `chat_enabled`。裸 `Boolean(x.chat)` 会把用户主动关闭的
+# agent 当成可用 —— 列表里那一项看起来完全正常，选中后后端才报错。
+#
+# **只在它「单独构成判据」时命中**：后面紧跟 `&&`/`||`/`?` 说明作者在组合条件，
+# 由人工 review 判断（`Boolean(a.chat) && a.chat_enabled !== false` 是正确写法）。
+CHAT_CAPABILITY_JUDGED_BY_PRESENCE = re.compile(
+    r"Boolean\(\s*[\w.]+\.chat\s*\)(?!\s*(?:&&|\|\||\?))"
+)
+
+# 刻意保留「是否声明了 chat」（与「是否可用」是两个问题）的合法位置。
+# `isChatEnabled` 自身实现、徽标的灰态判定。
+CHAT_JUDGE_IMPL = frozenset(
+    {
+        "src/shared/types/agent.ts",
+        "src/features/agent/components/CapabilityBadges.tsx",
+    }
+)
+
 # 组件测试里做源码扫描不算「消费」，跳过 —— 它们校验的正是本护栏的判据本身。
 TEST_MARKER = "__tests__/"
 
@@ -69,6 +87,7 @@ GUARD = Guard(
         "读：`useAgentStore((s) => s.agents)` / `resolveAgent(id)`；"
         "写：只经 `saveAgent` / `resetAgent`（内部落盘 + 刷新缓存）。"
         "「是否被覆盖」由后端 `AgentConfig.is_overridden` 回答，不要自己存键集合。"
+        "「有没有 chat」只走 `isChatEnabled(agent)`（`Boolean(agent.chat)` 会忽略用户关闭）。"
     ),
 )
 
@@ -107,7 +126,18 @@ def check(ctx: Context) -> GuardResult:
                 )
             )
 
-        # 3) 终端取命令必须经 resolveAgent
+        # 3) chat 能力判据不得只看 chat 是否存在
+        if rel not in CHAT_JUDGE_IMPL and (m := CHAT_CAPABILITY_JUDGED_BY_PRESENCE.search(text)):
+            findings.append(
+                Finding(
+                    "用 `Boolean(x.chat)` 判 CHAT 能力会忽略 `chat_enabled` —— "
+                    "被用户关闭的 agent 仍显示为可用。改用 `isChatEnabled(x)`",
+                    rel,
+                    text.count("\n", 0, m.start()) + 1,
+                )
+            )
+
+        # 4) 终端取命令必须经 resolveAgent
         if rel in TERMINAL_FILES:
             m = DIRECT_SNAPSHOT.search(text)
             if m:
