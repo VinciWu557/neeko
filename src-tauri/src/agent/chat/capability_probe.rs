@@ -174,4 +174,87 @@ mod tests {
         assert!(caps.shows_controls());
         assert!(!caps.uses_session_config());
     }
+
+    mod commands_contract {
+        //! `commands` 能力位 ⇔ [`AgentAdapter::list_commands`] 实现的一致性
+        //! （红线 14 同源：声明了却没人实现 = 静默功能缺失；该声明却没声明
+        //! 同样违约）。
+        use super::*;
+        use crate::agent::chat::adapter::opencode::ServeAdapter;
+        use crate::agent::chat::adapter::pi_rpc::PiRpcAdapter;
+        use crate::common::error::AppError;
+
+        fn agent_config(id: &str) -> crate::common::agent::types::AgentConfig {
+            crate::common::agent::types::AgentConfig {
+                id: id.into(),
+                name: id.into(),
+                command: "cli".into(),
+                ..Default::default()
+            }
+        }
+
+        /// 四条传输的能力快照：只有 pi 能列命令（`get_commands` 存在且有实现）。
+        /// 变异验证：改掉任一 adapter 的 `commands` 位 → 本用例红。
+        #[test]
+        fn command_capability_matches_each_transports_reality() {
+            let pi = PiRpcAdapter::new(
+                vec!["pi".into(), "--mode".into(), "rpc".into()],
+                Default::default(),
+            );
+            assert!(
+                pi.chat_capabilities().commands,
+                "pi exposes get_commands and implements list_commands"
+            );
+            assert!(!AcpAdapter::mock().chat_capabilities().commands);
+            assert!(
+                !ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default())
+                    .chat_capabilities()
+                    .commands
+            );
+            assert!(
+                !DeepSeekHarnessAdapter::new(vec!["ds".into()], Default::default())
+                    .chat_capabilities()
+                    .commands
+            );
+        }
+
+        /// **双向一致性**：位为 false ⇔ 查询返回 `Unsupported`；位为 true ⇔
+        /// 查询有真实现（用不存在的二进制验证 —— spawn 失败是任何错误**除了**
+        /// `Unsupported`；若覆写被删、退回默认实现，这里立即变红，且不需要
+        /// 在 CI 里起真 pi 进程）。
+        #[tokio::test]
+        async fn commands_bit_implies_list_commands_is_not_unsupported() {
+            // 位 false → 默认 Unsupported。
+            let serve =
+                ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default());
+            let err = serve
+                .list_commands(&agent_config("opencode"))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
+            let ds = DeepSeekHarnessAdapter::new(vec!["ds".into()], Default::default());
+            let err = ds
+                .list_commands(&agent_config("deepseek"))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
+            let acp = AcpAdapter::mock();
+            let err = acp
+                .list_commands(&agent_config("mockAgent"))
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
+
+            // 位 true → 必须有覆写（不是默认 Unsupported）。
+            let pi = PiRpcAdapter::new(
+                vec!["definitely-not-a-real-binary-mention-slash".into()],
+                Default::default(),
+            );
+            let err = pi.list_commands(&agent_config("pi")).await.unwrap_err();
+            assert!(
+                !matches!(err, AppError::Unsupported(_)),
+                "commands bit true ⇒ list_commands must be implemented, got: {err:?}"
+            );
+        }
+    }
 }

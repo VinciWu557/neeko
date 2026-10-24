@@ -518,7 +518,10 @@ impl AgentAdapter for AcpAdapter {
             config: ConfigCapability::SessionConfig,
             // ACP 有 `session/request_permission`。
             approvals: true,
-            // ACP 没有「列命令」方法。
+            // ACP 的 `available_commands_update` 是**会话内**的推送通告（agent
+            // 在 session/update 里主动下发命令表），没有会话外的「列命令」查询
+            // ——`list_commands` 的契约是会话外独立查询，故维持 false。若要接，
+            // 属会话内增量（缓存通告内容），不在 slash-palette 任务范围。
             commands: false,
             // `AgentAdapter::resume` 未覆写（ACP 的会话恢复不在本期范围）。
             resume: false,

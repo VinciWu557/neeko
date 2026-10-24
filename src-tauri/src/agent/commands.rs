@@ -1,6 +1,6 @@
 //! Tauri commands for agent CRUD and installation checks.
 
-use crate::agent::chat::adapter::ModelCatalogResult;
+use crate::agent::chat::adapter::{AgentCommand, ModelCatalogResult};
 use crate::agent::chat::commands::resolve_agent_config;
 use crate::common::agent::types::{AgentConfig, ModelInfo};
 use crate::AppError;
@@ -127,6 +127,25 @@ async fn try_list_via_command(agent: &AgentConfig) -> Result<Option<Vec<ModelInf
     crate::agent::model_discovery::list_models_by_command(agent)
         .await
         .map(Some)
+}
+
+/// List an agent's slash commands for the composer `/` palette.
+///
+/// # 会话外独立查询（同 `list_agent_models` 一类）
+///
+/// 命令列表是 agent 级事实（pi 的 `get_commands`），与会话生命周期解耦 ——
+/// 不需要先建会话。入口显隐**不在本命令裁决**：前端由
+/// `SessionStart.capabilities.commands` 能力位门控，能力位 false 的传输
+/// 连查询都不发；本查询对不支持的传输返回 `Unsupported`（声明与实现一致，
+/// 由 `capability_probe.rs` 契约测试钉住）。
+#[tauri::command]
+pub async fn list_agent_commands(
+    agent_id: String,
+    state: State<'_, AppStateWrapper>,
+) -> Result<Vec<AgentCommand>, AppError> {
+    let agent = resolve_agent_config(&state, &agent_id)?;
+    let adapter = crate::agent::chat::adapter::adapter_for(&agent)?;
+    adapter.list_commands(&agent).await
 }
 
 /// Add or update an agent and persist to config.

@@ -128,6 +128,7 @@ macro_rules! neeko_invoke_handler {
             $crate::agent::commands::list_agents,
             $crate::agent::commands::get_agent,
             $crate::agent::commands::list_agent_models,
+            $crate::agent::commands::list_agent_commands,
             $crate::agent::commands::add_agent,
             $crate::agent::commands::remove_agent,
             $crate::agent::commands::set_project_agents,

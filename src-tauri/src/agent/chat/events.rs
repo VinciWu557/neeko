@@ -36,6 +36,9 @@ pub struct Capabilities {
     pub diff: bool,
     /// Whether the session supports resume via `resume_id`.
     pub resume: bool,
+    /// 是否能列出 slash 命令（前端 `/` 补全入口的**唯一**判据）。
+    #[serde(default)]
+    pub commands: bool,
     /// 会话配置项的读写机制（`session_config` / `per_turn` / `none`）。
     ///
     /// 前端据此决定「配置项控件是否可见」与「写入走哪条通道」——
@@ -61,6 +64,7 @@ impl Capabilities {
             command_echo,
             diff,
             resume: caps.resume,
+            commands: caps.commands,
             config: caps.config,
         }
     }
@@ -436,6 +440,7 @@ mod tests {
                 command_echo: true,
                 diff: true,
                 resume: true,
+                commands: true,
             },
         };
         let json = serde_json::to_string(&ev).expect("serialize");
@@ -448,6 +453,28 @@ mod tests {
 
         let back: StreamEvent = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, ev);
+    }
+
+    /// **能力位投影必须完整**（红线 14 同源）：`from_chat_capabilities` 是
+    /// 「适配器声明 → 会话下发」的唯一链路，漏投一个字段 = 前端永远拿不到它
+    /// 而无任何报错。
+    ///
+    /// 变异验证：删掉投影里的 `commands: caps.commands` → 本用例红。
+    #[test]
+    fn from_chat_capabilities_projects_every_declared_field() {
+        let caps = crate::agent::chat::capabilities::ChatCapabilities {
+            approvals: true,
+            commands: true,
+            resume: true,
+            ..Default::default()
+        };
+        let projected = Capabilities::from_chat_capabilities(caps, true, true);
+        assert_eq!(projected.approvals, caps.approvals);
+        assert_eq!(projected.resume, caps.resume);
+        assert_eq!(
+            projected.commands, caps.commands,
+            "commands 必须投影到会话事件"
+        );
     }
 
     /// The approval gate round-trip (A2) — the central v3 addition.

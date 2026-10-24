@@ -27,6 +27,7 @@ use crate::agent::chat::adapter::acp_config::{
     SessionConfigOption, SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValue,
     CATEGORY_MODEL, CATEGORY_THOUGHT_LEVEL,
 };
+use crate::agent::chat::adapter::AgentCommand;
 use crate::common::agent::types::ModelInfo;
 
 /// 模型配置项的 `id`（`SessionConfigOption.id`，也是 `set_model` 的分派键）。
@@ -181,10 +182,66 @@ pub fn levels_from_response(data: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `get_commands` 的响应 → 命令列表（spec `agent-chat-transports.md` §9.4：
+/// pi 实测 157 条，`{name, description, source, sourceInfo}`）。
+///
+/// 无 `name` 的条目直接丢弃（发出去只会是渲染不出来的孤儿）；畸形响应
+///（缺 `commands` 键）回空列表 —— 「支持但为空」是合法答案，不是错误（R2）。
+#[must_use]
+pub fn commands_from_response(data: &Value) -> Vec<AgentCommand> {
+    data.get("commands")
+        .and_then(Value::as_array)
+        .map(|cmds| {
+            cmds.iter()
+                .filter_map(|c| {
+                    let name = c.get("name").and_then(Value::as_str)?.to_string();
+                    Some(AgentCommand {
+                        description: c
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                        source: c.get("source").and_then(Value::as_str).map(str::to_string),
+                        name,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `get_commands` 投影：字段逐条映射，无 `name` 的条目丢弃。
+    #[test]
+    fn commands_from_response_maps_fields_and_drops_nameless() {
+        let data = json!({"commands": [
+            {"name": "trellis-continue", "description": "Continue Current Task", "source": "prompt"},
+            {"name": "skill:code-walkthrough", "description": "walk through code", "source": "skill",
+             "sourceInfo": {"scope": "user"}},
+            {"description": "no name — must be dropped", "source": "extension"}
+        ]});
+        let cmds = commands_from_response(&data);
+        assert_eq!(cmds.len(), 2, "nameless entries must be dropped");
+        assert_eq!(cmds[0].name, "trellis-continue");
+        assert_eq!(
+            cmds[0].description.as_deref(),
+            Some("Continue Current Task")
+        );
+        assert_eq!(cmds[0].source.as_deref(), Some("prompt"));
+        assert_eq!(cmds[1].name, "skill:code-walkthrough");
+    }
+
+    /// 「支持但为空」是合法答案（R2）：缺 `commands` 键 / 空数组都回空列表，
+    /// 不报错 —— 前端显示空态而不是假装没有该功能。
+    #[test]
+    fn commands_from_response_treats_missing_or_empty_as_empty_list() {
+        assert!(commands_from_response(&json!({})).is_empty());
+        assert!(commands_from_response(&json!({"commands": []})).is_empty());
+        assert!(commands_from_response(&json!([])).is_empty());
+    }
 
     #[test]
     fn maps_models_without_parsing_slug() {

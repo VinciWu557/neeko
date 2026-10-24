@@ -183,6 +183,27 @@ pub trait AgentAdapter: Send + Sync {
         crate::agent::model_discovery::list_models_by_command(config).await
     }
 
+    /// 列出 agent 的 slash 命令（**会话外**独立查询，同 [`Self::list_models`] 一类
+    /// —— 与会话生命周期解耦，不需要先建会话）。
+    ///
+    /// 默认 `Unsupported`：没有独立「列命令」途径的传输保持默认；pi 覆写
+    /// （`get_commands`，短暂 spawn rpc 进程即弃，spec
+    /// `agent-chat-transports.md` §9.4 取证：它是权威来源，不要扫目录）。
+    ///
+    /// # 「能不能弹 `/`」的判据是能力位，不是本查询
+    ///
+    /// 前端入口由 `SessionStart.capabilities.commands` 门控（能力位 false 时
+    /// 连查询都不发）；本方法只承担「取数据」。「`commands` 位为 true ⇔ 不返回
+    /// `Unsupported`」的一致性由契约测试钉住
+    ///（`capability_probe.rs`，红线 14 同源：声明必须与实现一致）。
+    async fn list_commands(&self, config: &AgentConfig) -> Result<Vec<AgentCommand>, AppError> {
+        let _ = config;
+        Err(AppError::Unsupported(format!(
+            "agent {:?} does not expose a command list",
+            self.kind()
+        )))
+    }
+
     /// 本 adapter 是否能选模型（会话内配置项 **或** 每轮请求参数）。
     ///
     /// Driven from [`Self::chat_capabilities`] —— 这里**故意不是**可直接覆盖的
@@ -221,6 +242,22 @@ pub trait AgentAdapter: Send + Sync {
     fn supports_session_config(&self) -> bool {
         self.chat_capabilities().config.uses_session_config()
     }
+}
+
+/// 一条 agent 的 slash 命令（跨传输通用形状）。
+///
+/// `name` / `description` 与 ACP `available_commands_update` 的条目形状对齐；
+/// `source` 是 pi 的来源标记（`prompt` / `skill` / `extension`），仅用于展示。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentCommand {
+    /// 命令名（插入文本是 `/name`，不含斜杠 —— pi 自己会展开）。
+    pub name: String,
+    /// 展示用说明；agent 不给时为 `None`。
+    #[serde(default)]
+    pub description: Option<String>,
+    /// 来源标记（pi 专有；ACP 条目无此字段）。
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// `list_agent_models` 的结果类型。
