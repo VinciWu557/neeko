@@ -20,6 +20,7 @@
  */
 
 import type { AgentConfig, ChatLaunch, WireFormat } from '@/shared/types/agent';
+import { stripGhostText } from '@/shared/utils/webkitInputGuard';
 
 import { formatChatLaunch, formatEnvText } from './agentFormChat';
 import { trimArgList } from './argList';
@@ -147,6 +148,11 @@ export function toFormState(form: AgentConfig): FormState {
   };
 }
 
+/** 提交边界剥落 WKWebView 幽灵字符：键盘路径已被全局守卫拦截，这里是粘贴等路径的兑底。 */
+const clean = (v: string): string => stripGhostText(v).trim();
+
+const cleanArgs = (args: readonly string[]): string[] => trimArgList(args.map(stripGhostText));
+
 /**
  * 表单态 → 提交用的 `AgentConfig`（尾部未填的冗余空行在提交边界裁掉）。
  *
@@ -167,26 +173,26 @@ export function buildAgentConfig(
   builtChat: ChatLaunch | null,
 ): AgentConfig {
   return {
-    id: t.id.trim(),
-    name: t.name.trim(),
+    id: clean(t.id),
+    name: clean(t.name),
     icon: t.icon || 'cli.svg',
     enabled: t.enabled,
-    command: t.command.trim(),
-    args: trimArgList(t.args),
+    command: clean(t.command),
+    args: cleanArgs(t.args),
     env: initial?.env ?? {},
     chat: initial?.is_builtin ? (initial.chat ?? null) : builtChat,
     chat_enabled: initial?.is_builtin && initial.chat ? fromChatEnabledChoice(t.chatEnabled) : null,
-    prompt_args: toNullableArgs(trimArgList(t.promptArgs)),
-    post_prompt_args: toNullableArgs(trimArgList(t.postPromptArgs)),
-    model_list_args: toNullableArgs(trimArgList(t.modelListArgs)),
-    skill_path: t.skillPath.trim() || null,
-    detection: t.detectionTarget.trim()
-      ? { type: t.detectionType, target: t.detectionTarget.trim() }
+    prompt_args: toNullableArgs(cleanArgs(t.promptArgs)),
+    post_prompt_args: toNullableArgs(cleanArgs(t.postPromptArgs)),
+    model_list_args: toNullableArgs(cleanArgs(t.modelListArgs)),
+    skill_path: clean(t.skillPath) || null,
+    detection: clean(t.detectionTarget)
+      ? { type: t.detectionType, target: clean(t.detectionTarget) }
       : null,
     deploy: {
-      skills: t.deploySkills.trim() || '{{projectPath}}/.agent/skills',
-      commands: t.deployCommands.trim() || null,
-      mcp_config: t.deployMcp.trim() || null,
+      skills: clean(t.deploySkills) || '{{projectPath}}/.agent/skills',
+      commands: clean(t.deployCommands) || null,
+      mcp_config: clean(t.deployMcp) || null,
     },
   };
 }
