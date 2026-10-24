@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/agent-chat-transports.md", "reason": "chat 传输契约 / §10.5d 覆盖层事故 / 能力位"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "agentStore 单源 + 写入口"}
