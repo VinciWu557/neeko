@@ -276,7 +276,8 @@
   /* ── Composer ─────────────────────────────────────────────────────────── */
   .wa-composer { flex:0 0 auto; padding:0 16px 14px; }
   /* 输入框：大圆角 + 柔和双层阴影（参考 WorkBuddy 输入框）；聚焦不高亮边框，仅阴影加深 */
-  .wa-box { max-width:760px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:20px; box-shadow:0 2px 12px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06); transition:box-shadow 180ms ease; }
+  /* 弹层需要相对定位的锚点：补全弹层绝对定位后贴着输入框上沿弹出（design §7） */
+  .wa-box { max-width:760px; margin:0 auto; background:var(--card); border:1px solid var(--border); border-radius:20px; box-shadow:0 2px 12px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06); transition:box-shadow 180ms ease; position:relative; }
   .wa-box:focus-within { box-shadow:0 4px 16px rgba(0,0,0,.14), 0 1px 2px rgba(0,0,0,.06); }
   .wa-at { display:flex; flex-wrap:wrap; gap:6px; padding:8px 20px 0; }
   /* 附件 chip：无边框无背景，与输入框同色 */
@@ -285,8 +286,40 @@
   .attach-chip .at-close { color:var(--text-muted); cursor:pointer; display:flex; }
   .attach-chip .at-close:hover { color:var(--accent-red); }
 
-  .composer-textarea { width:100%; min-height:60px; max-height:200px; padding:14px 20px 8px; background:transparent; border:none; color:var(--text-primary); font-size:14px; font-family:inherit; line-height:1.55; resize:none; outline:none; }
-  .composer-textarea::placeholder { color:var(--text-muted); }
+  /* ── 输入框内高亮层（AC11，镜像层）──
+     textarea 文字透明、caret 保留可见；同排版镜像 div 在下方逐字渲染文本，
+     按 trigger 语法把 `/命令` 与 `@文件` 区间渲染成高亮 token。三个同步点：
+     字体/行高/padding 与 textarea 逐字一致、同宽度 + 同折行（textarea 的 UA
+     默认是 pre-wrap + overflow-wrap:break-word）、scrollTop 由 scroll 事件同步。
+     隐藏字形必须用 -webkit-text-fill-color 而非 color:transparent：WebKit 的
+     IME 组合文本（marked text）绘制走 text-fill-color 路径，color:transparent
+     会让组合期出现豆腐块/乱码（WKWebView 真机实测，react-simple-code-editor
+     同型问题）。placeholder 的 fill-color 会被继承，必须显式恢复。
+     IME 组合期（.composing）同时恢复 fill-color 与隐藏镜像层双保险。 */
+  .composer-input { position: relative; }
+  .composer-textarea { width:100%; min-height:60px; max-height:200px; padding:14px 20px 8px; background:transparent; border:none; position:relative; z-index:1; color:var(--text-primary); -webkit-text-fill-color:transparent; caret-color:var(--text-primary); font-size:14px; font-family:inherit; line-height:1.55; resize:none; outline:none; }
+  .composer-textarea.composing { -webkit-text-fill-color:currentColor; }
+  .composer-textarea::placeholder { color:var(--text-muted); -webkit-text-fill-color:var(--text-muted); }
+  /* 滚动条必须隐藏：max-height 出滚动后，Win/Linux 的 classic thin 滚动条占据
+     布局宽度（macOS overlay 不占），textarea 折行宽度因此窄于镜像层 → 高亮
+     逐行错位。隐藏后两端内容宽度恒等；滚轮/方向键滚动与 scrollTop 同步不受
+     影响（.no-scrollbar 同款双写，覆盖不支持 scrollbar-width 的旧 WebKit）。 */
+  .composer-textarea { scrollbar-width:none; }
+  .composer-textarea::-webkit-scrollbar { display:none; }
+  /* UA 默认选区背景不透明，会盖住下方镜像层字形（textarea 文字是透明的，
+     可见字形全在镜像层）—— 半透明选区让镜像字形透出，选中文字可见。 */
+  .composer-textarea::selection { background:color-mix(in srgb, var(--accent-blue) 30%, transparent); }
+  .composer-mirror {
+    position:absolute; inset:0; z-index:0; overflow:hidden;
+    padding:14px 20px 8px;
+    font-size:14px; font-family:inherit; line-height:1.55;
+    white-space:pre-wrap; overflow-wrap:break-word;
+    color:var(--text-primary); pointer-events:none;
+  }
+  /* token 只改颜色/背景/圆角 —— 不改字体、不加 padding/边框：任何盒模型差异
+     都会让镜像层与透明文字的排版漂移，token 之后的每个字符错位。 */
+  .composer-token { background:color-mix(in srgb, var(--accent-blue) 16%, transparent); color:var(--accent-blue); border-radius:4px; }
+  .composer-token-mention { background:color-mix(in srgb, var(--accent-green) 16%, transparent); color:var(--accent-green); }
 
   .composer-footer { display:flex; align-items:center; gap:6px; padding:6px 12px 10px; }
   .composer-left { display:flex; align-items:center; gap:6px; row-gap:4px; min-width:0; flex:1; flex-wrap:wrap; }
@@ -423,6 +456,28 @@
   .plan-action { border:none; border-radius:var(--radius-sm); background:transparent; color:var(--text-secondary); font-size:11px; padding:3px 8px; cursor:pointer; transition:background 120ms, color 120ms; }
   .plan-action:hover { background:var(--bg-hover); color:var(--text-primary); }
 }
+
+/* ── Composer 补全弹层（slash 命令 / @ 文件提及） ─────────────────────── */
+/* 贴输入框上沿（不随光标）：单行时与光标几乎等价，多行长文本时固定在上方更稳（design §7） */
+.composer-palette {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 6px);
+  z-index: 200; max-height: 240px; overflow-y: auto; padding: 4px;
+  background: var(--bg-primary); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: 0 12px 40px rgba(0,0,0,.35);
+}
+.composer-palette-item {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 5px 8px; border: none; background: transparent; text-align: left;
+  border-radius: var(--radius-sm); color: var(--text-primary); cursor: pointer;
+  font-size: 12px;
+}
+.composer-palette-item:hover, .composer-palette-item.active { background: var(--bg-hover); }
+.composer-palette-label { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono, monospace); }
+.composer-palette-sub {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-muted); font-size: 11px;
+}
+.composer-palette-empty { padding: 14px 10px; text-align: center; font-size: 12px; color: var(--text-muted); }
 
 /* ── 附件文件选择弹窗（AttachFilePicker） ─────────────────────────────── */
 .attach-picker {

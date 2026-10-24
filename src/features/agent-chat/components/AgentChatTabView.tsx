@@ -1,15 +1,15 @@
 import { ChevronRight } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { readDirTree } from '@/features/file/api/fileApi';
 import { useProjectStore } from '@/shared/store/projectStore';
-import { activeWorkspaceSession } from '@/shared/store/workspaceStore';
 import type { FileNode } from '@/shared/types';
 import type { AgentChatTabData } from '@/shared/types/tab';
 import { ProjectId, WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import { useAgentChat } from '../hooks/useAgentChat';
 import { useAgentInputRegistration } from '../hooks/useAgentInputRegistration';
+import { useChatAutoFollow } from '../hooks/useChatAutoFollow';
+import { useComposerSources } from '../hooks/useComposerSources';
 import { useOpenAgentFile } from '../hooks/useOpenAgentFile';
 import { useWorkingStatus } from '../hooks/useWorkingStatus';
 
@@ -65,6 +65,7 @@ export default function AgentChatTabView({
     sessionConfigOptions,
     modelAvailability,
     handleSetConfigOption,
+    commandsEnabled,
     selectedAgent,
     handleSend,
     handleApproval,
@@ -84,37 +85,27 @@ export default function AgentChatTabView({
   const projectPath = useProjectStore(
     (s) => s.projects.find((p) => p.id === projectId)?.path ?? '',
   );
-  const [attachFiles, setAttachFiles] = useState<FileNode[]>([]);
-  const [attachFilesLoading, setAttachFilesLoading] = useState(false);
   const [attachPickerOpen, setAttachPickerOpen] = useState(false);
+
+  // 补全弹层数据源（slash 命令 / @ 文件提及）与文件树加载的整体装配，
+  // 见 useComposerSources（能力位门控 + 只拉一次的文件树，@ 提及与附件弹窗共用）。
+  const {
+    sources: composerSources,
+    attachFiles,
+    attachFilesLoading,
+    loadAttachFiles,
+  } = useComposerSources({
+    projectId,
+    addAttachment,
+    commandsEnabled,
+    agentId: selectedAgent.id,
+  });
 
   // 回合指示器数据源（时长 + 活动工具）：从 turnStream 的 ref 账本派生。
   const working = useWorkingStatus(streaming, turnStartRef, turnToolsRef);
 
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  /// 滚动容器（.wa-chat）—— MessageList 虚拟器据此计算可见窗口
-  const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  /// 程序化滚动保护 — 防止用户手动滚动时被自动跟随打断
-  const programmaticScrollUntilRef = useRef(0);
-  /// 上一条消息数量 — 仅真实消息变化时触发自动跟随
-  const messageCountRef = useRef(0);
-
-  const scrollToBottom = useCallback(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
-
-  useEffect(() => {
-    // 自动跟随信号 — 仅基于真实消息变化（对齐 Synara §14.11）
-    const currentCount = messages.length;
-    const shouldFollow = currentCount > messageCountRef.current;
-    messageCountRef.current = currentCount;
-
-    if (shouldFollow) {
-      // 程序化滚动保护窗口
-      programmaticScrollUntilRef.current = Date.now() + 100;
-      scrollToBottom();
-    }
-  }, [messages, scrollToBottom]);
+  // 消息流自动跟随滚动（refs + 保护窗的纯滚动关注点，见该 hook）。
+  const { chatEndRef, chatScrollRef } = useChatAutoFollow(messages.length);
 
   // 空会话态拉取可恢复列表（仅 opencode 类支持接续的 agent 有意义，失败静默）
   const emptyChat = messages.length === 0 && !streaming && !pendingApproval && !pendingUserInput;
@@ -148,6 +139,9 @@ export default function AgentChatTabView({
     [handleSend],
   );
 
+  // 补全弹层选中候选后的写回入口；光标恢复与自动增高由 ChatComposer 内部处理
+  const handleReplaceInput = useCallback((text: string) => setInput(text), [setInput]);
+
   const handleInputChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       setInput(e.target.value);
@@ -166,14 +160,8 @@ export default function AgentChatTabView({
    */
   const openAttachDrop = useCallback(() => {
     setAttachPickerOpen(true);
-    if (attachFiles.length === 0 && !attachFilesLoading) {
-      setAttachFilesLoading(true);
-      void readDirTree(activeWorkspaceSession(projectId), null, 3)
-        .then((result) => setAttachFiles(result.nodes))
-        .catch(() => setAttachFiles([]))
-        .finally(() => setAttachFilesLoading(false));
-    }
-  }, [projectId, attachFiles.length, attachFilesLoading]);
+    loadAttachFiles();
+  }, [loadAttachFiles]);
 
   const handlePickFile = useCallback(
     (file: FileNode) => {
@@ -272,6 +260,8 @@ export default function AgentChatTabView({
         tabId={tabId}
         onInputChange={handleInputChange}
         onKeyDown={handleKeyDown}
+        onReplaceInput={handleReplaceInput}
+        sources={composerSources}
         onSend={() => void handleSend()}
         onStop={handleStop}
         onRemoveAttachment={removeAttachment}
