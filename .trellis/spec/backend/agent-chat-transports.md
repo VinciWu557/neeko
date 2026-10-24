@@ -355,6 +355,60 @@ spawn 时带参数或旧版本行为。**pi 1.3.0 实测 `非 JSON 行: 0`**。
 （`log::warn!` 后跳过，循环继续）。为一条从未触发的路径写收集+展示是没有验证
 手段的死重量。真机出现非 JSON 行时再按当时的形状决定。
 
+### 4.8 用量遥测：两条有数据的传输（PiRpc 拉取 / Acp 推送）
+
+上下文用量计量器（前端 `ContextWindowMeter`）的数据源按传输分两类：
+PiRpc 靠回合后**拉取**，Acp 靠 agent **推送**；opencode serve 与 DeepSeek
+jsonl 协议侧无 token 数据（`Meta` 无生产者 → 前端计量器整体不挂载，给它们接
+用量前先复核上游协议是否已变，基线见 10-24 任务 `research/usage-data-sources.md`）。
+
+**PiRpc**：数据只能从 pi 的 `get_session_stats` 命令来 —— assistant message 上的
+per-turn `usage` 没有窗口上限，事件流里也没有任何 token 事件。协议事实
+（pi docs `rpc-commands.md`，1.4.x 实测文档）：
+
+- `tokens` 是**会话累计**（含 tool 嵌套与 compaction 生成用量），且
+  `input` **不含** cacheRead/cacheWrite（`totalTokens = input + output +
+  cacheRead + cacheWrite`）；
+- `contextUsage` 是**当前上下文占用估计**（compaction/footer 同源）：无模型/
+  无窗口信息时整体省略；compaction 后到新 assistant 响应前 `tokens`/`percent`
+  为 `null` —— **正常降级，不是错误**；
+- `contextUsage.percent` 不复用：前端自算（单一真相，舍入口径不漂移）。
+
+接线契约（`session.rs`）：`translate` 只置 `Translation.settled` 标记（纯函数
+不发请求，与 `approval` 同模式）；`PiSession::next()` 把标记转为
+`stats_pull_pending`，在**事件空闲窗口**（`pending` 排空、即将阻塞读进程的
+下一轮循环顶部）才发 `get_session_stats` —— TurnEnd（必要数据）的交付不串行
+等遥测（可选数据），拉取延迟落在回合间空档，对用户不可见。专用
+`STATS_TIMEOUT`（2s）短于 `AUX_TIMEOUT`（5s）：用户在空档期发下一条消息时，
+新话轮的流式事件要排队等这次 RPC 落幕，2s 框住「旧版 pi 对未知命令不回应」
+的最坏延迟。`meta_from_stats`（纯函数）把回包映射为 `Meta` 事件的
+`Usage` 扩展字段（`context_tokens` / `context_limit` / `cache_read_tokens` /
+`cache_write_tokens`，全 `#[serde(default)]` 向后兼容）。**stats 拉取失败只
+`log::debug!` 跳过，不发 Error** —— 遥测缺失不等于回合失败；旧版 pi 没有该
+命令时表现为「无计量器」，无害。护栏：`turn_end_is_delivered_without_waiting_for_stats` /
+`settled_turn_pulls_session_stats_into_a_meta_event` /
+`stats_failure_does_not_surface_an_error_event` /
+`meta_from_stats_treats_null_context_fields_as_missing`。
+
+缓存命中率口径（前端派生，协议只传原始计数）：会话累计
+`cacheRead / (input + cacheRead + cacheWrite)`，三计数缺任一或分母为 0
+即不渲染（禁止假数据）。
+
+**Acp**：RFDS [`session-usage`](https://agentclientprotocol.com/rfds/session-usage)
+（Completed 2026-06-05）定义 `session/update` 的 `usage_update` 变体，agent
+**主动推送** `{used, size}`（可选 `cost`，本期忽略）—— 旧 agent 不发，
+`translate_notification` 的 `_ => None` 兜底天然兼容。接线契约
+（`acp.rs`）：`used → context_tokens`、`size → context_limit`，均 required
+缺任一忽略；载荷不携带模型名，由 `handle_inbound` 注入
+`current_model_from_config` 的当前值。**snapshot 必须按变体名窥探后再取**
+（`session_update_kind == "usage_update"` 才取）：`session/update` 同时承载
+高频 text delta，无条件 `configs.snapshot()`（Mutex + 全量配置深克隆）是
+每条 delta 一次的无谓分配（2026-10-24 trellis-check 实测修复）。协议无
+cache 计数（拆分在 draft RFD `end-turn-token-usage`）→ 命中率行降级。
+护栏：`usage_update_maps_used_and_size_into_meta` /
+`usage_update_without_size_is_ignored` / `usage_update_tolerates_float_counts`
+（JSON number 可能由浮点类型产生，`as_u64` 静默失败会丢整条更新）。
+
 ## 5. 新增传输的检查清单
 
 1. `ChatLaunch::transport()` 的 token 判定 + `ChatTransport` 变体 + `as_str()` + `adapter_for`
