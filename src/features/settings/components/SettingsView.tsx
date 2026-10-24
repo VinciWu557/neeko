@@ -164,6 +164,7 @@ function SettingsView() {
             onConfigChange={onConfigChange}
             onSkillPathInputValueChange={state.setSkillPathInputValue}
             onSaveAgent={state.saveCustomAgent}
+            onToggleAgentEnabled={state.setAgentEnabled}
             onRemoveAgent={(agentId) => {
               void state.removeCustomAgentById(agentId);
             }}

@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import { FolderIcon } from '@/shared/components/icons';
 import type { AgentConfig } from '@/shared/types';
 import { getAgentIconSrc } from '@/shared/utils/agents';
-import { Input } from '@/ui';
+import { Input, Switch } from '@/ui';
 
 interface BuiltInAgentsSectionProps {
   builtinAgents: AgentConfig[];
@@ -18,6 +18,8 @@ interface BuiltInAgentsSectionProps {
   /** 保存内置覆盖（后端覆盖层 → 刷新 agentStore）。 */
   /** 保存内置 agent 覆盖（落盘 + 刷新缓存）。 */
   onSaveBuiltinAgent: (agent: AgentConfig) => Promise<void>;
+  /** 行内启停开关（写路径与错误策略在 hook 收口，Promise 永不 reject）。 */
+  onToggleAgentEnabled: (agent: AgentConfig, enabled: boolean) => Promise<void>;
   /** 重置内置覆盖（恢复出厂）。 */
   onResetBuiltinAgent: (agentId: string) => void;
   onSelectSkillPath: (agent: AgentConfig) => void;
@@ -33,6 +35,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
   onSkillPathInputValueChange,
   getEffectiveAgent,
   onSaveBuiltinAgent,
+  onToggleAgentEnabled,
   onResetBuiltinAgent,
   onSelectSkillPath,
   onStartEditSkillPath,
@@ -61,19 +64,6 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
         </div>
       </div>
 
-      {editingBuiltin && (
-        <div className="w-full border border-border rounded-lg bg-bg-primary overflow-hidden">
-          <AgentForm
-            initial={getEffectiveAgent(editingBuiltin)}
-            onSaved={async (agent) => {
-              await onSaveBuiltinAgent(agent);
-              setEditingBuiltin(null);
-            }}
-            onCancel={() => setEditingBuiltin(null)}
-          />
-        </div>
-      )}
-
       <div className="w-full border border-border rounded overflow-hidden bg-bg-primary">
         {builtinAgents.map((agent) => {
           const effectiveAgent = getEffectiveAgent(agent);
@@ -81,14 +71,26 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
           const isOverridden = isAgentOverridden(agent);
           const skillPathValue = effectiveAgent.skill_path ?? '';
           const hasSkillPath = !!skillPathValue;
+          /** 行内编辑：表单锚定在被编辑行下方，行本体高亮。 */
+          const isEditing = editingBuiltin?.id === agent.id;
+          /** 停用视觉：主内容压暗，开关状态本身就是另一根主动线索。 */
+          const isDisabled = effectiveAgent.enabled === false;
 
           return (
             <React.Fragment key={agent.id}>
-              <div className="flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em]">
+              <div
+                className={cn(
+                  'flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em] hover:bg-bg-hover/40 transition-colors duration-150',
+                  isEditing && 'bg-accent-blue/5 shadow-[inset_2px_0_0_0_var(--accent-blue)]',
+                )}
+              >
                 {iconSrc ? (
                   <img
                     src={iconSrc}
-                    className="text-[var(--font-size)] size-[18px] object-contain"
+                    className={cn(
+                      'text-[var(--font-size)] size-[18px] object-contain',
+                      isDisabled && 'opacity-50',
+                    )}
                     alt=""
                   />
                 ) : (
@@ -97,7 +99,12 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
                   </span>
                 )}
 
-                <span className="text-text-primary font-medium min-w-[100px] shrink-0">
+                <span
+                  className={cn(
+                    'text-text-primary font-medium min-w-[100px] shrink-0',
+                    isDisabled && 'opacity-50',
+                  )}
+                >
                   {effectiveAgent.name}
                 </span>
 
@@ -105,6 +112,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
                   className={cn(
                     'text-text-muted font-mono text-[0.82em] flex-1 min-w-[80px] overflow-hidden text-ellipsis whitespace-nowrap',
                     isOverridden && '!text-accent-blue',
+                    isDisabled && 'opacity-50',
                   )}
                   title="Edit via the pencil button"
                 >
@@ -113,9 +121,24 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
 
                 <CapabilityBadges agent={effectiveAgent} className="shrink-0" />
 
+                {/* 启用开关：不经编辑表单直接切换；写路径与错误策略在 hook 收口。
+                    单写者：若该行正展开编辑表单（打开时刻的快照），先收起。 */}
+                <Switch
+                  checked={effectiveAgent.enabled !== false}
+                  onCheckedChange={(v) => {
+                    if (isEditing) setEditingBuiltin(null);
+                    void onToggleAgentEnabled(effectiveAgent, v);
+                  }}
+                  aria-label={`${effectiveAgent.name} enabled`}
+                  className="shrink-0"
+                />
+
                 <button
-                  className="bg-none border-none text-text-muted cursor-pointer p-1 rounded shrink-0 transition-colors duration-150 hover:text-accent-blue hover:bg-bg-hover"
-                  onClick={() => setEditingBuiltin(agent)}
+                  className={cn(
+                    'bg-none border-none text-text-muted cursor-pointer p-1 rounded shrink-0 transition-colors duration-150 hover:text-accent-blue hover:bg-bg-hover',
+                    isEditing && 'text-accent-blue bg-bg-hover',
+                  )}
+                  onClick={() => (isEditing ? setEditingBuiltin(null) : setEditingBuiltin(agent))}
                   title="Edit built-in agent"
                 >
                   <Pencil size={13} />
@@ -131,6 +154,21 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
                   </button>
                 )}
               </div>
+
+              {/* 编辑表单插在被编辑行与其 Skill Path 行之间 —— 行内锚定。
+                  无内层边框盒：AgentForm 自带分区，叠套边框只会制造噪音。 */}
+              {isEditing && (
+                <div className="px-3 py-3 border-b border-white/[0.03] bg-bg-secondary/40 animate-agents-expand">
+                  <AgentForm
+                    initial={getEffectiveAgent(agent)}
+                    onSaved={async (a) => {
+                      await onSaveBuiltinAgent(a);
+                      setEditingBuiltin(null);
+                    }}
+                    onCancel={() => setEditingBuiltin(null)}
+                  />
+                </div>
+              )}
 
               <div className="flex items-center gap-2.5 py-[5px] px-3 pb-2 border-b border-white/[0.03] text-[0.79em] [&:last-child]:border-b-0 bg-bg-secondary/30">
                 <span className="w-[18px] shrink-0" />

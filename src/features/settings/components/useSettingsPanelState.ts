@@ -255,6 +255,29 @@ export function useSettingsPanelState({
     }
   };
 
+  /**
+   * 行内启停开关：列表行直接翻转 `enabled`，不经编辑表单。
+   *
+   * 保存与错误策略都在这里收口（section 只报告意图，不持策略）：
+   * - 内置走覆盖层、自定义直存 —— 与表单保存同一写路径，无第二份真相；
+   * - 失败 catch + console.error（与 updateAgentSkillPath 同策略），
+   *   返回的 Promise **永不 reject**，调用方的 `void` 消费是安全的。
+   *   `saveCustomAgent` 保持裸 Promise —— AgentForm 需要它做内联报错。
+   */
+  const setAgentEnabled = async (agent: AgentConfig, enabled: boolean) => {
+    const updated = { ...getEffectiveAgent(agent), enabled };
+    try {
+      if (agent.is_builtin) {
+        // 内置：走覆盖层（不污染 customAgents），与 updateAgentSkillPath 同判据。
+        await saveBuiltinOverride(updated);
+      } else {
+        await saveAgent(updated);
+      }
+    } catch (e) {
+      console.error('[Settings] Failed to toggle agent:', e);
+    }
+  };
+
   const startEditSkillPath = (agentId: string, currentPath: string) => {
     setSkillPathEditingAgentId(agentId);
     setSkillPathInputValue(currentPath);
@@ -354,6 +377,7 @@ export function useSettingsPanelState({
     addCustomIde,
     removeCustomIde,
     saveCustomAgent,
+    setAgentEnabled,
     removeCustomAgentById,
     saveBuiltinOverride,
     resetBuiltinOverride,

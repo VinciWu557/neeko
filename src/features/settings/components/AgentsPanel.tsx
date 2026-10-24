@@ -14,6 +14,7 @@ interface AgentsPanelProps {
   onConfigChange: (next: AppConfig) => void;
   onSkillPathInputValueChange: (value: string) => void;
   onSaveAgent: (agent: AgentConfig) => Promise<void>;
+  onToggleAgentEnabled: (agent: AgentConfig, enabled: boolean) => Promise<void>;
   onRemoveAgent: (agentId: string) => void;
   onSaveBuiltinAgent: (agent: AgentConfig) => Promise<void>;
   onResetBuiltinAgent: (agentId: string) => void;
@@ -32,6 +33,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
   onConfigChange,
   onSkillPathInputValueChange,
   onSaveAgent,
+  onToggleAgentEnabled,
   onRemoveAgent,
   onSaveBuiltinAgent,
   onResetBuiltinAgent,
@@ -89,6 +91,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
         onSkillPathInputValueChange={onSkillPathInputValueChange}
         getEffectiveAgent={getEffectiveAgent}
         onSaveBuiltinAgent={onSaveBuiltinAgent}
+        onToggleAgentEnabled={onToggleAgentEnabled}
         onResetBuiltinAgent={onResetBuiltinAgent}
         onSelectSkillPath={onSelectSkillPath}
         onStartEditSkillPath={onStartEditSkillPath}
@@ -101,6 +104,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
         skillPathInputValue={skillPathInputValue}
         onSkillPathInputValueChange={onSkillPathInputValueChange}
         onSaveAgent={onSaveAgent}
+        onToggleAgentEnabled={onToggleAgentEnabled}
         onRemoveAgent={onRemoveAgent}
         onSelectSkillPath={onSelectSkillPath}
         onStartEditSkillPath={onStartEditSkillPath}
