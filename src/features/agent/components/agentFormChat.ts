@@ -1,4 +1,4 @@
-import type { ChatLaunch, ChatTransport } from '@/shared/types/agent';
+import type { ChatLaunch, WireFormat } from '@/shared/types/agent';
 import { transportOf } from '@/shared/types/agent';
 
 /**
@@ -16,21 +16,26 @@ import { transportOf } from '@/shared/types/agent';
  * 这里**没有传输选项列表** —— 传输是从 argv 识别出来的（`transportOf`），
  * 不是用户可声明的。历史上那个下拉（acp/serve/jsonl/mock/pi-rpc）让用户去
  * 声明一个他无法改变的事实，选错只会得到跑不起来的配置。
+ *
+ * 传输的**展示文案**唯一来源是 `shared/types/agent.ts` 的 `TRANSPORT_LABELS`
+ * （从 `TRANSPORTS` 表派生）—— 本文件曾有一份手写副本，与共享表漂移不会报错，
+ * 已删除（re-export 保持既有 import 路径可用）。
  */
+export { TRANSPORT_LABELS } from '@/shared/types/agent';
 
-/** 传输的展示文案（识别结果用，不是选项列表）。 */
-export const TRANSPORT_LABELS: Record<ChatTransport, string> = {
-  acp: 'ACP · JSON-RPC stdio',
-  serve: 'opencode serve · HTTP + SSE',
-  jsonl: 'JSON-Lines stdio',
-  'pi-rpc': 'Pi rpc · private NDJSON',
-};
-
-/** 表单态（argv，首项是程序名）→ `ChatLaunch`；空 → `null`（无 CHAT 能力）。 */
+/**
+ * 表单态（argv，首项是程序名）→ `ChatLaunch`；空 → `null`（无 CHAT 能力）。
+ *
+ * `wireFormat` 是 ACP 帧格式的**用户选择**（`'content-length'` 也算显式选择 ——
+ * 显式值落盘后，后端装载期迁移就不会对 opencode 命名的配置重新推断出 NDJSON）。
+ * 只有识别为 ACP 的启动命令才携带它：`wire_format` 只有 ACP 消费，
+ * 其它传输带这个字段纯属配置噪音。
+ */
 export function buildChatLaunch(
   argv: readonly string[],
   envText: string,
   inprocess = false,
+  wireFormat?: WireFormat,
 ): ChatLaunch | null {
   const env = parseEnvText(envText);
   const withEnv = Object.keys(env).length > 0 ? { env } : {};
@@ -41,7 +46,11 @@ export function buildChatLaunch(
   const [program, ...args] = argv;
   if (program === undefined) return null; // 无 argv → 无 CHAT 能力，env 一并丢弃
 
-  return { program, args, ...withEnv };
+  const launch: ChatLaunch = { program, args, ...withEnv };
+  if (wireFormat && transportOf(launch) === 'acp') {
+    launch.wire_format = wireFormat;
+  }
+  return launch;
 }
 
 /**
@@ -94,14 +103,4 @@ export function formatEnvText(env: Record<string, string> | null | undefined): s
     .sort()
     .map((k) => `${k}=${env[k]}`)
     .join('\n');
-}
-
-/** argv 识别出的传输标签（无 CHAT 能力 → `null`）。 */
-export function chatTransportLabel(argv: readonly string[], inprocess = false): string | null {
-  // 进程内实现没有 argv 可识别 —— 但它确有 CHAT 能力，标签要如实说出来。
-  if (inprocess) return TRANSPORT_LABELS.acp;
-  const [program, ...args] = argv;
-  if (program === undefined) return null;
-  const transport = transportOf({ program, args });
-  return transport ? TRANSPORT_LABELS[transport] : null;
 }

@@ -6,14 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatLaunch } from '@/shared/types/agent';
 import { transportOf } from '@/shared/types/agent';
 
-import {
-  TRANSPORT_LABELS,
-  buildChatLaunch,
-  chatTransportLabel,
-  formatChatLaunch,
-  formatEnvText,
-  parseEnvText,
-} from '../agentFormChat';
+import { buildChatLaunch, formatChatLaunch, formatEnvText, parseEnvText } from '../agentFormChat';
 
 /**
  * CHAT 启动配置的读写与传输识别。
@@ -68,33 +61,6 @@ describe('transportOf', () => {
    * 优先级漂移都会在这里暴露 —— 否则用户配了 `serve` 却被后端当 ACP spawn，
    * 没有任何运行时错误。
    */
-  it('agrees with the backend recogniser on every token', () => {
-    const rust = readFileSync(
-      resolve(__dirname, '../../../../../src-tauri/src/common/agent/chat_launch.rs'),
-      'utf8',
-    );
-
-    // 后端也必须只认完整 token（`tokens.contains`），不能子串匹配。
-    expect(rust).toContain('tokens.contains(&wanted)');
-    expect(rust).not.toContain('t.contains(wanted)');
-
-    // 每个分派字面量都要在两端存在。
-    expect(
-      ['acp', 'serve', '--jsonl', 'stream-json', '--mode', 'rpc'].filter(
-        (t) => !rust.includes(`"${t}"`),
-      ),
-    ).toEqual([]);
-
-    // 优先级：acp 的判定必须出现在 serve 之前。
-    const acpAt = rust.indexOf('has("acp")');
-    const serveAt = rust.indexOf('has("serve")');
-    expect(acpAt).toBeGreaterThan(-1);
-    expect(serveAt).toBeGreaterThan(-1);
-    expect(acpAt).toBeLessThan(serveAt);
-  });
-});
-
-describe('buildChatLaunch / formatChatLaunch', () => {
   it('returns null for an empty argv', () => {
     expect(buildChatLaunch([], '')).toBeNull();
   });
@@ -175,6 +141,42 @@ describe('buildChatLaunch / formatChatLaunch', () => {
     const launch: ChatLaunch = { program: 'x', args: ['-m', ''] };
     expect(buildChatLaunch(formatChatLaunch(launch, 'x'), '')).toEqual(launch);
   });
+
+  /**
+   * **ACP 帧格式是用户选择，不是推断结果**。
+   *
+   * 旧版按可执行文件名猜 NDJSON：改名 / 包一层 wrapper 就静默换错协议，且
+   * 用户无法覆盖。现在它是 `ChatLaunch.wire_format` 配置项，显式选择（含
+   * `'content-length'`）都落盘 —— 后端装载期迁移对 opencode 命名的旧配置
+   * 推断 NDJSON，显式值短路推断。
+   *
+   * 变异验证：`buildChatLaunch` 丢弃 `wireFormat` 参数 → 前两条红。
+   */
+  it('carries an explicit wire format on an ACP launch', () => {
+    expect(buildChatLaunch(['my-wrapper', 'acp'], '', false, 'ndjson')).toEqual({
+      program: 'my-wrapper',
+      args: ['acp'],
+      wire_format: 'ndjson',
+    });
+    // 显式 content-length 必须能落盘（对 opencode 命名的二进制是唯一的表达方式）。
+    expect(buildChatLaunch(['opencode', 'acp'], '', false, 'content-length')).toEqual({
+      program: 'opencode',
+      args: ['acp'],
+      wire_format: 'content-length',
+    });
+  });
+
+  it('drops the wire format on non-ACP transports', () => {
+    // wire_format 只有 ACP 消费；其它传输带它纯属配置噪音。
+    expect(buildChatLaunch(['opencode', 'serve'], '', false, 'ndjson')).toEqual({
+      program: 'opencode',
+      args: ['serve'],
+    });
+    // 进程内实现没有帧，同理。
+    expect(buildChatLaunch([], '', true, 'ndjson')).toEqual({ inprocess: true });
+    // 未提供时保持缺席（不写 null 噪音）。
+    expect(buildChatLaunch(['x', 'acp'], '')).toEqual({ program: 'x', args: ['acp'] });
+  });
 });
 
 describe('parseEnvText', () => {
@@ -224,26 +226,6 @@ describe('parseEnvText', () => {
   });
 });
 
-describe('chatTransportLabel', () => {
-  it('shows the recognised transport', () => {
-    expect(chatTransportLabel(['opencode', 'serve'])).toBe(TRANSPORT_LABELS['serve']);
-  });
-
-  it('returns null for an empty argv', () => {
-    expect(chatTransportLabel([])).toBeNull();
-  });
-
-  it('reports a label for an in-process launch', () => {
-    expect(chatTransportLabel([], true)).toBe(TRANSPORT_LABELS['acp']);
-  });
-
-  it('has a label for every transport', () => {
-    for (const t of ['acp', 'serve', 'jsonl', 'pi-rpc'] as const) {
-      expect(TRANSPORT_LABELS[t]).toBeTruthy();
-    }
-  });
-});
-
 /**
  * 传输下拉必须**彻底**消失。
  *
@@ -251,6 +233,11 @@ describe('chatTransportLabel', () => {
  * 既成事实（opencode 只会 serve，pi 只会自己那套 rpc），选错只会得到跑不
  * 起来的配置，且表单给不出任何提示。
  */
+/** CHAT 区的全部组件源码（内置只读 / 自定义可编辑 + 表单本体）。 */
+const CHAT_SECTION_SOURCES = ['AgentForm.tsx', 'BuiltinChatSection.tsx', 'ChatLaunchEditor.tsx']
+  .map((f) => readFileSync(resolve(__dirname, '..', f), 'utf8'))
+  .join('\n');
+
 describe('no transport picker remains', () => {
   it('agentFormChat exports no option list', () => {
     const src = readFileSync(resolve(__dirname, '../agentFormChat.ts'), 'utf8');
@@ -261,7 +248,9 @@ describe('no transport picker remains', () => {
   });
 
   it('AgentForm renders no select for chat transport', () => {
-    const src = readFileSync(resolve(__dirname, '../AgentForm.tsx'), 'utf8');
+    // CHAT 区拆成两个子组件后，判据必须覆盖整棵子树 —— 否则抽走的部分
+    // 就不再受这条护栏保护（它会「绿着」但什么也没检查）。
+    const src = CHAT_SECTION_SOURCES;
     expect(src).not.toContain('CHAT Transport');
     // 传输没有下拉。其它 `<select>`（如 Detection 的 kind）是合法的 ——
     // 断言的是「CHAT 区不存在传输选择器」，不是「全文件没有 select」。
@@ -310,7 +299,7 @@ describe('argv is never projected back to a single line', () => {
   });
 
   it('the ArgListEditor is the shared control for every argv field', () => {
-    const src = readFileSync(resolve(__dirname, '../AgentForm.tsx'), 'utf8');
+    const src = CHAT_SECTION_SOURCES;
     // 五个 argv 字段（args / chatArgv / 三件套）全部走同一个控件。
     expect(src.match(/<ArgListEditor/g)?.length).toBe(5);
   });

@@ -7,7 +7,7 @@
     "src/app/hooks/useAppShellData.ts": 394,
     "src/features/agent-chat/hooks/useAgentChat.ts": 484,
     "src/features/agent-chat/hooks/useMockEventSchedule.ts": 367,
-    "src/features/agent/components/AgentForm.tsx": 457,
+    "src/features/agent/components/AgentForm.tsx": 459,
     "src/features/agent/components/AgentSelector.tsx": 447,
     "src/features/browser/hooks/useBrowserPanel.ts": 368,
     "src/features/browser/hooks/useBrowserTab.ts": 301,

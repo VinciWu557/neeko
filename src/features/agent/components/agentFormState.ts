@@ -19,9 +19,10 @@
  *   会丢边界的序列。
  */
 
-import type { AgentConfig } from '@/shared/types/agent';
+import type { AgentConfig, ChatLaunch, WireFormat } from '@/shared/types/agent';
 
 import { formatChatLaunch, formatEnvText } from './agentFormChat';
+import { trimArgList } from './argList';
 
 /** 新建时的空白编辑态。 */
 export function emptyFormState(): FormState {
@@ -35,6 +36,8 @@ export function emptyFormState(): FormState {
     chatArgv: [],
     chatEnvText: '',
     chatInprocess: false,
+    chatEnabled: 'default',
+    chatWireFormat: 'content-length',
     promptArgs: [],
     postPromptArgs: [],
     modelListArgs: [],
@@ -62,6 +65,24 @@ export interface FormState {
   chatEnvText: string;
   /** 该 chat 由进程内实现提供（无 argv）；与空命令行互斥。 */
   chatInprocess: boolean;
+  /**
+   * 仅内置 agent 有意义：出厂有 chat 时是否启用。
+   *
+   * **三态**，禁止压成 `boolean`：`'default'` 表示跟随出厂定义。压成布尔会让
+   * 「打开表单 → 保存」把 `null` 写成 `true`，此后出厂默认的任何变化都追不上
+   *（反向的「旧快照回滚出厂升级」）。
+   */
+  chatEnabled: ChatEnabledChoice;
+  /**
+   * ACP 帧格式的用户选择（仅 ACP 传输的自定义 agent 可编辑；提交时只对 ACP
+   * 携带，见 `buildChatLaunch`）。
+   *
+   * **两态直接用 `WireFormat`**：`'content-length'` 是协议默认值，缺省与显式
+   * 选择在语义上等价（不存在 `chatEnabled` 那种「跟随出厂」第三态），无需
+   * 再造一层 choice 类型。显式落盘 `'content-length'` 的意义在于让后端装载期
+   * 迁移短路 —— opencode 命名的配置不会被重新推断成 NDJSON。
+   */
+  chatWireFormat: WireFormat;
   promptArgs: string[];
   postPromptArgs: string[];
   modelListArgs: string[];
@@ -73,6 +94,26 @@ export interface FormState {
   deploySkills: string;
   deployCommands: string;
   deployMcp: string;
+}
+
+/**
+ * 内置 agent 的 CHAT 开关三态。
+ *
+ * `'default'` = 跟随出厂定义（后端 `chat_enabled: null`）。
+ */
+export type ChatEnabledChoice = 'default' | 'on' | 'off';
+
+/** 后端 `Option<bool>` → 三态（**不做有损投影**）。 */
+export function toChatEnabledChoice(value: boolean | null | undefined): ChatEnabledChoice {
+  if (value === false) return 'off';
+  if (value === true) return 'on';
+  return 'default';
+}
+
+/** 三态 → 后端 `Option<bool>`。 */
+export function fromChatEnabledChoice(choice: ChatEnabledChoice): boolean | null {
+  if (choice === 'default') return null;
+  return choice === 'on';
 }
 
 /** 空数组 → `null`（后端契约：`None` 表示「没有这个能力」）。 */
@@ -92,6 +133,8 @@ export function toFormState(form: AgentConfig): FormState {
     chatArgv: formatChatLaunch(form.chat, form.command),
     chatEnvText: formatEnvText(form.chat?.env),
     chatInprocess: form.chat?.inprocess === true,
+    chatEnabled: toChatEnabledChoice(form.chat_enabled),
+    chatWireFormat: form.chat?.wire_format ?? 'content-length',
     promptArgs: [...(form.prompt_args ?? [])],
     postPromptArgs: [...(form.post_prompt_args ?? [])],
     modelListArgs: [...(form.model_list_args ?? [])],
@@ -101,5 +144,49 @@ export function toFormState(form: AgentConfig): FormState {
     deploySkills: form.deploy?.skills ?? '{{projectPath}}/.agent/skills',
     deployCommands: form.deploy?.commands ?? '',
     deployMcp: form.deploy?.mcp_config ?? '',
+  };
+}
+
+/**
+ * 表单态 → 提交用的 `AgentConfig`（尾部未填的冗余空行在提交边界裁掉）。
+ *
+ * # 内置 agent 的 `chat` 必须原样带回（绝不走投影）
+ *
+ * 表单态里的 argv 是投影（`formatChatLaunch` 会把 `command` 填进 `program`），
+ * 用投影值提交会把 `{program: None}` 改写成 `{program: Some(command)}` ——
+ * 「沿用 command」变成「显式指定」，出厂升级不再跟随，**而界面上看不出来**。
+ *
+ * # `chat_enabled` 只在「真有一个可开关的出厂 chat」时有意义
+ *
+ * 出厂没有 chat 的内置 agent 写偏好是纯噪音（判据被 `chat: null` 压住，但配置
+ * 里从此躺着一个改不动也看不见的字段）。自定义 agent 的开关不存在，恒为 `null`。
+ */
+export function buildAgentConfig(
+  t: FormState,
+  initial: AgentConfig | null | undefined,
+  builtChat: ChatLaunch | null,
+): AgentConfig {
+  return {
+    id: t.id.trim(),
+    name: t.name.trim(),
+    icon: t.icon || 'cli.svg',
+    enabled: t.enabled,
+    command: t.command.trim(),
+    args: trimArgList(t.args),
+    env: initial?.env ?? {},
+    chat: initial?.is_builtin ? (initial.chat ?? null) : builtChat,
+    chat_enabled: initial?.is_builtin && initial.chat ? fromChatEnabledChoice(t.chatEnabled) : null,
+    prompt_args: toNullableArgs(trimArgList(t.promptArgs)),
+    post_prompt_args: toNullableArgs(trimArgList(t.postPromptArgs)),
+    model_list_args: toNullableArgs(trimArgList(t.modelListArgs)),
+    skill_path: t.skillPath.trim() || null,
+    detection: t.detectionTarget.trim()
+      ? { type: t.detectionType, target: t.detectionTarget.trim() }
+      : null,
+    deploy: {
+      skills: t.deploySkills.trim() || '{{projectPath}}/.agent/skills',
+      commands: t.deployCommands.trim() || null,
+      mcp_config: t.deployMcp.trim() || null,
+    },
   };
 }

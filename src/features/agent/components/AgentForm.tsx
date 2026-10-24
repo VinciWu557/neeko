@@ -9,18 +9,26 @@ import { open } from '@tauri-apps/plugin-dialog';
 import React, { useCallback, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
-import type { AgentConfig } from '@/shared/types/agent';
+import type { AgentConfig, WireFormat } from '@/shared/types/agent';
 import { transportOf } from '@/shared/types/agent';
 import { PRESET_AGENT_ICONS } from '@/shared/utils/agents';
-import { Button, Input, Textarea } from '@/ui';
+import { Button, Input } from '@/ui';
 
 import { importAgentIcon, resolveAgentIconSrc } from '../api/agentApi';
 
-import { buildChatLaunch, chatTransportLabel } from './agentFormChat';
-import { emptyFormState, toFormState, toNullableArgs, type FormState } from './agentFormState';
+import { buildChatLaunch } from './agentFormChat';
+import {
+  buildAgentConfig,
+  emptyFormState,
+  toFormState,
+  type ChatEnabledChoice,
+  type FormState,
+} from './agentFormState';
 import { trimArgList } from './argList';
 import ArgListEditor from './ArgListEditor';
+import BuiltinChatSection from './BuiltinChatSection';
 import CapabilityBadges from './CapabilityBadges';
+import ChatLaunchEditor from './ChatLaunchEditor';
 import DeploySection from './DeploySection';
 
 interface AgentFormProps {
@@ -77,11 +85,46 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
     [set],
   );
 
+  /**
+   * CHAT 区子组件（`BuiltinChatSection` / `ChatLaunchEditor`）的稳定回调 ——
+   * 与 `argSetters` 同理：两个子组件都是 `React.memo` 的，内联箭头会把 memo
+   * 全程打穿。依赖恒定的 `set`，身份恒定。
+   */
+  const chatSetters = useMemo(
+    () => ({
+      chatEnabled: (next: ChatEnabledChoice) => set('chatEnabled', next),
+      chatEnvText: (next: string) => set('chatEnvText', next),
+      chatInprocess: (next: boolean) => set('chatInprocess', next),
+      chatWireFormat: (next: WireFormat) => set('chatWireFormat', next),
+    }),
+    [set],
+  );
+
   /** 提交用的 chat（`null` = 无 CHAT 能力）。预览、校验、env 显隐都复用它，
    *  避免「判据说有能力、落库却是 null」的两套语义。 */
+  /** 判据来源：`is_builtin`（既有字段）。不新增 `isChatXxx` 布尔。 */
+  const isBuiltinAgent = initial?.is_builtin === true;
+
   const builtChat = useMemo(
-    () => buildChatLaunch(trimArgList(t.chatArgv), t.chatEnvText, t.chatInprocess),
-    [t.chatArgv, t.chatEnvText, t.chatInprocess],
+    () =>
+      buildChatLaunch(trimArgList(t.chatArgv), t.chatEnvText, t.chatInprocess, t.chatWireFormat),
+    [t.chatArgv, t.chatEnvText, t.chatInprocess, t.chatWireFormat],
+  );
+
+  /**
+   * argv 识别出的传输（`null` = 无 CHAT 能力）—— **只算一次**：模型目录判据、
+   * 子组件展示都从这一份派生，不再各自重复解析同一份 argv。
+   */
+  const transport = useMemo(() => (builtChat ? transportOf(builtChat) : null), [builtChat]);
+
+  /**
+   * 内置 agent 的**出厂**协议 —— 从 `initial.chat` 识别，**不经过投影**：
+   * inprocess 出厂 chat（mockAgent）的投影是空 argv，会被误判成「无协议」。
+   * 依赖整个 `initial`（React Compiler 的推断粒度，窄化会报错）。
+   */
+  const builtinTransport = useMemo(
+    () => (initial?.chat ? transportOf(initial.chat) : null),
+    [initial],
   );
 
   /** 能力预览 —— `chat` 直接取提交值的真值，不存在第二套判据。 */
@@ -104,43 +147,13 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
    * 注意判据**不是**「能否选模型」：`serve`（`PerTurn`）也能选模型，但它的
    * CLI 目录形状恰好与写回通道一致，必须保留（spec §10.5c）。
    */
-  const chatIsSessionScoped = useMemo(() => {
-    const transport = builtChat ? transportOf(builtChat) : null;
-    return transport === 'acp' || transport === 'pi-rpc';
-  }, [builtChat]);
-
-  /** 识别结果只算一次（两次调用会在同一帧重复解析同一份 argv）。 */
-  const transportLabel = useMemo(
-    () => chatTransportLabel(trimArgList(t.chatArgv), t.chatInprocess),
-    [t.chatArgv, t.chatInprocess],
+  const chatIsSessionScoped = useMemo(
+    () => transport === 'acp' || transport === 'pi-rpc',
+    [transport],
   );
 
-  /** 组装提交用的 AgentConfig。尾部未填的冗余空行在提交边界裁掉。 */
-  const buildConfig = useCallback((): AgentConfig => {
-    return {
-      id: t.id.trim(),
-      name: t.name.trim(),
-      icon: t.icon || 'cli.svg',
-      enabled: t.enabled,
-      command: t.command.trim(),
-      args: trimArgList(t.args),
-      env: initial?.env ?? {},
-      chat: builtChat,
-      prompt_args: toNullableArgs(trimArgList(t.promptArgs)),
-      post_prompt_args: toNullableArgs(trimArgList(t.postPromptArgs)),
-      model_list_args: toNullableArgs(trimArgList(t.modelListArgs)),
-      skill_path: t.skillPath.trim() || null,
-      detection: t.detectionTarget.trim()
-        ? { type: t.detectionType, target: t.detectionTarget.trim() }
-        : null,
-      deploy: {
-        skills: t.deploySkills.trim() || '{{projectPath}}/.agent/skills',
-        commands: t.deployCommands.trim() || null,
-        mcp_config: t.deployMcp.trim() || null,
-      },
-    };
-  }, [t, initial, builtChat]);
-
+  /** 组装提交用的 AgentConfig：纯映射在 `agentFormState.buildAgentConfig`
+   *  （组件文件受 ratchet 约束，投影函数与 React 无关，落同一族文件）。 */
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault();
@@ -161,14 +174,14 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       try {
         // 写路径归调用方（它才知道内置/自定义，也只有它能统一走 `saveAgent`）。
         // 表单自己调 `addAgent` 会造成一次保存两次 `add_agent`。
-        await onSaved?.(buildConfig());
+        await onSaved?.(buildAgentConfig(t, initial, builtChat));
       } catch (err) {
         setError(String(err));
       } finally {
         setSaving(false);
       }
     },
-    [t, buildConfig, onSaved, builtChat],
+    [t, onSaved, initial, builtChat],
   );
 
   const handleUploadIcon = useCallback(async () => {
@@ -329,44 +342,30 @@ const AgentForm: React.FC<AgentFormProps> = ({ initial, onSaved, onCancel }) => 
       <div className="border border-border rounded-lg bg-bg-primary overflow-hidden">
         <div className={cn(sectionTitle, 'px-3 pt-2 pb-1.5 bg-bg-secondary/40')}>Capabilities</div>
         <div className="p-3 pt-2 flex flex-col gap-2">
-          {/* CHAT 启动配置：argv（程序名 + 参数各一行）+ 环境变量。
-              没有传输下拉 —— 传输由 argv 识别（`chatTransportLabel`）。 */}
-          <div className={groupCls}>
-            <span className={labelCls}>CHAT Launch (first = program · empty = no CHAT)</span>
-            <ArgListEditor
-              value={t.chatArgv}
-              onChange={argSetters.chatArgv}
+          {isBuiltinAgent ? (
+            <BuiltinChatSection
+              transport={builtinTransport}
+              value={t.chatEnabled}
+              onChange={chatSetters.chatEnabled}
+              groupCls={groupCls}
+              labelCls={labelCls}
+            />
+          ) : (
+            <ChatLaunchEditor
+              argv={t.chatArgv}
+              onArgvChange={argSetters.chatArgv}
+              envText={t.chatEnvText}
+              onEnvTextChange={chatSetters.chatEnvText}
+              inprocess={t.chatInprocess}
+              onInprocessChange={chatSetters.chatInprocess}
+              wireFormat={t.chatWireFormat}
+              onWireFormatChange={chatSetters.chatWireFormat}
+              transport={transport}
+              hasChat={builtChat !== null}
               placeholders={chatPlaceholders}
-              disabled={t.chatInprocess}
-              inputClassName="bg-bg-secondary"
+              groupCls={groupCls}
+              labelCls={labelCls}
             />
-          </div>
-          {/* 进程内实现没有 argv 可填，但**确有** CHAT 能力 —— 两者必须显式区分。 */}
-          <label className="flex items-center gap-1.5 text-[0.72em] text-text-muted">
-            <input
-              type="checkbox"
-              checked={t.chatInprocess}
-              onChange={(e) => set('chatInprocess', e.target.checked)}
-            />
-            In-process (no subprocess · e.g. mockAgent)
-          </label>
-          {transportLabel && (
-            <div className="text-[0.7em] text-text-muted -mt-1">Detected: {transportLabel}</div>
-          )}
-          {builtChat !== null && (
-            <div className={groupCls}>
-              <label className={labelCls} htmlFor="agent-form-chat-env">
-                CHAT Env (one KEY=value per line)
-              </label>
-              <Textarea
-                id="agent-form-chat-env"
-                value={t.chatEnvText}
-                onChange={(e) => set('chatEnvText', e.target.value)}
-                rows={2}
-                placeholder={'ANTHROPIC_API_KEY=sk-…'}
-                className="bg-bg-secondary text-[0.82em] min-h-0 py-1"
-              />
-            </div>
           )}
           <div className="grid grid-cols-2 gap-2">
             <div className={groupCls}>

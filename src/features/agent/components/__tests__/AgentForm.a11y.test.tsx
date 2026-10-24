@@ -23,14 +23,20 @@ import AgentForm from '../AgentForm';
  *
  * 变异验证：把任一处改回裸 `<input className={fieldCls}>` → 本用例红。
  */
-describe('AgentForm reuses ui controls', () => {
-  const source = readFileSync(resolve(__dirname, '../AgentForm.tsx'), 'utf8');
+// CHAT 区已按「内置只读 / 自定义可编辑」抽成两个子组件（组件规模 ratchet），
+// 所以判据必须覆盖**整个表单子树**，否则抽走的部分就不再受这条护栏保护。
+const FORM_FILES = ['AgentForm.tsx', 'BuiltinChatSection.tsx', 'ChatLaunchEditor.tsx'] as const;
+const sources = FORM_FILES.map((f) => readFileSync(resolve(__dirname, '..', f), 'utf8'));
+const source = sources.join('\n');
 
+describe('AgentForm reuses ui controls', () => {
   it('should have no bare text inputs left', () => {
-    // 允许的裸 `<input>` 只有 checkbox（不需要 IME / 自动大写 / focus ring）。
+    // 允许的裸 `<input>` 只有 checkbox（不需要 IME / 自动大写 / focus ring）：
+    // ① `Agent enabled` ② 自定义 agent 的 `In-process` ③ 内置 agent 的 `Enable chat`。
+    // 新增 checkbox 时这条会红 —— 那是在强制你确认「它确实不该用 ui/Checkbox」。
     const bareInputs = source.match(/<input[\s>]/g) ?? [];
-    expect(bareInputs).toHaveLength(2);
-    expect(source.match(/type="checkbox"/g) ?? []).toHaveLength(2);
+    expect(bareInputs).toHaveLength(3);
+    expect(source.match(/type="checkbox"/g) ?? []).toHaveLength(3);
   });
 
   it('should render text fields through Input and multiline through Textarea', () => {

@@ -116,11 +116,40 @@ describe('ArgListEditor reuses ui/Input', () => {
  */
 describe('ArgListEditor memoisation preconditions', () => {
   it('AgentForm should pass stable props to every editor', () => {
-    const src = readFileSync(resolve(__dirname, '../AgentForm.tsx'), 'utf8');
-    // 回调来自模块/useMemo 派生的稳定对象，而不是内联箭头。
-    expect(src).not.toMatch(/onChange=\{?\(?\s*\(?next/);
+    // 判据覆盖**所有**渲染 `ArgListEditor` 的文件：CHAT 区拆出子组件后，
+    // 只扫 `AgentForm.tsx` 会漏掉新位置（护栏会「绿着」但不再保护它们）。
+    const src = ['AgentForm.tsx', 'ChatLaunchEditor.tsx']
+      .map((f) => readFileSync(resolve(__dirname, '..', f), 'utf8'))
+      .join('\n');
+
+    // 只判**传给 ArgListEditor 的** `onChange`：那才是 memo 生效的前提。
+    // `AgentForm` 里给非 memo 控件（如 Textarea）的内联箭头是合法的。
+    const editorCalls = src.match(/<ArgListEditor[\s\S]*?\/>/g) ?? [];
+    expect(editorCalls.length).toBeGreaterThanOrEqual(5);
+    for (const call of editorCalls) {
+      expect(call).not.toMatch(/onChange=\{\s*\(?\s*\(?next/);
+    }
     expect(src).toContain('argSetters.');
     // placeholders 一律是模块常量或 useMemo 派生值。
     expect(src).not.toMatch(/placeholders=\{\[/);
+  });
+
+  /**
+   * CHAT 区的两个 `React.memo` 子组件同理：`AgentForm` 必须传稳定回调。
+   *
+   * 变异验证：把 `onChange={chatSetters.chatEnabled}` 改回内联
+   * `(next) => set(...)` → 本用例红。判据覆盖**传给 memo 组件的**回调 props
+   * —— 子组件内部 DOM 控件的 onChange 不跨 memo 边界，不在此列。
+   */
+  it('AgentForm should pass stable callbacks to the memoised chat sections', () => {
+    const src = readFileSync(resolve(__dirname, '../AgentForm.tsx'), 'utf8');
+    const chatSectionCalls = [
+      ...src.matchAll(/<(?:BuiltinChatSection|ChatLaunchEditor)[\s\S]*?\/>/g),
+    ].map((m) => m[0]);
+    expect(chatSectionCalls).toHaveLength(2);
+    for (const call of chatSectionCalls) {
+      expect(call).not.toMatch(/=\{\s*\(next/);
+    }
+    expect(src).toContain('chatSetters.');
   });
 });

@@ -36,10 +36,19 @@ export const CAPABILITY_META: Record<CapabilityKind, { label: string; cls: strin
   };
 
 /** 单枚能力徽标。 */
-function CapChip({ kind, className }: { kind: CapabilityKind; className?: string }) {
+function CapChip({
+  kind,
+  className,
+  title,
+}: {
+  kind: CapabilityKind;
+  className?: string;
+  title?: string;
+}) {
   const meta = CAPABILITY_META[kind];
   return (
     <span
+      title={title}
       className={cn(
         'inline-flex items-center gap-1 rounded border px-1.5 py-px text-[0.68em] font-medium leading-[1.5]',
         meta.cls,
@@ -53,17 +62,29 @@ function CapChip({ kind, className }: { kind: CapabilityKind; className?: string
 }
 
 interface CapabilityBadgesProps {
-  agent: Pick<AgentConfig, 'command' | 'chat' | 'prompt_args'>;
+  // `chat_enabled` 必须在这个 `Pick` 里：漏了 `isChatEnabled` 读不到它，
+  // 被用户关掉的 CHAT 会继续显示成可用（而不是灰态）。
+  agent: Pick<AgentConfig, 'command' | 'chat' | 'chat_enabled' | 'prompt_args'>;
   className?: string;
 }
 
-/** 一组能力徽标（有哪个能力显示哪个）。 */
+/**
+ * 一组能力徽标（有哪个能力显示哪个）。
+ *
+ * CHAT 徽标在「有出厂 chat 但用户关掉」时显示为**灰态**而不是消失 ——
+ * 用户要能区分「这个 agent 本来就不能聊」与「我把它关了、去哪里打开」。
+ */
 const CapabilityBadges: React.FC<CapabilityBadgesProps> = ({ agent, className }) => {
   const caps = agentCapabilities(agent as AgentConfig);
+  const chatDeclared = Boolean(agent.chat);
+  const chatOff = chatDeclared && !caps.chat;
   return (
     <span className={cn('inline-flex items-center gap-1', className)}>
       {caps.cli && <CapChip kind="cli" />}
       {caps.chat && <CapChip kind="chat" />}
+      {chatOff && (
+        <CapChip kind="chat" className="opacity-40" title="CHAT is disabled for this agent" />
+      )}
       {caps.headless && <CapChip kind="headless" />}
     </span>
   );
