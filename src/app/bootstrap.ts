@@ -1,4 +1,5 @@
 import { preloadRendererAddons } from '@/shared/utils/terminal';
+import { installWebKitInputGuard } from '@/shared/utils/webkitInputGuard';
 
 import { registerGlobalErrorHandlers } from './registerGlobalErrorHandlers';
 
@@ -16,5 +17,6 @@ import { registerGlobalErrorHandlers } from './registerGlobalErrorHandlers';
  */
 export function bootstrap(): void {
   registerGlobalErrorHandlers();
+  installWebKitInputGuard(document);
   preloadRendererAddons();
 }
