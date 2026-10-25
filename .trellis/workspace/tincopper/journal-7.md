@@ -716,3 +716,29 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 339: 清理无用本地分支：删除 5 个已完全合并的分支 + 移除 dsh-neeko worktree
+<!-- trellis-session: v=2 fp=f76a0df87b16ad87 -->
+
+**Date**: 2026-10-25
+**Task**: 清理无用本地分支：删除 5 个已完全合并的分支 + 移除 dsh-neeko worktree
+**Branch**: `main`
+
+### Summary
+
+删除前逐个验证：5 个本地分支相对 main 的未合并提交数均为 0（feat/composer-token-editor 落后56、feat/mention-slash-palette 落后68、dsh-neeko 落后143、fix/lsp-typescript-root-resolution 落后895、feature-commands 落后957），全部用 git branch -d（安全删除，非 -D 强删），由 git 自身复核可合并性。关键发现：dsh-neeko 被活跃 worktree ~/.neeko/worktrees/dsh-neeko 占用（git branch -vv 的 + 标记），先确认该 worktree 零未提交改动、零独有提交、且 stash 存于 common git dir（删 worktree 不丢 stash），再 git worktree remove 后删分支。远端 13 个分支均保留未动：全部有 63-587 个未合并提交，删远端不可逆且超出「当前无用」判定。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `21bde8e7` | chore: merge the dsh-neeko TUI package into main |
+
+### Testing
+
+- [OK] 删除后 git branch 仅剩 main；工作树干净（0 改动）；代码完好（composer 8 个 ts/tsx、packages/dsh-neeko 0.1.1 均在）；stash 7 个未受影响
+
+### Status
+
+[OK] **Completed**
