@@ -504,3 +504,27 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 333: composer 二轮自查：收表补全 + 空内容判据统一 + 假绿用例修正
+<!-- trellis-session: v=2 fp=4d2945d30c140040 -->
+
+**Date**: 2026-10-25
+**Task**: composer 二轮自查：收表补全 + 空内容判据统一 + 假绿用例修正
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+第二轮第一性原理自查新查出的实质问题已修：①chipSpec 收表只做了一半——节点定义(属性 schema/renderHTML)、扩展数组、docToRequestFiles 的 'fileChip'/'path' 仍硬编码 → 属性定义与 filePathAttr 一并入表，editorSchema 改为按表循环装配；②三套命名(commandSuggestion/fileSuggestion vs kind slash/mention vs COMMAND_SUGGESTION_KEY) → 统一按 ChipKind 索引；③空内容有两个判据(editor.isEmpty vs trim)，只输空格时按钮可点但点了没反应 → 收敛为 isComposerEmpty 唯一实现；④测试辅助 typeText 漏 emitUpdate:true 导致多个用例假绿；⑤suggestionWiring 文档仍引用已删的 filterBySubstring。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 14/14；test:fe 646 文件 / 5993 用例全绿；新增 submitComposer.test.ts 判据直测（变异验证：判据换成 editor.isEmpty 语义 → 3 条红，确认有判别力）
+
+### Status
+
+[OK] **Completed**

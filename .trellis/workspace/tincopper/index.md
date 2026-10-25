@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 332
+- **Total Sessions**: 333
 - **Last Active**: 2026-10-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~506 | Active |
+| `journal-7.md` | ~530 | Active |
 | `journal-6.md` | ~1955 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 333 | 2026-10-25 | composer 二轮自查：收表补全 + 空内容判据统一 + 假绿用例修正 | - | `feat/composer-token-editor` |
 | 332 | 2026-10-25 | composer 自查：chip 种类收表 + 死代码清理 + 分层修正 | - | `feat/composer-token-editor` |
 | 331 | 2026-10-24 | composer 附件单一表示（B 方案）+ 弹层分组/图标/多词搜索 | - | `feat/composer-token-editor` |
 | 330 | 2026-10-24 | composer 富文本 token 化：Tiptap chip 落地（阶段 0-5） | - | `feat/composer-token-editor` |
