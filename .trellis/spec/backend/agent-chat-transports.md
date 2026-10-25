@@ -548,6 +548,62 @@ uuid，工具卡在等回答上，表现为「点了允许没反应」。现在�
 
 执行侧也不需要新命令：`prompt` 里带 `/name` 会被 pi 自己展开（实测触发）。
 
+### 9.4b opencode 的命令列表：`/api/command`（`/api/*` 共享层）
+
+opencode 走 `serve` 传输，命令列表来自 **`GET /api/command`**（实测 2.1.3）：
+
+```jsonc
+{"location":{"directory":"…"},
+ "data":[{"name":"init","description":"guided AGENTS.md setup"},
+         {"name":"trellis/start","description":"…"}]}
+```
+
+**两条已实测事实**：
+
+| 事实 | 后果 |
+| --- | --- |
+| 无前缀的 `/command` 是 `200 text/html`（SPA 回落） | 按 `/command` 拼路径会拿到 HTML，当空列表处理 |
+| 命令发现**异步完成**：同一 server 连续请求得到 `0 → 2 → 5` 条 | 查一次拿空就放弃 = 用户永远看到「无命令」 |
+
+#### 1.x 的支持：按共享层实现，由运行时回答
+
+**已实测（1.19.0，见 `10-20-opencode-2x-serve-dual-stack/research/opencode-2x-protocol.md`）**：
+`/api/model`、`POST /api/session`、`GET /api/event` **两版共存**；只有 `/api/info`
+是 v2 独有（正因如此它才是协议判据）。
+
+**未实测**：`/api/command` 在 1.x 上没有一手取证（取证机只有 2.1.3）。
+
+因此实现选择**共用路径** `/api/command`（同 `models_path` 的先例），而不是按协议
+分叉成 `V1 => "/command"`（那是 SPA 回落，必然坏）。
+
+> **判据（可推广）：「不确定某端点是否存在」不能用静态假设表达。**
+> 猜 `None` 与猜 `Some` 一样错 —— 前者把功能藏起来（用户失去整个 `/` 入口），
+> 后者把报错露出来。正确的是让它**降级成运行时探测**：真没有的版本在请求上
+> 失败，由 `useAgentCommands` 的「失败 → 空数组、不打断输入」路径吸收。
+>
+> 这条是对早先「静态 `false` + 会话期 `capabilities_for(protocol)` 派生」那版
+> 的修正：那版把**未取证**当成了**不支持**，代价是 1.x 用户完全没有 `/` 补全。
+
+#### 实现要点
+
+- `ServeProtocol::commands_path(self) -> &'static str` 恒返回 `/api/command`
+  （保留 `self` 接收者只为让调用点统一写 `protocol.commands_path()`）
+- `ServeAdapter::chat_capabilities().commands = true` —— 单一真值，不再有
+  「静态声明 vs 会话期派生」两层
+- **有界重试** 8 × 250ms（约 2s）覆盖异步发现；预算用尽仍空 → 空列表
+  （真的没命令），端点不可用 → `Err`（让前端走失败降级，不是静默空）
+- **必须带 `?directory=`**：项目级命令（`<project>/.opencode/commands/**`）只在
+  请求带上项目根时才被纳入。前端 `projectPath` 经
+  `list_agent_commands(agentId, directory)` → `list_commands(config, directory)`
+  一路下传
+
+**缓存键必须带 directory**：同一 agent 在不同项目下命令集不同，只按 agentId 缓存
+会让 A 项目拿到 B 项目的命令（`useAgentCommands` 的 `commandKeyOf`）。
+
+护栏：`opencode/tests.rs` 的 `commands_from_response_*` / `commands_url_*` /
+`commands_path_is_shared_by_both_protocols`；`capability_probe.rs` 的契约测试断言
+「位 true ⇒ 查询有覆写」（本机装了 opencode 时实测返回 `init` / `review`）。
+
 ### 9.5 会话恢复：`sessionId` 有，但文件要发过消息才落盘
 
 `get_state.sessionId` 在握手时就有，可作为 `resume_id()` 返回给

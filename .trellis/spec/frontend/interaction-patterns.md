@@ -576,52 +576,232 @@ insertToSessionTerminal(session, `${path}/`);    // 多余斜杠（目录）
 `src/features/terminal/components/__tests__/terminalRouting.test.ts`（仲裁 + 编排降级链）、
 `src/features/agent-chat/api/__tests__/agentInputRegistry.test.ts`（注册表显式成败）。
 
-## Composer 补全弹层：`handleKeyDown → boolean` 消费契约（2026-10-24）
+## Composer 补全弹层与 chip token（Tiptap，2026-10-24 重写）
 
-输入框类补全（agent chat 的 `/` 命令与 `@` 文件提及，`ComposerPalette` +
-`useComposerPalette`）的键盘事件必须走**「弹层先收、返回是否已消费」**的契约：
+> **本节在 `10-24-composer-token-editor` 后重写。** 旧形态（textarea + 镜像高亮层 +
+> `handleKeyDown → boolean` 自研消费契约）已被 Tiptap 富文本 composer 取代：
+> 触发、过滤、键盘导航、chip 插入全部交给 `@tiptap/suggestion` 与 ProseMirror 事务。
+> 保留下面的「历史形态」一小段，只作为**其他 textarea 场景**的通用思路参考 ——
+> 不要照抄进 agent chat composer。
 
-```tsx
-onKeyDown={(e) => {
-  if (handlePaletteKeyDown(e)) {   // true = 弹层已消费（选中 / 关闭 / 移动高亮）
-    e.preventDefault();
-    return;
-  }
-  // 否则维持输入框既有行为（Enter 发送 / Shift+Enter 换行）
-  ...
-}}
+### 1. 为什么换编辑器（原理性上限，不是偏好）
+
+textarea 里不可能内嵌 DOM 元素，所以「带图标、可整块删、类型化配色」的 chip 只能靠
+**镜像层**模拟：textarea 文字透明 + 同排版 div 逐字渲染。该架构有两个死结：
+
+1. **逐像素对齐**：镜像必须与透明文字完全同排版，因此 chip 内不能有任何宽度差异
+   （图标一放，token 之后全部错位）—— 视觉上限就是「彩色文字」。
+2. **WebKit IME**：透明 textarea 的 CJK 组合文本在 WKWebView 下会腐坏（实测豆腐块 /
+   乱码），需要 `-webkit-text-fill-color` + 组合期重同步 + 镜像 `visibility` 三层加固。
+
+换 contenteditable 后两条都消失：chip 是真实节点，组合文本由 ProseMirror 的
+DOM observer 直接观察。**这是删掉一层易腐中间层，不是新增一层。**
+
+### 2. 结构（含 chip 种类的单一事实源）
+
+```
+composer/editorSchema.ts    两套 Mention 实例（CommandChip / FileChip）+ docToPromptText
+composer/suggestionWiring.ts  Suggestion × 2（'/' 与 '@'）+ 能力位门 + chip 插入
+composer/PalettePopup.tsx     ComposerPalette 的 suggestion 桥接（高亮状态）
+composer/RichComposer.tsx     EditorProvider + 键盘/草稿/空态投影
+composer/editorRegistry.ts    (tabKey, tabId) → Editor，「外部投递」的唯一落地点
+composer/submitComposer.ts    Enter 与发送按钮的**单一**提交实现
+composer/ChipView.tsx         chip 的 node view（图标 + 类型化配色 pill）
+composer/chipSpec.ts          **chip 种类的单一事实源**（触发符 · 节点名 · 序列化）
 ```
 
-### 契约要点
+**新增一种 chip 只改一处**（`CHIP_SPECS` 加一条）。表里涵盖：触发符、ProseMirror
+节点名、**属性定义**（HTML 往返自动生成）、HTML 类名、纯文本展示、chip 序列化、
+以及「这个 chip 是否进 `files`」（`filePathAttr`）。`editorSchema` 按表**循环装配**
+扩展（无逐条手写块），`suggestionWiring` 按 `kind` 索引 PluginKey 与数据源。
 
-1. **返回 `boolean` 是类型契约，不是文档约定** —— 「有没有消费」由弹层自己回答，
-   调用方据此决定 `preventDefault` 并短路发送。返回 `void` 会让调用方猜，猜错
-   就是 Enter 双触发（一次按键既选中候选又发送消息，AC7 的核心缺陷形态）。
-2. **未打开 / IME 组合中恒返回 `false`** —— 不干扰既有 Enter 发送；拼音的
-   Enter 上屏绝不能被弹层吞掉（`compositionstart/end` 显式门控，不用
-   `nativeEvent.isComposing` —— React 合成事件上该字段部分浏览器滞后一帧）。
-3. **候选为空时只消费 `Escape`**，其余按键放行（Enter 交给发送路径）——
-   「支持但为空」的空态不是「弹层接管键盘」的理由。
-4. 触发与过滤**不另设增量状态**：每次 change 从「当前文本 + 光标」重新派生
-   （`paletteTrigger.findTrigger` 向前扫描最近的合法触发符，要求行首/空白后 ——
-   `src/foo` 里的 `/` 不触发），Backspace 越过触发符、输入空格自然关闭。
-   写回只替换 `[triggerIndex, cursor)` 段（`applySelection`），前缀后缀原样保留。
+> 这是本任务自查时修掉的真实缺陷，两轮：
+> 第一轮发现 `'/'` 与 `'@'` 在 **7 处**硬编码（两处 `char:`、`insertChip` 三元、
+> `createPaletteRender` 的 kind 反推、字面量联合）；第二轮发现**收表只收了一半**
+> —— 节点定义（属性 schema + renderHTML）与扩展数组仍逐条手写，`docToRequestFiles`
+> 里还硬编码 `'fileChip'` / `'path'`。补全后判据才真正成立：
+> **新增 chip 不应修改 `chipSpec.ts` 之外的任何 switch / 三元 / 手写扩展条目**。
 
-### 数据源与能力位
+**表必须自洽**（第三轮自查补的）：`attrs` 声明属性 schema（未声明的属性会被
+ProseMirror 丢弃），`attrsOf` 负责插入时写值。两者一旦分家，坏法极隐蔽——曾有
+`attrsOf` 多产出一个未声明的 `label`，于是所有 `?? attrs.label` 兜底**永不可达**
+（读起来像有兜底，实际是死代码）。`chipSpec.test.ts` 用双向断言钉住
+（不得多产、不得少产），并钉住「声明了 `filePathAttr` 就必须真的声明该属性」。
 
-弹层是「骨架 + 数据源」两件套（`paletteSources.ts` 的
-`ComposerPaletteSource { kind, emptyText, getItems, onPick? }`），`/` 与 `@`
-的差异只有数据来源与选中副作用。slash 源的挂载由
-`SessionStart.capabilities.commands` 能力位唯一裁决（能力位 false 时不挂源、
-不发查询 —— 不靠试查询报错，见 spec `agent-chat-transports.md` §10.1）；
-命令列表来自 `list_agent_commands`，按 agentId 在 `useAgentCommands` 内缓存
-（会话期内不变，不落盘），**禁止前端硬编码命令清单**（静态护栏：
-`paletteSources.test.ts` 的 AC2 用例）。
+**序列化 ≠ 展示**：`displayText` 给人看（文件 chip 显示文件名），`toPromptText`
+给 agent 看（必须是完整 `@path`，pi 才能定位）。两者不同源是**有意的**，不要
+「统一」成同一个函数。
 
-### 对应测试
+**分层**：`chipSpec` 不 import React / Tiptap 运行时；`editorSchema` 是纯 schema +
+序列化层（`docToPromptText` / `docToRequestFiles` 可在 node 环境单测），
+**不 import `ChipView`** —— chip 的 React node view 由装配点（`RichComposer`）
+经 `buildComposerExtensions({ nodeViews })` 注入。把 React 拉进 schema 层会让
+「序列化契约」的测试被迫跑在 jsdom + 图标生态里。
 
-`paletteTrigger.test.ts`（纯函数：触发判据 / 写回 / 过滤）、
-`ComposerPalette.test.tsx`（骨架键盘契约）、`ChatComposerPalette.test.tsx`
-（双触发 AC7 / IME AC8 / 能力位门控 AC1 / 提及选中 AC5）、
-`useAgentCommands.test.ts`（能力位 false 不发查询 / agentId 缓存 / 失败降级空态）、
-`composerWiring.test.ts`（能力位链路静态护栏）。
+**schema 故意窄**：只有段落 / 文本 / 两种 chip，不引入加粗、标题、代码块。schema 越窄，
+IME 与序列化的暴露面越小。
+
+### 3b. 空内容判据必须唯一（`isComposerEmpty`）
+
+「有没有内容」有两个消费点：发送前校验、发送按钮禁用。它们曾用**不同判据**——
+按钮用 `editor.isEmpty`（ProseMirror 语义：有文本节点即非空），发送用
+`promptText.trim()`——于是**只输入空格时按钮可点、点了什么都不发生**。
+
+现在唯一实现是 `submitComposer.ts::isComposerEmpty(doc)`（取序列化后 trim），
+按钮经 `onEmptyChange` 只做投影。
+
+**测试分层的教训**：ChatComposer 层只拿到一个布尔，把判据换回 `editor.isEmpty`
+那边用例**仍然绿**（实测）。有判别力的位置是判据本身 —— `submitComposer.test.ts`
+直测 `isComposerEmpty`（空格 / 换行 / tab 算空，chip 算内容，且与
+`docToPromptText` 逐例一致）。**别在只拿得到结果的层去测判据的对错。**
+
+### 3c. 测试里程序化插入必须带 `emitUpdate: true`
+
+Tiptap 的 `editor.commands.insertContent(text)` 程序化调用**默认不发 `update`
+事件**（只有真实用户输入才发），而草稿持久化与 `onEmptyChange` 都挂在 `update` 上。
+测试辅助里漏掉它 → 用例看到「什么都没发生」→ 假绿。
+
+```ts
+function typeText(editor: Editor, text: string) {
+  editor.commands.insertContent(text, { emitUpdate: true }); // 必须
+}
+```
+
+### 3. 序列化契约（pi 展开依赖，golden 锁死）
+
+`docToPromptText(doc)` 是纯函数：命令 chip → `/name `，文件 chip → `@path `，
+chip 自带**尾随空格**（因此插入 chip 时不要再插文本空格，否则双空格破坏形状）。
+`editorSchema.test.ts` 用 golden 覆盖混排 / 相邻 chip / 末尾 chip / CJK + 路径分隔符 /
+空文档。**任何改变该形状的改动都必须同时确认 pi 仍能展开命令。**
+
+### 4. 受控回环：单向闸门
+
+Tiptap 是非受控编辑器，而草稿的真相在 tab data 的 `composerDoc`。规则只有一条：
+**`setContent` 只发生在「编辑器实例创建后恢复本 tab 草稿」这一次**（按实例身份判定，
+StrictMode 重挂载下新实例各自恢复一次）；`onUpdate` → `mergeTabData({ composerDoc })`
+**只出不进** —— store 回流永不回写编辑器，死循环在结构上不可达。
+
+护栏：`RichComposer.test.tsx` 断言「恢复之后 `setContent` 全程调用次数 = 1」；
+`composerWiring.test.ts` 断言 update handler 体内不出现 `setContent`。
+变异验证：把 `setContent` 放进 update 处理器 → 回环用例立刻红。
+
+### 4b. 附件：**一份表示**，`files` 是文档的投影（B 方案）
+
+文件附件曾有第二份 state（`useChatAttachments.attachments`）：`@` 提及与附件按钮
+都往里写。它与编辑器文档**没有任何同步** —— 用户退格删掉 `@path` chip 后，附件仍在
+上方 chips 区，且照样随消息的 `files` 字段发出去（「以为移除了、实际没有」）。
+
+现在文件只有一份表示：
+
+| 入口 | 落到哪 |
+| --- | --- |
+| `@` 提及 | 编辑器 `fileChip` |
+| 「Attach files」按钮 | `insertIntoComposer(tabKey, tabId, '@' + path)` —— **同一条路径** |
+| 文件拖拽 | 同上（`insertIntoComposer`） |
+
+请求的 `files` 由 `editorSchema.ts::docToRequestFiles(doc)` 投影得出（首现顺序去重）。
+不变量：**chip 在文档里存在 ⇔ 该文件随消息发送**。护栏杆位：
+
+- `editorSchema.test.ts` 的「files 是文档的投影」组（顺序 / 同名不同目录 / 去重 /
+  **删 chip 即不再发送** / 空文档）
+- `composerWiring.test.ts` 的「route the file picker through the editor」用例：
+  视图层不得再出现 `addAttachment` / `fileCount`，`handleSend` 不得再用 `toRequestFiles`
+
+`useChatAttachments` 因此只剩 skill 槽（skill 无文本表示，不能进文档），
+且**只暴露 `skillCount` / `toRequestSkills`** —— `attachments` / `remove` 曾留在
+出口但已无消费方（死接口），一并删除。**注意**：
+当前没有 skill 附件生产者（无 `addSkill` 调用点），`skills` 恒为空 —— 那是后续
+接 skill 选择器的任务，不要因为「反正恒空」把它删掉（后端 `ContextManifest.skills`
+契约仍在）。
+
+> 判据（可推广）：**同一事实的第二份表示只要无法与真相同步，就一定会分叉。**
+> 这里真相是「用户在输入框里看得见、删得掉的东西」= 编辑器文档；任何绕过它的
+> 附属 state 都是 bug 温床，而不是便利。
+
+### 5. 外部投递走编辑器实例，不走 state
+
+「往输入框塞文本」（文件拖拽、prompts 面板）在受控时代是 `setInput(...)`；换成非受控
+编辑器后这条路**静默失效**（state 变了但编辑器不动）—— 正是本仓「函数存在但什么都不做」
+的经典形态。正确做法：`editorRegistry` 按 `(tabKey, tabId)` 登记编辑器实例，
+`insertIntoComposer` 命中则插入、未命中返回 `false` 让调用方降级（clipboard + toast）。
+`composerWiring.test.ts` 钉住 `useAgentInputRegistration` 不再出现 `setInput`。
+
+### 6. 能力位门控落在 `shouldShow`，不是条件注册扩展
+
+`SessionStart.capabilities.commands` 为 false 时 `/` 不激活。实现是 suggestion 的
+`shouldShow: () => pickSource() !== null`（运行时门），**不是**"把 slash chip 扩展
+从 extensions 数组里拿掉"：能力位可能在 tab 挂载后才翻转（会话握手时序），条件注册会让
+extensions 身份漂移 → 编辑器重建 → 打破上面那条 setContent=1 的单向闸门。
+
+语义等价：位为 false 时 `items` 不被问、弹层不渲染；IPC 查询侧的门在
+`useAgentCommands`（`enabled=false` 连查询都不发）。**禁止前端硬编码命令清单**
+（护栏：`paletteSources.test.ts` 的 AC2 用例）。
+
+### 6b. 弹层：分组 + 图标 + 多词搜索
+
+弹层按**分组**渲染（`Skills / Commands / Extensions / Files`），每组带图标、标题与
+计数；组顺序由 `PALETTE_GROUP_ORDER` 决定（不依赖数据到达顺序）。`highlight` 始终是
+**扁平下标**（与 suggestion 引擎的 item 数组同序）—— 分组只改渲染结构，不改下标语义，
+否则引擎选中与视觉高亮会分叉。
+
+| 关注点 | 落点 |
+| --- | --- |
+| 分组归一 | `groupOfSource`：`prompt→command`、`skill→skill`、`extension→extension`、其余 `other` |
+| 搜索 | `searchPaletteItems`：**按空格分词的每个 token 都必须命中**，不是整串子串 |
+| 排序 | 命中 `label` 前缀的排前，其余保持数据源原序（不做模糊打分，顺序可解释） |
+| 滚动 | 高亮行 `scrollIntoView({block:'nearest'})`（引擎只改下标，滚动是渲染层的职责） |
+| 类型 | `PaletteKind` **就是** `chipSpec.ChipKind`（同一条轴）—— 不再有第二个同形类型 |
+| 吸顶 | 分组标题 `position: sticky`，长列表滚动时始终知道在读哪一组 |
+
+**为什么搜索要按 token**：直接子串匹配对多词输入是全灭的（`trellis cont` 匹配不到
+`trellis-continue`、`chat composer` 匹配不到 `ChatComposer.tsx`），而用户搜索时几乎
+总是打关键词而非完整标识符。命令的 `description` 与文件的目录片段也入关键词。
+
+> 测试注意：jsdom 没有布局，`scrollIntoView` 由 `src/testing/setup.ts` 在
+> `HTMLElement.prototype` 注入 `vi.fn()` 垫片；**要断言它被调用必须替换
+> `HTMLElement.prototype` 上的那个**（`Element.prototype` 上赋值是静默失败的）。
+
+### 7. 数据源复用（未变）
+
+`paletteSources.ts` 的 `ComposerPaletteSource { kind, emptyText, getItems, onPick? }`
+两件套原样保留：`/` 与 `@` 的差异只剩「数据从哪来」与「选中后做什么」。命令列表来自
+`list_agent_commands`（按 agentId 缓存，会话期内不变），文件树来自 `readDirTree`
+摊平（`@` 提及与附件弹窗共用一份）。
+
+### 8. 键盘与 IME
+
+- Enter 发送、Shift+Enter 换行；**弹层有候选时 Enter 归弹层**（AC7）。实现要点：
+  PM 的 `someProp` 先跑 editorProps 再跑插件，所以发送分支必须**主动**问
+  `controller.isPopupConsumingEnter()` 并让路 —— 不能假设「插件会先消费」。
+- 候选为空时弹层只消费 Escape，Enter 回到发送（空态契约）。
+- IME：ProseMirror 原生处理组合；`handleKeyDown` 里 `event.isComposing` 时直接放行。
+  **不要**再叠一层自研 composition 拦截（与上述三层加固同族的过度补偿）。
+
+### 9. 已退役符号（不得回潮）
+
+`ComposerMirror` / `paletteHighlight`（`tokenizeHighlights`、`segmentHighlights`）/
+`paletteTrigger` 的 `findTrigger`、`applySelection`、`triggerStartAt` / `.composer-mirror`
+与 `.composer-token*` CSS / `.composer-textarea` 与组合期门控 CSS。
+
+护栏：`composerWiring.test.ts` 的「retired textarea/mirror architecture」用例 ——
+**剥注释后**扫描 `agent-chat/` 生产文件（注释里提「已删除」不算回潮，参照
+quality-guidelines §18b）。
+
+### 10. 对应测试
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `composer/__tests__/editorSchema.test.ts` | 序列化 golden（形状 / 空格 / CJK / 旧草稿迁移） |
+| `composer/__tests__/RichComposer.test.tsx` | Enter 发送 / Shift+Enter / IME / 草稿恢复 / **回环 setContent=1** |
+| `composer/__tests__/RichComposerSuggestions.test.tsx` | `/` 与 `@` 触发、↑↓、Enter 选中（AC7）、能力位门控（AC1）、Esc 恢复发送 |
+| `composer/__tests__/ChipView.test.tsx` | chip 渲染 / 类型化配色 / 整块删 |
+| `__tests__/ChatComposerPalette.test.tsx` | ChatComposer 接线：序列化交 onSend、按钮 disabled 派生、附件共存 |
+| `__tests__/ComposerPalette.test.tsx` | 弹层骨架（纯展示 + 点击选中；键盘不在此层） |
+| `__tests__/composerWiring.test.ts` | 能力位链路 / 回环结构 / 外部投递 / 退役符号 四处静态护栏 |
+
+### 历史形态（textarea 时代，仅供其他纯文本场景参考）
+
+旧契约是 `handleKeyDown(e) → boolean`：弹层先收、返回值即「是否已消费」，调用方据此
+`preventDefault` 并短路发送；未打开或 IME 组合中恒返回 `false`。**只要输入载体仍是
+textarea 且弹层是自己实现的状态机，这个契约就成立**（返回 `void` 会让调用方猜，猜错
+就是 Enter 双触发）。agent chat 不再属于这个场景 —— 它由 suggestion 引擎承担。
