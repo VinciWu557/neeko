@@ -138,14 +138,21 @@ async fn try_list_via_command(agent: &AgentConfig) -> Result<Option<Vec<ModelInf
 /// `SessionStart.capabilities.commands` 能力位门控，能力位 false 的传输
 /// 连查询都不发；本查询对不支持的传输返回 `Unsupported`（声明与实现一致，
 /// 由 `capability_probe.rs` 契约测试钉住）。
+/// # `directory`
+///
+/// 项目根路径，**可选**。有些 agent 的命令带项目级（opencode 的
+/// `<project>/.opencode/commands/**`），不带它在 serve 的 cwd 下查会漏掉这类命令。
+/// 前端从 `projectStore` 取已有路径传入，不在后端重算（红线 12：身份由
+/// 已持有的一方下传，不逆向重建）。
 #[tauri::command]
 pub async fn list_agent_commands(
     agent_id: String,
+    directory: Option<String>,
     state: State<'_, AppStateWrapper>,
 ) -> Result<Vec<AgentCommand>, AppError> {
     let agent = resolve_agent_config(&state, &agent_id)?;
     let adapter = crate::agent::chat::adapter::adapter_for(&agent)?;
-    adapter.list_commands(&agent).await
+    adapter.list_commands(&agent, directory.as_deref()).await
 }
 
 /// Add or update an agent and persist to config.

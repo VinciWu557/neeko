@@ -2609,3 +2609,86 @@ fn config_state_tracks_current_model() {
     assert!(!state.needs_variants_for("opencode/flint"));
     assert!(state.needs_variants_for("opencode/other"));
 }
+
+// ── 命令列表（`GET /api/command`，仅 V2）────────────────────────────────
+
+/// 实测响应形状（2.1.3）：`{location:{directory}, data:[{name, description}]}`。
+#[test]
+fn commands_from_response_maps_data_entries() {
+    let json = serde_json::json!({
+        "location": { "directory": "/p" },
+        "data": [
+            { "name": "init", "description": "guided AGENTS.md setup" },
+            { "name": "trellis/start", "description": "Start session" }
+        ]
+    });
+    let commands = super::adapter::commands_from_response(&json);
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].name, "init");
+    assert_eq!(
+        commands[0].description.as_deref(),
+        Some("guided AGENTS.md setup")
+    );
+    assert_eq!(commands[1].name, "trellis/start");
+    // opencode 不给 source —— 不编一个（编了会让前端分组把它当 pi 的分类）
+    assert!(commands[0].source.is_none());
+}
+
+/// 缺 `name` 或名字为空 → 丢弃（没有名字的命令无法插入文本）。
+#[test]
+fn commands_from_response_drops_nameless_entries() {
+    let json = serde_json::json!({
+        "data": [
+            { "description": "no name" },
+            { "name": "" },
+            { "name": "ok" }
+        ]
+    });
+    let commands = super::adapter::commands_from_response(&json);
+    assert_eq!(commands.len(), 1);
+    assert_eq!(commands[0].name, "ok");
+}
+
+/// 容忍裸数组与空/畸形载荷 —— 前端拿到空列表（真的没命令），而不是 panic。
+#[test]
+fn commands_from_response_tolerates_other_shapes() {
+    let bare = serde_json::json!([{ "name": "a" }]);
+    assert_eq!(super::adapter::commands_from_response(&bare).len(), 1);
+    assert!(super::adapter::commands_from_response(&serde_json::json!({})).is_empty());
+    assert!(super::adapter::commands_from_response(&serde_json::json!({ "data": [] })).is_empty());
+    assert!(super::adapter::commands_from_response(&serde_json::json!(null)).is_empty());
+}
+
+/// `?directory=` 必须带上，否则项目级命令（`<project>/.opencode/commands/**`）不被发现。
+#[test]
+fn commands_url_carries_the_project_directory() {
+    assert_eq!(
+        super::adapter::commands_url("/api/command", "http://127.0.0.1:1", Some("/p/roject")),
+        "http://127.0.0.1:1/api/command?directory=%2Fp%2Froject"
+    );
+    // 未提供路径（设置页预览等）→ 只查用户级命令
+    assert_eq!(
+        super::adapter::commands_url("/api/command", "http://127.0.0.1:1", None),
+        "http://127.0.0.1:1/api/command"
+    );
+    assert_eq!(
+        super::adapter::commands_url("/api/command", "http://127.0.0.1:1", Some("")),
+        "http://127.0.0.1:1/api/command"
+    );
+}
+
+/// **命令端点是 `/api/*` 共享层**：两版同一路径，不随协议分叉。
+///
+/// 证据表见 `ServeProtocol::commands_path` 的文档：`/api/model`、`/api/session`、
+/// `/api/event` 都已实测两版共存；`/api/info` 是唯一只有 v2 的（正因如此它才是
+/// 协议判据）。所以命令端点按共用实现，真没有的版本由运行时失败暴露 ——
+/// **不用静态假设把功能藏起来**。
+///
+/// 变异验证：把 `commands_path` 改回 `match { V1 => "/command", … }` → 本用例红
+/// （那会拼出 SPA 回落路径，永远拿不到 JSON）。
+#[test]
+fn commands_path_is_shared_by_both_protocols() {
+    use crate::agent::chat::adapter::opencode::protocol::ServeProtocol;
+    assert_eq!(ServeProtocol::V1.commands_path(), "/api/command");
+    assert_eq!(ServeProtocol::V2.commands_path(), "/api/command");
+}

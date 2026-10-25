@@ -60,7 +60,11 @@ impl AgentAdapter for PiRpcAdapter {
     /// 命令列表基本是用户级事实（`~/.pi/agent/**` 的 prompt/skill/extension），
     /// 所以 cwd 用当前目录即可；项目级 `.pi/prompts` 需要项目 cwd，属后续
     /// 增量。解析在 [`commands_from_response`]（纯函数，独立单测）。
-    async fn list_commands(&self, _config: &AgentConfig) -> Result<Vec<AgentCommand>, AppError> {
+    async fn list_commands(
+        &self,
+        _config: &AgentConfig,
+        _directory: Option<&str>,
+    ) -> Result<Vec<AgentCommand>, AppError> {
         let program = self
             .cmd
             .first()

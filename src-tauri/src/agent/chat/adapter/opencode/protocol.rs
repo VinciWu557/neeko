@@ -89,6 +89,40 @@ impl ServeProtocol {
         "/api/model"
     }
 
+    /// 命令列表端点 —— **两版共用 `/api/command`**，同 [`Self::models_path`]
+    /// 的形状（前缀不随协议变）。
+    ///
+    /// # 取证与推断的边界（说清楚，不要读成已实测）
+    ///
+    /// **已实测（2.1.3）**：`/api/command` → `200 application/json`
+    ///（`{location, data:[{name, description, …}]}`）；无前缀的 `/command`
+    /// → `200 text/html`（SPA 回落，不是端点）。
+    ///
+    /// **未实测（1.19）**：本机只有 2.1.3，1.x 上该端点没有一手取证。
+    /// 但 1.x 的 `/api/*` 是**渐进迁移的共享层**，不是 v2 专属 —— 已实测的先例：
+    ///
+    /// | 端点 | 1.19.0 | 2.0.32 |
+    /// | --- | --- | --- |
+    /// | `/api/model` | ✅ JSON | ✅ JSON |
+    /// | `/api/session`（POST） | ✅ 200 | ✅ 200 |
+    /// | `/api/event`（GET） | ✅ 200 | ✅ 200 |
+    /// | `/api/info` | ❌ SPA 回落 | ✅ JSON（这正是协议判据） |
+    ///
+    /// 所以这里**按共用路径实现，并让运行时决定真相**：真没有的版本会在
+    /// 请求上失败（HTML/404），由 `list_commands` 的失败路径处理，
+    /// 而不是由本方法**猜**一个 `None`。
+    ///
+    /// 判据（可推广）：**「不确定某端点是否存在」不能用静态假设表达，
+    /// 要么取证，要么把它降级成运行时探测。** 猜 `None` 与猜 `Some` 一样错，
+    /// 只是一个把功能藏起来、一个把报错露出来。
+    #[must_use]
+    pub(super) const fn commands_path(self) -> &'static str {
+        // 有意不使用 `self`：两版共用同一路径（同 `models_path` 的先例）。
+        // 保留 `self` 接收者是为了让调用点统一写成 `protocol.commands_path()`。
+        let _ = self;
+        "/api/command"
+    }
+
     /// 回落用的 CLI 参数。
     ///
     /// | 版本 | 命令 | 原因 |

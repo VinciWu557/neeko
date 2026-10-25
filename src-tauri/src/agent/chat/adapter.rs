@@ -196,8 +196,18 @@ pub trait AgentAdapter: Send + Sync {
     /// 连查询都不发）；本方法只承担「取数据」。「`commands` 位为 true ⇔ 不返回
     /// `Unsupported`」的一致性由契约测试钉住
     ///（`capability_probe.rs`，红线 14 同源：声明必须与实现一致）。
-    async fn list_commands(&self, config: &AgentConfig) -> Result<Vec<AgentCommand>, AppError> {
-        let _ = config;
+    /// # `directory`
+    ///
+    /// 项目级命令与「在哪个项目下查」绑定（opencode 的
+    /// `<project>/.opencode/commands/**`）。pi 的命令是用户级的，忽略它。
+    /// `None` = 调用方不知道项目路径（例如设置页预览），实现方应退回
+    /// 「用户级命令」或直接忽略。
+    async fn list_commands(
+        &self,
+        config: &AgentConfig,
+        directory: Option<&str>,
+    ) -> Result<Vec<AgentCommand>, AppError> {
+        let _ = (config, directory);
         Err(AppError::Unsupported(format!(
             "agent {:?} does not expose a command list",
             self.kind()

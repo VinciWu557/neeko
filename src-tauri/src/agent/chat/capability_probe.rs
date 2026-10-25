@@ -193,8 +193,12 @@ mod tests {
             }
         }
 
-        /// 四条传输的能力快照：只有 pi 能列命令（`get_commands` 存在且有实现）。
-        /// 变异验证：改掉任一 adapter 的 `commands` 位 → 本用例红。
+        /// 四条传输的能力快照。
+        ///
+        /// serve 与 pi 都能列命令：pi 走 `get_commands`（spawn 查询），
+        /// opencode 走 `GET /api/command`（`/api/*` 共享层，两版同一路径）。
+        ///
+        /// 变异验证：改掉任一 adapter 的位 → 本用例红。
         #[test]
         fn command_capability_matches_each_transports_reality() {
             let pi = PiRpcAdapter::new(
@@ -207,9 +211,10 @@ mod tests {
             );
             assert!(!AcpAdapter::mock().chat_capabilities().commands);
             assert!(
-                !ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default())
+                ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default())
                     .chat_capabilities()
-                    .commands
+                    .commands,
+                "opencode exposes GET /api/command (shared /api/* layer)"
             );
             assert!(
                 !DeepSeekHarnessAdapter::new(vec!["ds".into()], Default::default())
@@ -222,35 +227,50 @@ mod tests {
         /// 查询有真实现（用不存在的二进制验证 —— spawn 失败是任何错误**除了**
         /// `Unsupported`；若覆写被删、退回默认实现，这里立即变红，且不需要
         /// 在 CI 里起真 pi 进程）。
+        ///
+        /// serve 与 pi 同形：位 true ⇒ 查询必须有覆写（失败于 IO 而非
+        /// `Unsupported`）。本机装了 opencode 时它会真的返回命令。
         #[tokio::test]
         async fn commands_bit_implies_list_commands_is_not_unsupported() {
-            // 位 false → 默认 Unsupported。
-            let serve =
-                ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default());
-            let err = serve
-                .list_commands(&agent_config("opencode"))
-                .await
-                .unwrap_err();
-            assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
+            // 位 false 且**无实现** → 默认 Unsupported。
             let ds = DeepSeekHarnessAdapter::new(vec!["ds".into()], Default::default());
             let err = ds
-                .list_commands(&agent_config("deepseek"))
+                .list_commands(&agent_config("deepseek"), None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
             let acp = AcpAdapter::mock();
             let err = acp
-                .list_commands(&agent_config("mockAgent"))
+                .list_commands(&agent_config("mockAgent"), None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
 
-            // 位 true → 必须有覆写（不是默认 Unsupported）。
+            // serve：位 true ⇒ 必须有覆写。「要么成功（本机有 opencode 时
+            // 实测拿到 `init` / `review`），要么失败但不是 Unsupported
+            // （环境问题）」—— 两种都不是「覆写被删」。
+            let serve =
+                ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default());
+            match serve.list_commands(&agent_config("opencode"), None).await {
+                Ok(cmds) => assert!(
+                    cmds.iter().all(|c| !c.name.is_empty()),
+                    "returned commands must carry a name: {cmds:?}"
+                ),
+                Err(e) => assert!(
+                    !matches!(e, AppError::Unsupported(_)),
+                    "serve implements list_commands; an Unsupported here means the \
+                     override is gone and the `/` entry would silently disappear: {e:?}"
+                ),
+            }
+            // 位 true（pi）→ 必须有覆写：失败于 spawn/IO 而不是 `Unsupported`。
             let pi = PiRpcAdapter::new(
                 vec!["definitely-not-a-real-binary-mention-slash".into()],
                 Default::default(),
             );
-            let err = pi.list_commands(&agent_config("pi")).await.unwrap_err();
+            let err = pi
+                .list_commands(&agent_config("pi"), None)
+                .await
+                .unwrap_err();
             assert!(
                 !matches!(err, AppError::Unsupported(_)),
                 "commands bit true ⇒ list_commands must be implemented, got: {err:?}"

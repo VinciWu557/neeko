@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 
-use crate::agent::chat::adapter::{AgentAdapter, AgentContext, AgentKind, AgentSession};
+use crate::agent::chat::adapter::{
+    AgentAdapter, AgentCommand, AgentContext, AgentKind, AgentSession,
+};
 use crate::agent::chat::capabilities::{ChatCapabilities, ConfigCapability};
 use crate::common::agent::types::{AgentConfig, ModelInfo};
 use crate::common::error::AppError;
@@ -48,11 +50,21 @@ impl AgentAdapter for ServeAdapter {
     /// 这正是 P1 的例子：旧 `supports_model_selection` 对它返回 true，
     /// 前端据此以为「可以切模型」，但点选后走 `set_config_option` 是空实现 ——
     /// 静默无操作。`PerTurn` 把机制差异表达出来。
+    /// `commands` 为 `true`：`/api/command` 与 `/api/model` 同属 `/api/*`
+    /// 共享层，两版都按同一路径实现（证据表见 `ServeProtocol::commands_path`）。
+    ///
+    /// **「端点可能不存在」由运行时回答，不由静态声明兜底**：真没有该端点的
+    /// 版本会让查询失败（前端显示空态，`useAgentCommands` 已按「失败 → 空数组
+    /// 降级、不打断输入」处理），而不是让 `/` 入口永久消失。
+    ///
+    /// 这是对早先「静态 false + 会话期派生」那版实现的修正：那版把**未取证**
+    /// 当成了**不支持**，代价是 V1 用户失去整个功能。判据写在
+    /// `commands_path` 的文档里。
     fn chat_capabilities(&self) -> ChatCapabilities {
         ChatCapabilities {
             config: ConfigCapability::PerTurn,
             approvals: true,
-            commands: false,
+            commands: true,
             resume: true,
         }
     }
@@ -95,6 +107,30 @@ impl AgentAdapter for ServeAdapter {
         let binary = (!config.command.is_empty()).then(|| config.command.clone());
         let args = protocol.cli_models_args();
         crate::agent::model_discovery::discover_opencode_models_with_args(binary, &args).await
+    }
+
+    /// 查命令列表（`GET /api/command`，两版共用路径）。
+    ///
+    /// # 两个必须处理的现实
+    ///
+    /// 1. **命令发现是异步的**：实测同一 server 连续三次请求拿到
+    ///    `0 → 2 → 5` 条。server 启动后才开始扫配置与项目目录，
+    ///    所以「第一次拿到空数组」不等于「没有命令」。这里做有界重试。
+    /// 2. **端点是否存在由运行时回答**：1.x 上该端点没有一手取证，路径按
+    ///    `/api/*` 共享层实现（见 `ServeProtocol::commands_path` 的证据表）。
+    ///    真没有的版本会在请求上失败 → 走失败路径，而不是靠静态假设藏功能。
+    ///
+    /// # 为什么带 `?directory=`
+    ///
+    /// 项目级命令（`<project>/.opencode/commands/**`）只在请求带上项目目录时
+    /// 才被纳入。不带参时 serve 用它自己的 cwd，拿到的是用户级命令的子集。
+    async fn list_commands(
+        &self,
+        _config: &AgentConfig,
+        directory: Option<&str>,
+    ) -> Result<Vec<AgentCommand>, AppError> {
+        let conn = serve_connection(&self.cmd, &self.env).await?;
+        fetch_commands_with_retry(conn, conn.protocol.commands_path(), directory).await
     }
 
     async fn create(&self, ctx: &AgentContext) -> Result<Box<dyn AgentSession>, AppError> {
@@ -375,4 +411,96 @@ async fn probe_config_state(
     // `refresh_variants` 同时负责「当前值不在候选里就回落第一个」。
     state.refresh_variants(variants, model_id);
     state
+}
+
+/// 命令发现的重试预算：实测 server 启动后 `0 → 2 → 5` 条会持续数秒。
+///
+/// 取 8 次 × 250ms ≈ 2s：足够覆盖实测的最坏情况（约 2s 内稳定），
+/// 又不会让用户点开 `/` 时干等。超过预算仍为空 → 返回空列表
+/// （真的没有命令），**不是** `Unsupported`（协议是支持的）。
+const COMMAND_DISCOVERY_ATTEMPTS: usize = 8;
+const COMMAND_DISCOVERY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// 查命令，带「空结果重试」—— 命令发现是异步的（见 [`COMMAND_DISCOVERY_ATTEMPTS`]）。
+///
+/// 与 `list_commands` 拆开是为了可注入假连接做单测（同 `pi_rpc` 的
+/// `list_commands_with`）。
+async fn fetch_commands_with_retry(
+    conn: &ServeConnection,
+    path: &str,
+    directory: Option<&str>,
+) -> Result<Vec<AgentCommand>, AppError> {
+    let url = commands_url(path, &conn.base_url, directory);
+    for attempt in 0..COMMAND_DISCOVERY_ATTEMPTS {
+        let Some(json) = fetch_json(&conn.client, &url).await else {
+            // 端点不可用（HTTP 非 2xx / 解析失败）：协议声称支持却拿不到数据 →
+            // 视为本轮失败，交给下一次重试；最终仍失败则报错（不是 Unsupported：
+            // 能力位已声明支持，静默空列表会让「支持但坏了」看起来像「不支持」）。
+            if attempt + 1 == COMMAND_DISCOVERY_ATTEMPTS {
+                return Err(AppError::Agent(format!(
+                    "serve GET {path} failed after {COMMAND_DISCOVERY_ATTEMPTS} attempts"
+                )));
+            }
+            tokio::time::sleep(COMMAND_DISCOVERY_INTERVAL).await;
+            continue;
+        };
+        let commands = commands_from_response(&json);
+        if !commands.is_empty() {
+            return Ok(commands);
+        }
+        tokio::time::sleep(COMMAND_DISCOVERY_INTERVAL).await;
+    }
+    // 预算用尽仍为空：真的没有命令（协议是支持的），返回空列表而不是错误。
+    Ok(Vec::new())
+}
+
+/// 拼命令端点 URL（含 `?directory=`）—— 项目级命令要靠它才被发现。
+#[must_use]
+pub(super) fn commands_url(path: &str, base_url: &str, directory: Option<&str>) -> String {
+    match directory {
+        Some(dir) if !dir.is_empty() => {
+            format!("{base_url}{path}?directory={}", urlencoding::encode(dir))
+        }
+        _ => format!("{base_url}{path}"),
+    }
+}
+
+/// `GET /api/command` 响应 → 命令列表（纯函数，独立单测）。
+///
+/// 实测形状：`{"location":{"directory":...},"data":[{"name":"init",
+/// "description":"guided AGENTS.md setup",…}]}`。
+///
+/// 容忍两种包装：`{data:[…]}`（V2 实测）与裸数组（防御未来变化）。
+/// 缺 `name` 的条目直接丢弃 —— 没有名字的命令无法插入文本。
+#[must_use]
+pub(super) fn commands_from_response(json: &serde_json::Value) -> Vec<AgentCommand> {
+    let entries = json
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| json.as_array());
+    let Some(entries) = entries else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let name = entry.get("name").and_then(serde_json::Value::as_str)?;
+            if name.is_empty() {
+                return None;
+            }
+            Some(AgentCommand {
+                name: name.to_string(),
+                description: entry
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+                // opencode 的命令没有 pi 那种 source 分类；用 agent 自己的
+                // 命令来源（若给出）而不是编一个。
+                source: entry
+                    .get("source")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string),
+            })
+        })
+        .collect()
 }
