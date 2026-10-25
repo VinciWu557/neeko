@@ -528,3 +528,27 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 334: composer 三轮自查：chipSpec 表自洽性契约
+<!-- trellis-session: v=2 fp=9d565cf8e55bf4ff -->
+
+**Date**: 2026-10-25
+**Task**: composer 三轮自查：chipSpec 表自洽性契约
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+第三轮发现 chipSpec 表的自洽漏洞：attrsOf 产出未在 attrs 声明的 label 属性（ProseMirror 会丢弃），导致所有 '?? label' 兜底永不可达——读起来有兜底实为死代码。修法：attrsOf 只产声明过的键、去掉全部不可达 label 兜底；新增 chipSpec.test.ts 双向契约（不得多产/不得少产）+ filePathAttr 一致性 + 序列化与展示各自形状。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 14/14；test:fe 647 文件 / 6001 用例全绿；变异验证（attrsOf 加回幽灵 label → 契约用例红）
+
+### Status
+
+[OK] **Completed**
