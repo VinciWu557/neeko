@@ -271,11 +271,39 @@ impl MacFseventWatcher {
                 MAX_FSEVENT_EXCLUSIONS
             );
         }
-        let exclusion_paths = exclusions
+        let exclusion_paths: Vec<PathBuf> = exclusions
             .iter()
             .take(MAX_FSEVENT_EXCLUSIONS)
             .cloned()
             .collect();
+        // 可观测性（R4）：把「请求几条 / 实际应用几条 / 是否截断」落到日志，
+        // 替代下次靠 `sample fseventsd` 反推。挂载期一次，非高频路径。
+        // 打印**具体**应用了哪些根：只报数量无法回答「`node_modules` 到底排进去没有」，
+        // 而这正是截断时唯一需要知道的信息（R1 排序是否生效的现场证据）。
+        log::info!(
+            "[WatchBackend] fsevents stream: exclusion_roots={}/{} truncated={} applied={:?}",
+            exclusion_paths.len(),
+            exclusions.len(),
+            exclusions.len() > exclusion_paths.len(),
+            exclusion_paths
+                .iter()
+                .map(|p| {
+                    // 打印「父目录/自身」而非裸目录名：多个 `node_modules` 同名
+                    // 但位于不同子树（`.mimocode/node_modules` vs
+                    // `.opencode/node_modules`），裸名无法区分
+                    // 「不同路径同名」与「真的重复」—— 而排查截断时这恰恰是关键。
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                    match p
+                        .parent()
+                        .and_then(|q| q.file_name())
+                        .and_then(|n| n.to_str())
+                    {
+                        Some(parent) => format!("{parent}/{name}"),
+                        None => name.to_string(),
+                    }
+                })
+                .collect::<Vec<_>>()
+        );
         Ok(MacFseventWatcher {
             paths,
             exclusion_paths,
@@ -308,6 +336,18 @@ impl MacFseventWatcher {
     /// `FSEventStreamSetExclusionPaths` 只在 `FSEventStreamStart` 之前可设置，故必须
     /// `stop` → 更新集合 → `run`（与 `watch_inner` 同构）。集合未变则 no-op，避免无谓重建。
     pub(super) fn update_exclusions(&mut self, exclusions: &[PathBuf]) {
+        // 与 `with_exclusions` 同款可观测性：截断必须留痕。
+        // 规则重载路径（`.gitignore` 变更 → ReloadAll）同样受 8 条硬上限约束，
+        // 静默截断会让「新增的 ignored 根为何没被排除」无从排查。
+        if exclusions.len() > MAX_FSEVENT_EXCLUSIONS {
+            log::warn!(
+                "[WatchBackend] {} exclusion roots exceed FSEvents max {} on reload; \
+                 only first {} applied (callback filter still enforces the boundary)",
+                exclusions.len(),
+                MAX_FSEVENT_EXCLUSIONS,
+                MAX_FSEVENT_EXCLUSIONS
+            );
+        }
         let next: Vec<PathBuf> = exclusions
             .iter()
             .take(MAX_FSEVENT_EXCLUSIONS)
