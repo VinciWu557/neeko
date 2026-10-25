@@ -552,3 +552,27 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 335: opencode slash 失效修复：接通 /api/command（A 方案）
+<!-- trellis-session: v=2 fp=4ba5dea1dcb34cc1 -->
+
+**Date**: 2026-10-25
+**Task**: opencode slash 失效修复：接通 /api/command（A 方案）
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+根因：opencode 走 serve 传输且 ServeAdapter 声明 commands:false，前端据此不挂 slash 源 → 按 / 无反应。取证确认 opencode V2 有 GET /api/command（实测返回 init/review/trellis/* 等），A 方案可行。实现：protocol.commands_path() 返回 Option（V1→None 未取证不猜路径，V2→/api/command）；list_commands 签名加 directory 参数（项目级命令需 ?directory=）；能力位分两层（静态声明保守 false + 会话期 capabilities_for(protocol) 派生真实值）；有界重试 8×250ms（命令发现异步，实测 0→2→5）；前端 list_agent_commands 传 projectPath，useAgentCommands 缓存键改为 agentId::directory（项目级命令集不同，只按 agentId 会串项目）。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 全绿；cargo test --lib 2190 通过；test:fe 647 文件/6003 用例；新增 serve 命令解析/URL/能力位派生 5 条 Rust 测试 + 2 条缓存分键前端测试；变异验证（缓存键改回只用 agentId → 跨项目用例红）；契约测试实测真调 serve 拿到 init/review
+
+### Status
+
+[OK] **Completed**
