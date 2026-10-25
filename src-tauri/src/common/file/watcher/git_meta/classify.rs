@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 /// Git 元数据事件分类结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum GitMetaChange {
+pub(in crate::common::file::watcher) enum GitMetaChange {
     /// 无关路径（config / ORIG_HEAD / 别的单元等），不处理
     Nothing,
     /// 本单元 index 变更 → 需要重查（覆盖 ignored_files 与 staged 状态）
@@ -23,7 +23,7 @@ pub(super) enum GitMetaChange {
 /// 此时按 index 处理，确保全量刷新覆盖 ignored_files。refs 是最弱的信号：任何
 /// `refs/**`（含 `refs/heads` / `refs/remotes` / `refs/tags`）或 `packed-refs` 变化
 /// 都归入它，且**只作查询调度提示**（事实仍由 `git-status-snapshot` 携带）。
-pub(super) fn classify_git_meta_event(
+pub(in crate::common::file::watcher) fn classify_git_meta_event(
     paths: &[PathBuf],
     head: &Path,
     index: &Path,

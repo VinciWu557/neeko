@@ -384,6 +384,36 @@ impl WatcherManager {
         let (maintenance_tx, maintenance_rx) =
             mpsc::channel::<super::super::registration::WatchMaintenance>();
         let maintenance_tx_for_closure = maintenance_tx.clone();
+        // git 元数据：判定是否并入主 watcher（规则住在 git_meta_merge 模块，
+        // 本函数只负责顺序与失败策略）。
+        let git_meta_decision = super::git_meta_merge::decide(
+            &path,
+            git_repo,
+            &exclusions,
+            watch_backend().can_exclude_subtrees(),
+            &workspace,
+        );
+        let merge_git_meta = git_meta_decision.merge;
+        let git_meta_callbacks = git_meta_decision
+            .paths
+            .as_ref()
+            .filter(|_| merge_git_meta)
+            .map(|paths| {
+                super::git_meta_merge::build_callbacks(
+                    &workspace,
+                    &repo,
+                    paths,
+                    Arc::clone(&sink),
+                    scheduler.as_ref().map(|s| s.sender()),
+                )
+            });
+        if merge_git_meta {
+            log::info!(
+                "[Watcher:{}] git meta merged into main watcher (single FSEvents stream)",
+                workspace
+            );
+        }
+
         let notify_result = create_file_watcher(
             build_notify_callback(
                 repo.clone(),
@@ -394,6 +424,7 @@ impl WatcherManager {
                 tree_debounce_tx,
                 scheduler_tx,
                 git_repo,
+                git_meta_callbacks,
             ),
             Config::default(),
             &exclusions,
@@ -466,7 +497,8 @@ impl WatcherManager {
         // 监听（`resolve_git_meta_paths` 会读 `.git` 指针文件定位）。旧实现里那套
         // `resolve_worktree_roots` + `rearm_worktrees_if_needed` 的机制，存在的唯一前提就是
         // 「worktree 没有自己的资源」—— 前提消失，机制退役。
-        let head_watcher = if git_repo {
+        // 合并成功 → 不再建独立 git_meta 流（流数 2N → N）。
+        let head_watcher = if git_repo && !merge_git_meta {
             crate::common::file::watcher::git_meta::resolve_git_meta_paths(&path).and_then(|meta| {
                 let scheduler_tx = scheduler.as_ref().map(|s| s.sender());
                 let unit_index = workspace.clone();

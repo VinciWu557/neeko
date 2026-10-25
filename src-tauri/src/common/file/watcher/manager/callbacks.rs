@@ -3,6 +3,7 @@
 //! 闭包体从 `WatcherManager::watch` 抽离为独立构建函数，使组装编排保持精简；
 //! 全部依赖经参数显式注入（move 捕获语义与原实现一致）。
 
+use super::super::git_meta::{classify_git_meta_event, GitMetaChange, GitMetaPaths};
 use super::super::gitignore::GitIgnoreFilter;
 use super::super::registration::WatchMaintenance;
 use super::super::sink::{WatcherEvent, WatcherEventSink};
@@ -24,6 +25,32 @@ use std::sync::{mpsc, Arc};
 /// - 结构事件（Create/Remove/Rename）：ignored 根自身的边界事件保留（灰节点更新），
 ///   子树**内部**路径一律丢弃（监听层不订阅 ignored 内部），投递 tree-debounce
 ///   （父目录集合聚合后定向刷新）与注册维护。
+///
+/// `git_meta` 为 `Some` 时，回调会**在 hard-noise 丢弃之前**先做一次 git 元数据
+/// 分类（见 [`GitMetaCallbacks`]）。
+///
+/// git 元数据回调三元组：把「事件 → 三条出口」的语义作为**数据**注入主回调。
+///
+/// **为什么要合并**：每个 workspace 原本有两条 FSEvents 流 —— 主 watcher 与
+/// git_meta watcher。macOS 的 `SubtreeExclusion` 后端递归订阅整个 root，而
+/// `WatchManifest::compute` 跳过 `.git` 且**不放入 `ignored_roots`** ⇒ `.git`
+/// 事件**已经送达**主 watcher，只是在回调层被 `is_hard_noise_path` 丢弃。
+/// 因此合并 = 在丢弃前加一个分类分支，流数从 2N 降到 N。
+///
+/// 三条回调由 `manager/core.rs` 构造一次，语义与独立流的
+/// `create_git_meta_watcher` 保持一致（index/refs 只发调度信号、head 才 emit 事实）。
+/// 合并与否共用同一份构造代码，避免两处各写一遍。
+pub(super) struct GitMetaCallbacks {
+    /// 该单元的 git 元数据路径（HEAD / index / refs / packed-refs）。
+    pub(super) paths: GitMetaPaths,
+    /// index 变更 → 只发查询调度信号（公理 1：信号≠事实）。
+    pub(super) on_index_changed: Box<dyn FnMut() + Send>,
+    /// HEAD 变更 → 调度信号 + emit `GitChanged`（分支切换是事实本身）。
+    pub(super) on_head_changed: Box<dyn FnMut() + Send>,
+    /// refs 变更 → 只发查询调度信号。
+    pub(super) on_refs_changed: Box<dyn FnMut() + Send>,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_notify_callback(
     repo: WorkspaceRef,
@@ -34,9 +61,11 @@ pub(super) fn build_notify_callback(
     tree_debounce_tx: mpsc::Sender<PathBuf>,
     scheduler_tx: Option<mpsc::Sender<()>>,
     git_repo: bool,
+    git_meta: Option<GitMetaCallbacks>,
 ) -> impl FnMut(Result<Event, notify::Error>) + Send + 'static {
     let pid_log = repo.key();
     let project_id = repo.project_id().to_string();
+    let mut git_meta = git_meta;
     move |result: Result<Event, notify::Error>| {
         let event = match result {
             Ok(ev) => ev,
@@ -53,6 +82,46 @@ pub(super) fn build_notify_callback(
                 return;
             }
         };
+
+        // git 元数据分类（合并路径，仅 macOS 的递归后端会走到这里）。
+        //
+        // 位置关键：**必须在 hard-noise 过滤之前** —— 下面的 `is_hard_noise_path`
+        // 会丢弃所有 `.git` 路径，而 git 元数据事件正是 `.git` 下的。
+        //
+        // 短路：主 watcher 的事件量远大于原 git_meta 流（后者只订阅 `.git` 三处），
+        // 故先做一次廉价的路径前缀判定，再调分类函数（后者对每个事件做 3 次
+        // Path 比较）。
+        //
+        // **判据必须是「路径落在该单元 git_dir 之下」，不能用「含 `.git` 组件」**：
+        // 后者会把「别的单元的 gitdir」（如 `<root>/.git/worktrees/other/HEAD`）
+        // 也放进分类，且无法表达 linked worktree 的真实布局。前缀判定同时是
+        // 合并可行性的运行期自检 —— 若事件根本不在 git_dir 下，分类必然 Nothing。
+        if let Some(ctx) = git_meta.as_mut() {
+            let touches_git_dir = event
+                .paths
+                .iter()
+                .any(|p| p == &ctx.paths.head || p.starts_with(&ctx.paths.git_dir));
+            if touches_git_dir {
+                match classify_git_meta_event(
+                    &event.paths,
+                    &ctx.paths.head,
+                    &ctx.paths.index,
+                    &ctx.paths.refs_dir,
+                    &ctx.paths.packed_refs,
+                ) {
+                    // index / refs 只发**查询调度信号**，不 emit 事实（公理 1：
+                    // 信号≠事实，事实由 git-status-snapshot 携带）。
+                    GitMetaChange::IndexChanged => (ctx.on_index_changed)(),
+                    GitMetaChange::RefsChanged => (ctx.on_refs_changed)(),
+                    // HEAD 变化是「分支已切换」这一事实本身，需 emit 驱动前端刷新。
+                    GitMetaChange::HeadChanged => (ctx.on_head_changed)(),
+                    // 无关的 .git 路径（objects / config / 别的单元）→ 落到下面被丢弃
+                    GitMetaChange::Nothing => {}
+                }
+            }
+            // 注意：**不 return** —— `.git` 路径仍需被后续 hard-noise 过滤丢弃，
+            // 不得漏进前端事件（I2）。
+        }
 
         // .gitignore / .git/info/exclude 自身变更时重载规则
         if let Some(filter) = gitignore_filter_for_notify.as_deref() {

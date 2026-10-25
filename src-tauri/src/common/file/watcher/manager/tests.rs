@@ -217,3 +217,164 @@ fn structure_event_paths_keep_visible_paths_mixed_with_ignored() {
         vec![root.join("src/main.rs"), root.join("README.md")]
     );
 }
+
+// ── git 元数据合并路径（P3）──────────────────────────────────────────────
+//
+// 合并后 `.git` 事件由主 watcher 的分类分支处理。两条不变量必须同时成立：
+//   I1 分类判定复用 `classify_git_meta_event`（不复制判定逻辑）；
+//   I2 命中分类的 `.git` 路径**仍被 hard-noise 丢弃**，不得漏进前端事件。
+
+use crate::common::file::watcher::git_meta::{classify_git_meta_event, GitMetaChange};
+
+/// 构造一套 git 元数据路径（不落盘，只用于分类）。
+fn git_meta_paths(
+    root: &Path,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let git = root.join(".git");
+    (
+        git.join("HEAD"),
+        git.join("index"),
+        git.join("refs"),
+        git.join("packed-refs"),
+    )
+}
+
+#[test]
+fn merged_git_meta_classifies_head_index_and_refs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (head, index, refs, packed) = git_meta_paths(root);
+
+    // index 优先于 HEAD（git commit 同时改两者时按 index 处理）
+    assert_eq!(
+        classify_git_meta_event(std::slice::from_ref(&index), &head, &index, &refs, &packed),
+        GitMetaChange::IndexChanged
+    );
+    assert_eq!(
+        classify_git_meta_event(std::slice::from_ref(&head), &head, &index, &refs, &packed),
+        GitMetaChange::HeadChanged
+    );
+    assert_eq!(
+        classify_git_meta_event(
+            &[refs.join("heads").join("main")],
+            &head,
+            &index,
+            &refs,
+            &packed
+        ),
+        GitMetaChange::RefsChanged
+    );
+    assert_eq!(
+        classify_git_meta_event(std::slice::from_ref(&packed), &head, &index, &refs, &packed),
+        GitMetaChange::RefsChanged
+    );
+}
+
+/// `.git/objects/**` 的写入（`git gc` / 对象落盘高频）**不得**被误判为 refs 变化。
+#[test]
+fn merged_git_meta_ignores_objects_and_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (head, index, refs, packed) = git_meta_paths(root);
+    let git = root.join(".git");
+
+    for p in [
+        git.join("objects").join("ab").join("cdef0123"),
+        git.join("config"),
+        git.join("ORIG_HEAD"),
+    ] {
+        assert_eq!(
+            classify_git_meta_event(std::slice::from_ref(&p), &head, &index, &refs, &packed),
+            GitMetaChange::Nothing,
+            "{} 必须归为 Nothing",
+            p.display()
+        );
+    }
+}
+
+/// I2：命中分类的 `.git` 路径仍被 hard-noise 丢弃（不漏进前端）。
+#[test]
+fn merged_git_meta_paths_still_dropped_by_hard_noise() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let filter = gitignore_filter(root);
+    let (head, index, refs, _packed) = git_meta_paths(root);
+
+    let paths = vec![head, index, refs.join("heads").join("main")];
+    assert!(
+        relevant_event_paths(&paths, Some(&filter)).is_empty(),
+        "git 元数据路径不得进入内容事件"
+    );
+    assert!(
+        structure_event_paths(&paths, true, Some(&filter)).is_empty(),
+        "git 元数据路径不得进入结构事件"
+    );
+}
+
+/// 普通源码路径 + 合并上下文存在时，不得被 git 分类吃掉（短路语义）。
+#[test]
+fn merged_git_meta_does_not_swallow_source_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let filter = gitignore_filter(root);
+    let (head, index, refs, packed) = git_meta_paths(root);
+
+    let src = root.join("src").join("main.rs");
+    assert_eq!(
+        classify_git_meta_event(std::slice::from_ref(&src), &head, &index, &refs, &packed),
+        GitMetaChange::Nothing,
+        "源码路径必须归为 Nothing"
+    );
+    assert_eq!(
+        relevant_event_paths(std::slice::from_ref(&src), Some(&filter)),
+        vec![src],
+        "源码路径必须正常投递"
+    );
+}
+
+// ── 合并可行性判定（P3 高危回归）────────────────────────────────────────
+//
+// 合并的前提是「`.git` 事件**确实会送达主 watcher**」。这要求 git 元数据目录
+// 位于主 watcher 的订阅根之下。**linked worktree 不满足**：它的 `.git` 是指针
+// 文件，真实 gitdir 在主仓库的 `.git/worktrees/<name>/`，位于工作树之外。
+//
+// 若误判为可合并 → 不建独立流 → 该 worktree 的 HEAD/index/refs 变化永久丢失。
+
+/// 判定「git 元数据目录是否在主 watcher 订阅根之下」——合并的**结构判据**。
+///
+/// 不能用「路径含 `.git` 组件」这种字符串启发式：linked worktree 的真实 gitdir
+/// 虽含 `.git`，却不在订阅根内。
+fn git_meta_within_root(git_dir: &Path, root: &Path) -> bool {
+    git_dir.starts_with(root)
+}
+
+#[test]
+fn git_meta_merge_is_rejected_for_linked_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main_root = tmp.path().join("main");
+    let worktree_root = tmp.path().join("feat");
+    // linked worktree：gitdir 在主仓库内，不在工作树内
+    let worktree_git_dir = main_root.join(".git").join("worktrees").join("feat");
+
+    assert!(
+        !git_meta_within_root(&worktree_git_dir, &worktree_root),
+        "linked worktree 的 gitdir 在订阅根之外 → 必须拒绝合并"
+    );
+}
+
+#[test]
+fn git_meta_merge_is_allowed_for_normal_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    let git_dir = root.join(".git");
+
+    assert!(
+        git_meta_within_root(&git_dir, &root),
+        "普通仓库的 .git 在订阅根之下 → 允许合并"
+    );
+}

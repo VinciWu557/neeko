@@ -10,5 +10,6 @@ mod watcher;
 #[cfg(test)]
 mod tests;
 
-pub(super) use paths::resolve_git_meta_paths;
+pub(super) use classify::{classify_git_meta_event, GitMetaChange};
+pub(super) use paths::{resolve_git_meta_paths, GitMetaPaths};
 pub(super) use watcher::{create_git_meta_watcher, GitMetaWatcherHandle};

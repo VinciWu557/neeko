@@ -44,17 +44,17 @@ pub(super) fn resolve_git_head_path(repo_path: &Path) -> Option<PathBuf> {
 #[derive(Debug, Clone)]
 pub(in crate::common::file::watcher) struct GitMetaPaths {
     /// HEAD 文件绝对路径（分支切换检测）
-    pub(super) head: PathBuf,
+    pub(in crate::common::file::watcher) head: PathBuf,
     /// index 文件绝对路径（暂存 / 取消暂存检测）
-    pub(super) index: PathBuf,
+    pub(in crate::common::file::watcher) index: PathBuf,
     /// 该单元的 git 目录（HEAD 所在目录：普通仓库为 `<repo>/.git`，linked worktree 为其 gitdir）
-    pub(super) git_dir: PathBuf,
+    pub(in crate::common::file::watcher) git_dir: PathBuf,
     /// refs 根目录（递归监听）。普通仓库 = `git_dir/refs`；linked worktree 的 refs 在
     /// **公共 gitdir**（`commondir` 指向），不是私有 gitdir —— 否则 worktree 视图看不到
     /// 外部 push。refs 目录不存在（尚无任何 ref）时不监听，不算失败。
-    pub(super) refs_dir: PathBuf,
+    pub(in crate::common::file::watcher) refs_dir: PathBuf,
     /// `packed-refs` 文件（refs 被 gc 打包后的形态）。与 `refs_dir` 同源（公共 gitdir）。
-    pub(super) packed_refs: PathBuf,
+    pub(in crate::common::file::watcher) packed_refs: PathBuf,
 }
 
 /// 解析 refs 所在的**公共 gitdir**：linked worktree 的私有 gitdir 里有 `commondir`
