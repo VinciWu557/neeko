@@ -12,6 +12,7 @@ import type {
   PRDetailTabData,
   BrowserTabData,
   AgentChatTabData,
+  ComposerDocJson,
   TabKind,
 } from '@/shared/types/tab';
 import { emitTabActivated } from '@/shared/utils/editorActivity';
@@ -219,6 +220,8 @@ function mergeTabData(data: TabData, partial: Partial<TabData>): TabData {
           'resumeNativeSessionId' in p
             ? (p.resumeNativeSessionId as string | undefined)
             : d.resumeNativeSessionId,
+        composerDoc:
+          'composerDoc' in p ? (p.composerDoc as ComposerDocJson | undefined) : d.composerDoc,
       };
     }
     default:

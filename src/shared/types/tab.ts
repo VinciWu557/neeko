@@ -93,6 +93,26 @@ export interface BrowserTabData {
   favicon?: string;
 }
 
+/**
+ * Composer 富文本草稿的 JSON 节点（Tiptap `editor.getJSON()` 产物的最小结构声明）。
+ *
+ * chip 节点的属性语义（哪个 attr 是命令名 / 文件路径）由 agent-chat 的
+ * `editorSchema.ts` 定义；这里只需要「能落盘、能恢复、能被 docToPromptText 遍历」。
+ */
+export interface ComposerDocNode {
+  type: string;
+  attrs?: Record<string, unknown>;
+  content?: ComposerDocNode[];
+  text?: string;
+  marks?: { type: string; attrs?: Record<string, unknown> }[];
+}
+
+/** Composer 富文本草稿的文档根（Tiptap doc 的 JSON 形状）。 */
+export interface ComposerDocJson {
+  type: 'doc';
+  content?: ComposerDocNode[];
+}
+
 export interface AgentChatTabData {
   kind: 'agent-chat';
   /** 当前选中的 agent ID（如 deepseek-harness、opencode）。 */
@@ -119,6 +139,12 @@ export interface AgentChatTabData {
   resumeConversationId?: string;
   /** Histor 恢复目标：agent 原生会话 id（agent_chat_resume 接续写入）。 */
   resumeNativeSessionId?: string;
+  /**
+   * Composer 富文本草稿（Tiptap 文档 JSON，含 chip token）。mount / 切 tab 时
+   * `setContent` 恢复一次；`onUpdate` 只出不进（受控回环单向闸门，composer 任务
+   * design §4）。显式写 `undefined` = 清空草稿。
+   */
+  composerDoc?: ComposerDocJson;
 }
 
 export type TabData =

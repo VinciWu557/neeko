@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { EditorSplitLayout, Tab } from '@/shared/types';
 import { createDefaultEditorLayout } from '@/shared/types/editorGroup';
+import type { ComposerDocJson } from '@/shared/types/tab';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 
 import {
@@ -404,6 +405,37 @@ describe('editorStore.updateTab — agent-chat 字段落盘（mergeTabData 穷�
     if (data.kind !== 'agent-chat') throw new Error('kind changed');
     expect(data.resumeConversationId).toBeUndefined();
     expect(data.resumeNativeSessionId).toBeUndefined();
+  });
+
+  it('composerDoc 写入后必须能读回（RichComposer 草稿按 tab 持久化）', () => {
+    seedChatTab();
+    const doc: ComposerDocJson = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'run ' },
+            { type: 'commandChip', attrs: { name: 'tr', source: 'prompt' } },
+          ],
+        },
+      ],
+    };
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { composerDoc: doc });
+
+    const data = chatData();
+    expect(data.kind === 'agent-chat' && data.composerDoc).toEqual(doc);
+  });
+
+  it('显式写 undefined 必须能清除 composerDoc（清空草稿语义）', () => {
+    seedChatTab();
+    useEditorStore.getState().updateTab(SPACE, 'tc1', {
+      composerDoc: { type: 'doc', content: [{ type: 'paragraph' }] },
+    });
+    useEditorStore.getState().updateTab(SPACE, 'tc1', { composerDoc: undefined });
+
+    const data = chatData();
+    expect(data.kind === 'agent-chat' && data.composerDoc).toBeUndefined();
   });
 });
 
