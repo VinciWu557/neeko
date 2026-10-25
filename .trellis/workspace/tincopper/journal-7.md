@@ -626,3 +626,29 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 338: 分支合并到 main：composer-token-editor 快进合并，跳过 3 个无需合并的分支
+<!-- trellis-session: v=2 fp=2438f56dbca0a72c -->
+
+**Date**: 2026-10-25
+**Task**: 分支合并到 main：composer-token-editor 快进合并，跳过 3 个无需合并的分支
+**Branch**: `main`
+
+### Summary
+
+检查 5 个本地分支拓扑后合并：feat/composer-token-editor（21 提交，10-24 创建）快进合并入 main（--ff-only，main 是其祖先）。跳过三个：feat/mention-slash-palette 是 composer 的祖先（git merge-base --is-ancestor 确认），合并 composer 已自动带入全部 9 个提交，单独合并会重复；fix/lsp-typescript-root-resolution 与 feature-commands 已完全被 main 包含（0 个未合并提交）。dsh-neeko 判为超出范围：10-17 创建、领先 main 54 但落后 120，是独立长线分支而非本次新建的短期分支，未动。合并前清理了自己在验证暂存区时误造的 stash@{0}（tmp），确认其相对 HEAD 只剩 journal/index 差异、无代码内容。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ad5df1e5` | chore: record journal |
+
+### Testing
+
+- [OK] pnpm check 全量：32 条护栏全通过（lint_fe / lint_rust_all_targets / test_fe / test_rust / test_host 均 ok）；合并后 main 上 composer 与 mention-slash-palette 均 0 个未合并提交
+
+### Status
+
+[OK] **Completed**
