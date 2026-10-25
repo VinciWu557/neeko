@@ -190,6 +190,7 @@ impl SshExecutor {
             wait,
             kill,
             Some(remote_pid),
+            kill_tree,
         ))
     }
 }

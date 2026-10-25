@@ -18,7 +18,7 @@ mod traits;
 mod types;
 mod wsl;
 
-pub(crate) use child_registry::{kill_all_live, register};
+pub(crate) use child_registry::kill_all_live;
 pub use collect::{
     collect_child_output, collect_child_output_streaming,
     collect_child_output_streaming_cancellable,

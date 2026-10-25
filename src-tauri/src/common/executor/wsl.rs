@@ -126,7 +126,7 @@ impl WslExecutor {
         };
 
         Ok(ExecChild::new_with_pid(
-            stdin, stdout, stderr, wait, kill, pid,
+            stdin, stdout, stderr, wait, kill, pid, kill_tree,
         ))
     }
 }

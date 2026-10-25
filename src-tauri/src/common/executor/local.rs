@@ -94,7 +94,7 @@ impl CommandExecutor for LocalExecutor {
         };
 
         Ok(ExecChild::new_with_pid(
-            stdin, stdout, stderr, wait, kill, pid,
+            stdin, stdout, stderr, wait, kill, pid, kill_tree,
         ))
     }
 
@@ -213,6 +213,54 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    /// **端到端：登记表驱动的退出收敛真的能杀掉一个活着的进程。**
+    ///
+    /// 这是机制层的钉子。之前登记是可选动作（16 个 spawn 点只有 git 做了），
+    /// 现在 `kill_tree` 自动登记。本用例验证从「spawn」到「登记表驱动」的整个链条：
+    /// 不必经过 `save_app_state` / Tauri 运行时，直接调 `kill_all_live`。
+    ///
+    /// 变异验证：把 `new_with_pid` 的 `kill_tree` 分支改成不登记 → 本用例红。
+    ///
+    /// 不写成 `#[tokio::test]`：`kill_all_live` 是**同步**入口（它借用全局 runtime
+    /// 做 `block_on`），在 async 上下文里调会得 "Cannot start a runtime from within
+    /// a runtime"。这也正是它在 shutdown 线程（非 runtime）里的正确用法。
+    #[test]
+    #[cfg(unix)]
+    fn kill_all_live_actually_kills_a_registered_child() {
+        let child = crate::common::runtime::block_on_shutdown(async {
+            LocalExecutor
+                .spawn_with(SpawnOptions::new("sh", &["-c", "sleep 300"]).with_kill_tree())
+                .await
+                .expect("spawn sh")
+        });
+        let pid = child.pid.expect("local child has a pid");
+        let pid_i32 = i32::try_from(pid).expect("pid fits i32");
+
+        assert!(
+            unsafe { libc::kill(pid_i32, 0) } == 0,
+            "child must be alive right after spawn"
+        );
+
+        // 退出收敛驱动（同步入口，与 shutdown 路径同一个动作）。
+        crate::common::executor::kill_all_live();
+
+        // 必须真的死（SIGKILL 按进程组发，可能略有延迟）。
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let alive = unsafe { libc::kill(pid_i32, 0) } == 0;
+            if !alive {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "child {pid} still alive after kill_all_live — 登记表没驱动 kill 动作"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        drop(child);
     }
 
     /// L8：进程组只在**显式声明** `kill_tree` 时建立 —— 普通短命令（git / 探测 /

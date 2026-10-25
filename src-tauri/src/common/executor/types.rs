@@ -71,10 +71,16 @@ pub struct ExecChild {
     kill: KillFn,
     /// Best-effort OS / remote process id when known (local, WSL host, SSH remote).
     pub pid: Option<u32>,
+    /// 退出收敛登记号（仅测试可观测）；`None` = 该 spawn 不登记（短命令 / 假子进程）。
+    #[cfg(test)]
+    reg_id: Option<u64>,
 }
 
 impl ExecChild {
-    /// Create a new `ExecChild` from its parts.
+    /// Create a new `ExecChild` from its parts (test / fake-child constructor).
+    ///
+    /// **不登记退出收敛**：它用于进程内假子进程（无真实 pid、无进程组），
+    /// 登记它们只会污染退出表。真实 spawn 走 [`Self::new_with_pid`]。
     pub fn new(
         stdin: Option<BoxAsyncWrite>,
         stdout: Option<BoxAsyncRead>,
@@ -82,10 +88,39 @@ impl ExecChild {
         wait: impl Future<Output = Result<i32, ExecError>> + Send + 'static,
         kill: impl Fn() -> KillFuture + Send + Sync + 'static,
     ) -> Self {
-        Self::new_with_pid(stdin, stdout, stderr, wait, kill, None)
+        Self {
+            stdin,
+            stdout,
+            stderr,
+            wait: Box::pin(wait),
+            kill: std::sync::Arc::new(kill),
+            pid: None,
+            #[cfg(test)]
+            reg_id: None,
+        }
     }
 
     /// Create a new `ExecChild` including an optional process id.
+    ///
+    /// # `kill_tree` 决定「是否自动登记进退出收敛表」
+    ///
+    /// 早先登记是**调用点自愿**的动作（`register(child.kill_action())`），全仓 16 个
+    /// spawn 点只有 git 那一个做了 —— 于是 `opencode serve` / LSP / DAP / pi rpc 的
+    /// 进程在应用退出时全部孤儿化（`std::process::exit` **不跑 Drop**，实测确认）。
+    ///
+    /// 现在把登记绑到 `kill_tree` 上：它本来就是这个 spawn 的**既有语义声明**
+    /// （「受管长驻进程，需要连后代一起清理」），而所有长驻 spawn 都开它、所有短命令
+    /// 都不开。于是「要不要登记」不再是一个可以被忘记的独立决定。
+    ///
+    /// # 登记的生命周期 ≡ kill 句柄的生命周期
+    ///
+    /// lease 被**捕获进 kill 闭包**（`Arc<dyn Fn>`），所以只要还有任何一方能杀这个
+    /// 进程（`ExecChild` 本体 / `into_wait_and_kill` 给出的 `KillFn` / `kill_action()`
+    /// 的克隆），登记就仍然有效；最后一个句柄释放即注销。这正是要的不变量 ——
+    /// 「只要还有人能杀它，它就在退出收敛表里」。
+    ///
+    /// 反面：把 lease 放进 `ExecChild` 结构体字段会**错**——`into_wait_and_kill` 会把
+    /// `ExecChild` 拆开、lease 当场 drop，而进程还活着（LSP / pi rpc 就是这么用的）。
     pub fn new_with_pid(
         stdin: Option<BoxAsyncWrite>,
         stdout: Option<BoxAsyncRead>,
@@ -93,18 +128,55 @@ impl ExecChild {
         wait: impl Future<Output = Result<i32, ExecError>> + Send + 'static,
         kill: impl Fn() -> KillFuture + Send + Sync + 'static,
         pid: Option<u32>,
+        kill_tree: bool,
     ) -> Self {
+        let action: KillFn = std::sync::Arc::new(kill);
+        #[cfg(test)]
+        let mut reg_id = None;
+        let kill: KillFn = if kill_tree {
+            let lease = super::child_registry::register(std::sync::Arc::clone(&action));
+            #[cfg(test)]
+            {
+                reg_id = Some(lease.id());
+            }
+            std::sync::Arc::new(move || {
+                // 只借不改：lease 的所有权在闭包里，随这个 Arc 的最后一个克隆一起释放。
+                let _keep_registered = &lease;
+                (action)()
+            })
+        } else {
+            action
+        };
         Self {
             stdin,
             stdout,
             stderr,
             wait: Box::pin(wait),
-            kill: std::sync::Arc::new(kill),
+            kill,
             pid,
+            #[cfg(test)]
+            reg_id,
         }
     }
 
-    /// 取出可重复调用的终止动作（退出收敛登记用）；与 [`Self::kill`] 共用**同一动作**。
+    /// 本子进程的退出收敛登记号（仅测试可观测）。
+    ///
+    /// 用 id 而非全局计数断言：登记表是**进程级全局**的，并行跑的其它用例
+    /// （真实 spawn 也会登记）会污染计数。
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) const fn registration_id(&self) -> Option<u64> {
+        self.reg_id
+    }
+
+    /// 取出可重复调用的终止动作；与 [`Self::kill`] 共用**同一动作**。
+    ///
+    /// 返回的 `KillFn` 是 `Arc` 克隆 —— 它同时**保住退出收敛登记**（lease 捕获在
+    /// 闭包内），所以调用方只要还持有这个句柄，进程就仍在收敛表里。
+    ///
+    /// 生产路径不需要它：登记已由 [`Self::new_with_pid`] 按 `kill_tree` 自动完成。
+    /// 保留下来的唯一用途是测试——验证「退出收敛在 wait future 仍 poking 时不死锁」。
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn kill_action(&self) -> KillFn {
         std::sync::Arc::clone(&self.kill)

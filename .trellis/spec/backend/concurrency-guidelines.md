@@ -721,22 +721,50 @@ let output = tokio::time::timeout(
 
 ### 5b. 退出时子进程收敛（子进程登记表）
 
-**判据**：应用退出（`Destroyed` → `shutdown_background_and_exit`）时，**仍在跑**的长操作子进程树
+**判据**：应用退出（`Destroyed` → `shutdown_background_and_exit`）时，**仍在跑**的长驻子进程树
 必须被收敛，不得孤儿化（父进程退出不回收子进程）。
 
-- **登记表**：`common/executor::child_registry`——`run_spawn_streaming` 在子进程存活期登记它的
-  `KillFn`（= `Arc<dyn Fn() -> KillFuture>`，**与取消共用同一个动作**），返回 RAII `ChildLease`
-  （正常完成 / 取消即注销）。动作的宿主/远端差异由 executor 按 `ExecTarget` 构造，登记表与传输层
-  都不分支执行目标。**只对仍登记（存活）的项动手**，降低 pid / 进程组复用误杀。
-- **收敛点**：`shutdown_background_and_exit` 的 `CleanupTask`（`"git-children"`）在所有后台服务
-  关停前调 `kill_all_live()`（同步驱动，确认有界 5s）；Local / WSL 的动作用平台门面
-  `platform::process_spawn::kill_process_tree`（红线 10）本地树杀；SSH 的动作在**远端** `kill -9`
-  （新通道）—— 远端 pid 与本地 pid 无关，**不得**本地按 pid 杀。
-- **不变量**：退出驱动与真实 killer 解耦（`kill_all_with(&dyn Fn(&KillFn))`），单测不触碰真实进程。
+> **2026-10-25 修正：登记不再由调用点自愿完成。**
+>
+> 旧实现把登记写成调用点的可选动作（`register(child.kill_action())`），全仓 16 个 spawn 点里
+> **只有 git 那一个**做了。于是 `opencode serve` / LSP / DAP / pi rpc 的进程在应用退出时全部
+> 孤儿化——实测 `cargo test` 每跑一轮就残留一个 `opencode serve`（累积到 7 个），用户每开关
+> 一次应用也多一个后台 server。
+>
+> 根因是**机制允许忘记**，不是某个调用点的疏漏。现在登记下沉到 `ExecChild::new_with_pid`，
+> 判据是既有的 `kill_tree` 声明（它本来就是这个 spawn 的语义：受管长驻、需要树杀）。
+> 所有长驻 spawn 都开它、所有短命令都不开——于是「要不要登记」不再是一个可以漏掉的决定。
+
+- **登记表**：`common/executor::child_registry`——`ExecChild::new_with_pid` 在
+  `kill_tree == true` 时**自动**登记其 `KillFn`（= `Arc<dyn Fn() -> KillFuture>`，**与取消共用
+  同一个动作**），返回 RAII `ChildLease`。动作的宿主/远端差异由 executor 按 `ExecTarget` 构造，
+  登记表与执行器都不分支执行目标。**只对仍登记（存活）的项动手**，降低 pid / 进程组复用误杀。
+- **登记的生命周期 ≡ kill 句柄的生命周期（不是 `ExecChild` 的）**：lease 被捕获进 kill 闭包，
+  只要还有任何一方能杀它（`ExecChild` / `into_wait_and_kill` 给出的 `KillFn`），登记就有效，
+  最后一个句柄释放即注销。**反面教材**：把 lease 放进 `ExecChild` 结构体字段会错——
+  `into_wait_and_kill` 把 `ExecChild` 拆开时 lease 当场 drop，而进程还活着（LSP / pi rpc 正是
+  这么用的）。回归钉子：`child_registry::tests::registration_outlives_into_wait_and_kill`。
+- **收敛点**：`shutdown_background_and_exit` 的 `CleanupTask`（`"git-children"`，现覆盖全部
+  kill_tree 子进程）在所有后台服务关停前调 `kill_all_live()`（同步驱动，确认有界 5s）；
+  Local / WSL 的动作用平台门面 `platform::process_spawn::kill_process_tree`（红线 10）本地树杀；
+  SSH 的动作在**远端** `kill -9`（新通道）—— 远端 pid 与本地 pid 无关，**不得**本地按 pid 杀。
+- **`kill_all_live` 是同步入口**：它借用全局 runtime 做 `block_on`，**不得**在 async 上下文调用
+  （会得 "Cannot start a runtime from within a runtime"）。测试要驱动它就用 `#[test]` +
+  `block_on_shutdown`，不要用 `#[tokio::test]`。
+- **`ExecChild::new`（假子进程构造器）不登记**：它用于进程内假子进程（无真实 pid / 进程组），
+  登记它们只会污染退出表。真实 spawn 一律走 `new_with_pid`。
+- **不变量**：退出驱动与真实 killer 解耦（`kill_all_with(&dyn Fn(&KillFn))`）。端到端钉子：
+  `local::tests::kill_all_live_actually_kills_a_registered_child`（真 spawn 一个 `sleep 300`，
+  调 `kill_all_live`，断言进程真的死）。
 - **executor 契约**：`ExecChild.wait` 的实现**不得**跨 `await` 持有子进程句柄的 `Mutex`——否则退出收敛驱动
   共享 kill 动作时抢不到锁而死锁（Local / WSL 用短锁轮询 `try_wait`，不跨 `await` 持锁；回归测试
   `local::tests::kill_action_does_not_deadlock_while_wait_is_polling`）。
+- **wait future 必须有归属**：取走 stdio 后必须把 `wait` 交给某个 task 驱动（否则进程退出后无人
+  reap ⇒ 僵尸）。ACP / DeepSeek adapter 曾直接 `.stdout` / `.stdin` 取字段、丢弃 `wait`——已修。
 - **边界**：不改 Tauri 取消协议（运行期 future 被 drop 自动树杀不在范围）；不做远端同步清理。
+  **`cargo test` 不受本机制保护**：测试进程走 `std::process::exit`，不经过
+  `shutdown_background_and_exit`，所以**单元测试不得 spawn 真二进制**（见
+  `unit-test/backend-testing.md`「测试不得 spawn 真实外部进程」）。
 
 机制详解与实测：`backend/git-domain.md`「退出收敛（子进程登记表）」。
 

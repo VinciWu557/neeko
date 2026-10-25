@@ -736,11 +736,19 @@ macOS 上 Tauri 事件送达 = 每次 `evaluateJavaScript`，逐读块 `emit` �
 
 **退出收敛（子进程登记表）**：git 传输层用 `kill_tree` 自组 spawn，但 kill 动作只在**主动取消**时被
 调用 —— 应用退出 / 运行时空停时 future 被丢弃、kill 不执行，整棵树（git → hook → pnpm →
-vitest/cargo）会孤儿化。`common/executor` 的 `child_registry` 让 `run_spawn_streaming` 在子进程
-**存活期**登记它的 `KillFn`（= `Arc<dyn Fn() -> KillFuture>`，**与取消共用同一个动作**；动作的
-宿主/远端差异由 executor 在构造时按 `ExecTarget` 定下，传输层与登记表都不分支执行目标）。
-`AppStateWrapper::shutdown_background_and_exit` 的 CleanupTask（`"git-children"`）在所有后台服务
-关停前调 `kill_all_live()`，逐个同步驱动该动作（确认有界 5s）：
+vitest/cargo）会孤儿化。`common/executor` 的 `child_registry` 让子进程**存活期**登记它的 `KillFn`
+（= `Arc<dyn Fn() -> KillFuture>`，**与取消共用同一个动作**；动作的宿主/远端差异由 executor 在构造时
+按 `ExecTarget` 定下，执行器与登记表都不分支执行目标）。
+
+**2026-10-25 修正：登记已下沉到 `ExecChild::new_with_pid`，按 `kill_tree` 自动完成。**
+早先登记是调用点的可选动作，全仓 16 个 spawn 点只有 git 这一处做了 —— `opencode serve` / LSP /
+DAP / pi rpc 因此在应用退出时全部孤儿化。git 落地时那行 `register(child.kill_action())`
+**已删除**：留着会让同一进程进表两次。登记的生命周期 ≡ kill 句柄（lease 捕获在 kill 闭包内），
+所以 `collect_child_output_streaming_cancellable` 拆出的 `KillFn` 存活期间它一直在表里。
+细节见 `backend/concurrency-guidelines.md` §5b。
+
+`AppStateWrapper::shutdown_background_and_exit` 的 CleanupTask（`"git-children"`，现覆盖全部
+kill_tree 子进程）在所有后台服务关停前调 `kill_all_live()`，逐个同步驱动该动作（确认有界 5s）：
 
 - **宿主本地（Local / WSL）** 的动作 = 本地进程组树杀（`platform::process_spawn::kill_process_tree`，
   红线 10 门面）；
