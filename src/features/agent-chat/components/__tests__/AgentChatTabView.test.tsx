@@ -12,6 +12,45 @@ import { WorkspaceSession } from '@/shared/utils/workspaceRef';
 import { insertAgentInput } from '../../api/agentInputRegistry';
 import AgentChatTabView, { clearMessageCache } from '../AgentChatTabView';
 
+/**
+ * 富文本 composer 的测试辅助。
+ *
+ * textarea 时代这里用 `getByPlaceholderText` 定位输入框并 `fireEvent.change`
+ * 写值。换成 Tiptap（contenteditable）后，输入必须落进 ProseMirror 的文档 ——
+ * 直接改 DOM 不会被观察，所以统一经 `editor.commands` 写入。
+ */
+/**
+ * 本页所有 composer 的 editable DOM（多页面并存用例按 index 取）。
+ *
+ * 走 Testing Library 的 role 查询而不是 `document.querySelectorAll`：
+ * composer 是唯一带 textbox role 的元素（`aria-label="Message composer"`）。
+ */
+function composerEls(): HTMLElement[] {
+  return screen.getAllByRole('textbox');
+}
+
+function composerElAt(index = 0): HTMLElement {
+  const el = composerEls()[index];
+  if (!el) throw new Error(`composer #${index} not mounted`);
+  return el;
+}
+
+/** 取挂在该 editable DOM 上的 Tiptap 实例（@tiptap/react 会写到 editor 字段）。 */
+function editorAt(index = 0): { commands: { insertContent: (t: string) => void } } {
+  const el = composerElAt(index) as HTMLElement & {
+    editor?: { commands: { insertContent: (t: string) => void } };
+  };
+  if (!el.editor) throw new Error('editor instance unavailable');
+  return el.editor;
+}
+
+/** 向 composer 键入文本（替代 fireEvent.change）。 */
+function typeIntoComposer(text: string, index = 0): void {
+  act(() => {
+    editorAt(index).commands.insertContent(text);
+  });
+}
+
 /** 测试身份源：项目 id → WorkspaceSession（主仓形态）。 */
 function mkSession(projectId: string) {
   return WorkspaceSession.of(projectId, null);
@@ -205,7 +244,7 @@ describe('AgentChatTabView', () => {
     await renderView();
 
     expect(screen.getByTestId('agent-chat-tab')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('Type a message...')).toBeInTheDocument();
+    expect(composerEls()).toHaveLength(1);
   });
 
   it('系统横幅显示项目上下文', async () => {
@@ -253,8 +292,7 @@ describe('AgentChatTabView', () => {
   it('发送后渲染右对齐用户气泡与时间戳', async () => {
     await renderView();
 
-    const ta = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;
-    fireEvent.change(ta, { target: { value: 'hello agent' } });
+    typeIntoComposer('hello agent');
     fireEvent.click(screen.getByTitle('Send'));
 
     await waitFor(() => {
@@ -571,7 +609,11 @@ describe('AgentChatTabView', () => {
     });
     emitEvent({ type: 'text_delta', session_id: 's1', delta: '✅ 命令已执行：$ cargo check' });
 
-    const paragraphs = screen.getAllByRole('paragraph');
+    // 只数**消息流**里的段落：composer 是富文本编辑器，空文档也是一个 <p>
+    // （挂在 editable DOM 下），不属于消息内容。用 role=textbox 取 composer
+    // 容器再排除（而不是 document.querySelector）。
+    const composer = screen.getByRole('textbox');
+    const paragraphs = screen.getAllByRole('paragraph').filter((p) => !composer.contains(p));
     expect(paragraphs).toHaveLength(2);
     expect(paragraphs[0]).toHaveTextContent('现在执行一条命令来验证修改。');
     expect(paragraphs[1]).toHaveTextContent('✅ 命令已执行：$ cargo check');
@@ -941,8 +983,7 @@ describe('AgentChatTabView', () => {
       />,
     );
 
-    const ta = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;
-    fireEvent.change(ta, { target: { value: 'hi' } });
+    typeIntoComposer('hi');
     fireEvent.click(screen.getByTitle('Send'));
 
     await waitFor(() => {
@@ -1004,14 +1045,12 @@ describe('AgentChatTabView', () => {
    */
   describe('agent 投递接收端登记（Q5=A）', () => {
     // 登记身份 = 组件 props 下传的 WorkspaceSession 本体（与生产同源，tabKey 仅作 store 键）。
-    const COMPOSER_PLACEHOLDER = 'Type a message...';
-
     /**
-     * 按下标取 composer：同一用例内可并存两个页面，所以不能用单数 getBy。
-     * 卸载后其 DOM 节点移除，存活页自然落到 index 0 —— 断言因此更直白。
+     * 按下标取 composer 的 editable DOM：同一用例内可并存两个页面，所以不能用
+     * 单数查询。卸载后其 DOM 节点移除，存活页自然落到 index 0 —— 断言因此更直白。
      */
-    function composerAt(index = 0) {
-      return screen.getAllByPlaceholderText(COMPOSER_PLACEHOLDER)[index];
+    function composerAt(index = 0): HTMLElement {
+      return composerElAt(index);
     }
 
     /** 挂一个 agent-chat 页面并等它渲染完成。 */
@@ -1047,7 +1086,7 @@ describe('AgentChatTabView', () => {
       await renderAt('t1');
 
       expect(deliver('t1', 'review this diff')).toBe(true);
-      expect(composerAt()).toHaveValue('review this diff');
+      expect(composerAt()).toHaveTextContent('review this diff');
     });
 
     it('未渲染 → 显式 false，不谎报成功（本 defect 的反证）', () => {
@@ -1067,7 +1106,7 @@ describe('AgentChatTabView', () => {
       unmountFirst(); // count 2 → 1：登记必须保留，此时存活页是唯一 composer
 
       expect(deliver('t1', 'still alive')).toBe(true);
-      expect(composerAt()).toHaveValue('still alive');
+      expect(composerAt()).toHaveTextContent('still alive');
 
       unmountSecond(); // count 1 → 0：彻底注销
       expect(insertAgentInput(TAB_SESSION, 't1', 'nobody home')).toBe(false);
@@ -1093,9 +1132,9 @@ describe('AgentChatTabView', () => {
       await renderAt('t-wt', wtSession);
 
       expect(deliverOn(wtSession, 't-wt', 'to-worktree')).toBe(true);
-      const [mainComposer, wtComposer] = screen.getAllByPlaceholderText(COMPOSER_PLACEHOLDER);
-      expect(wtComposer).toHaveValue('to-worktree');
-      expect(mainComposer).toHaveValue('');
+      const [mainComposer, wtComposer] = composerEls();
+      expect(wtComposer).toHaveTextContent('to-worktree');
+      expect(mainComposer).toHaveTextContent('');
 
       // tabId 在两个 session 下可以同名，身份仍不得串。
       await renderAt('t-wt-dup', wtSession);
@@ -1164,8 +1203,7 @@ describe('AgentChatTabView', () => {
   it('shows the working indicator with duration while streaming', async () => {
     await renderView();
     // 走真实路径触发 streaming：输入并发送（handleSend 会 setStreaming(true)）
-    const ta = screen.getByPlaceholderText('Type a message...') as HTMLTextAreaElement;
-    fireEvent.change(ta, { target: { value: 'hello' } });
+    typeIntoComposer('hello');
     fireEvent.click(screen.getByTitle('Send'));
 
     expect(await screen.findByTestId('working-indicator')).toBeInTheDocument();

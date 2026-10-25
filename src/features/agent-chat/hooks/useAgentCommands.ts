@@ -5,11 +5,30 @@ import type { AgentCommandEntry } from '@/shared/types/agentChat';
 import { listAgentCommands } from '../api/agentChatApi';
 
 /**
- * 命令列表的**会话期内**缓存（按 agentId，不落盘 —— design §3：命令列表在
- * 会话期内不变）。模块级 Map 让「切走再切回」不重新发起查询；失败的 agent
- * 不进缓存，重新挂载可重试（同一挂载内由 `loaded` 键挡住重试）。
+ * 命令列表的**会话期内**缓存（不落盘 —— design §3：命令列表在会话期内不变）。
+ *
+ * # 键必须带 directory
+ *
+ * opencode 的命令含项目级（`<project>/.opencode/commands/**`），所以「同一 agent
+ * 在不同项目下的命令集不同」。只按 agentId 缓存会让 A 项目拿到 B 项目的命令 ——
+ * 用户会看到一堆在本项目里不存在的 `/命令`。键 = `agentId::directory`。
  */
 const commandCache = new Map<string, AgentCommandEntry[]>();
+
+/**
+ * 空结果的**稳定引用**。
+ *
+ * 不能在返回处写 `|| []` —— 那每次渲染都造一个新数组，让下游
+ * `useComposerSources` 的 `useMemo([agentCommands])` 每次都重建 sources，
+ * 进而让 `RichComposer` 的 sources effect 每次渲染都跑一遍（memo 全部失效）。
+ * 恒等性是这个 hook 的契约的一部分。
+ */
+const NO_COMMANDS: AgentCommandEntry[] = [];
+
+/** 缓存/查询键：agent 身份 + 项目根（`''` 表示未提供）。 */
+function commandKeyOf(agentId: string, directory: string | undefined): string {
+  return `${agentId}::${directory ?? ''}`;
+}
 
 /**
  * agent 的 slash 命令列表（`/` 补全数据源）。
@@ -32,14 +51,18 @@ const commandCache = new Map<string, AgentCommandEntry[]>();
  * 级联渲染（eslint 报 error）；只有异步回包真正需要落 state，按 agentId
  * 分键存，避免切 agent 时读到上一个 agent 的在途结果。
  */
-export function useAgentCommands(agentId: string | null, enabled: boolean): AgentCommandEntry[] {
-  const key = enabled && agentId ? agentId : null;
+export function useAgentCommands(
+  agentId: string | null,
+  enabled: boolean,
+  directory?: string,
+): AgentCommandEntry[] {
+  const key = enabled && agentId ? commandKeyOf(agentId, directory) : null;
   const [loaded, setLoaded] = useState<Record<string, AgentCommandEntry[]>>({});
 
   useEffect(() => {
     if (!key || commandCache.has(key) || key in loaded) return;
     let cancelled = false;
-    void listAgentCommands(key)
+    void listAgentCommands(agentId ?? '', directory)
       .then((list) => {
         commandCache.set(key, list);
         if (!cancelled) setLoaded((prev) => ({ ...prev, [key]: list }));
@@ -53,5 +76,5 @@ export function useAgentCommands(agentId: string | null, enabled: boolean): Agen
     };
   }, [key, loaded]);
 
-  return (key && (commandCache.get(key) ?? loaded[key])) || [];
+  return (key && (commandCache.get(key) ?? loaded[key])) || NO_COMMANDS;
 }

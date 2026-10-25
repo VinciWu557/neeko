@@ -31,19 +31,23 @@ import { useAgentCommands } from './useAgentCommands';
  */
 export function useComposerSources(params: {
   projectId: ProjectId;
-  /** 附件链路的唯一写路径（`useChatAttachments.addFile`，去重在写路径内完成）。 */
-  addAttachment: (path: string, name: string) => void;
   /** slash 能力位（`SessionStart.capabilities.commands`）。 */
   commandsEnabled: boolean;
   /** 落定 agent id（`selectedAgent.id`；空串 = 还没落定，不发查询）。 */
   agentId: string;
+  /**
+   * 项目根路径（可选）。命令含项目级时（opencode 的
+   * `<project>/.opencode/commands/**`）必须带上，否则只拿到用户级命令。
+   * 空串 = 路径还没落定，按「只查用户级」处理。
+   */
+  projectPath?: string;
 }): {
   sources: ComposerPaletteSource[];
   attachFiles: FileNode[];
   attachFilesLoading: boolean;
   loadAttachFiles: () => void;
 } {
-  const { projectId, addAttachment, commandsEnabled, agentId } = params;
+  const { projectId, commandsEnabled, agentId, projectPath } = params;
   const [attachFiles, setAttachFiles] = useState<FileNode[]>([]);
   const [attachFilesLoading, setAttachFilesLoading] = useState(false);
   const requestedRef = useRef(false);
@@ -51,6 +55,7 @@ export function useComposerSources(params: {
   const agentCommands: AgentCommandEntry[] = useAgentCommands(
     agentId === '' ? null : agentId,
     commandsEnabled,
+    projectPath || undefined,
   );
 
   const loadAttachFiles = useCallback(() => {
@@ -68,10 +73,10 @@ export function useComposerSources(params: {
   }, [loadAttachFiles]);
 
   const sources = useMemo<ComposerPaletteSource[]>(() => {
-    const next: ComposerPaletteSource[] = [createMentionSource(attachFiles, addAttachment)];
+    const next: ComposerPaletteSource[] = [createMentionSource(attachFiles)];
     if (commandsEnabled) next.unshift(createCommandSource(agentCommands));
     return next;
-  }, [agentCommands, attachFiles, addAttachment, commandsEnabled]);
+  }, [agentCommands, attachFiles, commandsEnabled]);
 
   return { sources, attachFiles, attachFilesLoading, loadAttachFiles };
 }

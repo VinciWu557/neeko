@@ -286,40 +286,24 @@
   .attach-chip .at-close { color:var(--text-muted); cursor:pointer; display:flex; }
   .attach-chip .at-close:hover { color:var(--accent-red); }
 
-  /* ── 输入框内高亮层（AC11，镜像层）──
-     textarea 文字透明、caret 保留可见；同排版镜像 div 在下方逐字渲染文本，
-     按 trigger 语法把 `/命令` 与 `@文件` 区间渲染成高亮 token。三个同步点：
-     字体/行高/padding 与 textarea 逐字一致、同宽度 + 同折行（textarea 的 UA
-     默认是 pre-wrap + overflow-wrap:break-word）、scrollTop 由 scroll 事件同步。
-     隐藏字形必须用 -webkit-text-fill-color 而非 color:transparent：WebKit 的
-     IME 组合文本（marked text）绘制走 text-fill-color 路径，color:transparent
-     会让组合期出现豆腐块/乱码（WKWebView 真机实测，react-simple-code-editor
-     同型问题）。placeholder 的 fill-color 会被继承，必须显式恢复。
-     IME 组合期（.composing）同时恢复 fill-color 与隐藏镜像层双保险。 */
-  .composer-input { position: relative; }
-  .composer-textarea { width:100%; min-height:60px; max-height:200px; padding:14px 20px 8px; background:transparent; border:none; position:relative; z-index:1; color:var(--text-primary); -webkit-text-fill-color:transparent; caret-color:var(--text-primary); font-size:14px; font-family:inherit; line-height:1.55; resize:none; outline:none; }
-  .composer-textarea.composing { -webkit-text-fill-color:currentColor; }
-  .composer-textarea::placeholder { color:var(--text-muted); -webkit-text-fill-color:var(--text-muted); }
-  /* 滚动条必须隐藏：max-height 出滚动后，Win/Linux 的 classic thin 滚动条占据
-     布局宽度（macOS overlay 不占），textarea 折行宽度因此窄于镜像层 → 高亮
-     逐行错位。隐藏后两端内容宽度恒等；滚轮/方向键滚动与 scrollTop 同步不受
-     影响（.no-scrollbar 同款双写，覆盖不支持 scrollbar-width 的旧 WebKit）。 */
-  .composer-textarea { scrollbar-width:none; }
-  .composer-textarea::-webkit-scrollbar { display:none; }
-  /* UA 默认选区背景不透明，会盖住下方镜像层字形（textarea 文字是透明的，
-     可见字形全在镜像层）—— 半透明选区让镜像字形透出，选中文字可见。 */
-  .composer-textarea::selection { background:color-mix(in srgb, var(--accent-blue) 30%, transparent); }
-  .composer-mirror {
-    position:absolute; inset:0; z-index:0; overflow:hidden;
-    padding:14px 20px 8px;
-    font-size:14px; font-family:inherit; line-height:1.55;
-    white-space:pre-wrap; overflow-wrap:break-word;
-    color:var(--text-primary); pointer-events:none;
-  }
-  /* token 只改颜色/背景/圆角 —— 不改字体、不加 padding/边框：任何盒模型差异
-     都会让镜像层与透明文字的排版漂移，token 之后的每个字符错位。 */
-  .composer-token { background:color-mix(in srgb, var(--accent-blue) 16%, transparent); color:var(--accent-blue); border-radius:4px; }
-  .composer-token-mention { background:color-mix(in srgb, var(--accent-green) 16%, transparent); color:var(--accent-green); }
+  /* Tiptap 富文本 composer（富文本 token 化任务）：视觉仍与输入区既有排版对齐，
+     但它是真实渲染（非镜像），无需 text-fill-color / 组合期门控那套加固。
+     自动增高：编辑器随内容生长，外层 max-height + overflow 接管滚动（同现状 200px）。 */
+  .rich-composer-root { position: relative; }
+  .rich-composer { min-height:60px; max-height:200px; overflow-y:auto; scrollbar-width:none; }
+  .rich-composer::-webkit-scrollbar { display:none; }
+  .rich-composer .rich-composer-editor { min-height:60px; padding:14px 20px 8px; color:var(--text-primary); font-size:14px; font-family:inherit; line-height:1.55; outline:none; white-space:pre-wrap; overflow-wrap:break-word; }
+  .rich-composer .rich-composer-editor p { margin:0; }
+  .rich-composer .rich-composer-editor p.is-editor-empty:first-child::before { content:attr(data-placeholder); color:var(--text-muted); pointer-events:none; float:left; height:0; }
+  /* chip pill（R1）：真实渲染层，可以放心用内边距/图标 —— 不再受镜像层逐像素
+     对齐约束。配色统一走 --chip-color 主题变量，按 chip 类型/来源覆写。 */
+  .rich-composer .composer-chip { display:inline-flex; align-items:center; gap:3px; background:color-mix(in srgb, var(--chip-color, var(--accent-blue)) 16%, transparent); color:var(--chip-color, var(--accent-blue)); border-radius:4px; padding:0 5px; }
+  .rich-composer .composer-chip svg { flex:none; }
+  .rich-composer .composer-chip .composer-chip-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:280px; }
+  /* 类型化配色：命令按来源（prompt 默认蓝），文件 chip 独立色 */
+  .rich-composer .composer-chip.command-chip[data-chip-source='skill'] { --chip-color: var(--accent-orange); }
+  .rich-composer .composer-chip.command-chip[data-chip-source='extension'] { --chip-color: var(--accent-yellow); }
+  .rich-composer .composer-chip.file-chip { --chip-color: var(--accent-green); }
 
   .composer-footer { display:flex; align-items:center; gap:6px; padding:6px 12px 10px; }
   .composer-left { display:flex; align-items:center; gap:6px; row-gap:4px; min-width:0; flex:1; flex-wrap:wrap; }
@@ -461,10 +445,26 @@
 /* 贴输入框上沿（不随光标）：单行时与光标几乎等价，多行长文本时固定在上方更稳（design §7） */
 .composer-palette {
   position: absolute; left: 0; right: 0; bottom: calc(100% + 6px);
-  z-index: 200; max-height: 240px; overflow-y: auto; padding: 4px;
+  z-index: 200; max-height: 300px; display: flex; flex-direction: column;
   background: var(--bg-primary); border: 1px solid var(--border);
   border-radius: var(--radius-md); box-shadow: 0 12px 40px rgba(0,0,0,.35);
+  overflow: hidden;
 }
+/* 滚动容器：滚动发生在内层，分组标题才能吸顶（见 .group-title 的 sticky）。
+   滚动条收窄，与输入区其他列表的观感一致。 */
+.composer-palette-scroll { overflow-y: auto; padding: 4px; scrollbar-width: thin; }
+.composer-palette-scroll::-webkit-scrollbar { width: 8px; }
+.composer-palette-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.composer-palette-group + .composer-palette-group { margin-top: 2px; }
+/* 分组标题：吸顶 —— 长列表里滚动时始终能看见当前在读哪一组。 */
+.composer-palette-group-title {
+  position: sticky; top: -4px; z-index: 1;
+  display: flex; align-items: center; gap: 5px;
+  padding: 4px 8px; margin: 0 0 1px;
+  font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-muted); background: var(--bg-primary);
+}
+.composer-palette-group-count { margin-left: auto; font-weight: 500; opacity: .7; }
 .composer-palette-item {
   display: flex; align-items: baseline; gap: 8px; width: 100%;
   padding: 5px 8px; border: none; background: transparent; text-align: left;

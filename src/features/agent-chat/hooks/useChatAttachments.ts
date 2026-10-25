@@ -3,72 +3,50 @@ import { useCallback, useMemo, useState } from 'react';
 import type { Attachment } from '../components/messageModel';
 
 /**
- * 输入框附件（文件 / skill）的**一整组事实**：有哪些、怎么加、怎么删、
- * 派生计数、以及「怎么交给后端」。
+ * composer 的 **skill 附件**槽（文件不再走这里）。
  *
- * # 为什么整组抽出来
+ * # 文件附件为什么被移走
  *
- * 附件与消息流、审批、会话生命周期无耦合 —— 它只是 composer 的一个状态槽。
- * 留在 `useAgentChat` 里让那个 hook 继续贴着 ratchet 线，而每次新增一个
- * 附件来源（附件按钮、拖拽、@ 提及）都必须改它。
+ * 文件曾在此维护一份 `attachments` 状态（`@` 提及与附件按钮都往里写）。那是
+ * **第二份表示**：编辑器里的 `@path` chip 才是用户看得见、删得掉的真相，而这份
+ * state 与它没有任何同步 —— 退格删掉 chip 后附件仍在，且照样随消息的 `files`
+ * 字段发出去（「以为移除了、实际没有」）。
+ *
+ * 现在文件由**文档投影**产出（`composer/editorSchema.ts` 的 `docToRequestFiles`）：
+ * chip 在文档里存在 ⇔ 文件在请求里存在。本 hook 只剩 skill。
+ *
+ * # 已知缺口（不是本任务范围）
+ *
+ * 当前**没有任何 skill 附件的生产者**（全仓无 `addSkill` 调用点），所以这里的
+ * `skills` 恒为空数组。保留它是为了不把「skill 注入」这条后端契约（
+ * `ContextManifest.skills`）连同 UI 一起删掉 —— 那属于后续接 skill 选择器的任务。
  *
  * # `id` 才是身份，`name` 只是展示
  *
- * 文件附件的 `id` 是**路径**：同名不同目录的两个文件必须能同时挂上，且后端
- * `ContextManifest.files` 的契约是「file paths」。把 `name` 当身份会让它们
- * 相互去重覆盖；把它当发送值会让后端收到一个无法定位的文件名。
- * 所以 `toRequestFiles` 明确取 `id` —— 这个决定只在这里做一次。
- *
- * skill 附件的情况不同：后端的 `skills` 字段就是 skill 的 name/id（不是路径），
+ * skill 附件的情况：后端的 `skills` 字段就是 skill 的 name/id（不是路径），
  * 所以取 `name`。
  */
 export interface ChatAttachments {
-  /** 全部附件（文件 + skill）。 */
-  attachments: Attachment[];
-  /** 文件附件计数（composer 摘要用）。 */
-  fileCount: number;
-  /** skill 附件计数。 */
+  /** skill 附件计数（composer 摘要行用）。 */
   skillCount: number;
-  /** 附加一个文件（按路径去重）。 */
-  addFile: (path: string, name: string) => void;
-  /** 移除一个附件（按 `id`）。 */
-  remove: (id: string) => void;
-  /** 发给后端的路径 / skill 列表（契约的唯一产出点）。 */
-  toRequestFiles: () => { files: string[]; skills: string[] };
+  /** 发给后端的 skill 列表（契约的唯一产出点）。 */
+  toRequestSkills: () => string[];
 }
 
 export function useChatAttachments(): ChatAttachments {
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // 当前无 addSkill 生产者，state 恒为空；保留槽位是为了不删掉后端
+  // `ContextManifest.skills` 契约（见模块文档的「已知缺口」）。
+  const [attachments] = useState<Attachment[]>([]);
 
-  const addFile = useCallback((path: string, name: string) => {
-    setAttachments((prev) =>
-      prev.some((a) => a.type === 'FILE' && a.id === path)
-        ? prev
-        : [...prev, { id: path, type: 'FILE' as const, name, label: name }],
-    );
-  }, []);
-
-  const remove = useCallback((id: string) => {
-    setAttachments((prev) => prev.filter((a) => a.id !== id));
-  }, []);
-
-  const fileCount = useMemo(
-    () => attachments.filter((a) => a.type === 'FILE').length,
-    [attachments],
-  );
   const skillCount = useMemo(
     () => attachments.filter((a) => a.type === 'SKILL').length,
     [attachments],
   );
 
-  const toRequestFiles = useCallback(
-    () => ({
-      // 文件用 `id`（= 路径）；skill 用 `name`（后端字段就是 skill 标识）。
-      files: attachments.filter((a) => a.type === 'FILE').map((a) => a.id),
-      skills: attachments.filter((a) => a.type === 'SKILL').map((a) => a.name),
-    }),
+  const toRequestSkills = useCallback(
+    () => attachments.filter((a) => a.type === 'SKILL').map((a) => a.name),
     [attachments],
   );
 
-  return { attachments, fileCount, skillCount, addFile, remove, toRequestFiles };
+  return { skillCount, toRequestSkills };
 }

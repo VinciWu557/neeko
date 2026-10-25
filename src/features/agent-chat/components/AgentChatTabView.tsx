@@ -16,6 +16,7 @@ import { useWorkingStatus } from '../hooks/useWorkingStatus';
 import ApprovalPanel from './ApprovalPanel';
 import AttachFilePicker from './AttachFilePicker';
 import ChatComposer from './ChatComposer';
+import { insertIntoComposer } from './composer/editorRegistry';
 import MessageList from './MessageList';
 import ProposedPlanCard from './ProposedPlanCard';
 import ResumeList from './ResumeList';
@@ -52,11 +53,6 @@ export default function AgentChatTabView({
     contextWindow,
     ctxInfo,
     input,
-    setInput,
-    attachments,
-    removeAttachment,
-    addAttachment,
-    fileCount,
     skillCount,
     chatAgents,
     models,
@@ -96,9 +92,10 @@ export default function AgentChatTabView({
     loadAttachFiles,
   } = useComposerSources({
     projectId,
-    addAttachment,
     commandsEnabled,
     agentId: selectedAgent.id,
+    // 项目级命令（opencode `<project>/.opencode/commands/**`）靠它才被发现
+    projectPath,
   });
 
   // 回合指示器数据源（时长 + 活动工具）：从 turnStream 的 ref 账本派生。
@@ -125,32 +122,9 @@ export default function AgentChatTabView({
   }
 
   // 登记本 composer 为 agent 投递的接收端（Q1=(a) · Q5=A，详见该 hook 的 docstring）。
-  useAgentInputRegistration({ session, tabId, setInput });
+  useAgentInputRegistration({ session, tabId });
 
   const openAgentFile = useOpenAgentFile({ projectId, projectPath });
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        void handleSend();
-      }
-    },
-    [handleSend],
-  );
-
-  // 补全弹层选中候选后的写回入口；光标恢复与自动增高由 ChatComposer 内部处理
-  const handleReplaceInput = useCallback((text: string) => setInput(text), [setInput]);
-
-  const handleInputChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      setInput(e.target.value);
-      const ta = e.target;
-      ta.style.height = 'auto';
-      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-    },
-    [setInput],
-  );
 
   /**
    * 「Attach files」按钮：读项目文件树并**打开选择弹窗**。
@@ -163,12 +137,19 @@ export default function AgentChatTabView({
     loadAttachFiles();
   }, [loadAttachFiles]);
 
+  /**
+   * 「Attach files」选中文件 → **插入编辑器文本**（与 `@` 提及同一条路径）。
+   *
+   * B 方案下文件没有独立的附件 state：唯一表示是编辑器文档（chip / `@path` 文本），
+   * 请求的 `files` 由文档投影得出。因此按钮与 `@` 提及在这里汇合 —— 两个入口，
+   * 一份事实。
+   */
   const handlePickFile = useCallback(
     (file: FileNode) => {
-      addAttachment(file.path, file.name);
+      insertIntoComposer(tabKey, tabId, `@${file.path}`);
       setAttachPickerOpen(false);
     },
-    [addAttachment],
+    [tabKey, tabId],
   );
 
   return (
@@ -186,7 +167,7 @@ export default function AgentChatTabView({
                   <span className="wa-sys-cwd">{ctxInfo.projectPath}</span>
                 </>
               ) : null}
-              {attachments.length > 0 ? ` + ${skillCount} skills + ${fileCount} 文件附件` : ''}
+              {skillCount > 0 ? ` + ${skillCount} skills` : ''}
             </span>
             {emptyChat && (
               <button
@@ -246,8 +227,7 @@ export default function AgentChatTabView({
       {proposedPlan && <ProposedPlanCard plan={proposedPlan} />}
 
       <ChatComposer
-        input={input}
-        attachments={attachments}
+        legacyInput={input}
         streaming={streaming}
         chatAgents={chatAgents}
         models={models}
@@ -258,13 +238,9 @@ export default function AgentChatTabView({
         contextWindow={contextWindow}
         tabKey={tabKey}
         tabId={tabId}
-        onInputChange={handleInputChange}
-        onKeyDown={handleKeyDown}
-        onReplaceInput={handleReplaceInput}
         sources={composerSources}
-        onSend={() => void handleSend()}
+        onSend={(submission) => void handleSend(submission)}
         onStop={handleStop}
-        onRemoveAttachment={removeAttachment}
         onOpenAttachDrop={openAttachDrop}
         onModelChange={selectModel}
         onConfigChange={handleSetConfigOption}
@@ -273,7 +249,7 @@ export default function AgentChatTabView({
         <AttachFilePicker
           files={attachFiles}
           loading={attachFilesLoading}
-          attached={attachments.filter((a) => a.type === 'FILE').map((a) => a.id)}
+          attached={[]}
           onPick={handlePickFile}
           onClose={() => setAttachPickerOpen(false)}
         />

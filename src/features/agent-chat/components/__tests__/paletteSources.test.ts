@@ -20,8 +20,12 @@ import {
   createCommandSource,
   createMentionSource,
   flattenFiles,
+  groupOfSource,
+  groupPaletteItems,
   PALETTE_ITEM_LIMIT,
+  searchPaletteItems,
 } from '../paletteSources';
+import type { PaletteItem } from '../paletteSources';
 
 const COMMANDS: AgentCommandEntry[] = [
   { name: 'trellis-continue', description: 'Continue Current Task', source: 'prompt' },
@@ -65,8 +69,13 @@ describe('createCommandSource', () => {
       'skill:code-walkthrough',
     ]);
     expect(items[0].sublabel).toBe('Continue Current Task');
-    // description 缺失时回落来源标记，而不是 undefined 渲染成空。
-    expect(items[1].sublabel).toBe('extension');
+    // description 缺失时不编造说明（来源已有独立的分组标题与图标，不再重复塞进 sublabel）
+    expect(items[1].sublabel).toBeUndefined();
+    // source 随 item 透传 —— chip 的类型化配色（R1）依赖它。
+    expect(items[0].source).toBe('prompt');
+    expect(items[2].source).toBe('skill');
+    // 分组由 source 归一而来：prompt → command，skill → skill，extension → extension
+    expect(items.map((i) => i.group)).toEqual(['command', 'extension', 'skill']);
   });
 
   it('should filter by substring, case-insensitively', () => {
@@ -115,10 +124,16 @@ describe('createMentionSource', () => {
     expect(source.getItems('')).toEqual([]);
   });
 
-  it('should delegate the pick to the attachment path with (path, name)', () => {
-    const source = createMentionSource(TREE, onPick);
-    source.onPick?.({ value: 'src/App.tsx', label: 'App.tsx' });
-    expect(onPick).toHaveBeenCalledWith('src/App.tsx', 'App.tsx');
+  /**
+   * **文件源没有 onPick 副作用**（B 方案）：文件的唯一表示是编辑器里的 file chip，
+   * 请求的 `files` 由文档投影产出。曾经这里回调 `addAttachment` 写第二份状态 ——
+   * 那份状态与文档不同步，退格删掉 chip 后文件仍会被发送。
+   */
+  it('should not own a side effect for picked files', () => {
+    const source = createMentionSource(TREE);
+    expect(source.onPick).toBeUndefined();
+    expect(source.getItems('App').map((i) => i.value)).toEqual(['src/App.tsx']);
+    expect(source.getItems('App')[0].group).toBe('file');
   });
 });
 
@@ -150,5 +165,101 @@ describe('AC2 static guard: no hardcoded command list in the frontend', () => {
     // 具体命令名（阶段 3 假数据的遗迹）不得重新出现在代码里。
     expect(code).not.toContain('trellis-continue');
     expect(code).not.toContain('skill:code-walkthrough');
+  });
+});
+
+/**
+ * 搜索增强：多词输入按 token 逐个匹配（直接子串匹配对多词是全灭的），
+ * 且命令的 description 也参与匹配（用户常记得语义而非命令名）。
+ */
+describe('searchPaletteItems', () => {
+  const items: PaletteItem[] = [
+    {
+      value: 'trellis-continue',
+      label: 'trellis-continue',
+      sublabel: 'Resume work',
+      group: 'command',
+    },
+    {
+      value: 'skill:code-walkthrough',
+      label: 'code-walkthrough',
+      sublabel: 'Read Neeko code',
+      group: 'skill',
+      keywords: ['与用户共同阅读'],
+    },
+    {
+      value: 'src/features/x/components/ChatComposer.tsx',
+      label: 'ChatComposer.tsx',
+      sublabel: 'src/features/x/components/ChatComposer.tsx',
+      group: 'file',
+      keywords: ['src/features/x/components/'],
+    },
+  ];
+
+  it('should require every whitespace-separated token to match (not the whole string)', () => {
+    // 整串子串匹配对 `trellis cont` 是全灭的；按 token 匹配才命中
+    expect(searchPaletteItems(items, 'trellis cont', 10).map((i) => i.value)).toEqual([
+      'trellis-continue',
+    ]);
+    expect(searchPaletteItems(items, 'chat composer', 10).map((i) => i.value)).toEqual([
+      'src/features/x/components/ChatComposer.tsx',
+    ]);
+  });
+
+  it('should match against the description and extra keywords', () => {
+    expect(searchPaletteItems(items, 'walkthrough', 10).map((i) => i.value)).toEqual([
+      'skill:code-walkthrough',
+    ]);
+    // 中文说明也参与匹配（subagent/skill 的 description 常是中文）
+    expect(searchPaletteItems(items, '阅读', 10).map((i) => i.value)).toEqual([
+      'skill:code-walkthrough',
+    ]);
+  });
+
+  /** 前缀命中的排前 —— 用户打的通常是想找的那个的开头。 */
+  it('should rank label-prefix matches first', () => {
+    const value = searchPaletteItems(
+      [
+        { value: 'x-continue', label: 'x-continue', group: 'command' },
+        { value: 'continue', label: 'continue', group: 'command' },
+      ],
+      'continue',
+      10,
+    ).map((i) => i.value);
+    expect(value[0]).toBe('continue');
+  });
+
+  it('should return a bounded list for an empty query', () => {
+    expect(searchPaletteItems(items, '   ', 2)).toHaveLength(2);
+  });
+});
+
+describe('groupPaletteItems', () => {
+  it('should bucket items into stable-ordered sections and drop empty groups', () => {
+    const sections = groupPaletteItems([
+      { value: 'a.ts', label: 'a.ts', group: 'file' },
+      { value: 'cmd', label: 'cmd', group: 'command' },
+      { value: 'sk', label: 'sk', group: 'skill' },
+    ]);
+    expect(sections.map((s) => s.group)).toEqual(['skill', 'command', 'file']);
+    expect(sections.map((s) => s.label)).toEqual(['Skills', 'Commands', 'Files']);
+  });
+
+  it('should keep same-group items in their original order', () => {
+    const sections = groupPaletteItems([
+      { value: 'b', label: 'b', group: 'skill' },
+      { value: 'a', label: 'a', group: 'skill' },
+    ]);
+    expect(sections[0].items.map((i) => i.value)).toEqual(['b', 'a']);
+  });
+});
+
+describe('groupOfSource', () => {
+  it('should map known sources and fall back to other for unknown ones', () => {
+    expect(groupOfSource('prompt')).toBe('command');
+    expect(groupOfSource('skill')).toBe('skill');
+    expect(groupOfSource('extension')).toBe('extension');
+    expect(groupOfSource(null)).toBe('other');
+    expect(groupOfSource('brand-new-source')).toBe('other');
   });
 });

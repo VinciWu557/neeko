@@ -56,8 +56,15 @@ export function resumeAgentChat(req: StreamChatRequest, nativeSessionId: string)
  * 入口显隐不靠本查询报错判定 —— 由 `SessionStart.capabilities.commands`
  * 能力位门控（能力位 false 时调用方根本不发这条查询）。
  */
-export function listAgentCommands(agentId: string): Promise<AgentCommandEntry[]> {
-  return invoke<AgentCommandEntry[]>('list_agent_commands', { agentId });
+/**
+ * @param directory 项目根路径（可选）。opencode 的项目级命令
+ *   （`<project>/.opencode/commands/**`）只在该参数存在时被纳入。
+ */
+export function listAgentCommands(
+  agentId: string,
+  directory?: string,
+): Promise<AgentCommandEntry[]> {
+  return invoke<AgentCommandEntry[]>('list_agent_commands', { agentId, directory });
 }
 
 /** 该 agent 的 adapter 是否支持把原生会话恢复为 Agent Chat。 */

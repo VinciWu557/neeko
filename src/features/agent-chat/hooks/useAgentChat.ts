@@ -14,6 +14,7 @@ import {
   sendAgentInput,
   startAgentChat,
 } from '../api/agentChatApi';
+import type { ComposerSubmission } from '../components/composer/submitComposer';
 import { loadCachedMessages } from '../components/messageCache';
 import {
   appendDelta,
@@ -70,14 +71,8 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     }, []),
   );
   const [input, setInput] = useState('');
-  const {
-    attachments,
-    fileCount,
-    skillCount,
-    addFile,
-    remove: removeAttachment,
-    toRequestFiles,
-  } = useChatAttachments();
+  // 文件不走这里（见 handleSend 的文档投影）；只剩 skill 槽。
+  const { skillCount, toRequestSkills } = useChatAttachments();
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [streaming, setStreaming] = useState(false);
   // 可对话 agent 列表 + 选中项派生（只读，与消息流无关）。
@@ -269,67 +264,74 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     };
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || streaming) return;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: nextMsgId(),
-        role: 'user',
-        blocks: [{ kind: 'text' as const, id: nextBlockId(), text }],
-        ts: formatChatTime(new Date()),
-      },
-    ]);
-    setInput('');
-    setStreaming(true);
-    turnStream.reset();
-    try {
-      // 附件 → 请求字段的映射只有一处（`useChatAttachments.toRequestFiles`）：
-      // 文件取 `id`（路径），skill 取 `name`。消费侧不要再自己拼。
-      const { files, skills } = toRequestFiles();
-      const sid = await startAgentChat({
-        agentId: selectedAgent.id,
-        projectId,
-        prompt: text,
-        files,
-        skills,
-        mode: 'auto',
-        sessionId: sessionIdRef.current,
-        modelId: selectedModel?.id,
-      });
-      sessionIdRef.current = sid;
-      useEditorStore.getState().updateTab(tabKey, tabId, { sessionId: sid });
-      drainPending(sid);
-    } catch (err) {
-      setStreaming(false);
+  /**
+   * 发送：prompt 文本与 files 都由富文本 composer 提供。
+   *
+   * `files` 是**文档的投影**（`docToRequestFiles`：文件 chip 在文档里存在就发），
+   * 不再有第二份附件 state 可以和它分叉 —— 用户删掉 chip 就等于不再发送该文件。
+   */
+  const handleSend = useCallback(
+    async (submission: ComposerSubmission) => {
+      const text = submission.promptText.trim();
+      if (!text || streaming) return;
       setMessages((prev) => [
         ...prev,
         {
           id: nextMsgId(),
-          role: 'system',
-          blocks: [
-            {
-              kind: 'text' as const,
-              id: nextBlockId(),
-              text: `⚠ 启动会话失败: ${String(err)}`,
-            },
-          ],
+          role: 'user',
+          blocks: [{ kind: 'text' as const, id: nextBlockId(), text }],
+          ts: formatChatTime(new Date()),
         },
       ]);
-    }
-  }, [
-    input,
-    streaming,
-    selectedAgent.id,
-    projectId,
-    // 附件不再直接作为依赖：请求字段由 `toRequestFiles` 产出，它是唯一读点。
-    toRequestFiles,
-    tabKey,
-    tabId,
-    applyEvent,
-    selectedModel,
-  ]);
+      setInput('');
+      setStreaming(true);
+      turnStream.reset();
+      try {
+        // files 来自文档投影（上面的 submission）；skills 仍由附件槽唯一产出点给出。
+        const skills = toRequestSkills();
+        const sid = await startAgentChat({
+          agentId: selectedAgent.id,
+          projectId,
+          prompt: text,
+          files: submission.files,
+          skills,
+          mode: 'auto',
+          sessionId: sessionIdRef.current,
+          modelId: selectedModel?.id,
+        });
+        sessionIdRef.current = sid;
+        useEditorStore.getState().updateTab(tabKey, tabId, { sessionId: sid });
+        drainPending(sid);
+      } catch (err) {
+        setStreaming(false);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextMsgId(),
+            role: 'system',
+            blocks: [
+              {
+                kind: 'text' as const,
+                id: nextBlockId(),
+                text: `⚠ 启动会话失败: ${String(err)}`,
+              },
+            ],
+          },
+        ]);
+      }
+    },
+    [
+      streaming,
+      selectedAgent.id,
+      projectId,
+      // skills 的唯一读点（files 来自 handleSend 入参，不是 state）。
+      toRequestSkills,
+      tabKey,
+      tabId,
+      applyEvent,
+      selectedModel,
+    ],
+  );
 
   const handleApproval = useCallback(
     async (allow: boolean) => {
@@ -447,10 +449,6 @@ export function useAgentChat({ tabKey, tabId, projectId, data, mockMode }: UseAg
     // composer 态
     input,
     setInput,
-    attachments,
-    removeAttachment,
-    addAttachment: addFile,
-    fileCount,
     skillCount,
     // agent/model 选择态
     chatAgents,

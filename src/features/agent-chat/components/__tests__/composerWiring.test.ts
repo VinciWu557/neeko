@@ -1,4 +1,5 @@
 // @vitest-environment node
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -39,6 +40,26 @@ const CONFIG_HOOK = readFileSync(
 );
 /** composer 弹层数据源装配（slash 门控 / @ 文件树）。 */
 const SOURCES_HOOK = readFileSync(resolve(ROOT, 'agent-chat/hooks/useComposerSources.ts'), 'utf8');
+/** 富文本 composer（chip 入文 + 序列化 + 空态投影）。 */
+const RICH_COMPOSER = readFileSync(
+  resolve(ROOT, 'agent-chat/components/composer/RichComposer.tsx'),
+  'utf8',
+);
+/** suggestion 接线（触发符 / 能力位门 / chip 插入）。 */
+const SUGGESTION = readFileSync(
+  resolve(ROOT, 'agent-chat/components/composer/suggestionWiring.ts'),
+  'utf8',
+);
+/** 编辑器实例注册表（外部投递的落地点）。 */
+const EDITOR_REGISTRY = readFileSync(
+  resolve(ROOT, 'agent-chat/components/composer/editorRegistry.ts'),
+  'utf8',
+);
+/** 投递注册表的 composer 侧消费者。 */
+const INPUT_REGISTRATION = readFileSync(
+  resolve(ROOT, 'agent-chat/hooks/useAgentInputRegistration.ts'),
+  'utf8',
+);
 
 describe('composer wiring', () => {
   it('should render the file picker, not just load the tree', () => {
@@ -49,12 +70,26 @@ describe('composer wiring', () => {
     expect(PICKER).toContain('onPick(');
   });
 
-  it('should forward the picked file into attachments', () => {
-    expect(VIEW).toContain('addAttachment(file.path, file.name)');
-    // 视图层的 `addAttachment` 必须接到附件状态上（实现细节不写死：
-    // 附件已整组抽到 `useChatAttachments`，行为由它的直测覆盖）。
-    expect(HOOK).toMatch(/\n\s+addAttachment: addFile,/);
-    expect(HOOK).toContain('useChatAttachments(');
+  /**
+   * **文件只有一份表示：编辑器文档**（B 方案）。
+   *
+   * 旧实现把「附件按钮选的文件」与「@ 提及的文件」写进 `useChatAttachments`
+   * 的第二份 state，而那份 state 与编辑器文档没有同步 —— 退格删掉 chip 后文件
+   * 仍在，且照样随消息发出（「以为移除了、实际没有」）。
+   *
+   * 现在两个入口都汇合到编辑器（按钮 → `insertIntoComposer('@path')`），请求的
+   * `files` 由文档投影产出（`docToRequestFiles`）。
+   */
+  it('should route the file picker through the editor, not a second attachment state', () => {
+    // 按钮选文件 → 插入编辑器（与 @ 提及同一条路径）
+    expect(VIEW).toContain('insertIntoComposer(tabKey, tabId, `@${file.path}`)');
+    // 视图层不再持有文件附件状态
+    expect(VIEW).not.toContain('addAttachment');
+    expect(VIEW).not.toContain('fileCount');
+    // 请求字段由文档投影产出，handleSend 收的是 composer 的提交物
+    expect(HOOK).toContain('submission.files');
+    expect(HOOK).not.toContain('toRequestFiles');
+    expect(EDITOR_REGISTRY).toContain('export function insertIntoComposer');
   });
 
   /**
@@ -161,5 +196,79 @@ describe('composer wiring', () => {
     expect(VIEW).toContain('useComposerSources(');
     expect(SOURCES_HOOK).toMatch(/if \(commandsEnabled\) next\.unshift\(createCommandSource/);
     expect(SOURCES_HOOK).toContain('useAgentCommands(');
+    // 编辑器侧：无 slash 源时 `/` 不激活（连 items 都不问）
+    expect(SUGGESTION).toContain('shouldShow: () => params.pickSource() !== null');
+  });
+
+  /**
+   * **受控回环的单向闸门（design §4）。**
+   *
+   * `onUpdate` → `mergeTabData({ composerDoc })` 只出不进。一旦有人把
+   * `setContent` 写进 update 处理器，每次按键都会「写 store → 回写编辑器 →
+   * 再触发 update」—— 无限循环且输入卡顿。回环用例（setContent 调用次数 = 1）
+   * 在 RichComposer.test 里钉行为，这里钉源码结构。
+   */
+  it('should never write back into the editor from the update handler', () => {
+    // 精确取 handleUpdate 的函数体（不跨到相邻的「恢复草稿」effect —— 那里
+    // 确实有 setContent，是设计允许的唯一一次恢复写入）。
+    const start = RICH_COMPOSER.indexOf('const handleUpdate = () => {');
+    expect(start).toBeGreaterThan(-1);
+    const body = RICH_COMPOSER.slice(start, RICH_COMPOSER.indexOf('};', start) + 2);
+    expect(body).toContain('composerDoc');
+    expect(body).not.toContain('setContent');
+  });
+
+  /**
+   * **外部投递必须落到编辑器实例，不能走 state。**
+   *
+   * 富文本 composer 是非受控的（草稿真相在 tab data），往输入框塞文本无法经
+   * state 完成。旧实现在 handler 里 `setInput(...)` —— 换成编辑器后会静默无效
+   * （state 变了但编辑器不动），而这正是本仓「函数存在但什么都不做」的经典形态。
+   */
+  it('should deliver external text through the editor registry', () => {
+    expect(INPUT_REGISTRATION).toContain('insertIntoComposer(');
+    expect(INPUT_REGISTRATION).not.toContain('setInput');
+    expect(EDITOR_REGISTRY).toContain('export function registerComposerEditor');
+    expect(RICH_COMPOSER).toContain('registerComposerEditor(tabKey, tabId, editor)');
+  });
+
+  /**
+   * **退役的 textarea 架构不得回潮。**
+   *
+   * 镜像高亮层 / 文本触发判据 / 三处 WebKit IME 加固随 textarea 一起删除。
+   * 它们若重新出现（例如有人为了「先修个 bug」把 textarea 路径加回来），
+   * 就会与 suggestion 引擎构成两套触发判据 —— 行为必然漂移。
+   */
+  it('should keep the retired textarea/mirror architecture out of the tree', () => {
+    // 剥注释后再断言（quality-guidelines §18b：模块文档里写「这些符号已删除」
+    // 是正常的，命中的若是注释就不算回潮）。
+    const sourceFiles = execFileSync('grep', ['-rl', 'agent-chat', resolve(ROOT, 'agent-chat')], {
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter((f) => f !== '' && (f.endsWith('.ts') || f.endsWith('.tsx')))
+      .filter((f) => !f.includes('__tests__'));
+    const retiredSymbols = [
+      'ComposerMirror',
+      'paletteHighlight',
+      'tokenizeHighlights',
+      'segmentHighlights',
+      'findTrigger',
+      'applySelection',
+    ];
+    /** 去掉块注释与行注释，只留可执行代码。 */
+    const codeOnly = (src: string): string =>
+      src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    for (const file of sourceFiles) {
+      const code = codeOnly(readFileSync(file, 'utf8'));
+      for (const symbol of retiredSymbols) {
+        // 断言值自带文件名与符号，失败信息不需要第二参（vitest/valid-expect）
+        expect({ symbol, file, hit: code.includes(symbol) }).toEqual({
+          symbol,
+          file,
+          hit: false,
+        });
+      }
+    }
   });
 });

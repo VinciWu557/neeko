@@ -1,98 +1,45 @@
 /**
- * 附件状态的关键行为（`renderHook` 直测）。
+ * skill 附件槽（`renderHook` 直测）。
  *
- * 两个真缺陷的钉子：
- * 1. **去重身份必须是路径**：`a/types.ts` 与 `b/types.ts` 是两个不同的文件，
- *    按 `name` 去重会让第二个被静默吞掉。
- * 2. **发给后端必须是路径**：`ContextManifest.files` 的契约是「file paths」，
- *    传 `name` 后端无法定位（同名不同目录时更糟 —— 会解析到错误的那一个）。
+ * # 文件附件的契约去哪了
+ *
+ * 文件曾在这里按路径去重、并按路径发给后端。B 方案（`10-24-composer-token-editor`）
+ * 把文件改成**文档投影**：`@path` chip 是唯一表示，请求的 `files` 由
+ * `composer/editorSchema.ts::docToRequestFiles` 产出 —— 那一层的契约（去重、
+ * 首次出现顺序、同名不同目录是两个文件、删 chip 即不再发送）由
+ * `composer/__tests__/editorSchema.test.ts` 的 golden 用例钉住。
+ *
+ * 本 hook 因此只剩 skill：skill 没有文本表示（不进编辑器文档），必须独立存。
  */
-import { act, renderHook } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { useChatAttachments } from '../useChatAttachments';
 
 describe('useChatAttachments', () => {
-  it('adds a file keyed by its path', () => {
-    const { result } = renderHook(() => useChatAttachments());
-
-    act(() => {
-      result.current.addFile('src/a.ts', 'a.ts');
-    });
-
-    expect(result.current.attachments).toHaveLength(1);
-    expect(result.current.attachments[0]).toMatchObject({
-      id: 'src/a.ts',
-      name: 'a.ts',
-      type: 'FILE',
-    });
-  });
-
-  /**
-   * **同名不同目录必须都能挂上**。
-   *
-   * 按 `name` 去重会把第二个静默吞掉 —— 用户以为加了两个文件，实际只有一个。
-   */
-  it('keeps same-named files from different directories', () => {
-    const { result } = renderHook(() => useChatAttachments());
-
-    act(() => {
-      result.current.addFile('src/a/types.ts', 'types.ts');
-      result.current.addFile('src/b/types.ts', 'types.ts');
-    });
-
-    expect(result.current.attachments).toHaveLength(2);
-    expect(result.current.fileCount).toBe(2);
-  });
-
-  /** 同一路径重复添加是幂等的（用户手滑点两次不该产生两条）。 */
-  it('is idempotent for the same path', () => {
-    const { result } = renderHook(() => useChatAttachments());
-
-    act(() => {
-      result.current.addFile('src/a.ts', 'a.ts');
-      result.current.addFile('src/a.ts', 'a.ts');
-    });
-
-    expect(result.current.attachments).toHaveLength(1);
-  });
-
-  it('removes by id', () => {
-    const { result } = renderHook(() => useChatAttachments());
-
-    act(() => {
-      result.current.addFile('src/a.ts', 'a.ts');
-      result.current.addFile('src/b.ts', 'b.ts');
-    });
-    act(() => {
-      result.current.remove('src/a.ts');
-    });
-
-    expect(result.current.attachments.map((a) => a.id)).toEqual(['src/b.ts']);
-  });
-
-  /**
-   * **请求字段的映射**：文件取路径，skill 取 name。
-   *
-   * 这一条是「传 name 而非 path」缺陷的回归钉子 —— 后端 `files` 契约是路径。
-   */
-  it('maps files to paths and skills to names', () => {
-    const { result } = renderHook(() => useChatAttachments());
-
-    act(() => {
-      result.current.addFile('src/a/types.ts', 'types.ts');
-      result.current.addFile('src/b/types.ts', 'types.ts');
-    });
-
-    const { files, skills } = result.current.toRequestFiles();
-    expect(files).toEqual(['src/a/types.ts', 'src/b/types.ts']);
-    expect(skills).toEqual([]);
-  });
-
   it('starts empty', () => {
     const { result } = renderHook(() => useChatAttachments());
-    expect(result.current.attachments).toEqual([]);
-    expect(result.current.fileCount).toBe(0);
     expect(result.current.skillCount).toBe(0);
+    expect(result.current.toRequestSkills()).toEqual([]);
+  });
+
+  /**
+   * 防线：文件入口一旦被塞回这个槽，就又会与编辑器文档分叉
+   * （退格删 chip 后仍会被发送 —— B 方案修掉的那个缺陷）。
+   */
+  it('should not expose a file entry point (files are a document projection)', () => {
+    const { result } = renderHook(() => useChatAttachments());
+    expect(result.current).not.toHaveProperty('addFile');
+    expect(result.current).not.toHaveProperty('toRequestFiles');
+    expect(result.current).not.toHaveProperty('attachments');
+    expect(result.current).not.toHaveProperty('remove');
+  });
+
+  /** 请求字段的唯一产出点：skill 取 name（后端字段是 skill 标识，不是路径）。 */
+  it('should map skills to their names for the request payload', () => {
+    const { result } = renderHook(() => useChatAttachments());
+    const skills = result.current.toRequestSkills();
+    expect(Array.isArray(skills)).toBe(true);
+    expect(skills).toEqual([]);
   });
 });

@@ -1,277 +1,133 @@
-import { act, render, renderHook, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import type { ChangeEvent, KeyboardEvent } from 'react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import ComposerPalette, { useComposerPalette } from '../ComposerPalette';
-import type { ComposerPaletteSource, PaletteItem } from '../paletteSources';
+import ComposerPalette from '../ComposerPalette';
+import type { PaletteItem } from '../paletteSources';
+
+/**
+ * 弹层骨架（纯展示：分组渲染 + 点击选中 + 高亮行滚入可视区）。
+ *
+ * 键盘导航（↑↓ / Enter / Tab / Esc）与触发判定**不在这里测** —— 它们由
+ * suggestion 引擎接管，对应行为在 `composer/__tests__/RichComposerSuggestions.test.tsx`
+ * 里以真实按键路径覆盖。
+ */
 
 const ITEMS: PaletteItem[] = [
-  { value: 'trellis-continue', label: 'trellis-continue', sublabel: 'Resume the current task' },
-  { value: 'trellis-start', label: 'trellis-start' },
+  {
+    value: 'trellis-continue',
+    label: 'trellis-continue',
+    sublabel: 'Resume work',
+    group: 'command',
+  },
+  { value: 'skill:walkthrough', label: 'skill:walkthrough', sublabel: 'Walk code', group: 'skill' },
+  { value: 'src/app/App.tsx', label: 'App.tsx', sublabel: 'src/app/App.tsx', group: 'file' },
 ];
 
-const SOURCE: ComposerPaletteSource = {
-  kind: 'slash',
-  emptyText: 'No matching commands',
-  getItems: (query) => ITEMS.filter((i) => i.value.includes(query)),
-};
-
-/** 最小键盘事件桩：hook 只读 `key`，调用方只调 `preventDefault`。 */
-function keyEvent(key: string): KeyboardEvent<HTMLTextAreaElement> {
-  return { key, preventDefault: () => undefined } as unknown as KeyboardEvent<HTMLTextAreaElement>;
-}
-
-/** 最小 change 事件桩：hook 只读 `value` 与 `selectionStart`。 */
-function changeEvent(value: string): ChangeEvent<HTMLTextAreaElement> {
-  return {
-    target: { value, selectionStart: value.length },
-  } as unknown as ChangeEvent<HTMLTextAreaElement>;
-}
-
-describe('useComposerPalette', () => {
-  it('should open the palette when the change event carries a trigger', () => {
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr', sources: [SOURCE], onReplaceText: vi.fn() }),
-    );
-    act(() => result.current.handleChange(changeEvent('/tr')));
-    expect(result.current.view).not.toBeNull();
-    expect(result.current.view?.kind).toBe('slash');
-    expect(result.current.view?.items).toHaveLength(2);
-    expect(result.current.view?.highlight).toBe(0);
-  });
-
-  it('should close when the trigger is invalidated (whitespace / no trigger)', () => {
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr ', sources: [SOURCE], onReplaceText: vi.fn() }),
-    );
-    act(() => result.current.handleChange(changeEvent('/tr')));
-    act(() => result.current.handleChange(changeEvent('/tr ')));
-    expect(result.current.view).toBeNull();
-  });
-
-  it('should move the highlight with arrows and clamp at both ends', () => {
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr', sources: [SOURCE], onReplaceText: vi.fn() }),
-    );
-    act(() => result.current.handleChange(changeEvent('/tr')));
-
-    act(() => {
-      expect(result.current.handleKeyDown(keyEvent('ArrowDown'))).toBe(true);
-    });
-    expect(result.current.view?.highlight).toBe(1);
-    // 到底后不再前进
-    act(() => {
-      expect(result.current.handleKeyDown(keyEvent('ArrowDown'))).toBe(true);
-    });
-    expect(result.current.view?.highlight).toBe(1);
-    act(() => {
-      expect(result.current.handleKeyDown(keyEvent('ArrowUp'))).toBe(true);
-    });
-    expect(result.current.view?.highlight).toBe(0);
-    // 到顶后不再后退
-    act(() => {
-      expect(result.current.handleKeyDown(keyEvent('ArrowUp'))).toBe(true);
-    });
-    expect(result.current.view?.highlight).toBe(0);
-  });
-
-  it('should replace the trigger segment on Enter and report the event as consumed', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: 'hello /tr', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.handleChange(changeEvent('hello /tr')));
-
-    let consumed = false;
-    act(() => {
-      consumed = result.current.handleKeyDown(keyEvent('Enter'));
-    });
-    expect(consumed).toBe(true);
-    // 变异验证：handleKeyDown 无条件 return false → 本用例红（onReplaceText 不被调用）
-    expect(onReplaceText).toHaveBeenCalledWith('hello /trellis-continue ', 24);
-    expect(result.current.view).toBeNull();
-  });
-
-  it('should also pick on Tab', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.handleChange(changeEvent('/tr')));
-    let consumedByTab = false;
-    act(() => {
-      consumedByTab = result.current.handleKeyDown(keyEvent('Tab'));
-    });
-    expect(consumedByTab).toBe(true);
-    expect(onReplaceText).toHaveBeenCalledWith('/trellis-continue ', 18);
-  });
-
-  it('should close on Escape while keeping the typed text to the caller', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.handleChange(changeEvent('/tr')));
-    let consumedByEsc = false;
-    act(() => {
-      consumedByEsc = result.current.handleKeyDown(keyEvent('Escape'));
-    });
-    expect(consumedByEsc).toBe(true);
-    expect(result.current.view).toBeNull();
-    expect(onReplaceText).not.toHaveBeenCalled();
-  });
-
-  it('should consume nothing while the palette is closed', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr', sources: [SOURCE], onReplaceText }),
-    );
-    for (const key of ['Enter', 'Tab', 'ArrowDown', 'ArrowUp', 'Escape']) {
-      expect(result.current.handleKeyDown(keyEvent(key))).toBe(false);
-    }
-    expect(onReplaceText).not.toHaveBeenCalled();
-  });
-
-  it('should let Enter fall through when the filtered list is empty', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/zzz', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.handleChange(changeEvent('/zzz')));
-    expect(result.current.view?.items).toHaveLength(0);
-    // 空态下 Enter 不被弹层吞掉 —— 交给调用方的发送路径
-    expect(result.current.handleKeyDown(keyEvent('Enter'))).toBe(false);
-    let consumedByEsc = false;
-    act(() => {
-      consumedByEsc = result.current.handleKeyDown(keyEvent('Escape'));
-    });
-    expect(consumedByEsc).toBe(true);
-  });
-
-  it('should not trigger or pick while an IME composition is in progress (AC8)', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.compositionProps.onCompositionStart());
-    act(() => result.current.handleChange(changeEvent('/中文')));
-    expect(result.current.view).toBeNull();
-    // 组合期 Enter 是拼音上屏，弹层不得吞掉
-    expect(result.current.handleKeyDown(keyEvent('Enter'))).toBe(false);
-
-    act(() => result.current.compositionProps.onCompositionEnd());
-    act(() => result.current.handleChange(changeEvent('/trellis')));
-    expect(result.current.view).not.toBeNull();
-  });
-
-  /**
-   * WebKit 愈合点（真机冒烟缺陷）：compositionend 与末次 input 事件的顺序在
-   * WebKit 上可能颠倒 —— 受控值丢了组合末尾的 change，与 DOM 值分叉。组合结束
-   * 后以 DOM 值为准经 onReplaceText 写回，并保留 WebKit 留下的光标位。
-   * 变异验证：去掉 onCompositionEnd 的重同步 → 本用例红。
-   */
-  it('should resync the controlled value from the DOM when composition end reveals drift', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/zhong', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.compositionProps.onCompositionStart());
-    // 模拟丢 change：DOM 值比受控值多出组合末尾字符
-    const el = Object.assign(document.createElement('textarea'), {
-      value: '/zhong文',
-      selectionStart: '/zhong文'.length,
-    });
-    act(() => {
-      result.current.textareaRef.current = el;
-    });
-    act(() => result.current.compositionProps.onCompositionEnd());
-    expect(onReplaceText).toHaveBeenCalledWith('/zhong文', '/zhong文'.length);
-    expect(result.current.composing).toBe(false);
-  });
-
-  it('should not write back on composition end when the DOM value matches the controlled input', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/zhong文', sources: [SOURCE], onReplaceText }),
-    );
-    const el = Object.assign(document.createElement('textarea'), {
-      value: '/zhong文',
-      selectionStart: '/zhong文'.length,
-    });
-    act(() => {
-      result.current.textareaRef.current = el;
-    });
-    act(() => result.current.compositionProps.onCompositionEnd());
-    expect(onReplaceText).not.toHaveBeenCalled();
-  });
-
-  /**
-   * keydown 消费前以真实光标重新校验：textarea 的选区移动不触发 onChange，
-   * 挂载后的光标可能与 `active` 脱节 —— 失效即关闭并放行本次按键。
-   * 变异验证：去掉 handleKeyDown 里的重新校验 → 本用例红（返回 true，
-   * onReplaceText 被调）。
-   */
-  it('should re-validate against the real caret and fall through when it left the token', () => {
-    const onReplaceText = vi.fn();
-    const { result } = renderHook(() =>
-      useComposerPalette({ input: '/tr', sources: [SOURCE], onReplaceText }),
-    );
-    act(() => result.current.handleChange(changeEvent('/tr')));
-    expect(result.current.view).not.toBeNull();
-
-    // 挂一个光标已离开触发段的 textarea（点击别处后的真实形态）
-    const el = Object.assign(document.createElement('textarea'), {
-      value: '/tr',
-      selectionStart: 0,
-    });
-    act(() => {
-      result.current.textareaRef.current = el;
-    });
-
-    let consumed = false;
-    act(() => {
-      consumed = result.current.handleKeyDown(keyEvent('Enter'));
-    });
-    expect(consumed).toBe(false);
-    expect(result.current.view).toBeNull();
-    expect(onReplaceText).not.toHaveBeenCalled();
-  });
-});
-
-describe('ComposerPalette', () => {
-  const baseProps = {
+function renderPalette(overrides: Partial<Parameters<typeof ComposerPalette>[0]> = {}) {
+  const props = {
     kind: 'slash' as const,
     items: ITEMS,
-    highlight: 1,
-    emptyText: 'No matching commands',
+    highlight: 0,
+    emptyText: 'No commands available',
     onHighlight: vi.fn(),
     onPick: vi.fn(),
+    ...overrides,
   };
+  const view = render(<ComposerPalette {...props} />);
+  return { ...props, view };
+}
 
-  it('should render label and sublabel with the highlight marked', () => {
-    render(<ComposerPalette {...baseProps} />);
-    expect(screen.getByRole('option', { name: /trellis-continue/ })).toHaveAttribute(
-      'aria-selected',
-      'false',
-    );
-    expect(screen.getByRole('option', { name: /trellis-start/ })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
-    expect(screen.getByText('Resume the current task')).toBeInTheDocument();
+describe('ComposerPalette', () => {
+  it('should render the candidates with their labels and sublabels', () => {
+    renderPalette();
+    expect(screen.getAllByRole('option')).toHaveLength(3);
+    // 渲染顺序 = 分组顺序（Skills 先于 Commands），不是 items 的到达顺序
+    const commands = screen.getByRole('group', { name: 'Commands' });
+    const cmd = within(commands).getByRole('option');
+    expect(within(cmd).getByText('trellis-continue')).toBeInTheDocument();
+    expect(within(cmd).getByText('Resume work')).toBeInTheDocument();
   });
 
-  it('should pick the clicked item', async () => {
-    const onPick = vi.fn();
-    render(<ComposerPalette {...baseProps} onPick={onPick} />);
-    await userEvent.click(screen.getByRole('option', { name: /trellis-start/ }));
-    expect(onPick).toHaveBeenCalledWith(1);
+  /**
+   * 分组渲染：每组一个标题（Skills / Commands / Files），组顺序由
+   * `PALETTE_GROUP_ORDER` 决定，**不是** items 的到达顺序 —— 否则同一份数据
+   * 换个来源顺序就换一种排法。
+   */
+  it('should group candidates by kind with section titles in a stable order', () => {
+    renderPalette();
+    const groups = screen.getAllByRole('group');
+    expect(groups.map((g) => g.getAttribute('aria-label'))).toEqual([
+      'Skills',
+      'Commands',
+      'Files',
+    ]);
+    // 每组只装自己的项
+    expect(within(groups[0]).getAllByRole('option')).toHaveLength(1);
+    expect(within(groups[1]).getAllByRole('option')).toHaveLength(1);
   });
 
-  it('should show the empty text when no item matches (R2)', () => {
-    render(<ComposerPalette {...baseProps} items={[]} highlight={0} />);
+  it('should mark the highlighted row as selected', () => {
+    renderPalette({ highlight: 1 });
+    const options = screen.getAllByRole('option');
+    // 扁平下标 1 = Skills 组里的那一项（分组只改结构，不改下标语义）
+    expect(options[0]).toHaveAttribute('aria-selected', 'false');
+    expect(options[1]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('should report a click with the flat picked index', () => {
+    const utils = renderPalette();
+    fireEvent.click(screen.getAllByRole('option')[2]);
+    // 扁平下标：Commands(1) + Skills(1) 之后才是 Files 的第一项 → index 2
+    expect(utils.onPick).toHaveBeenCalledWith(2);
+  });
+
+  it('should report hover so the engine can move the highlight', () => {
+    const utils = renderPalette();
+    fireEvent.mouseEnter(screen.getAllByRole('option')[2]);
+    expect(utils.onHighlight).toHaveBeenCalledWith(2);
+  });
+
+  it('should show the empty state instead of an empty box', () => {
+    renderPalette({ items: [], emptyText: 'No matching commands' });
     expect(screen.getByText('No matching commands')).toBeInTheDocument();
-    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+    expect(screen.queryAllByRole('group')).toHaveLength(0);
+  });
+
+  it('should label the listbox by the palette kind', () => {
+    renderPalette({ kind: 'mention' });
+    expect(screen.getByRole('listbox', { name: '文件补全' })).toBeInTheDocument();
+  });
+
+  it('should not steal focus from the editor on mousedown', () => {
+    renderPalette();
+    const option = screen.getAllByRole('option')[0];
+    // preventDefault 的默认行为被阻止 → dispatchEvent 返回 false
+    expect(fireEvent.mouseDown(option)).toBe(false);
+  });
+
+  /**
+   * 高亮行必须滚进可视区（jsdom 无布局，只需证明**调用了** scrollIntoView ——
+   * 否则方向键在长列表里「看不见自己在哪」）。
+   */
+  it('should scroll the highlighted row into view', () => {
+    const scrollIntoView = vi.fn();
+    // jsdom 未实现 scrollIntoView，且 Element.prototype 上的赋值是静默失败的
+    // ——必须用 defineProperty 注入（直接 `proto.scrollIntoView = fn` 不生效）。
+    // 全局 setup 已在 HTMLElement.prototype 注入 vi.fn 垫片 —— 换掉它来观察调用。
+    const proto = HTMLElement.prototype as HTMLElement & { scrollIntoView?: () => void };
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'scrollIntoView');
+    Object.defineProperty(proto, 'scrollIntoView', {
+      value: scrollIntoView,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      renderPalette({ highlight: 1 });
+      expect(scrollIntoView).toHaveBeenCalled();
+    } finally {
+      if (descriptor) Object.defineProperty(proto, 'scrollIntoView', descriptor);
+      else delete proto.scrollIntoView;
+    }
   });
 });
