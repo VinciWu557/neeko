@@ -68,7 +68,7 @@ impl AgentAdapter for DeepSeekHarnessAdapter {
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        let child = exec::spawn(
+        let mut child = exec::spawn(
             &target,
             program,
             &args,
@@ -76,13 +76,19 @@ impl AgentAdapter for DeepSeekHarnessAdapter {
         )
         .await
         .map_err(|e| AppError::Io(format!("failed to spawn harness: {e}")))?;
-        let stdout = child
-            .stdout
+        // 先拆 stdio（`take_stdio` 按变异取，不会部分移动），再把 wait/kill 交出去。
+        // wait **必须有归属**，否则进程退出后无人 reap（僵尸）；kill 句柄同样要
+        // 活到会话结束 —— 它保住退出收敛登记。
+        let (stdin, stdout, _stderr) = child.take_stdio();
+        let (wait, kill_fn) = child.into_wait_and_kill();
+        tokio::spawn(async move {
+            let _ = wait.await;
+            drop(kill_fn);
+        });
+        let stdout = stdout
             .map(BufReader::new)
             .ok_or_else(|| AppError::Io("harness child has no stdout".into()))?;
-        let mut stdin = child
-            .stdin
-            .ok_or_else(|| AppError::Io("harness child has no stdin".into()))?;
+        let mut stdin = stdin.ok_or_else(|| AppError::Io("harness child has no stdin".into()))?;
         let (event_tx, event_rx) = mpsc::channel(64);
         let session_id = ctx.session_id.clone();
         let ctx_agent_id = ctx.agent_id.clone();

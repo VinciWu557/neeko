@@ -550,7 +550,7 @@ impl AgentAdapter for AcpAdapter {
                     .iter()
                     .map(|(k, v)| (k.as_str(), v.as_str()))
                     .collect();
-                let child = exec::spawn(
+                let mut child = exec::spawn(
                     &target,
                     program,
                     &args,
@@ -561,13 +561,21 @@ impl AgentAdapter for AcpAdapter {
                     log::error!("[AcpAdapter::create] Failed to spawn: {e}");
                     AppError::Io(format!("failed to spawn acp agent: {e}"))
                 })?;
-                let stdout = child
-                    .stdout
+                // 先拆 stdio（`take_stdio` 按变异取，不会部分移动），再把 wait/kill 交出去。
+                //
+                // wait **必须有归属**，否则进程退出后无人 reap（僵尸）。退出码对
+                // ACP 协议无用 —— stdout 关闭已是「进程没了」的信号。kill 句柄同样
+                // 要活到会话结束：它保住退出收敛登记（应用退出时 kill_all_live 驱动它）。
+                let (stdin, stdout, _stderr) = child.take_stdio();
+                let (wait, kill_fn) = child.into_wait_and_kill();
+                tokio::spawn(async move {
+                    let _ = wait.await;
+                    drop(kill_fn);
+                });
+                let stdout = stdout
                     .map(BufReader::new)
                     .ok_or_else(|| AppError::Io("acp child has no stdout".into()))?;
-                let stdin = child
-                    .stdin
-                    .ok_or_else(|| AppError::Io("acp child has no stdin".into()))?;
+                let stdin = stdin.ok_or_else(|| AppError::Io("acp child has no stdin".into()))?;
                 log::info!("[AcpAdapter::create] Child spawned successfully, setting up session");
                 Self::create_with_io(ctx, stdout, stdin, wire_format, self.chat_capabilities())
                     .await
