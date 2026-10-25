@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 335
+- **Total Sessions**: 336
 - **Last Active**: 2026-10-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~578 | Active |
+| `journal-7.md` | ~602 | Active |
 | `journal-6.md` | ~1955 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 336 | 2026-10-25 | opencode 命令端点修正：/api/command 属共享层，两版同一路径 | - | `feat/composer-token-editor` |
 | 335 | 2026-10-25 | opencode slash 失效修复：接通 /api/command（A 方案） | - | `feat/composer-token-editor` |
 | 334 | 2026-10-25 | composer 三轮自查：chipSpec 表自洽性契约 | - | `feat/composer-token-editor` |
 | 333 | 2026-10-25 | composer 二轮自查：收表补全 + 空内容判据统一 + 假绿用例修正 | - | `feat/composer-token-editor` |

@@ -576,3 +576,27 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 336: opencode 命令端点修正：/api/command 属共享层，两版同一路径
+<!-- trellis-session: v=2 fp=31a7d9eabd8d2b65 -->
+
+**Date**: 2026-10-25
+**Task**: opencode 命令端点修正：/api/command 属共享层，两版同一路径
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+推翻上一版「V1 无 /api/command → 静态 commands:false + 会话期 capabilities_for 派生」的实现：仓库既有取证显示 /api/model、POST /api/session、GET /api/event 在 1.19 与 2.0 两版共存，/api/* 是渐进迁移的共享层而非 v2 专属（只有 /api/info 是 v2 独有，正因如此才作协议判据）。改为两版共用 /api/command，能力位单一真值 commands:true，删除 capabilities_for 双轨抽象。判据：不确定端点是否存在不能用静态假设表达——猜 None 与猜 Some 一样错，前者把功能藏起来（1.x 用户失去整个 / 入口）。真没有的版本由运行时失败降级吸收。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 全绿；cargo test --lib 2190 通过；test:fe 647 文件/6003 用例；变异验证（commands_path 改回 V1=>/command 分叉 → 共享层用例红）；契约测试实测返回 init/review
+
+### Status
+
+[OK] **Completed**
