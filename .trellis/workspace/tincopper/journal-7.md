@@ -480,3 +480,27 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 332: composer 自查：chip 种类收表 + 死代码清理 + 分层修正
+<!-- trellis-session: v=2 fp=2999b031fb0bcf89 -->
+
+**Date**: 2026-10-25
+**Task**: composer 自查：chip 种类收表 + 死代码清理 + 分层修正
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+第一性原理自查发现的实质问题已修：①触发符 '/' 与 '@' 曾 7 处硬编码且 char 兼任三义 → 收敛为 chipSpec.ts 单一事实源（新增 chip 只改一处）；②renderText 与 docToPromptText 是两份序列化真相（getText 无消费点）→ renderText 改为从表派生；③paletteTrigger.ts 只剩死代码（filterBySubstring 无生产消费、PaletteKind 与 ChipKind 重复）→ 删除，PaletteKind 直接取自 chipSpec；④editorSchema 曾 import ChipView(React+lucide) → 改为装配点注入 nodeViews；⑤useChatAttachments 的 attachments/remove 与 useAgentChat 的导出成死接口 → 删除；⑥ChatComposer 另存 editorRef 与 editorRegistry 重复 → 统一走 getComposerEditor。
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] check:quick 14/14；test:fe 645 文件 / 5987 用例全绿；lint 0 errors；chipSpec 收表后 golden 与 suggestion 集成用例零改动通过
+
+### Status
+
+[OK] **Completed**
