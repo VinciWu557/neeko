@@ -600,3 +600,29 @@ textarea+镜像高亮 → Tiptap 3.32.0 富文本 composer：slash/@ 成为带�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 337: composer-token-editor 提交：按功能拆 4 个 commit，全量门禁 32/32
+<!-- trellis-session: v=2 fp=24810c47cdcfabfb -->
+
+**Date**: 2026-10-25
+**Task**: composer-token-editor 提交：按功能拆 4 个 commit，全量门禁 32/32
+**Branch**: `feat/composer-token-editor`
+
+### Summary
+
+按 neeko-commit 规范将 53 处未提交改动按功能拆为 4 个原子提交（英文 body）：4f163ddd feat 后端 opencode list_commands + 能力位；461d2e24 feat 前端 Tiptap 替换镜像层（含删除 ComposerMirror/paletteHighlight/paletteTrigger）；c67239d0 feat 接线 + palette 分组 + 附件改为文档投影 + 缓存键带 directory；c5a4cce4 docs spec 两篇。提交前发现暂存区被 git stash -u 污染出冲突标记，从 stash@{0} 恢复 composer/ 全部文件后校验零残留。每个提交均通过 pre-commit 护栏与 commitlint。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c5a4cce4` | docs(spec): document token composer and opencode command discovery |
+
+### Testing
+
+- [OK] pnpm check 全量：32 条护栏全通过（lint_fe / lint_rust_all_targets / test_fe / test_rust / test_host 均 ok）
+
+### Status
+
+[OK] **Completed**
