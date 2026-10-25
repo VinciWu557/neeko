@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/10-18-dsh-tui/prd.md", "reason": "可行性调研结论（pi-tui 能力面 / 参考实现拆解）、R1-R4、AC1-AC9"}
+{"file": ".trellis/tasks/10-18-dsh-tui/design.md", "reason": "落点地图、runner 接线（与桥同构）、双来源不变量、TUI/桥差异、验证顺序"}
+{"file": "packages/dsh-neeko/src/index.ts", "reason": "0.2.x 接线的已验证参照：doActivate/setupAgent/事件订阅/waiter 生命周期 —— TUI runner 照此写"}
+{"file": "packages/dsh-neeko/src/startup.ts", "reason": "--tui flag 的落点；resolveStartupValues 三态模式"}
+{"file": "packages/dsh-neeko/cordis.patch.yml", "reason": "neeko-tui 行的装配落点"}
+{"file": "packages/dsh-neeko/src/dsh-adapter.ts", "reason": "可复用：readSessionEvents/buildHistory（历史填充）；translateStreamFrame 的 id 纪律"}
+{"file": "packages/dsh-neeko/src/agent-handlers.ts", "reason": "可复用：canAnswerQuestions 谓词、waterfall 注册契约、测试形态"}
+{"file": ".trellis/tasks/10-18-dsh-tui/pi-parity.md", "reason": "pi-tui 原生能力对标测绘：4 类 22 项差距（file:line）、四张注册表目标形态、P0-P3 执行顺序、用户决策（跟随 pi 行为 + P2/P3 延后）"}

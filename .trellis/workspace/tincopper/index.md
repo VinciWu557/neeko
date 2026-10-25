@@ -19,8 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~654 | Active |
-| `journal-6.md` | ~1955 | Archived |
+| `journal-7.md` | ~718 | Active |
+| `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
 | `journal-3.md` | ~1978 | Archived |
@@ -61,7 +61,12 @@
 | 315 | 2026-10-20 | 翻译设置补 agent/模型选择：判据收口与陈旧 agentId 可见化 | `eab8d5d6`, `ffa659b1`, `df8c08de`, `2e040512`, `fd61f933` | `main` |
 | 314 | 2026-10-19 | 通用本地缓存：SQLite KV + 连接池 + 迁移链归一 | `dfc5850a`, `ee3a16d4`, `74ef8a5f`, `ab96ba9e`, `72161d6e`, `1b37a57d`, `656ac4f3`, `038b48e9`, `22ee1a29` | `main` |
 | 313 | 2026-10-19 | 代码编辑器注释翻译：三层抽象全链路实现 + 22 条 AC 达成 | - | `main` |
+| 312 | 2026-10-19 | dsh-neeko TUI：折叠/全屏/渲染性能与视觉对齐 pi | - | `dsh-neeko` |
+| 311 | 2026-10-18 | dsh-neeko /model 面板：槽位替换 + 模糊搜索 | - | `dsh-neeko` |
 | 310 | 2026-10-18 | C/S HTTP gateway: hooks ingest migration + review fixes | `b10a7d1c`, `0c8ebd21`, `87bf4650`, `e1876ec8` | `main` |
+| 309 | 2026-10-17 | 10-17 收尾：子包自带 workspace 根导致类型双实例（改值三次才找到生成源） | `8c71d81a`, `811dfc3a` | `dsh-neeko` |
+| 308 | 2026-10-17 | 10-17 收尾：cordis 版本范围错配（只在干净安装下现形） | `ff9863c3` | `dsh-neeko` |
+| 307 | 2026-10-17 | 10-17-dsh-neeko-bridge-fix: dsh 0.2.x 契约迁移（四条根因 + 两次复核抓假绿） | `e272e3a7`, `fb059ebf` | `dsh-neeko` |
 | 306 | 2026-10-17 | 10-16-notify-claude-compat / 10-16-notify-codex：完成度核验、AC 回填、spec 内联与归档 | `41cf223e`, `4f6de2b5` | `main` |
 | 305 | 2026-10-17 | 10-12-agent-notify: 完成度核验、Phase C/AC 文档回填、spec 沉淀与归档 | `944dafb25d16f76eada07fcb11b2cec552f0117b`, `d4bdc046536a9b7bedf90ab5089ea9ec14899bcd` | `main` |
 | 304 | 2026-10-16 | 10-16-notify-codex: A 方案（审批通知）—— 多面模型 + trust_probe 精确化 + 三态缺失区分（两个新真 bug） | - | `main` |

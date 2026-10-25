@@ -48,6 +48,89 @@ export interface NeekoStartupValues {
   autoSpawn?: boolean
   /** Override the command used to launch Neeko. */
   spawnCommand?: string
+  /** Run the interactive terminal UI instead of the Neeko bridge. */
+  tui?: boolean
+  /**
+   * Which TUI screen the user asked for.
+   *
+   * Absent means "said nothing", which is not the same as either value: the
+   * default lives in the TUI (the terminal-owned main screen), and this layer only
+   * reports what was requested. Spelling it `boolean | undefined` was ambiguous —
+   * the layers disagreed about what `undefined` meant and the default became
+   * unreachable.
+   *
+   * Spelled out rather than imported from `tui/screen.ts` (where the same
+   * union is `ScreenMode`): `startup` must not depend on the TUI, or the CLI
+   * parser would pull in pi-tui to describe one flag. The duplication is two
+   * words of TypeScript, not a business rule; a shared module would exist only to
+   * hold them.
+   */
+  screen?: 'main' | 'fullscreen'
+}
+
+/** Flags as commander actually reports them. */
+export interface StartupFlags {
+  daemon?: boolean
+  host?: string
+  port?: string
+  session?: string
+  /**
+   * `--spawn <cmd>` and `--no-spawn` share this key: a string, `false`, or absent.
+   * Typing it as `string` only is what let `--no-spawn` write `false` into
+   * `spawnCommand` (rejected by the Config schema, killing the whole row).
+   */
+  spawn?: string | false
+  /** `--tui`: run the interactive TUI instead of the bridge. */
+  tui?: boolean
+  /** `--main-screen`: name the terminal-owned screen explicitly (it is already the default). */
+  mainScreen?: boolean
+  /** `--fullscreen`: opt in to the alt screen, which owns the viewport. */
+  fullscreen?: boolean
+}
+
+/**
+ * Resolve the startup service values from parsed flags.
+ *
+ * Pure so the three-state `spawn` handling is testable without a real argv:
+ * - `spawn === false`      → `--no-spawn`: forbid spawning, no command.
+ * - `spawn` is a string    → `--spawn <cmd>`: use that command, keep the default.
+ * - `spawn === undefined`  → neither: leave both absent for the patch defaults.
+ *
+ * @param flags - parsed commander options.
+ * @param positional - the optional mode positional (`daemon`).
+ * @returns the immutable service values.
+ */
+export function resolveStartupValues(flags: StartupFlags, positional?: string): NeekoStartupValues {
+  const daemon = flags.daemon === true || positional === 'daemon'
+  const port = flags.port === undefined ? undefined : Number(flags.port)
+  const sessionId = flags.session?.trim()
+  return {
+    ...(daemon ? { daemon: true } : {}),
+    ...(flags.host === undefined ? {} : { host: flags.host }),
+    ...(port === undefined ? {} : { port }),
+    ...(sessionId === undefined || sessionId === '' ? {} : { sessionId }),
+    ...(flags.spawn === false ? { autoSpawn: false } : {}),
+    ...(typeof flags.spawn === 'string' ? { spawnCommand: flags.spawn } : {}),
+    ...(flags.tui === true ? { tui: true } : {}),
+    ...screenRequest(flags),
+  }
+}
+
+/**
+ * What the caller asked for, as one named value.
+ *
+ * Two flags can name the same decision, so they are folded here rather than in
+ * the value literal: a chain of nested ternaries inside an object spread is where
+ * the polarity last went wrong. `--main-screen` wins when both are given, because
+ * it is the more conservative screen (no alt screen, no mouse reporting).
+ *
+ * @param flags - the parsed command line.
+ * @returns `{}` when neither flag was given, otherwise the request.
+ */
+function screenRequest(flags: StartupFlags): { screen?: 'main' | 'fullscreen' } {
+  if (flags.mainScreen === true) return { screen: 'main' }
+  if (flags.fullscreen === true) return { screen: 'fullscreen' }
+  return {}
 }
 
 function neekoCommand(): Command {
@@ -61,6 +144,9 @@ function neekoCommand(): Command {
     .option('--session <id>', 'resume an existing persisted session')
     .option('--spawn <command>', 'override the command used to launch Neeko (e.g. "open -a Neeko")')
     .option('--no-spawn', 'do not spawn Neeko even in CLI mode')
+    .option('--tui', 'run the interactive terminal UI instead of the Neeko bridge')
+    .option('--fullscreen', 'TUI: use the alt screen (application-owned scrolling; the terminal-owned main screen is the default)')
+    .option('--main-screen', 'TUI: keep the terminal scrollback (this is the default; kept for scripts)')
     .argument('[mode]', "'daemon' runs the bridge in pure-wait mode (alias of --daemon)")
     .addHelpText('after', `
 Examples:
@@ -78,32 +164,17 @@ Examples:
 export function apply(ctx: Context): void {
   const program = neekoCommand()
   program.action(() => {
-    const options = program.opts<{
-      daemon?: boolean
-      host?: string
-      port?: string
-      session?: string
-      spawn?: string
-      spawnEnabled?: boolean
-    }>()
+    const options = program.opts<StartupFlags>()
     const positional = program.args[0]
-    const daemon = options.daemon === true || positional === 'daemon'
     if (positional !== undefined && positional !== 'daemon') program.error(`unknown mode: ${positional}`)
     const port = options.port === undefined ? undefined : Number(options.port)
     if (options.port !== undefined && !Number.isInteger(port) || port !== undefined && port <= 0) {
       program.error(`--port expects a positive integer, got ${JSON.stringify(options.port)}`)
     }
-    const sessionId = options.session?.trim()
-    if (options.session !== undefined && sessionId === '') program.error('--session requires a non-empty id')
-    const values: NeekoStartupValues = {
-      ...(daemon ? { daemon: true } : {}),
-      ...(options.host === undefined ? {} : { host: options.host }),
-      ...(port === undefined ? {} : { port }),
-      ...(sessionId === undefined ? {} : { sessionId }),
-      ...(options.spawnEnabled === false ? { autoSpawn: false } : {}),
-      ...(options.spawn === undefined ? {} : { spawnCommand: options.spawn }),
+    if (options.session !== undefined && options.session.trim() === '') {
+      program.error('--session requires a non-empty id')
     }
-    ctx.provide(NEEKO_STARTUP_SERVICE, values)
+    ctx.provide(NEEKO_STARTUP_SERVICE, resolveStartupValues(options, positional))
   })
   parseCmdline(ctx, program)
 }

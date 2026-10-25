@@ -59,6 +59,298 @@
 
 ---
 
+## 依赖契约与实际运行时同代（类型假绿）
+
+> 2026-10 `dsh-neeko` 事故的类：**类型检查跑在一份运行时不存在的 API 上**。
+> `tsc` 全绿、测试全绿、构建成功 —— 而 `dsh --profile neeko` 启动即崩。
+
+### 事故形态
+
+插件声明并开发依赖 `@deepseek-ai/dsh-*@0.1.0-rc.6/rc.8`，宿主 CLI 实际加载 `0.2.0-rc.2`：
+
+```
+类型检查看到的：  dsh-user-questions 0.1.0-rc.8   （devDependencies）
+运行时真实加载：  dsh-user-questions 0.2.0-rc.2   （宿主自带 peer）
+```
+
+`userQuestions.registerProvider()` 在 rc.8 存在、在 rc.2 已被移除，且 `UserQuestionProvider`
+类型在 rc.2 的公开导出里也消失了。于是 `tsc` 通过**毫无意义** —— 它校验的是一份不存在的契约。
+同一事故还有两个同族缺陷：`session.events`（属性）→ `snapshotEvents()`（方法）、
+`assistant/chunk`（事件）→ `assistant/message` + 独立的 `agent/assistant-stream` 通道。
+
+### 判据（可机器检查）
+
+1. **`peerDependencies` 与 `devDependencies` 必须同代。** dev 依赖落后是假绿的**直接原因**：
+   它让类型检查对着旧契约通过。只改 peer 不改 dev 等于没修。
+2. **`peerDependencies` 必须能覆盖宿主实际版本。** 写宽范围（`^0.1.0`）而实际只支持
+   `0.2.x` 是撒谎；范围如实收窄、并在 README 写明支持代际。
+3. **上游包的类型若 import 其自身 devDependency，必须显式补为精确版本。**
+   例：`dsh-llm@0.2.0-rc.2` 的 `.d.ts` import `@deepseek-ai/dsh-attachment`，而后者只是它的
+   devDep。用 npm `latest`（`^0.0.1-rc.1`）会报 `has no exported member`；必须写 `0.2.0-rc.2`。
+4. **API 换代先查权威类型定义，不猜。** 权威源是上游包的 `lib/types/*.d.ts`
+   （如 `SessionEventMap`、`AssistantStreamFrame`），不是旧代码、不是文档摘要。
+5. **依赖升级后必须从干净 `node_modules` 复验一次。** 增量安装会保留旧解析结果，
+   让「版本范围写错」看起来是通过的。
+   判据：`rm -rf node_modules && pnpm install && tsc` 必须与增量安装同结果。
+6. **子包不得自带 `pnpm-workspace.yaml`。** 它会把自己变成**独立 workspace 根**，
+   于是根的 `overrides` / 单实例收敛规则**全部失效**。
+   实测：`packages/dsh-neeko/pnpm-workspace.yaml`（原本只为 `dsh plugin install` 绕
+   release-age 门禁）导致 `@deepseek-ai/schemastery` 解析出 3.18.4 与 3.18.5 两份，
+   两份 `.d.ts` 顶层声明同名类型 → `TS6200` 标识符冲突。而根 `overrides` 根本无法介入。
+   修法：删子包 workspace 文件，把需要豁免的包提升到**根** `overrides`（本仓已有
+   `@codemirror/view` 先例）。判据：`ls packages/*/pnpm-workspace.yaml` 必须为空；
+   同一依赖在 `node_modules/.pnpm/` 下只应有一份。
+
+### 测试形态要求
+
+「能跑通」的测试不足以区分两种实现。反证导向：
+
+- 断言**注册在哪个 seam 上**（`user-questions/request` waterfall），而不只是「某个 provider 被登记」。
+- 用**变异验证**测试有效性：把 `next()` 改成不调用（会让每个 agent 永久挂起），
+  测试必须变红。本仓实测过：早期版本 58 条全绿而该变异不可见 —— 那就是假绿本身。
+- 监听器实现**不要用 `as never` 之类的 cast** 绕过真实签名。能结构化满足真实 `Context`
+  的接口才让「用错 API」成为编译错误，而不是运行时崩溃。
+
+### 拆控制器时，必须同时测“接缝”（controller ↔ 输入 ↔ 视图）
+
+> 2026-10 `dsh-neeko` TUI 事故的类：**两轮审核、三个 Block 全部落在同一条缝上**。
+
+把一个胖类拆成纯控制器后，控制器本身很容易测得很漂亮（状态机 9 条全绿），
+而**连接它们的那 30 行胶水**（键位路由、提交分流、重绘时机）零覆盖 ——
+缺陷全在那里。实测漏网过的三例：
+
+1. 待处理的自由输入提问：`submit()` 不检查交互态 → 答案被发给模型，提问永不回答；
+2. 同一个交互态下 ESC：审批分支有、提问分支没有 → 唯一出路是退出整个 TUI；
+3. `/clear` 只清视图容器，而 flush 按数据数组全量重建 → 下一个事件把整段对话复活。
+
+- 正解：每次抽控制器，**同时**补一条“从真实输入到控制器→再回到视图”的胶水测试
+  （本仓 `tests/tui-interaction-glue.spec.ts`：真键盘字节 + 真提交 + 真容器断言）。
+- 判据：把胶水行删掉，测试必须变红（上面三条都做了变异验证）。
+- 推论：**“纯函数覆盖率 100%”不能作为拆分完成的标志**，它只说明控制器没 bug，
+  不说明用户能用。同构教训已在 `implement.md` 写过一次（`suggestCommands()` 写了
+  纯函数却没接线）—— 重复出现说明需要机制而非记忆。
+
+### 异步测试不要 await 一个“等输入才会 settle”的 promise
+
+写胶水测试时，`await openApproval()` 再按键是**死锁**（promise 只在路由按键后 settle），
+症状是 5s 超时而不是断言失败 —— 很容易被误读为“实现坏了”。
+正解：得到 promise 引用就按键，最后才 `await expect(p)`；审批/提问/abort 三类都同理。
+
+### 频率契约测试：断言“调了几次”，不只是“算得对”
+
+> 2026-10 `dsh-neeko` TUI 事故的类：**性能回退对值断言完全隐身**。
+
+一个方法把 `readFacts()` → 全量日志快照 + 投影读 + 同步文件读。单元测试全绿（值都对），
+但它被调用在**每个流式 chunk** 上（≈每 token 一次）。实测：50 次调用 → 50 次全量折叠。
+
+- 正解：对热路径上的“昂贵依赖”写**调用次数**断言： 
+  `for (50次) status.setTiming(...)` → `expect(readFacts).toHaveBeenCalledTimes(0)`。
+- 这类测试不需要性能测量、不 flaky，且直接钉住“谁被允许在热路径上做重活”。
+- 同理适用于：每个事件重绘（`requestRender` 次数）、每个 chunk 的日志 fold、
+  每个按键的磁盘读。选一个能计数上的注入点（本仓的 `readFacts`）即可。
+
+### 把快路径换成慢路径（合并入口时最常翻的车）
+
+合并两个方法看起来很干净（“少一个 API，少一帧半更新”），但如果两者的**依赖成本**
+不同，合并就是性能回退：
+
+- 真实案例：`setTiming()`（纯内存，每 chunk 调）+ `refresh()`（全量 fold，每事件调）
+  → 合成 `update()`（每次都重读）→ 流式热路径从零 I/O 变成每 token 全量 I/O。
+- 判据：合并前先问“两个方法被调用的**频率**是否相同”，不同就不能合。
+- 正解：保留两个入口，但让昂贵那个**可选地**带上廉价参数
+  （`refresh(timing?)`）—— 既消掉双重重绘，又不把快路径变慢。
+- 命名上把成本写进去（`updateTiming` / `refreshStatus`），误用在 code review 时就刺眼。
+
+### 双来源不变量（流式 + 落盘）
+
+0.2.x 把实时流与持久日志拆成两个来源。**落盘日志不得被当作 delta 源**：
+若两边都发，每个 token 双发；若只依赖日志，助手文本全丢。
+落盘侧只贡献工具生命周期，实时侧只贡献文本/推理增量。
+
+### cordis patch 的 `disabled: !!js` 求值时机
+
+条件行表达式在 **loader audit** 阶段求值 —— 早于任何 patch row 的 `apply` / `provide`。
+该时刻可用的只有 **host 级事实**（`cmdlineArgs` / `profileContext` / `appExit`，
+由 `provideCmdline` 在 boot 前写入）；任何 row 提供的服务都不可见，
+且 cordis proxy 对未注入服务的属性访问**直接 throw**（`?.` 也救不了，拦截在 proxy trap）。
+
+- 正解：判据落 host 级事实，如 `ctx.get('cmdlineArgs').get().includes('--tui')`；
+  需要 row 内 config 时用 `?? 兜底` 形式（config 求值在 inject 之后，两者时机不同）。
+- 反例：`ctx.neekoStartup.tui`（属性访问 throw）→ `ctx.neekoStartup?.tui`
+  （同样 throw，`?.` 不绕过 proxy trap）→ `ctx.get('neekoStartup')?.tui`
+  （服务未 provide，get 返回 undefined）。
+- 复杂表达式用 IIFE 单行包裹；**多行会破坏 YAML 解析**（`!!js` 标量内不能换行），
+  且 JS 字符串里的 `\n` 也会破坏 YAML —— 需要调试输出时用逗号拼接多段。
+
+### 校验边界不一致 = 合法输入炸运行时（配置/主题/插件目录）
+
+> 适用范围：`packages/**`（Node 库侧）。同类形态在 Rust 侧对应「schema 宽松 + 消费处 unwrap」。
+
+**任何「loader 宽松、consumer 严格」的组合都是定时炸弹**：校验器（JSON schema /
+`coerce*` / 配置解析）允许缺字段而渲染/执行路径把缺字段当编程错误 throw，则一个
+**通过校验的合法输入**能把整个 UI 打死。`dsh-neeko` 的主题 loader 就是这样：
+接受只含 `accent` 的主题文件，而 `Theme.fg()` 对缺失 token 抛错 —— 用户合法文件
+→ 首次 repaint 抛异常。
+
+- 正解：在**解析出口**把稀疏输入叠到完整底版（`{...base, ...input}` 逐 key），
+  让「缺失」在校验层就被填满；消费处保留编程错误断言（那是内部约定）。
+- 反例：消费处逐点上 `?? 默认`，或在 `fg` 里静默回落 —— 前者漏一个 token 就炸，
+  后者把真正的编程错误也吞了。
+- 判据：为「最小合法输入」写一条「全字段可消费不抛」的测试（本仓
+  `overlays a partial document … every token resolves`）；它必须能在「取消叠底板」
+  的变异下变红。
+
+### 第三方行为假设必须先探针实测，再写代码
+
+> 适用范围：`packages/**`（依赖第三方库的适配层）。典型受害面：配置校验、格式化、
+> 输入匹配。
+
+**「覆盖用户输入」的代码是最危险的地方**：它是唯一一处「用户的错」会变成「程序的错」
+的边界。三条实测出来的坑，全部来自同一个动作 —— 用类型/注释推断第三方行为：
+
+| 假设（看起来对） | 实测 | 后果 |
+| --- | --- | --- |
+| `matchesKey` 遇到非法 key id 会抛错或忽略该键 | 解析失败返回 `false`，**永不匹配** | 覆盖型配置里一个错字**让键彻底消失**（退出键死了，TUI 无法退出） |
+| `formatKeyText` 只大写首段 | 它大写**每一段**（`Ctrl+Shift+P`） | 同一个键在自己表格里与 pi 表格两种拼写 |
+| `JSON.parse` 对 BOM 宽容 | 直接抛 → fail-open 分支把**整份文件**吞掉 | 用户配置全废，且无任何提示 |
+
+- 正解：**先写 3 行探针**（`node -e` / 一条临时 spec）打印真实返回值，再决定校验形状。
+  第三方模块的 `dist/*.js` 是唯一权威，`.d.ts` 只描述形状不描述行为。
+- 反例：「覆盖 = 替换，所以用户写什么就是什么」—— 替换语义下，非法输入不是「无效」，
+  而是「把原值删掉」。校验必须在**安装/生效边界**做，而不是在读取边界：
+  读取边界只能判断类型，无法判断「能否匹配」。
+- 判据：为每个「能被用户错误输入覆盖」的字段写一条「非法值不摧毁原行为」的测试；
+  变异（去掉校验）必须变红。本仓 `rejects a key id that can never match, keeping the default`。
+- 连带：**fail-open 的沉默要有对照**。同一个包内两个同类 loader（主题/键位）
+  必须共享同一条清洗规则（本仓 BOM 由 `stripBom` 与 `keymap` 各实现一次 ——
+  统一后一条测试同时守住两处）。
+
+### 快照 vs 活目录（宿主注入的可变目录）
+
+第三方组件把「传入数组」快照进构造函数时，**惰性 getter 只是幻觉**：
+
+```ts
+// API 看起来是活的 …
+listHostCommands: () => readRegistry()
+// … 但 buildCommands() 在构造时立即求值成数组，之后再也不读
+```
+
+插件在宿主运行中注册的命令因此永远进不了菜单，且**没有任何报错**。
+
+- 正解：把目录读取放在**每次请求的边界**（本仓 `LiveSlashProvider` 每次
+  `getSuggestions` 重建内部 provider；pi-tui 的 `applyCompletion` 不读命令表，
+  所以重建无状态代价）。
+- 反例：为「性能」缓存内部 provider —— 这就是 bug 本身。
+- 判据：测试写「先取一次菜单 → 改目录 → 再取」，变异（加缓存）必须变红。
+- 例外：确实异步且昂贵的目录（本仓 skills 需 `await`）允许启动快照，
+  但必须在类型/注释上把 snapshot 语义写清楚，不能让调用方以为是活的。
+
+---
+
+### 终端 UI：模态面板占「槽位」，不用浮层定位（pi-tui）
+
+给输入区做的替换面板（模型选择、会话切换……）**必须替换输入组件所在的槽位**，
+不要用 `showOverlay` 定位：
+
+```ts
+// 反例：anchor 相对整个终端算坐标，面板会飘到别处
+tui.showOverlay(panel, { anchor: 'bottom-center', width: '100%' })
+
+// 正解：放进 editor 原本的槽位（transcript 之后、status bar 之前）
+tui.removeChild(editor)
+tui.addChild(panel)
+```
+
+判据：面板渲染后 `tui.children` 里**不应同时存在** editor 与 panel，且
+status bar 仍是最后一个子节点。
+
+两个必踩的坑：
+
+- **`addChild` 是 `push`，不幂等。** 反复开关面板会把底部组件叠成多份；
+  追加前必须把「之后还要在末尾」的组件先摘掉再装回。
+- **`setFocus(panel 内部输入框)` 会废掉自己的按键分发。** pi-tui 把按键直接
+  路由给 focused component（`tui.js` 的 `focusedComponent.handleInput`），
+  外部 `addInputListener` 收不到 —— 表现为「过滤完全没反应」。面板要么自己
+  分发按键（不设焦点），要么把所有逻辑做成聚焦组件内部的行为。
+
+### 列表过滤用 `fuzzyFilter`，不要用 `SelectList.setFilter`
+
+`SelectList.setFilter` 是 `value.startsWith(query)` 的**前缀**匹配。模型 id 这类
+值（`group/auto-step-5-preview`）用前缀匹配几乎必然「搜不到」：
+
+```ts
+import { fuzzyFilter } from '@earendil-works/pi-tui'
+const matched = fuzzyFilter(rows, query, (item) => item.value)
+```
+
+`fuzzyFilter` 按字符顺序匹配并按分数排序（`step5` 命中中间的 `-step-5-`，
+`wbds` 命中 `workbuddy-ai/deepseek-…`）。`SelectList` 没有 `setItems`，把
+运行时的 `items` 换成 matched 集合后 `setFilter('')` 重置视图。
+
+另：`SelectList` 主列默认 clamp 到 **32 列**（`DEFAULT_PRIMARY_COLUMN_WIDTH`），
+会把 `workbuddy-ai/deepseek-v4.1-flash` 这类 33 字符的 id 截断且**不报错**。
+传 `layout.maxPrimaryColumnWidth` 放宽。
+
+---
+
+### 双渲染器：切换后所有重绘必须走「活跃渲染器」
+
+pi-tui 有两个渲染器，主屏保 scrollback 但**不捕获鼠标**，alt 屏有自己的视口/选中/复制。
+全屏切换后**主屏已 `stop()`**，任何写死 `this.tui.requestRender()` 的调用都落空：
+
+```ts
+// 反例：全屏下重绘请求打到已停止的主屏，只有 alt 屏因别的原因重绘时才连带刷新
+this.tui.requestRender()
+
+// 正解：单一访问器
+private get activeTui(): TUI { return this.fullscreen?.screen ?? this.tui }
+```
+
+判据：全屏下流式内容必须**逐帧增长**，不能「等答案结束才出现」。
+
+**更隐蔽的一层**：`Editor` 在构造函数里**存住**了传进去的 `tui`（用于
+`requestRender()` 和 `terminal.rows`），没有任何 setter 能替换。全屏后它仍向主屏
+发重绘 —— autocomplete 菜单会算出结果但**永不显示**（表现为「`/` 没反应」）。
+正解是传一个**代理**，把这两个成员转发给 `activeTui`。
+
+### `submit()` 必须先清空编辑器，再分发
+
+pi-tui 的 `isSlashMenuAllowed()` 要求 `cursorLine === 0`，`isAtStartOfMessage()` 还要求
+光标前为空。清理写在某个分支 `return` 之后 = 该分支永远不清：
+
+```ts
+// 反例：普通消息分支 return 在前，编辑器残留 "hello"
+if (action.kind === 'prompt') { onSubmit(text); return }
+editor.setText('')
+
+// 正解
+editor.setText('')
+if (action.kind === 'prompt') { onSubmit(text); return }
+```
+
+症状：**首次 `/` 出菜单，提交一次消息后再 `/` 不出，要再敲一个字符才行**。
+判据：测试写「提交普通消息 → 立刻打 `/` → 菜单打开」，变异（把清空移回分支后）必须变红。
+
+### 重绘成本：行缓存 + 不自调度
+
+两条独立的性能契约，缺一条就会「卡」：
+
+1. **行级缓存**。每次 flush 全量 `renderRow` + 重建容器，600 行约 30 ms，
+   且随会话线性增长。用「行对象身份 + 内容长度 + 展开态 + 主题 + spinner 帧」
+   做指纹，命中则复用组件（实测 900 行降到 1 ms）。
+2. **flush 不许自我调度**。`flush()` 末尾调 `this.requestRender()` 会重新排程
+   50 ms 定时器 → **空闲时也每 50 ms 全量重排一次，永不停止**。改成只调
+   `activeTui.requestRender()`。
+
+判据：测试写「空闲 300 ms 内终端输出字节数不变」，变异（恢复自调度）必须变红。
+
+### 折叠是默认态，`boundary: 0` 才是全展开
+
+`isExpanded(row, {})`（未传 boundary）必须返回 **false**。省略 boundary 表示
+「用默认」，不是「全展开」—— 把两者混同会让 app 层漏传参数时静默全展开。
+
+---
+
 ## 代码风格
 
 ### 注释风格 —— 中文为主
@@ -758,3 +1050,15 @@ pnpm tauri build       # 生产环境构建，包含打包
 （留 1.75pt，与前端全局地板同理）—— 只防回退，不是目标值。整仓数字被 `theme/*`、多数
 `*/commands.rs`（薄命令层，需 Tauri 运行时）拉低，所以**不要**用它衡量单个模块的质量。
 新增未测试代码把地板打穿时，正解是补测试，而不是下调地板。
+
+### 构建产物的 files 白名单与 chunk 拆分
+
+bundler（tsdown/rolldown）会把多入口共享的模块拆成 hash 命名的 chunk
+（如 `dsh-adapter-YLehbx72.js`）。若 `package.json` 的 `files` 是**逐文件白名单**，
+chunk 不在其中 → 包安装后 `import` 直接炸（`Cannot find module`），且只在
+**消费方加载时**暴露。二选一：
+
+- `files` 收整个目录（`"lib"`）—— 简单，但可能带入非预期产物；
+- bundler 关 chunk 拆分（`splitting: false`）—— 发布面扁平可预测，多入口小包推荐。
+
+判据：发包前 `npm pack --dry-run` 检查产物完整性；或消费方真机 import 一次。

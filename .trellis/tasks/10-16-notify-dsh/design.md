@@ -91,8 +91,29 @@ DSH 有完整上下文（`AgentContext` 全知），走降级链是语义降级�
 
 | 风险 | 对策 |
 | --- | --- |
-| **`:3081` 的实际可用性未验**（`dsh-neeko` 在 Neeko 内零引用，可能是未完成品） | U7 spike 必须真实连接一次；不可用 → 分支 C（登记不实施） |
+| ~~**`:3081` 的实际可用性未验**（`dsh-neeko` 在 Neeko 内零引用，可能是未完成品）~~ → **已验：桥可用**（见下） | U7 spike 已不需要再做「能不能起」的验证 |
 | 走 B 会产生重复投影代码 | 优先 A；选 B 必须在 design 记录代价 |
 | `dsh-neeko` 是独立 npm 包（门禁豁免） | 若需改它 → 另立任务 + 走其 `prepublishOnly` 门禁（不在本任务范围） |
 | DSH 版本漂移（`0.2.0-rc.2`，rc 阶段） | 事件名随版本变化风险高；adapter/投影需 fail-open（未知事件忽略） |
 | 与 `10-12` 的 DSH 无关联 | `10-12` 完全未涉及 DSH；本任务不能引用它的任何验收 |
+
+### 前置事实回填（2026-10-17，来自 `10-17-dsh-neeko-bridge-fix`）
+
+`dsh-neeko` **不再是「可能是未完成品」** —— 桥已修好并实测可用：
+
+```
+dsh --profile neeko --no-spawn --port 3197
+→ dsh-neeko: bridge listening on ws://127.0.0.1:3197/ws
+→ TCP 127.0.0.1:3197 (LISTEN)
+→ curl /neeko-health → {"status":"ok","name":"dsh-neeko","version":"1.0.0"}
+→ WS handshake (mode=dsh-agent) → session.init 到达
+```
+
+**对 U7 的影响**：
+
+- 桥的**传输层与生命周期**已可用，`branch C（不实施）` 的理由（「桥跑不起来」）已消失。
+- 但 **`dsh-neeko` 现在只支持 dsh `0.2.x`**（peer 已收窄）；U7 若需支持旧代需另议。
+- 事件面仍需 U7 自己确认：桥的协议事件（`approval.request` / `question.request` /
+  `tool.start` / `tool.end`）已实测映射正确，但**「会话结束 / 错误」类事件是否存在**仍待查
+  （桥的 `DshToNeeko` 没有 turn-completed 类消息，这直接影响 R2.1 后两行）。
+- 消费侧归属（A / B / C）**仍未定案** —— 这正是 U7 要回答的，本任务不去替它决定。

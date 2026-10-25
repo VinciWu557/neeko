@@ -15,17 +15,19 @@ import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentHandle, ModelSelection } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentHandle, AssistantStreamFrame, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
-import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionRequest, UserQuestionProvider } from '@deepseek-ai/dsh-user-questions'
+import type { AskUserQuestionAnswer, AskUserQuestionAnswerItem, AskUserQuestionItem, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
 import { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
+import { canAnswerQuestions, registerAgentHandlers } from './agent-handlers.ts'
 import type { DshToNeeko, NeekoStatus } from './protocol.ts'
 import type { Handshake } from './protocol.ts'
-import { buildHistory, translateEvent } from './dsh-adapter.ts'
+import { buildHistory, readSessionEvents, translateEvent, translateStreamFrame } from './dsh-adapter.ts'
+import type { StreamStart } from './dsh-adapter.ts'
 import { NeekoAdapter } from './neeko-adapter.ts'
 import { NeekoWsServer } from './ws-server.ts'
 import type { NeekoConnection } from './ws-server.ts'
@@ -109,6 +111,8 @@ export class NeekoBridge {
   private toolActive = 0
   private status: NeekoStatus = 'idle'
   private activationChain: Promise<void> = Promise.resolve()
+  /** The `start` frame of the attempt currently streaming, if any. */
+  private streamStart: StreamStart | undefined
   private boundPort: number | undefined
   private started = false
 
@@ -149,13 +153,23 @@ export class NeekoBridge {
     this.started = true
     await this.ctx.get('loader')?.await()
     this.disposers.push(this.ctx.on('session/event', (session, event) => this.handleSessionEvent(session, event)))
+    // Live assistant deltas arrive on their own agent-scoped channel in 0.2.x —
+    // the durable log carries settled messages only (see dsh-adapter docs).
+    this.disposers.push(this.ctx.on('agent/assistant-stream', ({ agent, frame }) => {
+      if (agent !== this.agent) return
+      this.handleAssistantStream(frame)
+    }))
     this.disposers.push(this.ctx.on('agent/status', ({ agent, status }) => {
       if (agent !== this.agent) return
       this.agentRunning = status === 'running'
       this.refreshStatus()
     }))
-    const questionDisposer = this.ctx.get('userQuestions')?.registerProvider(this.questionProvider())
-    if (questionDisposer !== undefined) this.disposers.push(questionDisposer)
+
+    // Questions are answered through the agent-scoped `user-questions/request`
+    // waterfall registered in `setupAgent` — NOT via a provider on this
+    // service. `userQuestions` stays in `inject` because we consume the events
+    // it dispatches: without the service those events never fire and the
+    // bridge would silently lose the ability to ask anything.
 
     this.boundPort = await this.server.start()
     this.io.stderr.write(`dsh-neeko: bridge listening on ${this.server.websocketUrl()}\n`)
@@ -174,6 +188,7 @@ export class NeekoBridge {
     const handle = this.agentHandle
     this.agentHandle = undefined
     this.agent = undefined
+    this.streamStart = undefined
     if (handle !== undefined) await handle.dispose()
     await this.server.stop()
   }
@@ -213,6 +228,9 @@ export class NeekoBridge {
     this.agentRunning = false
     this.toolActive = 0
     this.status = 'idle'
+    // Drop any half-streamed attempt: its turn/step must not be reused to
+    // attribute chunks from a later, unrelated attempt.
+    this.streamStart = undefined
     if (handle !== undefined) await handle.dispose()
   }
 
@@ -285,6 +303,8 @@ export class NeekoBridge {
     }
     this.agentHandle = reAdoptingOwned ? previousHandle : (adopted ? undefined : handle)
     this.agent = agent
+    // A different agent cannot inherit an in-flight attempt from the previous one.
+    this.streamStart = undefined
     await agent.whenIdle()
 
     // Push the reconstructed history and open the chat.
@@ -292,7 +312,7 @@ export class NeekoBridge {
       type: 'session.init',
       payload: {
         sessionId: String(agent.session.id),
-        history: buildHistory(agent.session.events),
+        history: buildHistory(readSessionEvents(agent.session)),
       },
     })
     this.refreshStatus()
@@ -301,10 +321,13 @@ export class NeekoBridge {
   /** Compose one agent's scoped world for the Neeko surface. */
   private setupAgent(agentCtx: Context, selection: ModelSelection): () => void {
     const modelDisposer = installModelSelection(agentCtx, { current: selection, assembled: undefined })
-    const approvalDisposer = agentCtx.on('approval/request', (request: ApprovalRequest) => this.requestApproval(request))
+    const handlersDisposer = registerAgentHandlers(agentCtx, {
+      onApproval: (request) => this.requestApproval(request),
+      onQuestion: (request) => this.answerQuestion(request),
+    })
     return () => {
       modelDisposer()
-      approvalDisposer()
+      handlersDisposer()
     }
   }
 
@@ -320,6 +343,18 @@ export class NeekoBridge {
         this.toolActive = Math.max(0, this.toolActive - 1)
         this.refreshStatus()
       }
+      this.sendToConnection(message)
+    }
+  }
+
+  /** Forward one live assistant stream frame (text/reasoning deltas only). */
+  private handleAssistantStream(frame: AssistantStreamFrame): void {
+    if (frame.type === 'start') {
+      this.streamStart = frame
+    } else if (frame.type === 'end') {
+      this.streamStart = undefined
+    }
+    for (const message of translateStreamFrame(this.streamStart, frame)) {
       this.sendToConnection(message)
     }
   }
@@ -350,14 +385,12 @@ export class NeekoBridge {
     })
   }
 
-  /** Forward one (or more) user questions to Neeko and collect the answers. */
-  private questionProvider(): UserQuestionProvider {
-    return {
-      ask: (request) => this.askQuestion(request),
-    }
-  }
-
-  private async askQuestion(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer> {
+  /** Forward one (or more) user questions to Neeko, or decline when idle. */
+  private async answerQuestion(request: AskUserQuestionRequest): Promise<AskUserQuestionAnswer | undefined> {
+    // No connection means nobody can answer: decline so the waterfall falls
+    // through to the inner `noAnswerer` (NO_PROVIDER) instead of hanging the
+    // agent forever.
+    if (!canAnswerQuestions(this.connection !== undefined)) return undefined
     const answers: AskUserQuestionAnswerItem[] = []
     for (const question of request.questions) {
       answers.push(await this.askOneQuestion(question, request.signal))

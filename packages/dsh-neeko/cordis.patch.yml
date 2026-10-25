@@ -1,9 +1,9 @@
-# dsh-neeko bundle patch: the two rows that turn a profile into the Neeko
-# bridge — the CLI/daemon startup provider and the bridge runtime itself.
-#
-# The `neeko` runtime row injects the `neekoStartup` service so its config is
-# resolved from this invocation's flags (`dsh --profile neeko [daemon] ...`),
-# with the integration design's defaults applied here.
+# dsh-neeko bundle patch: the rows that turn a profile into either the Neeko
+# bridge or the interactive TUI — the CLI/daemon startup provider, the bridge
+# runtime, and the TUI runner. The startup row is always mounted; the bridge
+# and TUI rows are mutually exclusive via `disabled: !!js` conditions (the
+# same conditional-entry mechanism dsh-base's own patch uses), so exactly one
+# of them runs per invocation: `--tui` selects the TUI, anything else the bridge.
 
 - insert:
     - id: neeko-startup
@@ -12,6 +12,7 @@
     - id: neeko
       name: 'dsh-neeko'
       inject: [neekoStartup]
+      disabled: !!js (function(){ try { return ctx.get('cmdlineArgs').get().includes('--tui') } catch { return false } })()
       config:
         daemon: !!js ctx.neekoStartup.daemon ?? false
         host: !!js ctx.neekoStartup.host ?? '127.0.0.1'
@@ -19,3 +20,22 @@
         sessionId: !!js ctx.neekoStartup.sessionId
         autoSpawn: !!js ctx.neekoStartup.autoSpawn ?? true
         spawnCommand: !!js ctx.neekoStartup.spawnCommand
+
+    - id: neeko-tui
+      name: 'dsh-neeko/tui'
+      inject: [neekoStartup]
+      disabled: !!js (function(){ try { return !ctx.get('cmdlineArgs').get().includes('--tui') } catch { return true } })()
+      config:
+        daemon: !!js ctx.neekoStartup.daemon ?? false
+        host: !!js ctx.neekoStartup.host ?? '127.0.0.1'
+        port: !!js ctx.neekoStartup.port ?? 3081
+        sessionId: !!js ctx.neekoStartup.sessionId
+        tui: !!js ctx.neekoStartup.tui === true
+        # Passed through untouched, `'main' | 'fullscreen' | undefined`.
+        #
+        # It is a string, not a boolean, because the domain has three cases — and
+        # the third ("said nothing") is the one that carries the default. An
+        # earlier `mainScreen === true` here collapsed *absent* and *false* into the
+        # same value, so the TUI could no longer tell "fullscreen was requested"
+        # from "nothing was requested", and its default became unreachable.
+        screen: !!js ctx.neekoStartup.screen

@@ -41,7 +41,20 @@ export interface Handshake {
   }
 }
 
-/** One reconstructed conversation row pushed to Neeko on `session.init`. */
+/** One reconstructed conversation row pushed to Neeko on `session.init`.
+ *
+ * ⚠️ `messageId` here and `messageId` on `text.delta` are **disjoint namespaces
+ * on purpose** and must never be assumed to join:
+ *
+ * - History rows identify a *settled* message (`assistant:{turn}:{step}:{message.id}`).
+ * - Delta frames multiplex a *live attempt* (`assistant:{turn}:{step}:{attemptId}`),
+ *   because DSH retries a step by re-running the same turn/step with a new attempt,
+ *   and a failed attempt's text must not be spliced into the successful retry.
+ *
+ * They never need to reconcile: `session.init` arrives once per activation and
+ * establishes the baseline (the bridge awaits `agent.whenIdle()` first), so deltas
+ * only ever describe attempts that began after the baseline landed.
+ */
 export type HistoryItem =
   | {
       kind: 'user'
@@ -65,6 +78,20 @@ export type HistoryItem =
       args: unknown
       result: unknown
       status: 'success' | 'failed'
+      createdAt: number
+    }
+  | {
+      /**
+       * A model-response failure, settled from the turn's `turn/end` reason.
+       *
+       * Its own variant, not a flag on `assistant`: a request can fail before
+       * any assistant message exists (auth, rate limit, transport), and a
+       * resumed turn would otherwise show the prompt and then silence.
+       */
+      kind: 'failure'
+      turn: number
+      /** Pre-worded line, ready to paint. */
+      text: string
       createdAt: number
     }
 

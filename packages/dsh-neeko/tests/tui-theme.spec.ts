@@ -1,0 +1,380 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  BUILTIN_THEMES, THEME_TOKENS, THEMES_DIR_ENV, Theme, findBuiltin, listThemes,
+  loadUserThemes, markdownThemeOf, piThemesDir, resolveTheme, resolveThemeByName,
+  themeSearchPaths, themesDir,
+} from '../src/tui/theme.ts'
+import type { ThemeDocument } from '../src/tui/theme.ts'
+import { stripAnsi } from './support/ansi.ts'
+
+/**
+ * The theme system mirrors pi's: a theme is `{ vars, colors }` where `colors`
+ * maps semantic tokens to either a var name or a literal color. These cases pin
+ * the resolution rules and the fact that a bad color degrades instead of
+ * throwing at render time.
+ */
+
+const doc: ThemeDocument = {
+  name: 'test',
+  appearance: 'dark',
+  vars: { primary: 'okhsl(295 50% 67%)' },
+  colors: { accent: 'primary', text: 'primary', muted: '#808080' },
+}
+
+describe('Theme resolution', () => {
+  it('resolves a var reference to its literal color', () => {
+    const theme = resolveTheme(doc)
+    // Same var, same escape sequence.
+    expect(theme.ansiOf('accent')).toBe(theme.ansiOf('text'))
+    expect(theme.ansiOf('accent')).not.toBe('')
+  })
+
+  it('accepts a literal color without a var', () => {
+    const theme = resolveTheme(doc)
+    expect(theme.ansiOf('muted')).not.toBe('')
+  })
+
+  it('emits the default-foreground reset for an empty color', () => {
+    // pi treats "" as "terminal default" rather than "no styling".
+    const theme = resolveTheme({ name: 'reset', colors: { text: '' } })
+    expect(theme.ansiOf('text')).toBe('\x1b[39m')
+  })
+
+  it('leaves an unparsable colour unpaintable rather than hiding it', () => {
+    // A typo is not the same as `""` (pi's spelling of "the terminal's own
+    // colour"). Degrading a typo to the default reset made a broken theme look
+    // deliberate and left `has()` unable to report it. `resolveTheme` overlays a
+    // built-in, so the raw constructor is where this contract lives.
+    const theme = new Theme('broken', { name: 'broken', colors: { accent: 'not-a-color', text: '#fff' } })
+    expect(theme.has('accent')).toBe(false)
+    expect(() => theme.fg('accent', 'x')).toThrow(/no color for "accent"/)
+  })
+
+  it('still treats an empty string as the terminal default', () => {
+    // pi writes `text: ""` meaning "whatever the terminal uses"; that is a valid
+    // declaration and must stay paintable.
+    const theme = new Theme('plain', { name: 'plain', colors: { text: '' } })
+    expect(theme.has('text')).toBe(true)
+    expect(() => theme.fg('text', 'x')).not.toThrow()
+  })
+
+  it('throws a named error for a token a hand-built theme does not define', () => {
+    // The programming-error contract lives at the `Theme` boundary: sparse
+    // *documents* are normalised by `resolveTheme` (overlay, next cases), so
+    // only direct construction can produce a Theme with holes.
+    const theme = new Theme('sparse', { name: 'sparse', colors: { accent: 'okhsl(0 0% 50%)' } })
+    expect(() => theme.fg('error', 'x')).toThrow(/no color for "error"/)
+  })
+
+  it('overlays a partial document on the dark base (every token resolves)', () => {
+    // A partial file is VALID input for the loader; painting it must not throw
+    // mid-repaint — missing rows fall back to the base palette.
+    const theme = resolveTheme({ name: 'sparse', colors: { accent: '#123456' } })
+    for (const token of THEME_TOKENS) {
+      expect(() => theme.fg(token, 'x'), token).not.toThrow()
+    }
+    const dark = resolveTheme(findBuiltin('dark')!)
+    expect(theme.ansiOf('error')).toBe(dark.ansiOf('error')) // inherited
+    expect(theme.ansiOf('accent')).not.toBe(dark.ansiOf('accent')) // explicit wins
+  })
+
+  it('overlays an appearance-light document on the light base', () => {
+    const theme = resolveTheme({ name: 'sparse', appearance: 'light', colors: { accent: '#123456' } })
+    const light = resolveTheme(findBuiltin('light')!)
+    expect(theme.ansiOf('error')).toBe(light.ansiOf('error'))
+    expect(theme.ansiOf('accent')).not.toBe(light.ansiOf('accent'))
+  })
+
+  it('does not inherit the base appearance (an undeclared one stays undeclared)', () => {
+    // Appearance decides the terminal color-mode fallback; leaking the base's
+    // `dark` would silently force truecolor on a theme that never asked.
+    const theme = resolveTheme({ name: 'plain', colors: { accent: '#123456' } })
+    expect(theme.spec.appearance).toBeUndefined()
+  })
+
+  it('wraps text in the token escape and resets afterwards', () => {
+    const theme = resolveTheme(doc)
+    const painted = theme.fg('accent', 'hello')
+    expect(painted.startsWith(theme.ansiOf('accent'))).toBe(true)
+    expect(painted.endsWith('\x1b[39m')).toBe(true)
+    expect(painted).toContain('hello')
+  })
+})
+
+describe('built-in themes', () => {
+  it('ships dark and light, both with a declared appearance', () => {
+    expect(BUILTIN_THEMES.map((theme) => theme.name)).toEqual(['dark', 'light'])
+    expect(findBuiltin('dark')?.appearance).toBe('dark')
+    expect(findBuiltin('light')?.appearance).toBe('light')
+  })
+
+  it('defines every token the TUI paints', () => {
+    // Keep this list in sync with what app.ts/transcript.ts actually call.
+    const painted = ['accent', 'border', 'success', 'error', 'warning', 'muted', 'dim', 'text', 'thinkingText', 'userMessageText']
+    for (const theme of BUILTIN_THEMES) {
+      for (const token of painted) {
+        expect(theme.colors, `${theme.name} is missing ${token}`).toHaveProperty(token)
+      }
+    }
+  })
+
+  it('returns undefined for an unknown name', () => {
+    expect(findBuiltin('nope')).toBeUndefined()
+  })
+})
+
+describe('listThemes', () => {
+  it('works with no user themes', () => {
+    expect(listThemes([]).map((choice) => choice.name)).toEqual(['dark', 'light'])
+  })
+
+  it('defaults an undeclared appearance to dark', () => {
+    const user = [{ document: { name: 'bare', colors: { accent: '#fff' } }, sourcePath: '/x/bare.json' }]
+    expect(listThemes(user).find((choice) => choice.name === 'bare')?.appearance).toBe('dark')
+  })
+})
+
+describe('Theme instance', () => {
+  it('exposes its document for previews', () => {
+    const theme = new Theme('x', doc)
+    expect(theme.spec.name).toBe('test')
+    expect(theme.name).toBe('x')
+  })
+})
+
+describe('user theme files', () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'dsh-neeko-themes-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const write = (name: string, body: unknown): void => {
+    writeFileSync(join(dir, name), typeof body === 'string' ? body : JSON.stringify(body))
+  }
+
+  it('loads a valid theme file', () => {
+    write('ocean.json', {
+      name: 'ocean',
+      appearance: 'dark',
+      vars: { blue: 'okhsl(220 60% 60%)' },
+      colors: { accent: 'blue', text: 'blue' },
+    })
+    const themes = loadUserThemes(dir)
+    expect(themes.map((theme) => theme.document.name)).toEqual(['ocean'])
+    expect(themes[0]?.document.vars?.blue).toBe('okhsl(220 60% 60%)')
+    expect(resolveTheme(themes[0]!.document).ansiOf('accent')).not.toBe('')
+  })
+
+  it('falls back to the file stem when the document has no name', () => {
+    write('nameless.json', { colors: { accent: 'okhsl(0 50% 50%)' } })
+    expect(loadUserThemes(dir)[0]?.document.name).toBe('nameless')
+  })
+
+  it('keeps only known tokens and ignores unknown ones', () => {
+    write('partial.json', { colors: { accent: 'okhsl(0 50% 50%)', notAToken: '#fff' } })
+    const document = loadUserThemes(dir)[0]!.document
+    expect(document.colors).toHaveProperty('accent')
+    expect(document.colors).not.toHaveProperty('notAToken')
+  })
+
+  it('skips invalid JSON instead of failing the whole scan', () => {
+    write('broken.json', '{ not json')
+    write('good.json', { colors: { accent: 'okhsl(0 50% 50%)' } })
+    expect(loadUserThemes(dir).map((theme) => theme.document.name)).toEqual(['good'])
+  })
+
+  it('skips a file with no colors map', () => {
+    write('empty.json', { name: 'empty' })
+    expect(loadUserThemes(dir)).toEqual([])
+  })
+
+  it('strips a UTF-8 BOM', () => {
+    write('bom.json', `\uFEFF${JSON.stringify({ colors: { accent: 'okhsl(0 50% 50%)' } })}`)
+    expect(loadUserThemes(dir)).toHaveLength(1)
+  })
+
+  it('ignores non-json files and a missing directory', () => {
+    write('readme.md', '# hi')
+    expect(loadUserThemes(dir)).toEqual([])
+    expect(loadUserThemes(join(dir, 'nope'))).toEqual([])
+  })
+
+  it('lists built-ins first, then user themes, skipping name collisions', () => {
+    const user = [{ document: { name: 'dark', colors: { accent: '#fff' } }, sourcePath: '/x/dark.json' },
+                  { document: { name: 'ocean', colors: { accent: '#00f' } }, sourcePath: '/x/ocean.json' }]
+    expect(listThemes(user).map((choice) => choice.name)).toEqual(['dark', 'light', 'ocean'])
+    expect(listThemes(user).find((choice) => choice.name === 'ocean')?.sourcePath).toBe('/x/ocean.json')
+  })
+
+  it('resolves a user theme by name and reports unknown names', () => {
+    const user = [{ document: { name: 'ocean', colors: { accent: '#00f' } }, sourcePath: '/x/ocean.json' }]
+    expect(resolveThemeByName('ocean', user)?.name).toBe('ocean')
+    expect(resolveThemeByName('nope', user)).toBeUndefined()
+  })
+
+  it('honours the themes-dir env override', () => {
+    expect(themesDir({ [THEMES_DIR_ENV]: '/custom/themes' } as NodeJS.ProcessEnv)).toBe('/custom/themes')
+  })
+
+  it('defaults to ~/.dsh/themes, the DSH home', () => {
+    // Not `~/.dsh-neeko/themes`: the DSH home already holds `profiles/`,
+    // `sessions/` and `storages/`, and a theme is profile configuration.
+    expect(themesDir({} as NodeJS.ProcessEnv)).toBe(join(homedir(), '.dsh', 'themes'))
+  })
+
+  it('honours DSH_HOME for the home directory', () => {
+    // A relocated profile must not leave its themes behind in `~/.dsh`.
+    expect(themesDir({ DSH_HOME: '/srv/dsh' } as NodeJS.ProcessEnv)).toBe(join('/srv/dsh', 'themes'))
+  })
+})
+
+describe('pi theme compatibility', () => {
+  it('defines every token pi defines', () => {
+    // The parser must accept a full pi theme; a short token list would reject
+    // valid files. 56 is pi's own count.
+    expect(THEME_TOKENS).toHaveLength(56)
+    expect(THEME_TOKENS).toContain('thinkingOff')
+    expect(THEME_TOKENS).toContain('bashMode')
+    expect(THEME_TOKENS).toContain('mdHeading')
+  })
+
+  it('ships built-ins that leave pi\'s four fallback tokens to the chain', () => {
+    // pi's own `dark.json` and `light.json` omit these four and rely on the
+    // fallback chain. Writing them into the built-in data would be a second
+    // definition of the same fact — and it would stop the chain from ever running
+    // on a built-in, which is how this file came to disagree with pi.
+    const FALLBACK_FILLED = ['scrollbarTrack', 'scrollbarThumb', 'searchMatchBg', 'searchMatchText'] as const
+    for (const theme of BUILTIN_THEMES) {
+      for (const token of FALLBACK_FILLED) {
+        expect(theme.colors[token], `${theme.name}/${token}`).toBeUndefined()
+      }
+    }
+  })
+
+  it('keeps pi token names that this TUI does not paint yet', () => {
+    // Dropping them would make a pi theme silently lose those colors.
+    const dark = findBuiltin('dark')!
+    expect(dark.colors.syntaxKeyword).toBeDefined()
+    expect(dark.colors.toolDiffAdded).toBeDefined()
+  })
+
+  it('scans ~/.dsh/themes first, then pi\'s directory', () => {
+    // `~/.dsh` is the DSH home — it already holds `profiles/`, `sessions/` and
+    // `storages/`, so themes join them rather than getting a second directory of
+    // their own. pi's directory stays in the list as a compatibility layer: a
+    // theme already installed for pi keeps working without being copied.
+    const paths = themeSearchPaths({} as NodeJS.ProcessEnv)
+    expect(paths).toHaveLength(2)
+    expect(paths[0]).toBe(join(homedir(), '.dsh', 'themes'))
+    expect(paths[1]).toBe(join(homedir(), '.pi', 'agent', 'themes'))
+  })
+
+  it('honours DSH_NEEKO_THEMES_DIR as the first directory', () => {
+    // The override is what a test or an alternate profile uses; it must not also
+    // disable the built-in search, or a user theme would vanish under a test that
+    // only wanted to redirect writes.
+    const paths = themeSearchPaths({ DSH_NEEKO_THEMES_DIR: '/custom/themes' } as NodeJS.ProcessEnv)
+    expect(paths[0]).toBe('/custom/themes')
+  })
+
+  it('collapses the two directories when they resolve to the same path', () => {
+    // `PI_AGENT_DIR=~/.dsh` (or `DSH_NEEKO_THEMES_DIR` pointing at pi's own
+    // directory) would otherwise scan the same directory twice and list every
+    // theme in it twice.
+    const paths = themeSearchPaths({ DSH_NEEKO_THEMES_DIR: '/same/themes', PI_AGENT_DIR: '/same' } as NodeJS.ProcessEnv)
+    expect(paths).toEqual(['/same/themes'])
+  })
+
+  it('honours PI_AGENT_DIR for pi\'s directory', () => {
+    expect(piThemesDir({ PI_AGENT_DIR: '/custom/agent' } as NodeJS.ProcessEnv))
+      .toBe(join('/custom/agent', 'themes'))
+  })
+
+  it('lets a local theme shadow a pi theme of the same name', () => {
+    const local = { document: { name: 'shared', colors: { accent: '#111' } }, sourcePath: '/local/shared.json' }
+    const fromPi = { document: { name: 'shared', colors: { accent: '#222' } }, sourcePath: '/pi/shared.json' }
+    // loadUserThemes dedupes across dirs; simulate by calling listThemes with both.
+    expect(listThemes([local, fromPi]).filter((choice) => choice.name === 'shared')).toHaveLength(1)
+    expect(listThemes([local, fromPi]).find((choice) => choice.name === 'shared')?.sourcePath).toBe('/local/shared.json')
+  })
+
+  it('builds a Markdown theme from md* tokens', () => {
+    const theme = resolveTheme({
+      name: 'md',
+      colors: { mdHeading: 'okhsl(83 88% 67%)', mdCode: 'okhsl(295 50% 67%)' },
+    })
+    const md = markdownThemeOf(theme)
+    expect(md.heading?.('x')).toContain(theme.ansiOf('mdHeading'))
+    expect(md.code?.('y')).toContain(theme.ansiOf('mdCode'))
+    // An omitted md token inherits the base palette (overlay), not bare text.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    expect(md.quote?.('z')).toContain(dark.ansiOf('mdQuote'))
+  })
+
+  it('highlights fenced code from the syntax tokens', () => {
+    // Without this a code block is one flat colour — the biggest readability
+    // loss in a transcript full of code.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    expect(md.highlightCode).toBeTypeOf('function')
+    const lines = md.highlightCode?.('const a = "x" // note', 'ts') ?? []
+    expect(lines).toHaveLength(1)
+    // Each class is painted from its own token.
+    expect(lines[0]).toContain(dark.ansiOf('syntaxKeyword'))
+    expect(lines[0]).toContain(dark.ansiOf('syntaxString'))
+    expect(lines[0]).toContain(dark.ansiOf('syntaxComment'))
+  })
+
+  it('returns the code unchanged when the fence has no language', () => {
+    const dark = resolveTheme(findBuiltin('dark')!)
+    expect(markdownThemeOf(dark).highlightCode?.('plain text', undefined)).toEqual(['plain text'])
+  })
+
+  it('renders list markers as bullets, not source dashes', () => {
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    const striped = stripAnsi(md.listBullet?.('- ') ?? '')
+    expect(striped).toBe('• ')
+  })
+
+  it('draws a code fence as a rule instead of raw backticks', () => {
+    // A ``` fence is Markdown *source*; the reader wants a bordered region.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    const strip = (text?: string): string => stripAnsi(text ?? '')
+    expect(strip(md.codeBlockBorder?.('```'))).not.toContain('```')
+    expect(strip(md.codeBlockBorder?.('```'))).toContain('─')
+    // …and the language label survives: it explains the code.
+    expect(strip(md.codeBlockBorder?.('```ts'))).toContain('ts')
+  })
+
+  it('indents code so it reads as a block', () => {
+    expect(markdownThemeOf(resolveTheme(findBuiltin('dark')!)).codeBlockIndent).toBe('  ')
+  })
+
+  it('styles emphasis with terminal attributes', () => {
+    // Returning the text unchanged dropped **bold** and *italic* entirely, so
+    // emphasised words read exactly like the rest of the sentence.
+    const dark = resolveTheme(findBuiltin('dark')!)
+    const md = markdownThemeOf(dark)
+    expect(md.bold?.('x')).toContain('\x1b[1m')
+    expect(md.italic?.('x')).toContain('\x1b[3m')
+    expect(md.underline?.('x')).toContain('\x1b[4m')
+    expect(md.strikethrough?.('x')).toContain('\x1b[9m')
+  })
+
+  it('leaves md tokens unstyled only for a hand-built sparse theme', () => {
+    // `resolveTheme` always overlays, so this shape exists only via `new Theme`
+    // — the guard keeps Markdown rendering safe there too.
+    const theme = new Theme('raw', { name: 'raw', colors: { mdHeading: 'okhsl(83 88% 67%)' } })
+    const md = markdownThemeOf(theme)
+    expect(md.quote?.('z')).toBe('z')
+  })
+})

@@ -1,8 +1,9 @@
 import { defineConfig } from 'tsdown'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/startup.ts', 'src/protocol.ts'],
+  entry: ['src/index.ts', 'src/startup.ts', 'src/protocol.ts', 'src/tui/runner.ts'],
   clean: true,
+  splitting: false,
   dts: true,
   fixedExtension: false,
   format: 'esm',

@@ -19,3 +19,29 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Third-party notices
+
+  pi — https://github.com/earendil-works/pi
+  Copyright (c) Mario Zechner
+  Licensed under the MIT License
+
+Portions of this package are transcribed from pi's CLI application
+(`@earendil-works/pi-coding-agent`), whose components are not depended on:
+
+  src/tui/message-view.ts       AssistantMessage / UserMessage / ToolExecution
+  src/tui/status-indicator.ts   StatusIndicator wrapper and border composition
+  src/tui/theme-tokens.ts       the 56-token vocabulary
+  src/tui/theme-selector.ts     ThemeSelectorComponent
+  src/tui/thinking-selector.ts  ThinkingSelectorComponent
+
+`@earendil-works/pi-tui` is a dependency, not a source: no code is copied from
+it, so it carries no notice of its own. Files that mention pi in prose without
+one of the markers above describe its behaviour and contain no ported code.
+
+pi is distributed under the MIT License, which requires its copyright notice and
+permission notice to accompany copies of the software. The copyright notice is
+stated above; the permission notice is the MIT text at the top of this file —
+the same terms, applied to this package's own copyright line as well.

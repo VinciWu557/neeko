@@ -46,6 +46,9 @@ docs/                架构、需求与设计文档
 声明与 CI/lefthook 接线的一致性由 `check_gate_topology`（A1/A3）机器校验；`BRANCH_PROTECTION` 的
 required check 核对属批次 2。
 
+**红线适用范围**：`packages/**` 是 Node 库（非 Tauri 后端），15 条红线**全部 N/A**；
+仍须遵守架构基本原则、TDD 与自带 `prepublishOnly`。
+
 子目录清单一律以 `ls` / Glob 为准，本文档不维护树状图。详版：`docs/ARCHITECTURE.md`、
 `.trellis/spec/{backend,frontend}/directory-structure.md`。
 

@@ -179,6 +179,80 @@ const handleGetWorktreeChangedFiles = useCallback(
 
 ---
 
+## 陷阱：同一策略复制 N 份，靠各自的私有状态维持
+
+**问题**：一段「挂载 → 卸载 → 转发按键」的策略被复制进 N 个调用点，每个调用点**各自持有一份私有状态**（一个 `Xxx | undefined` 字段、一个 `isOpen` 布尔）。单看每份都正确；合起来它们可以互相矛盾。
+
+**真实案例**（`packages/dsh-neeko`，三个选择器各持一份）：
+
+```ts
+private thinkingSelector: ThinkingSelector | undefined
+private themeSelector:    ThemeSelector    | undefined
+private resumeSelector:   ResumeSelector   | undefined
+```
+
+「有没有面板打开」有**三个答案**，而按键转发读的是其中一个。第二个面板打开后，第一个字段仍是 `undefined !== ...` 的真值，按键可能转到已被替换的面板。同一时期还有第二处后果：`dock.clear()` 之后的 `restore()` 只写在构造函数里，任何提前关闭的路径都把固定行留空。
+
+**判据**：问「这几份的状态能否同时为真/矛盾」。**能，就是同一策略的复制，必须合成一份。** 这与「重复几次」无关——两次也能矛盾。
+
+**修法**：把策略提成一个持有**单一可空槽位**的模块，让「是否有面板」和「是哪个面板」变成同一个问题：
+
+```ts
+class PanelHost {
+  private open: KeyedComponent | undefined   // 一个槽位，不可能矛盾
+  show(panel) { this.open = panel; dock.clear(); dock.addChild(panel) }
+  hide()      { this.open = undefined; dock.clear(); restore() }
+  handleKey(d) { if (!this.open) return false; this.open.handleInput(d); return true }
+}
+```
+
+**注意最后一行**：没有面板时返回 `false` 而不是「假装消费了」。一个关闭的 host 若报 consumed，输入框会变成死的——「声明自己处理了」必须等于「真的处理了」。
+
+---
+
+## 陷阱：缓存返回同一个数组实例，而你在原地改它
+
+**问题**：给组件加装饰（前缀标记、高亮、行号）时，顺手改 `render()` 返回的数组。若该组件缓存了自己的输出，返回的是**同一个数组实例**，于是装饰每帧叠加一次。
+
+**真实案例**：`zoneMarked()` 给首行加 OSC 133 标记：
+
+```ts
+const lines = original(width)      // Text 返回 cachedLines —— 同一个实例
+lines[0] = MARKER + lines[0]       // 每帧再加一个
+```
+
+实测 500 帧后首行 **100 → 8116 字节**（每帧 +16），流式会话 20fps 一分钟涨约 19KB 并最终折行。而当时的注释还写着「render builds fresh strings every call」——**注释里的假设没有对照过实现**。
+
+**判据**：装饰别人的输出前，先确认它是否缓存。`pi-tui` 里 `Text` / `Markdown` / `Box` 会缓存数组，`Container` / `Spacer` 不会 —— 所以「同一棵树里有的缓存有的不缓存」，不能按直觉推。
+
+**修法**：`const marked = [...lines]` 后再改。代价只是数组身份，而**没有任何东西依赖它**（当时的注释声称有，实际 `row-cache.ts` 用的是 `WeakMap` 上的**组件**身份）。
+
+**这类 bug 的测试**：断言「相同输入渲染 N 次，输出字节相同」。1 次和 500 次比较即可，不需要知道内部实现：
+
+```ts
+const first = component.render(60).map((l) => l.length)
+for (let i = 0; i < 500; i += 1) component.render(60)
+expect(component.render(60).map((l) => l.length)).toEqual(first)
+```
+
+> **别用 `toEqual(first)` 直接比两个数组**：缓存实现返回的是同一个对象，`toEqual` 会拿一个对象和它自己比较，无论如何都通过。必须投影成值（`.map(l => l.length)` 或 `.join()`）。
+
+---
+
+## 陷阱：热路径上的「装饰性状态」混进缓存键
+
+**问题**：把动画帧、时间戳、鼠标位置这类**只影响装饰**的值放进渲染缓存的签名，缓存就永远不命中。
+
+**真实案例**：`rowSignature()` 包含 `spinnerFrame`，于是每 80ms 动画跳一帧，正在流式的那一行签名就变，整行重建（新的 `Markdown`、重新解析、新组件树），一秒钟五次，直到回答结束。
+
+**判据**：问「这个值变化时，**内容**变了吗，还是只有装饰变了」。内容没变就不该进签名。
+
+**更进一步的问题**：这个装饰是**必要的**吗？当时的 `🐳` 思考标记是本仓自造的——对照参考实现，那里是纯文字 `Thinking...`，根本不需要动画。删掉装饰后，定时器、签名输入、常量整条链一起消失，比「合并两个时钟」更彻底。
+
+**顺序**：先问「要不要这个装饰」，再问「怎么让它不污染缓存」。反过来做，会把一个本不该存在的功能优化得很精致。
+
+---
+
 ## 提交前检查清单
 
 - [ ] 已搜索现有的相似代码
@@ -186,3 +260,6 @@ const handleGetWorktreeChangedFiles = useCallback(
 - [ ] 常量只在一个地方定义
 - [ ] **判定规则（正则 / 谓词 / 过滤模式）只有一处定义，调用点只查询**（见[模式 5](#模式-5同一条派生规则--谓词抄成多份副本)）
 - [ ] 相似的模式遵循相同的结构
+- [ ] **复制来的策略没有各自持私有状态**（能互相矛盾 = 必须合成一份）
+- [ ] **装饰别人的 `render()` 输出时先确认它是否缓存**，用副本而非原地改
+- [ ] **缓存签名里没有只影响装饰的值**（动画帧 / 时间戳 / 鼠标位置）

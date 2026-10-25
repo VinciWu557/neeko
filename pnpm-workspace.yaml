@@ -16,3 +16,8 @@ overrides:
   # 6.43.9，与直引 6.43.11 并存致 Vite 预打包双 view 实例、滚动后点击错位。
   # 此处强制全树收敛到 6.43.11（版本唯一性由 check_codemirror_singleton.py 保障）。
   '@codemirror/view': 6.43.11
+  # 单实例 @deepseek-ai/schemastery：dsh 0.2.0-rc.2 各包声明 `~3.18.4`，pnpm 会为
+  # 不同 peer 上下文解析出 3.18.4 与 3.18.5 两份；两份的 `lib/types/index.d.ts` 顶层
+  # 声明同名类型（From/TypeS/...）→ tsc 报 TS6200 标识符冲突。
+  # 与上面 codemirror 同一类问题：同一依赖多实例 → 类型/运行时双份。
+  '@deepseek-ai/schemastery': 3.18.5
