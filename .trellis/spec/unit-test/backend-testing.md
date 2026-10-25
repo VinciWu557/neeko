@@ -522,3 +522,38 @@ assert!(info.changed_files.iter().any(|f| f.path == "README.md"));
 目录级事件下必挂（2026-10-08 事故）；正向用 `CallbackProbe::wait_reached`，分类负向下沉
 `units.rs` 纯函数，生命周期负向改差分式（`assert_eq!(count, baseline)`）。
 完整判定表、正/反例与观察原语见 [真实源测试的确定性契约](./real-source-determinism.md)。
+
+### 7. 单元测试不得 spawn 真实外部进程
+
+**判据**：`#[test]` / `#[tokio::test]`（**无** `#[ignore]`）里不得启动本机真实二进制
+（`opencode` / `pi` / `git` 之外的 agent CLI 等）来验证「实现存在」。
+
+**2026-10-25 事故**：`capability_probe::commands_bit_implies_list_commands_is_not_unsupported`
+用 `ServeAdapter::new(vec!["opencode", "serve"])` 真起了 `opencode serve`。两个后果：
+
+1. **孤儿进程**：serve 是进程级 `OnceCell` 单例，测试二进制退出时 tokio runtime 被丢弃、
+   `child` 从未被 kill ⇒ 每跑一轮 `cargo test` 留下一个 `opencode serve`（实测累积 7 个）。
+   退出收敛机制（`child_registry`）**救不了测试进程**——测试走 `std::process::exit`，
+   不经过 `shutdown_background_and_exit`。
+2. **判据失效**：该用例声称「覆写被删就变红」，实际判据只是 `!matches!(e, AppError::Unsupported(_))`
+   —— opencode 装坏、serve 起不来、HTTP 401 全都通过。真跑进程对断言零增益。
+
+**正解**：判据是「走不走默认实现」，用一个**不存在的二进制名**即可（spawn 失败返回 `Io`，
+覆写被删则退回默认 `Unsupported`）。这与同文件里 pi 分支的写法一致、与传输无关：
+
+```rust
+const NO_SUCH_BINARY: &str = "definitely-not-a-real-binary-mention-slash";
+let serve = ServeAdapter::new(vec![NO_SUCH_BINARY.into(), "serve".into()], Default::default());
+let err = serve.list_commands(&config, None).await.unwrap_err();
+assert!(!matches!(err, AppError::Unsupported(_)));  // 覆写仍在
+```
+
+真实往返（handshake → prompt → 文本 → turn end）由**带 `#[ignore]`** 的集成用例覆盖：
+`adapter/opencode/integ.rs::serve_round_trip_streams_text_delta`、
+`tests/unit/acp_test.rs::acp_opencode_real_roundtrip`。
+
+**顺带代价**：真进程用例还会把 `STARTUP_TIMEOUT`(10s) + 命令发现重试(8×250ms) 拖进单元
+测试的墙钟——修掉后该用例 0.78s → 0.01s。
+
+**例外**：`tools/java-host/test.sh` 这类**明确标注**为 host 集成测试（`test:host` 独立 gate）
+的入口不受本条约束。

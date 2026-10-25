@@ -225,11 +225,23 @@ mod tests {
 
         /// **双向一致性**：位为 false ⇔ 查询返回 `Unsupported`；位为 true ⇔
         /// 查询有真实现（用不存在的二进制验证 —— spawn 失败是任何错误**除了**
-        /// `Unsupported`；若覆写被删、退回默认实现，这里立即变红，且不需要
-        /// 在 CI 里起真 pi 进程）。
+        /// `Unsupported`；若覆写被删、退回默认实现，这里立即变红）。
         ///
-        /// serve 与 pi 同形：位 true ⇒ 查询必须有覆写（失败于 IO 而非
-        /// `Unsupported`）。本机装了 opencode 时它会真的返回命令。
+        /// # 三条传输**全部**用假二进制
+        ///
+        /// 判据是「走不走默认实现」，不是「能不能真的查到命令」。真进程对这条断言
+        /// **零增益**，却带来两个真实代价：
+        ///
+        /// 1. **副作用泄漏**：serve 是进程级 `OnceCell` 单例，测试二进制退出时
+        ///    `tokio` runtime 被丢弃、`child` 从未被 kill ⇒ 每次跑 `cargo test` 都
+        ///    留下一个 `opencode serve` 孤儿（实测累积到 7 个）。
+        /// 2. **环境依赖**：本机装了 opencode 才能走到成功分支，CI 上走另一条 ——
+        ///    同一断言两种路径，且 `STARTUP_TIMEOUT`(10s) + 命令发现重试(8×250ms)
+        ///    把单元测试变成进程/网络依赖。
+        ///
+        /// 真实往返由 `adapter/opencode/integ.rs::serve_round_trip_streams_text_delta`
+        /// 与 `tests/unit/acp_test.rs::acp_opencode_real_roundtrip` 两条 `#[ignore]`
+        /// 用例覆盖 —— 不需要第三条不带 `#[ignore]` 的真进程用例。
         #[tokio::test]
         async fn commands_bit_implies_list_commands_is_not_unsupported() {
             // 位 false 且**无实现** → 默认 Unsupported。
@@ -246,27 +258,25 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(err, AppError::Unsupported(_)), "{err:?}");
 
-            // serve：位 true ⇒ 必须有覆写。「要么成功（本机有 opencode 时
-            // 实测拿到 `init` / `review`），要么失败但不是 Unsupported
-            // （环境问题）」—— 两种都不是「覆写被删」。
-            let serve =
-                ServeAdapter::new(vec!["opencode".into(), "serve".into()], Default::default());
-            match serve.list_commands(&agent_config("opencode"), None).await {
-                Ok(cmds) => assert!(
-                    cmds.iter().all(|c| !c.name.is_empty()),
-                    "returned commands must carry a name: {cmds:?}"
-                ),
-                Err(e) => assert!(
-                    !matches!(e, AppError::Unsupported(_)),
-                    "serve implements list_commands; an Unsupported here means the \
-                     override is gone and the `/` entry would silently disappear: {e:?}"
-                ),
-            }
-            // 位 true（pi）→ 必须有覆写：失败于 spawn/IO 而不是 `Unsupported`。
-            let pi = PiRpcAdapter::new(
-                vec!["definitely-not-a-real-binary-mention-slash".into()],
+            // 位 true ⇒ 必须有覆写：失败于 spawn/IO 而不是 `Unsupported`。
+            // 用不存在的二进制 —— 覆写被删时它会退回默认实现并返回 Unsupported。
+            const NO_SUCH_BINARY: &str = "definitely-not-a-real-binary-mention-slash";
+
+            let serve = ServeAdapter::new(
+                vec![NO_SUCH_BINARY.into(), "serve".into()],
                 Default::default(),
             );
+            let err = serve
+                .list_commands(&agent_config("opencode"), None)
+                .await
+                .unwrap_err();
+            assert!(
+                !matches!(err, AppError::Unsupported(_)),
+                "serve implements list_commands; an Unsupported here means the \
+                 override is gone and the `/` entry would silently disappear: {err:?}"
+            );
+
+            let pi = PiRpcAdapter::new(vec![NO_SUCH_BINARY.into()], Default::default());
             let err = pi
                 .list_commands(&agent_config("pi"), None)
                 .await
