@@ -362,13 +362,8 @@ mod tests {
                 "前端 NOTIFIABLE_EVENTS 缺少事件键 {needle}（双端必须同步）"
             );
         }
-        // `NotificationDraft` 字段镜像：Rust 侧加字段而前端漏镜像 = 该字段静默丢失
-        // （serde 反序列化只取 TS 声明里有的键；subtitle 缺失曾让主题整条链断在 IPC 边界）。
-        for field in ["title", "subtitle", "body", "class", "deep_link"] {
-            assert!(
-                FRONTEND.contains(&format!("{field}:")),
-                "前端 NotificationDraft 镜像缺少字段 {field}"
-            );
-        }
+        // 不再校验 `NotificationDraft` 字段镜像：该类型只用于 IPC emit 的应用内载荷，
+        // 而 Agent 通知现在**只走系统通知**（不跨 IPC 到前端）。没了消费方就不存在
+        // 「Rust 加字段前端漏镜像」的风险，留着断言只会变成一条追着已删类型跑的假护栏。
     }
 }

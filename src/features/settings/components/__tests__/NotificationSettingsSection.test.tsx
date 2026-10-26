@@ -62,12 +62,18 @@ describe('NotificationSettingsSection', () => {
     setupSettings();
   });
 
-  /** 加载后渲染三层开关 + CLI hooks 开关 = 6 个 switch，4 个事件行。 */
-  it('renders the three-layer switch surface after load', async () => {
+  /** 加载后渲染三层开关 + 失焦抑制 + CLI hooks = 6 个 switch，4 个事件行。
+   *
+   * 数量钉死是有意的：多一个开关意味着有人又往设置面塞了通道。Agent 通知只有系统通知
+   * 一条通道（应用内镜像已按需求删除），改这个数字前先读 `dispatch.rs` 模块头。 */
+  it('renders the switch surface after load', async () => {
     await renderLoaded();
     expect(screen.getAllByRole('switch')).toHaveLength(6);
     expect(screen.getByLabelText('Agent needs approval')).toBeInTheDocument();
     expect(screen.getByLabelText('Agent turn completed')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('switch', { name: 'Mirror into the in-app list' }),
+    ).not.toBeInTheDocument();
   });
 
   /** 点击全局开关 → 串行链发出一次保存，载荷为打补丁后的完整设置。 */

@@ -95,10 +95,13 @@ pub struct DecisionEnv {
     pub now: Instant,
 }
 
-/// 裁决产物：投递层唯一消费的接口，值类型、零依赖。序列化为前端回流载荷（snake_case，
-/// 与 `StreamEvent` 等 IPC 类型口径一致）。
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+/// 裁决产物：投递层唯一消费的接口，值类型、零依赖。
+///
+/// **不再跨 IPC**：曾同时作为「应用内列表载荷」序列化给前端（snake_case），
+/// 那条通道已删（Agent 通知只走系统通知，见 `dispatch.rs` 模块头）。
+/// 因此不再 `derive(Serialize)` —— 留一个无人调用的序列化实现，只会让下一个人
+/// 以为前端还在读它的字段。字段名保持 snake_case 风格与仓内其余值类型一致。
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotificationDraft {
     /// 通知标题（`"{group_label} · {event_label}"`，截断至 [`MAX_TITLE_CHARS`]）。
     pub title: String,
@@ -130,6 +133,11 @@ pub const MAX_SUBTITLE_CHARS: usize = 60;
 ///
 /// serde 命名 camelCase —— 与 config.json 既有键（`watcherExclude`/`customAgents`/
 /// `agentOverrides`）口径一致；`#[serde(default)]` 保证旧配置文件缺字段时整体回落默认值。
+///
+/// **禁止加 `deny_unknown_fields`**：删除字段后，用户磁盘上仍留着旧版本写入的键
+/// （实例：`inApp`，2026-10-17 删除）。serde 默认忽略未知字段 → 旧配置照常读；
+/// 一旦加上 deny，所有存过那个键的用户都会在升级后读盘失败。
+/// 已验证两种行为的差异（`from_value` 带残留键：默认忽略 / deny 则报 unknown field）。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 #[serde(rename_all = "camelCase")]
@@ -351,6 +359,29 @@ mod tests {
             .expect("deserialize")
             .normalized();
         assert_eq!(s, NotificationSettings::default());
+    }
+
+    /// 已删除字段的残留键必须被忽略（升级不破读盘）。
+    ///
+    /// 实例：`inApp` 曾落盘过（2026-10-17 删除），已经存过它的用户磁盘上有这个键。
+    /// serde 默认忽略未知字段才让这些用户能正常升级；一旦有人给本结构加
+    /// `deny_unknown_fields`，他们全部会在启动后读盘失败（设置回默认、甚至报错），
+    /// 而错误信息只会说 `unknown field`，与「删字段」看起来毫无关系。
+    /// 故用一条测试把「忽略未知字段」钉成行为契约，而不是靠没人碰那个 derive。
+    #[test]
+    fn unknown_legacy_keys_are_ignored_on_read() {
+        let stale = serde_json::json!({
+            "enabled": false,
+            "actionRequired": false,
+            // 已删除的字段：旧版本写过，新版本不认识
+            "inApp": true,
+            // 手改 config.json 会出现的任意键，同理不得炸
+            "somethingFromTheFuture": 42
+        });
+        let s: NotificationSettings = serde_json::from_value(stale)
+            .expect("带已删字段残留键的旧配置必须能读（不得加 deny_unknown_fields）");
+        assert!(!s.enabled, "已知字段要正常生效");
+        assert!(!s.action_required);
     }
 
     /// camelCase 契约钉死（与 config.json 既有键风格一致；改名即破坏兼容）。

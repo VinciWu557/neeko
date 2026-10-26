@@ -25,9 +25,10 @@ export const GIT_OPERATION_OUTPUT_EVENT = 'git-operation-output';
 /** 应用关闭请求事件（后端阻止关闭后通知前端弹「确认退出」框）：`app-close-requested` */
 export const APP_CLOSE_REQUESTED_EVENT = 'app-close-requested';
 
-/** 通知投递事件（后端投递系统通知的同时携带 draft 载荷，前端写 in-app 列表 + deep link 映射；
- * 与 `src-tauri/src/notification/dispatch.rs` 常量保持同步）：`notification-delivered` */
-export const NOTIFICATION_DELIVERED_EVENT = 'notification-delivered';
+/** 通知点击回流事件（**仅 macOS 原生委托**使用）：载荷是 deep link 字符串，只触发路由，
+ * 不新增列表条目（Windows/Linux 走插件 `onAction`，不经本事件）。
+ * 与 `src-tauri/src/notification/dispatch.rs` 常量保持同步）：`notification-refocus` */
+export const NOTIFICATION_REFOCUS_EVENT = 'notification-refocus';
 
 // ── LSP 事件（与 src-tauri/src/lsp/types.rs 常量保持同步）──
 

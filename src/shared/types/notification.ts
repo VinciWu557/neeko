@@ -2,24 +2,16 @@
  * 应用级通知域的前端类型镜像。
  *
  * 与 `src-tauri/src/notification/types.rs` 手动同步（项目约定，无代码生成）：
- * - `NotificationDraft`（IPC emit 载荷）serde 为 snake_case；
- * - `NotificationSettings`（config.json 持久化 + IPC）serde 为 camelCase。
+ * `NotificationSettings`（config.json 持久化 + IPC）serde 为 camelCase。
  * 改动 Rust 侧必须同步本文件并跑 `pnpm type-check`。
+ *
+ * 注意：这里只有**设置**镜像，没有 `NotificationDraft` —— Agent 通知只走系统通知通道，
+ * 不向后端 emit 应用内载荷（旧 `notification-delivered` 通道已删除）。
  */
 
-/** 通知语义类别 —— 闭集（与后端 `NotificationClass` 的 snake_case 序列化一致）。 */
+/** 通知语义类别 —— 闭集（与后端 `NotificationClass` 的 snake_case 序列化一致）。
+ * 用于设置页的类别/事件开关映射；不是 IPC 载荷类型。 */
 export type NotificationClass = 'action_required' | 'completed' | 'failed';
-
-/** 通知投递事件载荷（`NOTIFICATION_DELIVERED_EVENT`，镜像后端 `NotificationDraft`）。 */
-export interface NotificationDraft {
-  title: string;
-  /** 会话主题（R7）：macOS 原生副标题 / Win-Linux 已拼进 `body` 前缀；空串 = 无主题。 */
-  subtitle: string;
-  body: string;
-  class: NotificationClass;
-  /** 通用回流地址 `neeko://{domain}/{instance_id}`。 */
-  deep_link: string;
-}
 
 /** 用户通知设置（三层开关：全局 → 类别 → 事件覆盖；镜像后端 camelCase）。 */
 export interface NotificationSettings {

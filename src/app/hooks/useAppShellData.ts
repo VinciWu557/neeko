@@ -5,7 +5,7 @@ import { useAgentActions, useAgentClickHandler } from '@/features/agent';
 import { useRemoteAuthActions } from '@/features/connection';
 import { useFileTabRefresh, useFileView, useTabManagement } from '@/features/editor';
 import { useGitConsoleBridge } from '@/features/git';
-import { useNotificationDelivered, useNotificationReflow } from '@/features/notification';
+import { useNotificationReflow } from '@/features/notification';
 import {
   useConnectionProjects,
   useCrossTypeSelection,
@@ -63,8 +63,11 @@ export function useAppShellData(): UseAppShellDataResult {
   }, []);
   const local = useLocalProjects();
   const session = useSessionPersistence();
-  // 系统通知投递 → in-app 通知列表 + 点击精确回流（app 级挂载一次；badge 走 status-bar）。
-  useNotificationDelivered();
+  // Agent 通知的点击回流（app 级挂载一次）。
+  //
+  // 不订阅 `notification-delivered`：Agent 通知只走系统通知通道，不进应用内列表 ——
+  // status-bar 铃铛仅展示 App 自身的操作反馈（`useNotify` / 保存失败等，直写
+  // `notificationStore`，与本链路零交叠）。
   useNotificationReflow();
   const wsl = useConnectionProjects({ environment: 'wsl', saveSession: session.saveSession });
   const remote = useConnectionProjects({

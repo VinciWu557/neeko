@@ -552,6 +552,14 @@ pub const fn build_edit_submenu(
 - 业务代码只依赖 `platform::<theme>::` 统一接口，删除原函数体内的 `#[cfg]` 块。
 - 单平台专属主题（macOS-only / Windows-only / Linux-only）同样适用本模式：非目标平台在独立 stub 文件（如 `default.rs`）提供同签名默认实现（返回 `Ok(None)` / no-op），`mod.rs` 保持纯声明，业务代码无条件调用。
 - 非目标平台默认 stub **必须声明为 `const fn`**（体为纯 `Ok(None)` / no-op 的常量函数），否则 clippy `missing_const_for_fn` 在 `-D warnings` 下拦截 CI；stub 文件在开发机（macOS）本地不编译，属不可见失败域，由 CI 平台矩阵兜底。
+- **上面那条不是无条件的：带析构的 owned 参数不可能 `const fn`**。若 stub 的签名必须收
+  `Box<dyn Fn…>` / `String` / `Vec` / `Arc` 这类参数（典型：回调注册、句柄句柄转移），
+  `const fn` 在函数作用域末端要跑 `Drop` → 非目标平台直接报 `E0493`。此时 stub 用普通
+  `fn` **是正确写法**，且 clippy `missing_const_for_fn` 不会误报（它能判定该签名不可能为 const）。
+  实测案例：`platform/system_notify/default.rs::set_click_handler`（2026-10-17，`ClickHandler
+  = Box<dyn Fn(&str) + Send + Sync>`）。判断顺序：先看参数是否带析构，再决定 `const` 与否；
+  两种情形下「在 stub 里留一行注释说明为什么不是 const」都是必须的，下一个人否则会照着本
+  条把它改回 `const fn` 并在 CI 三平台矩阵红。
 - 平台差异是**编译期确定**的，坚持编译期 cfg + 每平台文件，**不**用运行期 `Box<dyn Trait>`（与「有限策略集用 Enum+match」原则一致：平台差异不是运行期策略）。
 - 纯移动迁移：不改变平台逻辑实现，仅移动位置、统一接口。
 - 行为正确性由 CI 三平台矩阵（`.github/workflows/ci.yml` 的 `backend-check`/`backend-test`）兜底；本约定只保证「每个平台有实现且能编译」。
@@ -594,6 +602,40 @@ pub const fn build_edit_submenu(
 **两个设置开关的分工**（勿合并）：`NotificationSettings.cli_hooks`（核心域）= **主开关**
 「用户是否同意装 hook」；`agentHookSources`（agent 域 config）= **逐 CLI 覆盖**。
 业务身份（CLI 名字）必须归业务域 —— 写进核心域会让核心域出现 CLI 分支。
+
+**Agent 通知只有系统通知一个出口**（`enabled` / `suppress_when_focused` 两个开关）：
+
+| 字段 | 作用面 | 默认 | 关掉后的行为 |
+|------|--------|------|--------------|
+| `enabled` | 整条通知链（裁决入口） | 开 | 完全不通知 |
+| `suppress_when_focused` | 焦点抑制（不看的人被打扰） | 开 | 前台看着也发 |
+
+**明确不存在的通道：Agent 事件的应用内镜像**。曾经有过一个 `in_app` 开关把 Agent 通知
+也抄一份进 status-bar 铃铛/列表/toast，**已按需求删除**（2026-10-17）。删除理由值得记住：
+
+1. status-bar 通知中心服务的是**应用自身的操作反馈**（`useNotify` / 保存失败 / LSP 异常等
+   40 处调用，直写 `notificationStore`），那是个会攼到 100 条的无读列表；
+   把 Agent 的「看一眼就过去」事件塞进去，两边都变差。
+2. 两个通道对本就没法共存成一个开关：系统通知是给**没在看的人**的（因此有焦点抑制），
+   应用内通知只在**正在看时**才有意义 —— 绑在一起就会出现「开了开关但最需要它的场景看不到」。
+3. 删掉 `in_app` 后，App 自身的反馈链一行未改 —— 这正是「两条通道零交叠」的证据。
+
+推论：`dispatch.rs` 不再 emit 任何前端载荷（`NOTIFICATION_DELIVERED_EVENT` 与
+前端 `NotificationDraft` 镜像已一并删除）。**新增一个前端通知通道前先问：它服务的是
+Agent 事件还是 App 自身反馈？** 前者只该走系统通知。
+
+**点击回流的两条通道**（同一个前端路由表 `reflow.ts`，不得各造一套）：
+
+| 平台 | 机制 | 深链载体 |
+|------|------|----------|
+| Windows / Linux | 插件 `show_tracked` → JS `onAction` | `extra.deepLink`（`EXTRA_DEEP_LINK_KEY`） |
+| macOS | `UNUserNotificationCenterDelegate::didReceiveNotificationResponse` | `userInfo.deepLink`（同键名）→ `notification-refocus` 事件 |
+
+macOS 走后端直写 UN，插件那套 `extra` + `onAction` **完全不经手** —— 缺 `didReceive`
+就等于「点系统通知只能把应用带到前台，定位不到会话」，且编译/运行都不报错。
+三端键名同值由 `macos.rs::user_info_key_matches_dispatcher_and_frontend` 与
+`dispatch.rs::deep_link_extra_key_matches_frontend_mirror` 钉住。`didReceive` 的
+选择器真实存在由 `delegate_implements_did_receive_selector`（ObjC 运行时查询）钉住。
 
 ---
 

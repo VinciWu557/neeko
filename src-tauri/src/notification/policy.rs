@@ -101,7 +101,9 @@ fn evaluate(
         return None;
     }
     if settings.suppress_when_focused && env.app_focused && env.instance_visible {
-        return None; // 用户正在看着这个实例，系统通知是纯打扰（in-app toast 走前端既有链路）
+        // 用户正在看着这个实例 → 不发。系统通知是给「没在看的人」的，盯着的时候弹是纯打扰。
+        // （这里没有第二条通道需要区别对待：Agent 通知只有系统通知一个出口。）
+        return None;
     }
     if let Some(last) = last_fired {
         if env.now.duration_since(last) < signal.class.throttle(settings) {

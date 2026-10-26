@@ -132,9 +132,9 @@ const NotificationSettingsSection: React.FC = () => {
     <div className="flex flex-col py-1">
       <div className="text-[1.05em] font-semibold text-text-primary mb-1">Notifications</div>
       <div className="text-[0.79em] text-text-muted leading-relaxed mb-2">
-        System notifications when a background task needs your attention. While the window is
-        focused and the session is visible, notifications are suppressed — the in-app list covers
-        those cases.
+        System notifications when a background task needs your attention. Agent alerts go to the OS
+        notification center only — they are not mirrored into the in-app bell, which is reserved for
+        the app&apos;s own feedback (save errors, language-server failures).
       </div>
 
       <SettingRow label="Enable notifications" hint="Master switch for all system notifications">
