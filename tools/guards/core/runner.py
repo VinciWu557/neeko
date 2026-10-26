@@ -123,10 +123,29 @@ def _run_one(reg, context) -> Outcome:
 FRAMEWORK_DIR = "tools/guards/"
 
 
+def _touches_framework(changed) -> bool:
+    """改动是否可能改变护栏自身的判据 —— 两条规则共用这一个判断。"""
+    return any(p.replace("\\", "/").startswith(FRAMEWORK_DIR) for p in changed or ())
+
+
 def _apply_framework_rule(changed):
     """改动触及框架/护栏自身 → 每条护栏的判据都受影响，增量跳过不成立，一律全量跑。"""
-    paths = [p.replace("\\", "/") for p in changed or ()]
-    return [] if any(p.startswith(FRAMEWORK_DIR) for p in paths) else paths
+    return [] if _touches_framework(changed) else [p.replace("\\", "/") for p in changed or ()]
+
+
+def _selftest_is_due(changed) -> bool:
+    """守门人何时需要重考自己。
+
+    `run_suite` 是开发循环里最贵的**固定**项（653 用例 / ~5s），而它关心的只有一件事：
+    护栏的判据本身有没有变。改一行业务代码不会改变「护栏是否可信」，却每次都要付这 5s。
+
+    判据与 `_touches_framework` 同源，只是问法不同：那条问「增量跳过还算不算数」，
+    这条问「守门人自己要不要重考」。**没有改动集时一律跑** —— 那时无从判断框架是否变了，
+    而「无从判断」不能读成「不用跑」。
+    """
+    if not changed:
+        return True
+    return _touches_framework(changed)
 
 
 def _bounded_findings(text: str) -> tuple:
@@ -266,6 +285,9 @@ def execute(
 ) -> int:
     out = out or sys.stdout
     err = err or sys.stderr
+    # 自测门控必须看**原始**改动集：`_apply_framework_rule` 会把「触及框架」的改动清成空集，
+    # 那正是需要重考守门人的情形 —— 用清洗后的集判会得到相反的结论。
+    selftest_due = run_selftest and _selftest_is_due(changed)
     changed = _apply_framework_rule(changed)
 
     try:
@@ -274,11 +296,15 @@ def execute(
         print(f"护栏框架无法启动：{exc}", file=err)
         return EXIT_GUARD_ERROR
 
-    if run_selftest:
+    if selftest_due:
         ok, summary = selftest.run_suite(err)
         if not ok:
             print(f"护栏自身单测未通过（{summary}）—— 先修护栏，再谈代码。", file=err)
             return EXIT_GUARD_ERROR
+    elif run_selftest:
+        # 跳过一个检查必须说出来，否则「绿」会被读成「守门人也考过了」。走 out 而非 err：
+        # 这不是错误，是与「跳过 N 条护栏」同级的**可见声明**。
+        print("护栏自测：本次改动未触及 tools/guards/，跳过（不是「自测通过」）。", file=out)
 
     try:
         registrations = discover(root)

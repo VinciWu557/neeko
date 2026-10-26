@@ -324,6 +324,64 @@ class ExecuteTest(unittest.TestCase):
         self.assertIn("超过预算", out)
 
 
+class SelftestScopeTest(unittest.TestCase):
+    """护栏自测只在**护栏自己的代码**可能变时才跑 —— 它是开发循环里最贵的固定项。
+
+    判据与 `_apply_framework_rule` 同源（都是「改动是否触及框架」），只是问的问题不同：
+    那条决定「增量跳过还算不算数」，这条决定「守门人自己要不要重考」。
+    """
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.calls = []
+        patcher = mock.patch.object(
+            runner.selftest, "run_suite", lambda stream: self.calls.append(stream) or (True, "ok")
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        root_patcher = mock.patch.object(runner.repo, "find_repo_root", lambda *a, **k: self.tmp)
+        root_patcher.start()
+        self.addCleanup(root_patcher.stop)
+        disc_patcher = mock.patch.object(
+            runner, "discover", lambda root=None: [reg(lambda ctx: GuardResult.passed(1))]
+        )
+        disc_patcher.start()
+        self.addCleanup(disc_patcher.stop)
+
+    def run_execute(self, changed):
+        out, err = io.StringIO(), io.StringIO()
+        code = runner.execute(out=out, err=err, run_selftest=True, changed=changed)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_framework_change_runs_the_selftest(self):
+        self.run_execute(["tools/guards/core/runner.py"])
+        self.assertEqual(len(self.calls), 1, "改了护栏自身就必须重考守门人")
+
+    def test_ordinary_source_change_skips_the_selftest(self):
+        """改一行业务代码不需要重考守门人 —— 那是开发循环里 5s 的无谓等待。"""
+        code, out, _ = self.run_execute(["src/features/agent-chat/hooks/useAgentChat.ts"])
+        self.assertEqual(len(self.calls), 0)
+        self.assertEqual(code, EXIT_OK)
+
+    def test_skipping_is_declared_not_silent(self):
+        """跳过一个检查必须说出来 —— 静默绿是本仓库反复踩的失效模式。"""
+        _, out, _ = self.run_execute(["src/a.ts"])
+        self.assertIn("护栏自测", out)
+
+    def test_empty_changed_set_keeps_the_selftest(self):
+        """没有改动集（全量档 / 拿不到改动集）时不许跳过 —— 那时无从判断框架是否变了。"""
+        self.run_execute([])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_explicit_no_selftest_still_wins(self):
+        out, err = io.StringIO(), io.StringIO()
+        runner.execute(
+            out=out, err=err, run_selftest=False, changed=["tools/guards/core/runner.py"]
+        )
+        self.assertEqual(len(self.calls), 0)
+
+
 class SelectFilterTest(unittest.TestCase):
     """`--suite`（kind）与 `--source`（形态）是两个正交过滤器，不引入重载语义的套件名。"""
 
