@@ -3,7 +3,7 @@
   "name": "mention-slash-palette",
   "title": "Agent Chat 输入框的 slash 命令与 @ 文件提及补全",
   "description": "在 Agent Chat 输入框实现 /（slash 命令）与 @（文件提及）两个补全弹层：数据源分别为 pi rpc 的 get_commands（157 条：prompt/skill/extension 三类）与项目文件树；含锚点定位、键盘导航（上下/Enter/Tab/Esc）、与 textarea 的光标联动。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
