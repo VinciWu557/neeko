@@ -28,24 +28,24 @@ fn classify(event: &str) -> Option<(NotificationClass, &'static str, &'static st
         event_keys::TURN_COMPLETED => Some((
             NotificationClass::Completed,
             event_keys::TURN_COMPLETED,
-            "任务完成",
+            "Agent turn completed",
         )),
         event_keys::APPROVAL_REQUESTED => Some((
             NotificationClass::ActionRequired,
             event_keys::APPROVAL_REQUESTED,
-            "Agent 等待审批",
+            "Agent needs approval",
         )),
         event_keys::INPUT_REQUESTED => Some((
             NotificationClass::ActionRequired,
             event_keys::INPUT_REQUESTED,
-            "Agent 等待输入",
+            "Agent needs input",
         )),
         // 2026-10-16 补：Claude 兼容面的 `StopFailure`（以及 Codex 将来的等价事件）
         // 投影到会话异常。此前缺此 arm → 该类上报被 fail-open 静默吞掉（通知缺失）。
         event_keys::SESSION_FAILED => Some((
             NotificationClass::Failed,
             event_keys::SESSION_FAILED,
-            "会话异常",
+            "Agent session failed",
         )),
         _ => None,
     }
@@ -131,14 +131,14 @@ mod tests {
         assert!(project("pi", &event("session.idle"), &attribution()).is_none());
     }
 
-    /// 会话异常事件的标签与类别：`session_failed` → Failed 类 + 「会话异常」文案。
+    /// 会话异常事件的标签与类别：`session_failed` → Failed 类 + 「Agent session failed」文案。
     #[test]
     fn session_failed_maps_to_failed_class_with_label() {
         let (class, key, label) =
             classify(event_keys::SESSION_FAILED).expect("session_failed must be mapped");
         assert_eq!(class, NotificationClass::Failed);
         assert_eq!(key, event_keys::SESSION_FAILED);
-        assert_eq!(label, "会话异常");
+        assert_eq!(label, "Agent session failed");
     }
 
     /// 上报的 title 成为信号 topic（模板侧已判定优先级，服务端只做透传+过滤）。

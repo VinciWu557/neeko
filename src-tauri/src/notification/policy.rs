@@ -181,9 +181,9 @@ mod tests {
             class,
             event_key: event_key.into(),
             event_label: match class {
-                NotificationClass::ActionRequired => "Agent 等待审批".into(),
-                NotificationClass::Completed => "任务完成".into(),
-                NotificationClass::Failed => "会话异常终止".into(),
+                NotificationClass::ActionRequired => "Agent needs approval".into(),
+                NotificationClass::Completed => "Agent turn completed".into(),
+                NotificationClass::Failed => "Agent session failed".into(),
             },
             detail: detail.map(str::to_string),
             topic: topic.map(str::to_string),
@@ -218,7 +218,7 @@ mod tests {
                 &s,
             )
             .expect("should fire");
-        assert_eq!(d.title, "neeko · Agent 等待审批");
+        assert_eq!(d.title, "neeko · Agent needs approval");
         assert_eq!(d.body, "[opencode] edit_file: main.rs");
         assert_eq!(d.deep_link, "neeko://agent/s1");
     }

@@ -86,9 +86,9 @@ fn degraded_body(subtitle: &str, body: &str) -> String {
 /// 命令层保持一行调度（红线 6）。
 pub fn deliver_test_sample(app: AppHandle) {
     let draft = NotificationDraft {
-        title: "Neeko 通知已就绪".into(),
+        title: "Neeko notifications are ready".into(),
         subtitle: String::new(), // 自检样本无会话主题（副标题是会话级信息）
-        body: "任务等待审批 / 完成 / 异常时将在此提醒你".into(),
+        body: "You'll be notified here when a task needs approval, completes, or fails".into(),
         class: NotificationClass::Completed,
         deep_link: deep_link_for(&SourceRef {
             domain: "notification",

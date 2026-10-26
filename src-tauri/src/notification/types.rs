@@ -32,9 +32,9 @@ impl NotificationClass {
     #[must_use]
     pub const fn default_body(self) -> &'static str {
         match self {
-            Self::ActionRequired => "请回到 Neeko 处理",
-            Self::Completed => "任务已完成",
-            Self::Failed => "发生错误，请查看详情",
+            Self::ActionRequired => "Return to Neeko to handle it",
+            Self::Completed => "Task completed",
+            Self::Failed => "Something went wrong — check the details",
         }
     }
 

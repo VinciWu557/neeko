@@ -98,14 +98,14 @@ pub fn project(event: &StreamEvent, ctx: &SessionNotifyContext) -> Option<Notifi
         } => (
             NotificationClass::ActionRequired,
             event_keys::APPROVAL_REQUESTED,
-            "Agent 等待审批",
+            "Agent needs approval",
             first_non_blank(&[title, prompt, tool]).map(str::to_string),
         ),
         // 等待输入：agent 提出的问题原文（截断交给核心域，R2.4）。
         StreamEvent::UserInput { prompt, .. } => (
             NotificationClass::ActionRequired,
             event_keys::INPUT_REQUESTED,
-            "Agent 等待输入",
+            "Agent needs input",
             Some(prompt.clone()),
         ),
         // 本轮完成：正常完成才投影；用户主动 stop 不通知（R1）；
@@ -114,7 +114,7 @@ pub fn project(event: &StreamEvent, ctx: &SessionNotifyContext) -> Option<Notifi
             TurnEndReason::Completed => (
                 NotificationClass::Completed,
                 event_keys::TURN_COMPLETED,
-                "任务完成",
+                "Agent turn completed",
                 None,
             ),
             TurnEndReason::Stopped | TurnEndReason::Error => return None,
@@ -125,13 +125,13 @@ pub fn project(event: &StreamEvent, ctx: &SessionNotifyContext) -> Option<Notifi
             DoneReason::Completed => (
                 NotificationClass::Completed,
                 event_keys::TURN_COMPLETED,
-                "任务完成",
+                "Agent turn completed",
                 None,
             ),
             DoneReason::Error => (
                 NotificationClass::Failed,
                 event_keys::SESSION_FAILED,
-                "会话异常终止",
+                "Agent session failed",
                 None,
             ),
             DoneReason::Cancelled => return None,
@@ -140,7 +140,7 @@ pub fn project(event: &StreamEvent, ctx: &SessionNotifyContext) -> Option<Notifi
         StreamEvent::Error { message, .. } => (
             NotificationClass::Failed,
             event_keys::SESSION_FAILED,
-            "会话异常终止",
+            "Agent session failed",
             Some(message.clone()),
         ),
         // 其余事件（TextDelta / ToolStart / Meta / …）与用户注意无关。
