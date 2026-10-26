@@ -22,9 +22,9 @@ function deliveredHandler(): (e: { payload: NotificationDraft }) => void {
 
 function draft(partial: Partial<NotificationDraft>): NotificationDraft {
   return {
-    title: 'neeko · 任务完成',
+    title: 'neeko · Agent turn completed',
     subtitle: '',
-    body: '[pi] 任务已完成',
+    body: '[pi] Task completed',
     class: 'completed',
     deep_link: 'neeko://agent/s1',
     ...partial,
@@ -65,8 +65,8 @@ describe('useNotificationDelivered', () => {
     expect(notifications[2].type).toBe('success');
     expect(notifications[0].deepLink).toBe('neeko://agent/s3');
     expect(notifications[2].deepLink).toBe('neeko://agent/s1');
-    expect(notifications[2].title).toBe('neeko · 任务完成');
-    expect(notifications[2].message).toBe('[pi] 任务已完成');
+    expect(notifications[2].title).toBe('neeko · Agent turn completed');
+    expect(notifications[2].message).toBe('[pi] Task completed');
   });
 
   /** 未知 class（前端镜像落后于后端时的防御路径）→ 回落 info，不崩。 */
