@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 341
+- **Total Sessions**: 342
 - **Last Active**: 2026-10-26
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~786 | Active |
+| `journal-7.md` | ~808 | Active |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 342 | 2026-10-26 | fsevent-stream-consolidation 按记录偏差收口：4 项未达成如实登记 + 修 git-domain spec 假陈述 | `a8cda585` | `main` |
 | 341 | 2026-10-26 | watcher 测试解耦收尾：变异验证抓出两处假绿 + R4 合并 + 修复坏掉的时延测量 | `456c16b8` | `main` |
 | 340 | 2026-10-26 | check:quick 延迟压缩：自测分层 + 缓存对 mtime 免疫 | - | `main` |
 | 339 | 2026-10-25 | 清理无用本地分支：删除 5 个已完全合并的分支 + 移除 dsh-neeko worktree | `21bde8e7` | `main` |
