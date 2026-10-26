@@ -14,6 +14,8 @@ mod git_meta_merge;
 mod handle;
 
 #[cfg(test)]
+mod callback_tests;
+#[cfg(test)]
 mod lifecycle_tests;
 #[cfg(test)]
 mod tests;

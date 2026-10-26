@@ -14,6 +14,17 @@ pub enum PlatformWatcher {
     /// macOS 专用：物理排除 ignored 子树的 FSEvents 后端。
     #[cfg(target_os = "macos")]
     MacExclusion(super::macos_fsevent::MacFseventWatcher),
+    /// **测试专用**：不建任何 OS 流的替身（`#[cfg(test)]` 门控，不进发布产物）。
+    ///
+    /// 用于验证 `WatcherManager` 的**编排与状态机**语义（幂等挂载、快照槽位隔离、
+    /// 票号吊销、号段单调）。这些断言的对象是 `Mutex<HashMap>` 里的状态，
+    /// 与「FSEvents 是否真的投递了事件」无关，但原先必须走真实流 ——
+    /// 27 个测试并发时把 fseventsd 压到 95%+（见任务
+    /// `10-25-watcher-test-decoupling`）。
+    ///
+    /// 需要验证「事件确实到达」的用例仍用真实后端（C 层）。
+    #[cfg(test)]
+    Noop,
 }
 
 impl PlatformWatcher {
@@ -50,6 +61,8 @@ impl PlatformWatcher {
                 watcher.update_exclusions(exclusions);
                 true
             }
+            #[cfg(test)]
+            Self::Noop => false,
         }
     }
 }
@@ -88,6 +101,8 @@ impl Watcher for PlatformWatcher {
             Self::Native(watcher) => watcher.watch(path, recursive_mode),
             #[cfg(target_os = "macos")]
             Self::MacExclusion(watcher) => watcher.watch(path, recursive_mode),
+            #[cfg(test)]
+            Self::Noop => Ok(()),
         }
     }
 
@@ -96,6 +111,8 @@ impl Watcher for PlatformWatcher {
             Self::Native(watcher) => watcher.unwatch(path),
             #[cfg(target_os = "macos")]
             Self::MacExclusion(watcher) => watcher.unwatch(path),
+            #[cfg(test)]
+            Self::Noop => Ok(()),
         }
     }
 
@@ -104,6 +121,8 @@ impl Watcher for PlatformWatcher {
             Self::Native(watcher) => watcher.configure(config),
             #[cfg(target_os = "macos")]
             Self::MacExclusion(watcher) => watcher.configure(config),
+            #[cfg(test)]
+            Self::Noop => Ok(false),
         }
     }
 }

@@ -14,7 +14,12 @@ use std::sync::{atomic::AtomicBool, Arc};
 pub(in crate::common::file::watcher) struct WatcherHandle {
     /// Arc<Mutex> 包装：注册维护线程需要 &mut 执行 watch/unwatch。
     /// 类型是平台门面 [`PlatformWatcher`]（W2 起 macOS 可能是物理排除后端）。
-    pub(super) _watcher: Arc<std::sync::Mutex<PlatformWatcher>>,
+    ///
+    /// **`Option` 的理由**：该字段是**纯保活**（全仓零读取，`_` 前缀即声明意图；
+    /// 维护线程用的是独立的 `Arc::downgrade(&watcher)`，不经此处）。测试要验证
+    /// 「快照 / 票号 / 编排」这类纯状态机语义时不需要真实 FSEvents 流 ——
+    /// 用 [`Self::worker_only`] 构造一个 `None` 的 handle 即可，生产路径恒 `Some`。
+    pub(super) _watcher: Option<Arc<std::sync::Mutex<PlatformWatcher>>>,
     /// S2 注册状态（策略/已注册集合）与维护消息发送端
     pub(super) _registration: Arc<std::sync::Mutex<WatchRegistration>>,
     pub(super) _maintenance_tx: Option<mpsc::Sender<super::super::registration::WatchMaintenance>>,

@@ -21,6 +21,8 @@ use super::handle::WatcherHandle;
 use crate::common::git::local::is_git_repo;
 use crate::common::git::status_worker::{GitStatusSnapshot, GitStatusWorker};
 use crate::common::git::WorkspaceRef;
+#[cfg(test)]
+use crate::platform::watch_backend::PlatformWatcher;
 use crate::platform::watch_backend::{
     build_exclusion_paths, create_file_watcher, watch_backend, WatchBackend,
 };
@@ -36,6 +38,14 @@ use std::{
     },
     time::Duration,
 };
+
+/// 测试模式下的回调投喂口类型（`no_real_fs` 用）。
+///
+/// 与 `build_notify_callback` 的返回同形 —— 测试拿到它就能主动投喂合成
+/// `notify::Event`，从而验证「事件到达后如何处理」，**不必建真实 FSEvents 流**。
+/// 生产代码从不读它（`#[cfg(test)]` 门控）。
+#[cfg(test)]
+pub type TestEventSink = Box<dyn FnMut(Result<notify::Event, notify::Error>) + Send>;
 
 /// 用户级 watcher 排除（`watcherExclude`）模式提供者。
 ///
@@ -78,6 +88,20 @@ pub struct WatcherManager {
     mount_lock: Arc<Mutex<()>>,
     /// 用户级 watcher 排除模式提供者（D2）；默认空 = 只 gitignore + 硬噪声。
     watcher_excludes_provider: WatcherExcludesProvider,
+    /// 测试开关：为真时不建真实 OS 流，改用 `PlatformWatcher::Noop`。
+    ///
+    /// **生产恒为 false**（`new()` 处初始化），`watch()` 的编排与状态机
+    /// （幂等检查、快照作废、票号签发、handle 登记）在两种模式下**完全相同**，
+    /// 只有「建流」这一步被替换。这使「快照槽位隔离 / 号段单调 / 票号吊销」
+    /// 这类纯状态机断言不必付出 FSEvents 的代价（27 条并发流 → fseventsd 95%+）。
+    ///
+    /// 需要验证「事件确实到达」的用例仍走真实路径（C 层，见 `lifecycle_tests`）。
+    #[cfg(test)]
+    no_real_fs: Arc<std::sync::atomic::AtomicBool>,
+    /// 测试模式下的回调投喂口（见 `no_real_fs`）。
+    #[cfg(test)]
+    test_event_sink: Arc<Mutex<Option<TestEventSink>>>,
+    /// 已创建的 watcher 套数（幂等契约观测口，见 `lifecycle_tests.rs`）：
     /// 已创建的 watcher 套数（幂等契约观测口，见 `lifecycle_tests.rs`）：
     /// 「重复 watch 只建一套」用创建计数断言，不用事件批次计数 —— 单次写入的
     /// 多个 FS 事件在负载下可跨 debounce 窗口分多批投递（合法生产行为），
@@ -105,8 +129,31 @@ impl WatcherManager {
             mount_lock: Arc::new(Mutex::new(())),
             watcher_excludes_provider: Arc::new(Vec::new),
             #[cfg(test)]
+            no_real_fs: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            test_event_sink: Arc::new(Mutex::new(None)),
+            #[cfg(test)]
             watcher_set_creations: Arc::new(AtomicUsize::default()),
         }
+    }
+
+    /// **测试专用**：取走该 manager 最近一次 `watch()` 生成的回调，用于主动投喂事件。
+    ///
+    /// 只在 `without_real_fs()` 模式下有值（见 `no_real_fs` 字段）。
+    #[cfg(test)]
+    pub(super) fn take_test_event_sink(&self) -> Option<TestEventSink> {
+        self.test_event_sink.lock().ok()?.take()
+    }
+
+    /// **测试专用**：关闭真实 OS 流（改用 `PlatformWatcher::Noop`）。
+    ///
+    /// 见 `no_real_fs` 字段说明。供纯状态机语义的用例使用 ——
+    /// 它们断言的是 `Mutex<HashMap>` 里的状态，不需要内核投递。
+    #[cfg(test)]
+    pub(super) fn without_real_fs(self) -> Self {
+        self.no_real_fs
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self
     }
 
     /// 注入用户级排除模式提供者（组合根用，见 `AppStateWrapper::new_with_library_store`）。
@@ -414,21 +461,32 @@ impl WatcherManager {
             );
         }
 
-        let notify_result = create_file_watcher(
-            build_notify_callback(
-                repo.clone(),
-                sink_for_watcher_error,
-                gitignore_filter_for_notify,
-                maintenance_tx_for_closure,
-                debounce_tx_for_notify,
-                tree_debounce_tx,
-                scheduler_tx,
-                git_repo,
-                git_meta_callbacks,
-            ),
-            Config::default(),
-            &exclusions,
+        let notify_callback = build_notify_callback(
+            repo.clone(),
+            sink_for_watcher_error,
+            gitignore_filter_for_notify,
+            maintenance_tx_for_closure,
+            debounce_tx_for_notify,
+            tree_debounce_tx,
+            scheduler_tx,
+            git_repo,
+            git_meta_callbacks,
         );
+        // 测试开关（生产恒 false）：不建 OS 流，并把**回调本体**交给测试，
+        // 由测试主动投喂合成事件 —— 这样 `watch()` 的编排与状态机（幂等检查、
+        // 快照作废、票号签发、handle 登记）全部照常执行，只有「内核投递」被替换。
+        // 见 `no_real_fs` 字段与 `take_test_event_sink`。
+        #[cfg(test)]
+        let notify_result = if self.no_real_fs.load(Ordering::Relaxed) {
+            if let Ok(mut slot) = self.test_event_sink.lock() {
+                *slot = Some(Box::new(notify_callback));
+            }
+            Ok(PlatformWatcher::Noop)
+        } else {
+            create_file_watcher(notify_callback, Config::default(), &exclusions)
+        };
+        #[cfg(not(test))]
+        let notify_result = create_file_watcher(notify_callback, Config::default(), &exclusions);
 
         let watcher = match notify_result {
             Ok(w) => w,
@@ -498,7 +556,14 @@ impl WatcherManager {
         // `resolve_worktree_roots` + `rearm_worktrees_if_needed` 的机制，存在的唯一前提就是
         // 「worktree 没有自己的资源」—— 前提消失，机制退役。
         // 合并成功 → 不再建独立 git_meta 流（流数 2N → N）。
-        let head_watcher = if git_repo && !merge_git_meta {
+        // 测试模式（`without_real_fs`）同样不建独立 git_meta 流 —— 否则 27 个状态机
+        // 测试仍会各自建一条真实 FSEvents（实测把 fseventsd 压到 99%+）。
+        // 生产恒 false，行为不变。
+        #[cfg(test)]
+        let skip_real_fs = self.no_real_fs.load(Ordering::Relaxed);
+        #[cfg(not(test))]
+        let skip_real_fs = false;
+        let head_watcher = if git_repo && !merge_git_meta && !skip_real_fs {
             crate::common::file::watcher::git_meta::resolve_git_meta_paths(&path).and_then(|meta| {
                 let scheduler_tx = scheduler.as_ref().map(|s| s.sender());
                 let unit_index = workspace.clone();
@@ -622,7 +687,7 @@ impl WatcherManager {
             watchers.insert(
                 workspace,
                 WatcherHandle {
-                    _watcher: watcher,
+                    _watcher: Some(watcher),
                     _registration: registration,
                     _maintenance_tx: Some(maintenance_tx),
                     _scheduler: scheduler,

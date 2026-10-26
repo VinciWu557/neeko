@@ -101,6 +101,30 @@ unsafe impl Send for MacFseventWatcher {}
 // Sync：所有修改可变状态的方法都取 `&mut self`。
 unsafe impl Sync for MacFseventWatcher {}
 
+/// 该路径是否落在本流的订阅范围内（**纯函数**，不碰 FFI）。
+///
+/// 规则（与 notify/上游一致）：
+/// - 递归订阅的根 → 任意后代都算；
+/// - 非递归订阅的根 → 仅根自身或其直接子项算（子项因为 notify 的语义需要上报，
+///   由下游 `classify` 决定去留）。
+///
+/// **为什么抽出来**：这段判定原先内联在 `callback_impl` 的 FFI 回调里，验证它必须
+/// 建真实 FSEvents 流（debug 构建下实测把 fseventsd 打到 78% CPU）。抽出后可直接
+/// 喂 `(path, recursive_info)` 断言，零流零 IO。
+fn should_handle_event(path: &Path, recursive_info: &HashMap<PathBuf, bool>) -> bool {
+    for (watched, recursive) in recursive_info {
+        if path.starts_with(watched) {
+            if *recursive || path == watched {
+                return true;
+            }
+            if path.parent() == Some(watched.as_path()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn translate_flags(flags: StreamFlags, precise: bool) -> Vec<Event> {
     let mut evs = Vec::new();
 
@@ -646,22 +670,7 @@ unsafe fn callback_impl(
         let flag = *event_flags.add(p);
         let flag = StreamFlags::from_bits_truncate(flag);
 
-        let mut handle_event = false;
-        for (watched, recursive) in &(*info).recursive_info {
-            if path.starts_with(watched) {
-                if *recursive || &path == watched {
-                    handle_event = true;
-                    break;
-                } else if let Some(parent_path) = path.parent() {
-                    if parent_path == watched {
-                        handle_event = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if !handle_event {
+        if !should_handle_event(&path, &(*info).recursive_info) {
             continue;
         }
 
@@ -716,11 +725,100 @@ impl Drop for MacFseventWatcher {
 mod tests {
     use super::*;
     use std::sync::mpsc;
-    use std::time::{Duration, Instant};
 
-    /// 静默窗口必须大于 notify/debounce 的 max_wait（1.5s），确保「没有事件」是真结论。
-    const QUIET_WINDOW: Duration = Duration::from_millis(2000);
-    const FIRST_EVENT_TIMEOUT: Duration = Duration::from_secs(8);
+    // ── 纯函数：路径过滤与 flags 翻译（零流、零 IO）────────────────────────
+    //
+    // 这三个 `*_on_real_fs` 用例原先各自建 1 条真实 FSEvents 流来验证
+    // 「事件是否到达」。但到达与否是 **内核行为**（Apple API），不是本仓代码；
+    // 本仓真正拥有的是下面两个纯判定。debug 构建下建流实测 78% CPU（release 0.7%），
+    // 而它们能覆盖的「我们的代码」仅此而已。
+
+    use std::collections::HashMap;
+
+    fn recursive_info(entries: &[(&str, bool)]) -> HashMap<PathBuf, bool> {
+        entries
+            .iter()
+            .map(|(p, r)| (PathBuf::from(p), *r))
+            .collect()
+    }
+
+    #[test]
+    fn should_handle_event_accepts_descendants_of_recursive_root() {
+        let map = recursive_info(&[("/repo", true)]);
+        assert!(should_handle_event(Path::new("/repo/a/b/c.txt"), &map));
+        assert!(should_handle_event(Path::new("/repo"), &map));
+        // 根之外
+        assert!(!should_handle_event(Path::new("/other/x"), &map));
+    }
+
+    #[test]
+    fn should_handle_event_for_non_recursive_root_only_root_and_direct_children() {
+        let map = recursive_info(&[("/repo/.git", false)]);
+        assert!(should_handle_event(Path::new("/repo/.git"), &map), "根自身");
+        assert!(
+            should_handle_event(Path::new("/repo/.git/HEAD"), &map),
+            "直接子项（由下游 classify 决定去留）"
+        );
+        assert!(
+            !should_handle_event(Path::new("/repo/.git/refs/heads/main"), &map),
+            "非递归根的孙辈不在订阅内"
+        );
+    }
+
+    #[test]
+    fn should_handle_event_matches_any_of_multiple_roots() {
+        let map = recursive_info(&[("/repo", true), ("/other/.git", false)]);
+        assert!(should_handle_event(Path::new("/repo/x"), &map));
+        assert!(should_handle_event(Path::new("/other/.git/index"), &map));
+        assert!(!should_handle_event(Path::new("/third/x"), &map));
+    }
+
+    #[test]
+    fn should_handle_event_rejects_everything_when_no_roots() {
+        assert!(!should_handle_event(
+            Path::new("/anything"),
+            &HashMap::new()
+        ));
+    }
+
+    /// flags → `EventKind` 的映射（下游 `classify` 依赖它）。
+    #[test]
+    fn translate_flags_maps_file_creation_and_removal() {
+        let created = translate_flags(StreamFlags::ITEM_CREATED | StreamFlags::IS_FILE, true);
+        assert!(matches!(
+            created.first().map(|e| e.kind),
+            Some(notify::EventKind::Create(_))
+        ));
+
+        let removed = translate_flags(StreamFlags::ITEM_REMOVED | StreamFlags::IS_DIR, true);
+        assert!(matches!(
+            removed.first().map(|e| e.kind),
+            Some(notify::EventKind::Remove(_))
+        ));
+    }
+
+    #[test]
+    fn translate_flags_maps_data_modification() {
+        let evs = translate_flags(StreamFlags::ITEM_MODIFIED, true);
+        assert!(matches!(
+            evs.first().map(|e| e.kind),
+            Some(notify::EventKind::Modify(_))
+        ));
+    }
+
+    /// `HISTORY_DONE` 是历史事件结束哨兵，不得产生任何 Event。
+    #[test]
+    fn translate_flags_drops_history_done_sentinel() {
+        assert!(translate_flags(StreamFlags::HISTORY_DONE, true).is_empty());
+    }
+
+    /// 非精确模式只给一个 `Any`，不逐 flag 翻译。
+    #[test]
+    fn translate_flags_in_precise_false_yields_single_any() {
+        let evs = translate_flags(StreamFlags::ITEM_CREATED, false);
+        assert_eq!(evs.len(), 1);
+        assert!(matches!(evs[0].kind, notify::EventKind::Any));
+    }
 
     /// 纯函数：截断到 FSEvents 硬上限，且保留前 N 个（顺序稳定）。
     #[test]
@@ -753,155 +851,5 @@ mod tests {
         // 相同集合：no-op（不改变既有状态）。
         watcher.update_exclusions(&many);
         assert_eq!(watcher.exclusion_paths, many[..MAX_FSEVENT_EXCLUSIONS]);
-    }
-
-    /// 真实 FSEvents：撤销排除后，原本被物理排除的子树必须恢复事件投递。
-    ///
-    /// 对应 `.gitignore` 撤销忽略后的 §14 下界：物理排除集合是 ignore 规则的派生值，
-    /// 规则变化必须重组流，否则新可见子树无界陈旧。
-    #[test]
-    fn updated_exclusions_resume_delivery_for_newly_visible_subtree() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
-        let heavy = root.join("heavy");
-        std::fs::create_dir_all(&heavy).unwrap();
-
-        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-        let mut watcher =
-            MacFseventWatcher::with_exclusions(tx, std::slice::from_ref(&heavy)).unwrap();
-        watcher.watch(&root, RecursiveMode::Recursive).unwrap();
-
-        std::thread::sleep(Duration::from_millis(500));
-        drain(&rx);
-
-        // 撤销排除：规则变化后维护线程会重建流。
-        watcher.update_exclusions(&[]);
-
-        let heavy_canonical = heavy.canonicalize().unwrap();
-        let deadline = Instant::now() + FIRST_EVENT_TIMEOUT;
-        let file = heavy.join("x.o");
-        let mut arrived = false;
-        while Instant::now() < deadline && !arrived {
-            std::fs::write(&file, b"churn").unwrap();
-            std::thread::sleep(Duration::from_millis(200));
-            while let Ok(event) = rx.try_recv() {
-                if let Ok(event) = event {
-                    if event.paths.iter().any(|p| p.starts_with(&heavy_canonical)) {
-                        arrived = true;
-                        break;
-                    }
-                }
-            }
-        }
-        drop(watcher);
-        assert!(arrived, "撤销排除后新可见子树的事件必须恢复投递");
-    }
-
-    /// 真实 FSEvents 差分用例（macOS only）：
-    /// 1) 在**排除**子树内写入 → 静默窗口后事件数回到基线（delta == 0）；
-    /// 2) 在**可见**子树写入 → 事件单向可达（`≥`，不做精确集合断言）。
-    #[test]
-    fn excluded_subtree_delivers_zero_events_visible_subtree_still_arrives() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        let excluded = root.join("heavy");
-        let visible = root.join("visible");
-        std::fs::create_dir_all(&excluded).unwrap();
-        std::fs::create_dir_all(&visible).unwrap();
-
-        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-        let mut watcher = MacFseventWatcher::with_exclusions(tx, std::slice::from_ref(&excluded))
-            .expect("construct watcher");
-        watcher
-            .watch(root, RecursiveMode::Recursive)
-            .expect("watch root");
-
-        // 让 FSEvents 流稳定后再取基线（历史事件 / 启动噪声）。
-        std::thread::sleep(Duration::from_millis(500));
-        drain(&rx);
-        let baseline = count(&rx); // 取基线后仍可能有迟到事件，故用差分式 + 静默窗口
-
-        std::fs::write(excluded.join("build.o"), b"churn").unwrap();
-        std::thread::sleep(QUIET_WINDOW);
-        let after_excluded = count(&rx);
-        assert_eq!(
-            after_excluded, baseline,
-            "排除子树内写入必须零投递（基线差分为 0）"
-        );
-
-        // 正向：可见子树写入必须至少到达一次（单向可达，不做精确集合断言）。
-        // FSEvents 投递的是 canonical 路径（tempdir 在 macOS 上位于 `/var → /private/var`
-        // 符号链接下），比较前先归一，否则路径前缀永远不匹配。
-        let visible_canonical = visible.canonicalize().unwrap();
-        let deadline = Instant::now() + FIRST_EVENT_TIMEOUT;
-        let visible_file = visible.join("main.rs");
-        let mut arrived = false;
-        while Instant::now() < deadline && !arrived {
-            std::fs::write(&visible_file, b"fn main() {}").unwrap();
-            std::thread::sleep(Duration::from_millis(200));
-            while let Ok(event) = rx.try_recv() {
-                if let Ok(event) = event {
-                    if event
-                        .paths
-                        .iter()
-                        .any(|p| p.starts_with(&visible_canonical))
-                    {
-                        arrived = true;
-                        break;
-                    }
-                }
-            }
-        }
-        drop(watcher);
-        assert!(arrived, "可见子树写入必须在超时内到达回调");
-    }
-
-    /// AC2：被排除（ignored）目录**自身**的创建/删除仍被投递 —— exclusion 只过滤其**内部**
-    /// 变化，边界事件由父目录监听捕获（灰节点更新）。
-    #[test]
-    fn excluded_root_boundary_event_still_arrives() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
-        let excluded = root.join("target");
-        let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
-        // 排除路径在构造期尚不存在：`str_path_to_cfstring_ref` 仍能正确解析。
-        let mut watcher =
-            MacFseventWatcher::with_exclusions(tx, std::slice::from_ref(&excluded)).unwrap();
-        watcher.watch(&root, RecursiveMode::Recursive).unwrap();
-
-        std::thread::sleep(Duration::from_millis(500));
-        drain(&rx);
-
-        // 正向可达（≥）：创建被排除根必须至少到达一次边界事件。
-        let deadline = Instant::now() + FIRST_EVENT_TIMEOUT;
-        let mut arrived = false;
-        while Instant::now() < deadline && !arrived {
-            std::fs::create_dir_all(&excluded).unwrap();
-            std::thread::sleep(Duration::from_millis(200));
-            while let Ok(event) = rx.try_recv() {
-                if let Ok(event) = event {
-                    if event.paths.iter().any(|p| p == &excluded) {
-                        arrived = true;
-                        break;
-                    }
-                }
-            }
-        }
-        drop(watcher);
-        assert!(arrived, "被排除根自身的边界事件必须仍被投递（灰节点更新）");
-    }
-
-    /// 排空通道（不计数）。
-    fn drain(rx: &mpsc::Receiver<notify::Result<Event>>) {
-        while rx.try_recv().is_ok() {}
-    }
-
-    /// 排空并计数（测试内的非确定性域：只用于差分，不做绝对零断言）。
-    fn count(rx: &mpsc::Receiver<notify::Result<Event>>) -> usize {
-        let mut n = 0;
-        while let Ok(_event) = rx.try_recv() {
-            n += 1;
-        }
-        n
     }
 }

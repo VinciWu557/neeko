@@ -3,7 +3,7 @@
 use super::classify::{classify_git_meta_event, GitMetaChange};
 use super::paths::GitMetaPaths;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Git 元数据 watcher 句柄。
@@ -34,6 +34,36 @@ pub(in crate::common::file::watcher) struct GitMetaWatcherHandle {
 /// 失败语义（显式约定）：核心 `git_dir` 监听失败 = watcher 无意义 → 返回 `None`（仅告警）；
 /// 新增的 `refs_dir` / 公共 gitdir（linked worktree 的 `packed-refs` 所在目录）监听失败
 /// 只告警，不影响 HEAD/index（各自独立）。
+/// 「一批路径 → git 元数据分类 → 三条出口」的**唯一分发实现**（纯逻辑、零 IO）。
+///
+/// **为什么抽出来**：这段是 `git_meta` 监听器的全部语义，原先内联在
+/// `RecommendedWatcher::new` 的闭包里 —— 于是验证它必须建真实 FSEvents 流
+/// （macOS 下每次流启动触发 fseventsd 全树扫描，实测把 CPU 打到 97%+）。
+/// 抽出后可直接喂路径数组断言三出口，不建流、不写文件、零 sleep。
+///
+/// `create_git_meta_watcher` 与合并进主 watcher 的路径（`manager/git_meta_merge.rs`）
+/// 都经此函数，**语义只存在一处**。
+pub(in crate::common::file::watcher) fn dispatch_git_meta_event(
+    paths: &[PathBuf],
+    meta: &GitMetaPaths,
+    on_index_changed: &mut impl FnMut(),
+    on_head_changed: &mut impl FnMut(),
+    on_refs_changed: &mut impl FnMut(),
+) {
+    match classify_git_meta_event(
+        paths,
+        &meta.head,
+        &meta.index,
+        &meta.refs_dir,
+        &meta.packed_refs,
+    ) {
+        GitMetaChange::Nothing => {}
+        GitMetaChange::IndexChanged => on_index_changed(),
+        GitMetaChange::HeadChanged => on_head_changed(),
+        GitMetaChange::RefsChanged => on_refs_changed(),
+    }
+}
+
 #[allow(clippy::type_complexity)]
 pub(in crate::common::file::watcher) fn create_git_meta_watcher(
     workspace: String,
@@ -62,19 +92,21 @@ pub(in crate::common::file::watcher) fn create_git_meta_watcher(
 pub(super) fn create_git_meta_watcher_with<W>(
     workspace: String,
     meta: &GitMetaPaths,
-    mut on_index_changed: impl FnMut() + Send + 'static,
-    mut on_head_changed: impl FnMut() + Send + 'static,
-    mut on_refs_changed: impl FnMut() + Send + 'static,
+    on_index_changed: impl FnMut() + Send + 'static,
+    on_head_changed: impl FnMut() + Send + 'static,
+    on_refs_changed: impl FnMut() + Send + 'static,
     mut watch_fn: W,
 ) -> Option<GitMetaWatcherHandle>
 where
     W: FnMut(&mut RecommendedWatcher, &Path, RecursiveMode) -> Result<(), notify::Error>,
 {
-    let head_path = meta.head.clone();
-    let index_path = meta.index.clone();
-    let refs_dir = meta.refs_dir.clone();
-    let packed_refs = meta.packed_refs.clone();
     let unit_for_cb = workspace.clone();
+    let meta_for_cb = meta.clone();
+    // 「事件 → 分类 → 三出口」抽成独立纯函数，便于**不建 OS 流**直接验证
+    // （见 `dispatch_git_meta_event`）。此处只把闭包捕获进去。
+    let mut on_index = on_index_changed;
+    let mut on_head = on_head_changed;
+    let mut on_refs = on_refs_changed;
     let result = RecommendedWatcher::new(
         move |result: Result<Event, notify::Error>| {
             let event = match result {
@@ -84,18 +116,13 @@ where
                     return;
                 }
             };
-            match classify_git_meta_event(
+            dispatch_git_meta_event(
                 &event.paths,
-                &head_path,
-                &index_path,
-                &refs_dir,
-                &packed_refs,
-            ) {
-                GitMetaChange::Nothing => {}
-                GitMetaChange::IndexChanged => on_index_changed(),
-                GitMetaChange::HeadChanged => on_head_changed(),
-                GitMetaChange::RefsChanged => on_refs_changed(),
-            }
+                &meta_for_cb,
+                &mut on_index,
+                &mut on_head,
+                &mut on_refs,
+            );
         },
         Config::default(),
     );
