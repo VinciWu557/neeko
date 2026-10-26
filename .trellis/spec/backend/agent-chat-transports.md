@@ -323,7 +323,7 @@ provider/model —— 排障时先看它，能直接区分「上游失败」与�
 
 | 载荷 | 正确 reason | 不区分的后果 |
 | --- | --- | --- |
-| `{aborted: true}`（用户点停止） | `Stopped` | 发「任务完成」通知 —— `notify.rs` 的 `Stopped => return None` 在 pi 上永不可达 |
+| `{aborted: true}`（用户点停止） | `Stopped` | 发「Agent turn completed」通知 —— `notify.rs` 的 `Stopped => return None` 在 pi 上永不可达 |
 | `{aborted: false}` | `Completed` | — |
 | 字段缺失（旧版 pi） | `Stopped` | 保守取「被叫停」：宁可少一条完成通知，不谎报成功 |
 
@@ -334,7 +334,7 @@ provider/model —— 排障时先看它，能直接区分「上游失败」与�
 - `translate` 是纯函数（这是它能被密集单测的前提，不能破）；
 - `agent_settled` 的载荷里没有「本轮是否报过错」。
 
-于是 `notify.rs` 的两条互斥声明被同时触发（「会话异常终止」+「任务完成」）。
+于是 `notify.rs` 的两条互斥声明被同时触发（「Agent session failed」+「Agent turn completed」）。
 修法：`PiSession::absorb()` 在**入队那个事件边界**维护 `turn_failed`，遇
 `Error` 置位、遇 `TurnEnd` 消费并清零（下一轮从干净状态开始）。
 
