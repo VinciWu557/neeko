@@ -762,3 +762,25 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 341: watcher 测试解耦收尾：变异验证抓出两处假绿 + R4 合并 + 修复坏掉的时延测量
+<!-- trellis-session: v=2 fp=9e5ef169371bdb30 -->
+
+**Date**: 2026-10-26
+**Task**: watcher 测试解耦收尾：变异验证抓出两处假绿 + R4 合并 + 修复坏掉的时延测量
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `456c16b8` | test(watcher): prove the assertions can fail, not just pass |
+
+### Status
+
+[OK] **Completed**
