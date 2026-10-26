@@ -121,3 +121,24 @@ npx vitest run
 > 它们全部带 `eslint-disable` + 理由，属既有架构债（`useKeyboardShortcuts` 的终端
 > 仲裁、`taskStore` 的 task/lsp API 等）。动它要重划 shared 与 features 的边界，
 > 是独立任务 —— 与本任务的「agent 配置单源」无因果关系。
+
+
+---
+
+## 归档记录（2026-10-26）
+
+**状态：完成。** 全部步骤已勾选（38 条），验收标准逐条可核。
+
+落地提交：
+- `96a13d86` refactor(agent): read agent config from agentStore everywhere
+- `a4f5502c` test(guards): pin agent config single-source with a machine guard
+- `33edff74` docs(spec): record the agent config single-source contract
+- `837420d6` test(guards): require chat capability checks to honor chat_enabled
+
+验收核对（2026-10-26 grep 实测）：
+- AC1/AC2：`agentCommandOverrides` / `agentOverrides` 在 `src/` 仅存于测试 mock 夹具
+  （`buildAppShellValues.test.ts` / `SettingsPanel.test.tsx` / `useAppConfig.test.ts`），
+  生产代码零命中。
+- AC3：终端侧命令解析统一走 `agentStore` 的 `resolveAgent`
+  （`terminalCache.ts` / `TerminalViewBase.tsx`）。
+- AC9：单侧护栏 `check_agent_config_single_source` 已接入门禁并通过。

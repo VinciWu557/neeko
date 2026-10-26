@@ -268,3 +268,18 @@ npx vitest run src/shared/types src/features/agent src/features/agent-chat
       内置分支协议标签从 `initial.chat` 直接识别（inprocess 投影为空 argv 会误判）。
 - [x] 9.10 env placeholder 提示 `!VAR` 语法（implement 8.3 的承诺此前未兑现）。
 - [x] 9.11 更新 `.trellis/spec/backend/agent-chat-transports.md`（wire_format 三层迁移 + 判据收口）。
+
+
+---
+
+## 归档记录（2026-10-26）
+
+**状态：完成。** 全部步骤已勾选（82 条），验收标准逐条可核。
+
+落地提交：
+- `c612f20d` feat(agent): rebuild chat transport plumbing around a registry
+- `837420d6` test(guards): require chat capability checks to honor chat_enabled
+
+本任务的 `PROTOCOLS` 注册表是后续所有 transport 改动的基座：`10-24-composer-token-editor`
+的 opencode `/api/command` 接线（`4f163ddd`）正是往这张表里加一条记录 + 前端 `TRANSPORTS`
+一行，符合 AC2 定义的「新增协议 = 两处各一行」。

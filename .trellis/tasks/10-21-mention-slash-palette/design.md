@@ -229,3 +229,41 @@ VS Code / Claude Code 的 composer 把 `/命令` 与 `@文件` 渲染成带色 t
 
 任一层失效（1 只治绘制路径、2 只治受控值分叉、3 只治 DOM 结构抖动），其余两层
 仍能兜住。变异验证：去 2 → 重同步用例红；去 3（恢复卸载）→ 组合期镜像两用例红。
+
+---
+
+## 归档记录（2026-10-26）：本任务已被 10-24 取代
+
+**归档性质：非「完成」，是「被取代」。** 这一点必须写清楚，否则后来者会把
+未勾选项当成待办。
+
+### 发生了什么
+
+本任务交付了 textarea + **镜像高亮层**（`ComposerMirror.tsx` / `paletteHighlight.ts` /
+`paletteTrigger.ts`）。该架构有原理性上限：镜像渲染必须与透明文字逐像素对齐，
+因此 chip 里不可能内嵌图标。`10-24-composer-token-editor` 用 Tiptap contenteditable
+**整体替换**了编辑面：
+
+| 本任务交付物 | 现状 |
+| --- | --- |
+| `ComposerMirror.tsx`（镜像层） | **已删除**（`461d2e24`） |
+| `paletteHighlight.ts`（高亮着色） | **已删除** |
+| `paletteTrigger.ts`（`findTrigger`/`applySelection`） | **已删除**，触发改由 Tiptap Suggestion 承担 |
+| `.composer-mirror` / `.composer-token*` CSS | **已删除** |
+| 三层 WebKit IME 加固 | **已删除**（ProseMirror 原生组合处理取代） |
+| `paletteSources.ts` / `ComposerPalette.tsx` | **保留并复用**（分组 + 分词搜索） |
+| 后端 `list_commands` / 能力位 / 契约测试 | **保留**（`4f163ddd` 又补了 opencode 的 `/api/command`） |
+
+### AC 判定
+
+- **AC1–AC8、AC10**：功能在 `10-24` 中全部重建且更强（chip 化、分组、分词搜索）。
+- **AC11（镜像层高亮 token）**：**判据已失效** —— 镜像层不存在了。
+  它的需求由 `10-24` 的 AC1（chip 一等 token）以更强形式满足。
+- **AC3 真机 pi 展开 `/命令`**：已由 `10-24` 的真机验证关闭（2026-10-26 用户手工确认）。
+
+`implement.md` 中十余条未勾项全部指向镜像层实现，**没有一条是可继续执行的工作**。
+
+### 结论
+
+本任务不应作为「未完成」留在活跃列表。`10-24-composer-token-editor` 是其直接后继，
+且已归档完成。若将来要验 composer，验的是 `10-24` 的 chip 架构，不要再验镜像层对齐。
