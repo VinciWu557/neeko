@@ -67,3 +67,22 @@ export async function getCliHookStatus(): Promise<HookInstallStatus[]> {
     return [];
   }
 }
+
+/**
+ * 认领「回流监听已生效」，并取回在此之前到达的点击深链（无则 `null`）。
+ *
+ * 两件事必须是一个命令：后端把它们放在同一把锁里，拆开就会出现「已就绪但没人监听」
+ * 与「取走了但点击还没写入」两类丢点击窗口（详见后端 `notification/boot.rs` 模块头）。
+ *
+ * **必须在 `listen()` 的 Promise resolve 之后调用**，不能放在挂载时 —— 早于订阅生效
+ * 就等于把状态标错了。后端幂等：重复调用恒 `null`。
+ *
+ * 失败回 `null`（旁路能力）：最坏结果是后端保持「未就绪」继续暂存，下次挂载再拉，不丢。
+ */
+export async function claimNotificationReflowReady(): Promise<string | null> {
+  try {
+    return await invoke<string | null>('notification_claim_reflow_ready');
+  } catch {
+    return null;
+  }
+}

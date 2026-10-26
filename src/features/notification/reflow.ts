@@ -1,9 +1,10 @@
 /**
  * 通知回流路由 —— deep link（`neeko://{domain}/{instance_id}`）→ 聚焦动作。
  *
- * 桌面端原生通知点击没有 payload 回调通道（tauri-plugin-notification 2.4.0 实现事实，
- * design D9 修订）：点击原生通知由系统把应用带到前台（尽力回流），精确聚焦经由
- * in-app 通知列表条目点击完成 —— 本模块是两种入口共用的路由表。
+ * 点击通知回到对应会话有两条原生通道，**入口都在本路由表**（`useNotificationReflow` 订阅）：
+ * - 插件路径（Windows / Linux）：`onAction` 回传 `extra.deepLink`；
+ * - macOS 原生委托：`didReceiveNotificationResponse` 从 `userInfo` 取回同名键，
+ *   经 `notification-refocus` 事件送达。
  *
  * 复用既有路径铁律：聚焦 = `selectProject` + `activateTab`（同一事实唯一产出点，
  * 禁止新造第二套「打开会话」逻辑）。未知 domain → 返回 false，调用方静默降级。
