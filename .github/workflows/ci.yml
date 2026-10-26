@@ -32,6 +32,20 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      # eslint / tsc 的增量缓存跨 run 复用。这不是「优化」，而是让这条门禁回到它的预算内：
+      # 冷跑实测 72s（本地 10 核），CI 的 4 核机器只会更慢；暖跑 2s。缓存能命中是因为
+      # `lint:fe` 用 `--cache-strategy content`（内容哈希，对 checkout 的 mtime 免疫）——
+      # 若改回默认的 metadata 策略，这份缓存会每次都失效且静默变慢。
+      - name: Restore eslint / tsc incremental cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .eslintcache
+            node_modules/.cache
+          key: ${{ runner.os }}-lintcache-${{ hashFiles('pnpm-lock.yaml', '.eslintrc.cjs', 'tsconfig*.json') }}
+          restore-keys: |
+            ${{ runner.os }}-lintcache-
+
       # 与本地 commit 档**同一条命令**（静态检查的定义单点在 package.json）：eslint + tsc。
       # 此前 eslint 只在本地 pre-commit 跑、CI 不跑 ⇒ 门的强度取决于「谁装了钩子」。
       - name: Frontend static checks

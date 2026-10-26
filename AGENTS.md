@@ -57,7 +57,7 @@ required check 核对属批次 2。
 ```bash
 pnpm install                 pnpm tauri dev            pnpm tauri build
 pnpm lint          # 全部静态检查：进程内判据 + lint_fe（eslint + tsc）+ lint_rust:all-targets（fmt + clippy 全目标）
-pnpm check:quick   # 开发循环的默认检查（~15-20s）：静态检查 + 改动文件的单元测试（覆盖窄于全量）
+pnpm check:quick   # 开发循环的默认检查（~12s）：静态检查 + 改动文件的单元测试（覆盖窄于全量）
 pnpm check         # 全量门禁（分钟级）：lint + test。**不本地跑** —— 由 pre-push hook 与 CI 执行
 pnpm guards list   # 列当前门禁清单与其 stage/scope/argv（checks/ 目录 + ledger/gates.json）
 pnpm lint:fix      # 写回修复：cargo fmt（Rust）+ eslint --fix（前端）

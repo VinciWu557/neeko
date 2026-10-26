@@ -7,10 +7,10 @@
 `lefthook.yml` 的文件头（commit = 快静态检查 / push = 全套分钟级门禁 / CI = 三平台终审）。
 `check:quick` 就是其中的「开发循环档」：**不该让人等的都在这，分钟级的都在 push**。
 
-| 轻量（本命令，实测 ~15-20s） | 重量（push / CI，`pnpm check`） |
+| 轻量（本命令，实测 ~12s 暖缓存） | 重量（push / CI，`pnpm check`） |
 | --- | --- |
 | 静态检查：eslint + tsc + fmt + clippy | 集成测试 |
-| 仓库护栏（25 条进程内判据） | 全量单元测试（`test_fe` / `test_rust`） |
+| 仓库护栏（28 条进程内判据） | 全量单元测试（`test_fe` / `test_rust`） |
 | 改动文件的单元测试（`vitest related`） | `test:host` / 覆盖率地板 / 生产打包 |
 
 三个设计点：
@@ -28,6 +28,14 @@
    两处缺口：Rust（无 import 图，`cargo test` 粒度是整个 crate）、
    Java host（`tools/java-host/**` 的唯一门禁就是重量级的 `test:host`）。
    两处都不静默跳过 —— 那会让一个实际没有任何检查覆盖的改动看起来是「绿」的。
+
+耗时前提（不成立就会退到 60–140s，排查「变慢了」先看这三条，不要先怀疑代码）：
+
+- `eslint --cache`：缓存冷跑 72s，暖跑 2s。`lint:fe` 用 `--cache-strategy content` 而非默认的
+  metadata —— 内容哈希对 mtime 免疫，`checkout` / `git clean` / `touch` 不再让缓存失效。
+- `tsc --incremental`：无 tsbuildinfo 时 20s，有则 1.6s（缓存在 `node_modules/.cache/`）。
+- `vitest related`：启动固定开销 ~5s；改动命中 `shared/store` 这类共享节点时反推出上百个
+  测试，退化到 ~30s。这是**真实的覆盖面**，不是浪费 —— 别为了变快砍掉它。
 """
 from __future__ import annotations
 

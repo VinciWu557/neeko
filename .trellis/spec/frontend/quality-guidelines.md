@@ -526,7 +526,7 @@ pnpm test:fe        # 跑一次前端测试（push 档用它）
 pnpm test:fe:coverage  # 带覆盖率跑同一套（CI 用它；地板见 vitest.config.ts）
 pnpm test           # 三套串接：test:fe + test:rust + test:host
 pnpm check          # 本地全量：lint + 两套单元测试 + host 自检（--jobs auto，按机器并发）
-pnpm check:quick    # 开发循环的默认检查（~15-20s）；覆盖面窄于 check，全量留给 push（见下）
+pnpm check:quick    # 开发循环的默认检查（纯业务改动 ~12s，见下表）；覆盖面窄于 check，全量留给 push（见下）
 ```
 
 > 命令的**定义单点在 `package.json`**（本文件只引用脚本名）。hook 与 CI 调用的名字必须与它一致 ——
@@ -551,11 +551,27 @@ pnpm check:quick    # 开发循环的默认检查（~15-20s）；覆盖面窄于
 > `check:quick` 就是其中的「开发循环档」：**不该让人等的不在这，分钟级的留在 push**。
 > 它的边界不是「改动文件」—— 改动集只是「单元测试」这一项需要的机制。
 >
-> | 轻量（本命令，~15-20s） | 重量（`pnpm check` / push） |
+> | 轻量（本命令，~12s 暖缓存） | 重量（`pnpm check` / push） |
 > | --- | --- |
 > | 静态检查：eslint + tsc + fmt + clippy | 集成测试 |
-> | 仓库护栏（25 条进程内判据） | 全量单元测试（`test_fe` 74–132s / `test_rust` 26–48s） |
+> | 仓库护栏（28 条进程内判据） | 全量单元测试（`test_fe` 74–132s / `test_rust` 26–48s） |
 > | 改动文件的单元测试（`vitest related`） | 覆盖率地板、生产打包 |
+>
+> **耗时构成与三个前提**（2026-10 实测，10 核机器）。这三条任一不成立就会退到 60–140s，
+> 所以遇到「变慢了」先按顺序排除它们，而不是去查代码：
+>
+> | 项 | 耗时 | 失效时的代价 |
+> | --- | --- | --- |
+> | `eslint --cache` | 2s | **缓存冷跑 72s**（`rm .eslintcache` / 新 clone / 换分支） |
+> | `tsc --incremental` | 1.6s | 无 tsbuildinfo 时 20s（旧实现每跑一次都全量） |
+> | `vitest related` | 5–8s | 改动命中 `shared/store` 这类共享节点时退化到 30s（反推上百个测试） |
+> | 护栏自测（653 用例） | 0s（跳过） | 改动触及 `tools/guards/**` 时才跑，5s |
+>
+> 前两项的缓存**不是优化而是命令的一部分**：`lint:fe` 的 eslint 带 `--cache-strategy content`，
+> `type-check` 带 `--incremental --tsBuildInfoFile node_modules/.cache/…`。用内容哈希而不是
+> mtime 是关键 —— `checkout` / `git clean` / `touch` 都会改 mtime 但不改内容，用默认的 metadata
+> 策略会让 CI 和刚切完分支的本地都白冷跑一遍（实测：内容不变只改 mtime ⇒ metadata 策略 72s，
+> content 策略 1.8s）。
 >
 > **静态检查不在这里自造清单**：它直接复用框架的「lint 档」（`runner.execute(stage="local",
 > suite="lint")`）。框架的 `kind=lint` 就是「静态检查」这个概念的**唯一定义点** ——
@@ -576,6 +592,12 @@ pnpm check:quick    # 开发循环的默认检查（~15-20s）；覆盖面窄于
 > **退出码三档与门禁同构**：`0` 通过 / `1` 有代码问题 / `2` 是**工具/环境问题**
 > （工具链缺失、单步超时）—— 2 必须与 1 可区分，否则「跑不起来」会被当成「代码有问题」，
 > 把人引向不该改的地方。
+>
+> **护栏自测按改动集分层**：`selftest` 挡在所有护栏前面，但它只回答「护栏的判据本身是否
+> 可信」，而这个问题只在 `tools/guards/**` 变动时才可能改变。判据与框架的
+> `_apply_framework_rule` 同源（`core/runner.py::_selftest_is_due`）：改动触及框架才跑，
+> 否则跳过并**在输出里声明跳过**（不静默）；改动集为空时（全量档 / 拿不到改动集）一律跑 ——
+> 「无从判断」不能读成「不用跑」。
 >
 > 执行本身复用 `tools/guards/core/proc.py`（「怎么跑外部命令」的唯一实现：cwd / 超时 /
 > 进程组清场）—— 与门禁共用同一份，不抄第二份平台相关逻辑（Windows 只能杀直接子进程）。
