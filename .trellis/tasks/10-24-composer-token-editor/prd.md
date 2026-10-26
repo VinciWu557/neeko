@@ -80,15 +80,31 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC1** 选中命令/文件后，输入框内是带图标的 chip（类型化配色）；退格整块删除
-- [ ] **AC2** 发送序列化正确：chip 文档 → `/name ` + `@path ` 纯文本（golden 测试）；
+> 全部达成。自动化部分与手工真机部分的证据分开记录：
+> 前者见 `implement.md` 各阶段与测试用例，后者见 `implement.md`「真机验证」。
+
+- [x] **AC1** 选中命令/文件后，输入框内是带图标的 chip（类型化配色）；退格整块删除
+      —— `ChipView.tsx`（`iconOfSource` 按 `source` 分类）+ `editorSchema.ts`
+      `deleteTriggerWithBackspace: true`。
+- [x] **AC2** 发送序列化正确：chip 文档 → `/name ` + `@path ` 纯文本（golden 测试）；
       真机 pi 展开 `/命令` 通过
-- [ ] **AC3** `/` 与 `@` 弹层补全行为与 10-21 等价（触发/过滤/键盘/空态/能力位门控）
-- [ ] **AC4** 草稿切 tab 丢弃再切回仍在（真 store 写入读回测试）
-- [ ] **AC5** Enter 发送 / Shift+Enter 换行 / 附件 chips 零回归
-- [ ] **AC6** CJK IME 组合输入正常（真机：组合文本可见、上屏正确、方向键无乱码）
-- [ ] **AC7** 镜像层代码全删（grep 零残留）；包体积增量记录在案
-- [ ] **AC8** `check:quick` 全绿；ratchet（组件 <300 行）合规
+      —— `editorSchema.test.ts` 10 条 golden（含 chip 相邻/尾随空格/CJK/attrs 缺失）；
+      **真机 pi 展开已由用户手工确认**。
+- [x] **AC3** `/` 与 `@` 弹层补全行为与 10-21 等价（触发/过滤/键盘/空态/能力位门控）
+      —— `suggestionWiring.ts` 的 `shouldShow` 运行时门；`composerWiring.test.ts`
+      反向护栏断言命令清单不硬编码。
+- [x] **AC4** 草稿切 tab 丢弃再切回仍在（真 store 写入读回测试）
+      —— `editorStore.ts` 登记 `composerDoc`；`editorStore.test.ts` 写入/读回/清除 3 条。
+- [x] **AC5** Enter 发送 / Shift+Enter 换行 / 附件 chips 零回归
+      —— `RichComposer.tsx` `handleKeyDown`；`submitComposer.ts` 的 files 由
+      `docToRequestFiles` 投影（chip 在文档里 ⇔ 随消息发送）。
+- [x] **AC6** CJK IME 组合输入正常（真机：组合文本可见、上屏正确、方向键无乱码）
+      —— **macOS 与 Windows 双平台真机手工验证通过**。
+- [x] **AC7** 镜像层代码全删（grep 零残留）；包体积增量记录在案
+      —— `composerWiring.test.ts` 剥注释后扫 6 个退役符号（排除 `__tests__`）；
+      包体积 +46KB gzip / 主 chunk gzip 1033.61 kB，见 `implement.md` 附录。
+- [x] **AC8** `check:quick` 全绿；ratchet（组件 <300 行）合规
+      —— `vitest run` 647 文件 / 6014 用例全绿；最大组件 208 行。
 
 ## Non-Goals
 

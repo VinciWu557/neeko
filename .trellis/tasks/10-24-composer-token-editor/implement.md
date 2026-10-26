@@ -69,8 +69,9 @@
 - [x] 包体积记录：build 产物 diff（gzip 增量写入 design §8 或 implement 附录）
 - [x] spec 更新（`trellis-update-spec`）：interaction-patterns 补「chip 编辑器的键盘
       契约」与「受控回环单向闸门」；agent-chat-transports 若有序列化契约措辞同步
-- [ ] 真机清单（AC2/AC6）：macOS + Windows 各跑——CJK 组合输入、方向键、候选删除、
-      `/命令` 发送后 pi 展开、草稿切 tab 恢复
+- [x] 真机清单（AC2/AC6）：macOS + Windows 各跑——CJK 组合输入、方向键、候选删除、
+      `/命令` 发送后 pi 展开、草稿切 tab 恢复。
+      **2026-10-26 由用户手工验证通过**（详见下方「真机待验」）。
 
 ## 变异验证清单
 
@@ -103,9 +104,14 @@
 - lockfile：+328 / -2 行
 - `pnpm vite build`：主 chunk `index-*.js` 3389.26 kB / **gzip 1033.61 kB**（Tiptap 约 +46 kB gzip，与选型研究的预估一致）
 
-## 真机待验（本环境跑不了，交付后须人工过一遍）
+## 真机验证（2026-10-26 用户手工确认通过）
 
-- [ ] **AC2**：选中 `/trellis-start` chip 后发送，pi 真的展开该命令（序列化形状 `/name `）
-- [ ] **AC6**：CJK IME 矩阵 —— macOS 与 Windows 各跑：组合输入可见、上屏正确、组合期方向键无乱码、退格删 chip 不残留触发符
-- [ ] chip 视觉：图标 + 类型化配色在深浅两套主题下的对比度；长路径 chip 的省略号截断
-- [ ] 附件链路：`@` 选中文件后 attachments chip 出现、发送后清空
+> 自动化门禁（`vitest run` 647 文件 / 6014 用例、`check:quick`）覆盖的是**代码路径**；
+> 下面四项覆盖的是**真实渲染与真实后端行为**，本环境无法自动化（Windows 那半尤其）。
+> 用户在真机上逐项验证并确认通过，故本任务据此收口。
+
+- [x] **AC2**：选中 `/trellis-start` chip 后发送，pi 真的展开该命令（序列化形状 `/name `）
+- [x] **AC6**：CJK IME 矩阵 —— macOS 与 Windows 各跑：组合输入可见、上屏正确、
+      组合期方向键无乱码、退格删 chip 不残留触发符
+- [x] chip 视觉：图标 + 类型化配色在深浅两套主题下的对比度；长路径 chip 的省略号截断
+- [x] 附件链路：`@` 选中文件后 chip 出现、发送后清空

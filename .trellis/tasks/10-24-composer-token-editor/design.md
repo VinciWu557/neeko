@@ -133,3 +133,65 @@ tab 身份切换；`onUpdate` 的 store 写回**永不**触发 setContent。恢�
 - 子 agent 数据源（schema 属性预留 `kind` 判别即可）
 - 富文本格式（加粗/标题/代码块）
 - 旧 `input` 字段的双向同步（两份表示必然漂移）
+
+## 10. 交付记录（2026-10-26 归档）
+
+### 10.1 落地提交
+
+四个原子提交，全部快进合并入 `main`（`Session 338` 记录，`--ff-only`）：
+
+| Hash | 内容 |
+| --- | --- |
+| `4f163ddd` | 后端 opencode `list_commands` + `commands` 能力位（`/api/command`，两版共享层） |
+| `461d2e24` | 前端 Tiptap 替换镜像层（含删除 `ComposerMirror` / `paletteHighlight` / `paletteTrigger`） |
+| `c67239d0` | 接线 + palette 分组 + 附件改为文档投影 + 缓存键带 directory |
+| `c5a4cce4` | spec 两篇（`interaction-patterns` §composer chip / `agent-chat-transports` §9.4b） |
+
+`feat/composer-token-editor` 分支已在 `Session 339` 的清理中删除（相对 main 未合并提交数 = 0），
+故 `task.json.branch` 已由该分支名改为 `main`。
+
+### 10.2 计划外的三处扩张（实现时发现必需）
+
+1. **R3b 附件单一表示**：原计划保留 `.wa-at` 附件 chips 区，实现时发现「退格删 chip 后
+   附件仍随消息发送」是真实缺陷（两份表示必然漂移）。改为 `docToRequestFiles(doc)` 投影，
+   `useChatAttachments` 只剩 skill 槽。
+2. **R3c 弹层分组与分词搜索**：分组渲染 + 按空格分词匹配 + 高亮行 `scrollIntoView`。
+   原 PRD 只要求「与 10-21 等价」，实测 10-21 的整串子串匹配在混合数据源下不可用。
+3. **opencode 命令端点**（`4f163ddd`）：任务本应「后端零改动」，但 opencode 走 serve
+   传输时 `commands: false` 导致 `/` 完全无反应。查明 `/api/command` 是 `/api/*`
+   共享层（1.x 与 2.x 共存），补了后端发现逻辑与有界重试（8×250ms，命令异步发现
+   实测 0→2→5 条）。
+
+### 10.3 自查发现的假绿（三轮，记录以避免重复）
+
+| 轮次 | 问题 | 修法 |
+| --- | --- | --- |
+| 1 | `'/'` 与 `'@'` 硬编码 7 处，`char` 兼任三义 | 收敛为 `chipSpec.ts` 单一事实源 |
+| 2 | `attrsOf` 产出未声明的 `label` 属性（ProseMirror 丢弃）⇒ 所有 `?? label` 兜底永不可达 | 只产声明过的键；加双向契约测试 |
+| 3 | 测试辅助 `typeText` 漏 `emitUpdate: true` ⇒ 多个用例假绿 | 修正辅助函数 |
+
+### 10.4 真机验证（用户手工确认，2026-10-26）
+
+自动化门禁覆盖代码路径，以下四项覆盖真实渲染与真实后端行为，本环境无法自动化：
+
+- **AC2**：`/trellis-start` chip 发送后 pi 真的展开该命令
+- **AC6**：CJK IME —— macOS 与 Windows 双平台（组合输入可见、上屏正确、
+  组合期方向键无乱码、退格删 chip 不残留触发符）
+- chip 视觉：深浅两套主题下的对比度、长路径 chip 的省略号截断
+- 附件链路：`@` 选中文件后 chip 出现、发送后清空
+
+**全部通过。** AC6 在 PRD「关键风险」表里排第一（删镜像层后 WKWebView 组合期行为需重验），
+该风险现已被双平台实测关闭。
+
+### 10.5 门禁
+
+- `vitest run`：647 文件 / **6014 用例**全绿
+- `cargo test --lib`：2241 passed（本任务后端的 opencode 部分）
+- 组件行数 ratchet：最大 208 行（`editorSchema.ts`）< 300
+- 包体积：主 chunk gzip 1033.61 kB（Tiptap 约 +46 kB，与选型预估一致）
+
+### 10.6 与后续任务的关系
+
+`10-21-mention-slash-palette` 仍在 `in_progress`，其镜像高亮层已被本任务整体替换删除。
+**该任务的真机项已无验证对象** —— 应视为被本任务取代，而非「未完成」。后续处理
+10-21 时以其 PRD 的哪些 AC 仍适用为准，不要再验镜像层对齐。
