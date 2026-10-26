@@ -542,8 +542,19 @@ golden 测试钉住（`golden_key_format_matches_frontend_contract` ↔ `workspa
 `WorkspaceRef` 刻意**不**携带 `ExecTarget`：后者不实现 `Hash/PartialEq`，且目标是**连接**属性不是
 **身份**属性（同一单元在 Local/WSL 下是同一个 git Workspace）。
 
-**生产者**：一个单元一套资源（worker + file watcher + git-meta watcher），
+**生产者**：一个单元一套资源（worker + **一条**文件监听流），
 `WatcherManager` 的 `watchers` / `snapshots` 主键一律 `WorkspaceRef::key()`。
+
+> **git 元数据监听的流数与平台相关（2026-10）**：macOS 后端是 `SubtreeExclusion`，递归订阅
+> 整个 root 且 `.git` **不在** exclusion 列表（`WatchManifest::compute` 跳过它、不放进
+> `ignored_roots`）⇒ `.git` 事件已送达主 watcher，`git_meta` 监听**并入同一条流**
+> （`manager/git_meta_merge.rs::decide`，回调层在 hard-noise 丢弃之前分类）。
+> Linux 是 `SelectiveRegistration`，逐**可见**目录注册且 `.git` 不在其中 ⇒ 主 watcher 拿不到
+> `.git` 事件，**必须保留独立流**。故：**macOS 1 条流，Linux 2 条**。
+> 回滚开关 `NEEKO_DISABLE_GIT_META_MERGE`（仅回退合并，不影响物理排除）。
+> 合并的四个前置条件（递归后端 / gitdir 在订阅根下 / `.git` 未被排除 / 未设开关）
+> 见该函数文档 —— 其中「gitdir 在订阅根下」是 linked worktree 不被合并的原因，
+> 误判会让该单元 HEAD/index/refs 变化永久丢失。
 
 - push 生产者 = 挂载中的 `GitStatusWorker`；pull 生产者 = `record_computed`（WSL / SSH /
   未挂载单元，例如侧栏要为每个 worktree 取计数）。两者产出同一种 `GitStatusSnapshot`、
@@ -868,6 +879,32 @@ ignored 根**整体置入（`FSEventStreamSetExclusionPaths` 无否定语义）�
 详见 `tasks/10-09-watcher-boundary-cost-model/design.md` §3.5；与上面的 R6 例外同属「监听集合
 只保证下界」的显式登记，不是缺陷。
 
+**排除集合的两条硬约束（2026-10，实测取证）**：
+
+1. **8 条是硬上限，超限则全失效**。`FSEventStreamSetExclusionPaths` 传 9 条返回 `false`，
+   且**一条都不生效**（传 12 条实测：内核排除完全失效，只剩回调过滤）。Apple 头文件原文
+   “A maximum of 8 directories maybe specified”。Neeko 的 `take(MAX_FSEVENT_EXCLUSIONS)`
+   避开了这个陷阱 —— **优于 `@parcel/watcher`**（它把所有忽略路径都塞进去并忽略返回值，
+   VS Code 继承该行为）。故**不要**为了「更彻底」而取消截断。
+2. **截断前必须按成本排序，不能保序**。`WatchManifest.ignored_roots` 的顺序来自 `read_dir`
+   （无保证），保序会让 `target` / `node_modules` 落到第 9 位而失去内核排除。
+   `platform/watch_backend/factory.rs::build_exclusion_paths` 是**唯一**的集合归一入口
+   （挂载期与 `ReloadAll` 两个调用点都经它），排序在它内部完成：
+   键为 `(tier, depth, file_name)`，全部 `Ord` ⇒ 结果与遍历序无关。
+
+   档位是**三档**（不是两档）：tier 0 = `target`/`node_modules`/`DerivedData`/`Pods`；
+   两档制实测会被小目录挤掉大目录（一个 33 个 ignored 根的仓库里，8 个名额被 4 个
+   `__pycache__` 占抵，而后者仅 138 个文件、`node_modules` 有 41843 个）。
+
+   ⚠️ **档位表是启发式，不是忽略判定**：哪些路径被排除完全由 `GitIgnoreFilter` 决定，
+   排序只决定「超过 8 个时保留哪 8 个」。新增目录名只能改这两张表，**不得**在排序函数里
+   加新的忽略规则。
+
+   两条路径都必须保留**截断 warn**（`with_exclusions` 与 `update_exclusions`）——
+   `update_exclusions` 曾经静默截断，使「编辑 `.gitignore` 新增的根为何没被排除」无从排查。
+   另有一条 `info!` 记录 `exclusion_roots=<applied>/<requested> truncated=<bool>`
+   并列出具体生效的根（同名目录在不同子树下靠父目录区分）。
+
 ## 15. git 命令寻址契约（`WorkspaceSession` 唯一地址）
 
 **第一性原理**：一次 git 操作的真值依赖是 `(Workspace, 操作)`。地址必须能表达「哪个
@@ -1063,7 +1100,8 @@ startTaskProcess({ workspace, cwd: options?.cwd, … });   // taskStore 内部�
 - `src-tauri/src/common/git/status_worker/` — status 快照唯一计算路径（含折叠 untracked 目录内容摘要 `collapsed_probe.rs`）
 - `src-tauri/src/git/services/status.rs` — 单元 status 读接口与挂载编排（`read_workspace_status` / `activate` / `wait_status_fresh`）
 - `src-tauri/src/common/file/watcher/manager/` — 按单元挂载的资源注册表（`watchers` / `snapshots` 主键 = `WorkspaceRef::key()`）
-- `src-tauri/src/common/file/watcher/git_meta/` — 单元 git 元数据监听（HEAD / index / `refs/**` / `packed-refs`）
+- `src-tauri/src/common/file/watcher/git_meta/` — 单元 git 元数据监听（HEAD / index / `refs/**` / `packed-refs`）。macOS 上运行期可并入主 watcher（见上方「生产者」注），模块本身仍是独立流的实现与分类纯函数所在
+- `src-tauri/src/common/file/watcher/manager/git_meta_merge.rs` — 「是否把 git 元数据并入主流」的判定（平台能力 + gitdir 位置 + exclusion + 回滚开关）与回调构造
 - `src-tauri/src/common/git/operations/` + `local/` — `get_commit_log` / `get_stash_list` / `get_stash_files` / `get_file_diff` / `status_porcelain`
 - `src-tauri/src/git/commands/` + `src-tauri/src/lib.rs` — 命令透传与注册
 - `src-tauri/src/git/events.rs` + `src/shared/events.ts` / `src/shared/types/git.ts` — 长操作输出事件的常量与 payload 双端单一源（红线 5）

@@ -189,24 +189,57 @@ log stream --predicate 'process == "fseventsd"' --info | head -200
 
 ## Acceptance Criteria
 
-- [ ] R1 成本排序：单测证明 `ignored_roots` 顺序被打乱（`target`/`node_modules`
-      放末尾）时，排序后前 8 仍含二者。
-- [ ] R1 确定性：同一输入集合两次排序结果逐位相同。
-- [ ] R1 成员不变：排序前后集合成员一致。
-- [ ] R1 判别性：`tier 0` 与 `tier 1` 混合时 tier 0 在前
-      （**注**：既有测试 `build_exclusion_paths_dedupes_and_preserves_order`
-      因两个输入都是 tier 0，排序未生效时也会 pass —— 不可作为判别依据）。
-- [ ] R2 流合并：`cargo test` 断言同一 workspace 不再创建独立 `git_meta` 流；
-      或等价的后端实例复用断言。
-- [ ] R2 分类正确：`.git/objects/**` → `Nothing`、`.git/refs/heads/**` →
-      `RefsChanged`、`.git/HEAD` → `HeadChanged`、`.git/index` → `IndexChanged`。
-- [ ] R2 不漏事件：`.git` 路径命中分类后仍被 hard-noise 丢弃。
-- [ ] R2 可回滚：`NEEKO_DISABLE_GIT_META_MERGE=1` 时仍建独立流。
-- [ ] R3 护栏：`check_watcher_test_isolation` 接入 `pnpm lint` 并通过。
-- [ ] R4 日志：挂载后可见 `streams= / exclusion_roots= / truncated=` 字段。
-- [ ] **实测对比**：同一组 workspace 下，修复前后 `lsof -p <pid> | grep -c FSEvents`
-      流数下降，且 `sample fseventsd` 中 `neeko_lib` client 线程数相应下降。
-- [ ] `pnpm check` 全绿（含 Rust clippy 全目标）。
+> **状态以代码实测为准**（2026-10-26 复核）。逐条依据与**未达成项的理由**见
+> `design.md §10`。本任务按「记录偏差后归档」收口：未达成的 4 项已在
+> `design.md §10.2` / `§10.5` 写清差什么、为什么可以停、接手成本多少。
+
+- [x] R1 成本排序：`exclusion_sort_keeps_heavy_roots_when_truncated`（12 个根、
+      `target`/`node_modules` 放末尾，断言排序后前 8 含二者）。
+- [x] R1 确定性：`exclusion_sort_is_deterministic`（20 个输入，两次结果逐位相同）。
+- [x] R1 成员不变：`exclusion_sort_preserves_membership`。
+- [x] R1 判别性：`exclusion_sort_ranks_heavy_above_light`（输入故意让 tier 1 在前，
+      排序未实现时必红）。旧测试已按 `implement.md §1.4` 的警告改名
+      `build_exclusion_paths_dedupes` —— 它两个输入同为 tier 0，排序失效也会 pass。
+- [x] R2 流合并：`decide().merge == true` 即「不建第二条流」的充分条件
+      （`core.rs:466` 的条件门控），由 `normal_repo_merges` 等 5 条覆盖。
+- [x] R2 分类正确：`merged_git_meta_classifies_head_index_and_refs` +
+      `merged_git_meta_ignores_objects_and_config`。
+- [x] R2 不漏事件：`merged_git_meta_paths_still_dropped_by_hard_noise`。
+- [~] R2 可回滚：开关**已实现**（`git_meta_merge.rs:30,99`），但**无测试**。
+      理由与接手成本见 `design.md §10.2③` —— 需要先把 `ScopedEnv`（现为
+      `agent/hooks/targets/tests.rs` 私有）提到共享测试支撑，再写该用例。
+- [ ] R3 护栏：**完全未实现**（`tools/guards/checks/` 无该文件，`gates.json` 未注册）。
+      `design.md §10.2①` 记录了其前提已被前序任务证伪（`cargo test --lib` 全量建流数 = 0），
+      因此缺的是**防回归**而非缺修复；接手约 1h。
+- [~] R4 日志：`exclusion_roots= / truncated= / applied=` 已落地
+      （`macos_fsevent.rs:307`），**缺 `streams=` 与 `merged_git_meta=`**；
+      合并状态打了另一条不带 workspace key 的独立日志（`core.rs:468`），
+      两条无法关联到同一挂载。见 `design.md §10.2②`。
+- [ ] **实测对比**：**未做**。代码上 2N→N 是构造性保证（`core.rs:466` 的门控），
+      缺的是端到端确认；该缺口与 R4 的 `streams=` 字段缺失**耦合**
+      —— 有那条日志就能一眼确认合并是否在真机生效。见 `design.md §10.2④`。
+- [x] `pnpm check:quick` 全绿（10 条护栏 / 0 违规）；`cargo clippy --all-targets
+      -D warnings` 干净。**未跑** `pnpm check` —— 按 AGENTS.md 硬指令由 pre-push 与 CI 执行。
 
 > 验收**不包含**「fseventsd CPU 占用下降」—— 取证已证明该 CPU 消耗与本任务的
 > 改动目标无因果关系。把不可归因的指标写进验收，会制造一个永远无法真正通过的验收项。
+
+## 偏差登记（与本节其余部分同等重要）
+
+**PRD R1 原文写 tier 0 = 10 个目录名、tier 1 = 其余（2 档）**，实际实现是 **3 档**、
+tier 0 只 4 个（`target` / `node_modules` / `DerivedData` / `Pods`）。
+
+理由（`factory.rs:26-44` 的注释，来自真机验证）：一个 33 个 ignored 根的仓库里，
+8 个名额被 4 个 `__pycache__` 占掉（实测仅 138 个文件），而 `node_modules` 有 41843 个。
+两档制下同档内按字母序决胜，小目录会挤掉大目录。⇒ 把 `__pycache__` 等降到 tier 1。
+
+这是**改进而非妥协**，判别性测试 `exclusion_sort_ranks_heavy_above_light` 仍成立。
+
+## 本任务留下的技术债（最高优先，见 `design.md §10.5`）
+
+`.trellis/spec/backend/git-domain.md:545` 仍写：
+
+> **生产者**：一个单元一套资源（worker + file watcher + git-meta watcher）
+
+该断言在 **macOS 上已被本次改动推翻**（git-meta 并入主 watcher），仅 Linux 成立。
+后续 agent 按这句推理会得出错误结论（例如「改 git_meta 不影响主 watcher」）。

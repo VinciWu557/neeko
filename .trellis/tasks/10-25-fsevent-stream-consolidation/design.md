@@ -250,3 +250,176 @@ R2 依赖 R1 吗？**不依赖**。两者独立：
   **评估**：`ReloadAll` 由 `.gitignore` 变更触发，属低频；且重启窗口内丢失的
   git 元数据事件会在下一次 `git status` 查询时被事实覆盖（公理 1：信号≠事实）。
   故接受此风险，但 P3 需在日志里记录重启次数，便于验证未变成高频路径。
+
+---
+
+## 10. 实施结果与偏差登记（2026-10-26 复核）
+
+本任务的代码改动分两次提交落地：
+
+| 提交 | 内容 |
+| --- | --- |
+| `e575e590` | P1 — `build_exclusion_paths` 按成本排序 |
+| `0eadd1c1` | P3 — git-meta 合并进主流（含 `decide()` 五条件门控与 `NEEKO_DISABLE_GIT_META_MERGE`）|
+
+P2（R4 日志）与 P4（R3 护栏）**未按计划完整落地**，R5 在 `0eadd1c1` 的邻近改动中补齐。
+下面逐条记录「做了什么 / 差什么 / 为什么可以停在这里」，供后续单独开任务时直接接手。
+
+### 10.1 已达成
+
+| 项 | 落点 | 测试 |
+| --- | --- | --- |
+| R1 成本排序 | `factory.rs:60` `exclusion_cost_tier`；`:82` `build_exclusion_paths` 按 `(tier, depth, file_name)` | 4 条：`exclusion_sort_ranks_heavy_above_light`（唯一的判别性用例）、`_keeps_heavy_roots_when_truncated`、`_is_deterministic`、`_preserves_membership`；旧 `..._and_preserves_order` 已改名 `build_exclusion_paths_dedupes`（其两个输入同为 tier 0，排序失效也 pass —— `implement.md §1.4` 的警告已被遵守）|
+| R1 契约改写 | `factory.rs:68-79` 文档改为「去重 + 按成本降序」，并保留「不新增**忽略判定**语义」的区分 | — |
+| R2 流合并 | `git_meta_merge.rs:63` `decide()` 五条件；`callbacks.rs:96` 在 hard-noise **之前**分类；`core.rs:466` 条件建独立流 | `decide()` 5 条（`normal_repo_merges` / `non_git_unit_yields_no_paths_and_no_merge` / `non_recursive_backend_never_merges` / `excluded_git_dir_blocks_merge` / `symlinked_root_still_merges_on_unix`）|
+| R2 分类语义 | `classify_git_meta_event` 仍是唯一判定点（I1 未破） | `manager/tests.rs` 4 条 `merged_git_meta_*` |
+| R2 回滚开关（实现） | `git_meta_merge.rs:30,99` `merge_disabled()` → `merge` 判定 | **无测试**，见 10.2 |
+| R5 截断可观测 | `macos_fsevent.rs:366-374` `update_exclusions` 补同款 warn | — |
+
+`cargo test --lib watch_backend` = 27 passed；`cargo test --lib watcher` = 123 passed / 1 ignored。
+
+### 10.2 未达成项（本任务按「记录偏差」收口，不再实施）
+
+#### ① R3 护栏：完全未实现
+
+```
+$ ls tools/guards/checks/ | grep -i watch     → 0 命中
+$ grep -rn watcher_test_isolation tools/ .github/ lefthook.yml package.json → 0 命中
+```
+
+`check_watcher_test_isolation.py` 不存在，`gates.json` 未注册。
+
+**为什么可以停**：这条护栏的前提是「测试可能在污染仓库根」。`10-25-watcher-test-decoupling`
+已实测 `cargo test --lib` 全量建流数 = **0**（`watch()` 在完整测试运行中调用 0 次），
+且 `design.md §5.1` 已核实 `registration/tests.rs` 与 `git_meta/tests/watcher.rs` 均隔离。
+⇒ 缺的是**防回归**，不是缺修复。风险等级：低（新测试若引入真实流，会成为套件耗时可见的回归）。
+
+**接手成本**：约 1 小时（仿 `check_unit_tests_spawn_real_binaries.py` 的结构 + ledger 一行）。
+
+#### ② R4 日志字段不符 PRD
+
+PRD 要求的形态：
+
+```
+streams=1 exclusion_roots=<applied>/<requested> truncated=<bool> merged_git_meta=<bool>
+```
+
+实际（`macos_fsevent.rs:307`）：
+
+```
+[WatchBackend] fsevents stream: exclusion_roots=8/12 truncated=true applied=[...]
+```
+
+缺 `streams=` 与 `merged_git_meta=`。合并状态打了**另一条**独立日志
+（`core.rs:468` `git meta merged into main watcher (single FSEvents stream)`），
+两条日志没有共同标识（这条不带 workspace key，那条带），无法一眼回答
+「这个 workspace 现在几条流」。
+
+**附带的不准确**：`core.rs:468` 的文案写 `(single FSEvents stream)`，但合并判定不看
+「实际是不是 FSEvents 后端」—— `NEEKO_DISABLE_FSEVENT_EXCLUSION=1` 时后端回退到
+`RecommendedWatcher`（仍是 FSEvents，正确），但 Linux 上 `decide()` 的
+`backend_can_exclude` 为假所以不会走到这条日志。文案在当前代码下成立，但属
+「靠外部前提才成立」的措辞，接手时应改成 `(git meta merged)`。
+
+**为什么可以停**：R4 的目的是「替代下次靠 `sample` 反推」。现有的
+`exclusion_roots=/truncated=/applied=` 已经覆盖了截断这一半（而截断正是 R1 的现场证据），
+缺的是「流数」这一半。而 `lsof | grep -c FSEvents` 在任何时候都能直接数流数，
+日志的价值主要在**长期无人值守时**才体现。风险等级：低。
+
+**接手成本**：约 30 分钟（把 `merged` 作为参数传进 `with_exclusions`，或把日志上移到
+`core.rs` 的 `watch()` 里打一条带 workspace key 的）。
+
+#### ③ R2 回滚开关无测试
+
+PRD 验收明写：「`NEEKO_DISABLE_GIT_META_MERGE=1` 时仍建独立流」。
+`decide()` 的 5 条测试覆盖了「非 git / 非递归后端 / `.git` 被排除 / 符号链接 / 正常仓库」，
+**唯独没有覆盖 env 分支**。
+
+**为什么没顺手补**：`decide()` 读进程级 env，`cargo test` 默认并行下两个用例会互相污染。
+本仓已有成熟先例（`ecf07aa5` + `agent/hooks/targets/tests.rs:35` 的 `ScopedEnv`：
+RAII + 全局 `Mutex` 持锁到 drop），但那套实现是 `targets/tests.rs` 私有的，
+复用需要先把它提到共享测试支撑模块 —— 那是独立的一次重构，不该塞进本任务的收尾。
+
+**风险等级**：中低。开关本身是一行 `is_some()`，写错的概率低；但它是**唯一的运行时退路**，
+一旦失效（比如有人改成 `var_os(...).is_some_and(|v| v == "1")`），排查时会影响判断。
+
+**接手成本**：约 1.5 小时（提 `ScopedEnv` 到共享支撑 + 1 条测试）。
+
+#### ④ PRD 的实测对比未做
+
+验收要求：「同一组 workspace 下，修复前后 `lsof -p <pid> | grep -c FSEvents` 流数下降，
+且 `sample fseventsd` 中 `neeko_lib` client 线程数相应下降」。
+
+**未做的原因**：需要跑 `pnpm tauri dev` + 挂载多个项目 + 前后各一次 `lsof`/`sample`。
+而本任务的改动（2N → N）在代码上是**构造性保证**的：`core.rs:466` 的条件
+`git_repo && !merge_git_meta && !skip_real_fs`，合并成立时不调 `create_git_meta_watcher`。
+单测 `normal_repo_merges` 断言了 `decide().merge == true`，而 `merge == true` 就是
+「不建第二条流」的唯一充分条件。
+
+⇒ 缺的是**端到端确认**，不是缺证据。风险等级：低（但若 `decide()` 的
+`backend_can_exclude` 在真机上为假，合并会静默失效——这正是 ② 里「日志缺 streams=」
+让人无法快速确认的部分，两个缺口是耦合的）。
+
+### 10.3 与 PRD 的其它偏差（不算缺失，但需登记）
+
+**R1 的档位从 2 档改成 3 档**。PRD 写「tier 0 = 已知高成本目录名（10 个），tier 1 = 其余」，
+实际是 3 档、tier 0 只 4 个（`target` / `node_modules` / `DerivedData` / `Pods`）。
+
+理由记在 `factory.rs:26-44` 的注释里：真机验证暴露了两档的浪费 —— 一个 33 个 ignored 根的
+仓库里，8 个名额被 4 个 `__pycache__` 占掉（实测仅 138 个文件），而 `node_modules` 有 41843 个。
+同档内按字母序决胜时，小目录会挤掉大目录。⇒ 把 `__pycache__` 等降到 tier 1，`target`/
+`node_modules` 独占 tier 0。
+
+**这是改进而非妥协**，但 PRD 的验收条目「tier 0 与 tier 1 混合时 tier 0 在前」的测试
+（`exclusion_sort_ranks_heavy_above_light`）仍然成立且仍是唯一判别性用例。
+
+**P3.0 建议的「`.git` ∉ exclusions」契约测试**：已有等价覆盖
+（`manifest.rs:143-148` 断言 `ignored == vec![node_modules]`，即 `.git` 不入 `ignored_roots`），
+无需新增。
+
+### 10.4 死测试（可删，未删）
+
+`manager/tests.rs:352-372` 的两条：
+
+- `git_meta_merge_is_rejected_for_linked_worktree`
+- `git_meta_merge_is_allowed_for_normal_repo`
+
+它们测的是**文件内本地副本** `git_meta_within_root`（实现就是 `git_dir.starts_with(root)`），
+不是 `decide()`。真实的等价覆盖在 `git_meta_merge.rs:192` / `:206`（那两条调 `within_root`，
+同样是本地副本——但至少与 `decide()` 同文件、同模块）。
+
+⇒ 两处都是「用自己的替身测自己的替身」。`decide()` 的真实覆盖由
+`linked_worktree_git_dir_is_outside_root` 之外的 5 条 `decide(...)` 调用承担。
+删掉 `manager/tests.rs` 那两条不损失覆盖。
+
+未删的理由：它们当前**是绿的、不产生噪声**，删除属于清理而非缺陷修复，
+与本任务的验收目标无关。
+
+### 10.5 spec 失真（**未修，需后续处理**）
+
+`.trellis/spec/backend/git-domain.md:545`：
+
+> **生产者**：一个单元一套资源（worker + file watcher + git-meta watcher）
+
+这句话在 macOS 上**已经不成立**（git-meta 已并入主 watcher）。Linux 上仍成立。
+同一文件 `:1066` 的目录说明也没提 macOS 的合并。
+
+按 `AGENTS.md`「收尾：同步必要 spec 文档」这条本应在归档前修掉。**本次未修**，
+原因是：修它需要在一句话里表达「macOS 合并 / Linux 独立」这个平台分支，
+而这句话在 spec 里属于「身份与生产者」章节，改写要连带核对上下文语义。
+留给接手者处理更好，避免在归档提交里塞一段没被 review 过的 spec 改写。
+
+**风险**：中。后续 agent 读 `git-domain.md:545` 会认为「每个单元必有一条 git-meta watcher」，
+在 macOS 上按这个前提推理会得出错误结论（例如「改 git_meta 不影响主 watcher」）。
+这是本任务留下的**最实质的技术债**。
+
+### 10.6 建议的后续任务划分
+
+| 优先 | 内容 | 成本 |
+| --- | --- | --- |
+| **P1** | 修 `git-domain.md:545` / `:1066` 的平台分支表述（10.5） | 30 min |
+| P2 | R4 日志补 `streams=` + `merged_git_meta=`，与 workspace key 同条（10.2②） | 30 min |
+| P3 | `ScopedEnv` 提到共享测试支撑 + `decide()` env 分支测试（10.2③） | 1.5 h |
+| P4 | `check_watcher_test_isolation.py`（10.2①） | 1 h |
+| P5 | `lsof` 流数实测对比（10.2④，依赖 P2 的日志先落地） | 1 h |
+| — | 删 `manager/tests.rs:352-372` 两条死测试（10.4） | 5 min |
