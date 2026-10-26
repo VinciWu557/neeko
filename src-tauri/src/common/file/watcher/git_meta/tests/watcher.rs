@@ -4,18 +4,19 @@ use super::super::paths::{resolve_git_meta_paths, GitMetaPaths};
 use super::super::watcher::create_git_meta_watcher_with;
 use notify::{RecommendedWatcher, RecursiveMode};
 
-// ── 真实文件系统集成测试：验证 notify 事件送达（方案 B 修复的核心假设） ────
+// 本文件**不建任何真实 FSEvents 流**（2026-10 解耦，见任务
+// `10-25-watcher-test-decoupling`）。两类覆盖：
 //
-// 这些测试使用真实 notify::RecommendedWatcher + 真实临时 git 仓库，验证：
-// 1. `.git/index` 的原子写（lock + rename，git 真实行为）能被捕获 → on_index_changed
-// 2. `.git/HEAD` 的原子写能被捕获 → on_head_changed
-// 3. worktree 区域事件经 rearm 递归监听送达（自愈补挂）
+// 1. 事件分发语义（`dispatch_git_meta_event`）—— 纯函数，直接喂路径数组；
+// 2. watcher 构造的失败分支（`create_git_meta_watcher_with`）—— 注入 `watch_fn`。
 //
-// 确定性约定（完整规则见 .trellis/spec/unit-test/real-source-determinism.md）：
-// - 真实源只承诺「至少一次」可达，故只做正向可达断言（CallbackProbe::wait_reached）；
-// - 不设注册预热 / 观察窗口 sleep，不用墙钟窗口做负向 / 分类断言；
-// - 负向分类属性（index / HEAD / refs 互斥，config / ORIG_HEAD → Nothing）由 units.rs
-//   纯函数测试确定性覆盖，不在真实 FS 上做「某回调计数不得增长」的绝对零断言。
+// 原先那 4 个 `*_on_real_fs` 用例各建一条真实流，只为验证「notify 能把 `.git/index`
+// 的 lock+rename 投递到回调」。那不是本仓契约（是 notify / Apple 的），代价却是
+// `cargo test --lib` 期间 fseventsd 100% CPU、watcher 套件 48s。
+// 同逻辑改纯函数后 0% CPU / 6.6s，断言反而更强（能覆盖分类全域）。
+//
+// 观察原语 `CallbackProbe` 随那批用例一并删除 —— 不要再按旧名去找它。
+// 确定性规则见 .trellis/spec/unit-test/real-source-determinism.md。
 
 // ── 事件分发语义（纯函数，零 IO）────────────────────────────────────────
 //

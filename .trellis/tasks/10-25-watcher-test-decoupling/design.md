@@ -305,3 +305,117 @@ P5 先行：立即可把 fseventsd 从 100% 压到可接受水平。
 不是本仓测试。判定方法：在 `with_exclusions` / `watch` 加一次性计数器（比 `sample` 可靠，
 后者需 sudo）。本仓全量测试的调用计数为 **0**。高 CPU 来自系统里其它 FSEvents client
 （Electron 应用 / 微信 / 云盘 / 编辑器索引）被「大量临时文件创建删除」唤醒。
+
+---
+
+## 11. 收尾补齐（2026-10-26 第二轮）
+
+§10 记录的是第一轮落地的形态。第二轮按 PRD 逐条复核，补了三处**实际未达成**的验收项、
+修了一个实测坏掉的用例，并补齐了 §10 缺失的验证记录。
+
+### 11.1 R4 — 三条号段用例合并为一条
+
+`unmounted_pulls_advance_the_same_registry_sequence` /
+`remount_continues_the_unit_version_sequence` /
+`pull_after_a_release_still_continues_the_sequence`
+→ 合并为 `version_sequence_stays_monotonic_across_every_producer_and_release`。
+
+判据是「不丢失败模式」，不是「减少行数」。合并后 4 条子场景各对应一个独立失败模式：
+
+| 子场景 | 失败模式（改坏什么会红） |
+| --- | --- |
+| ① pull → pull | 号源改成「每次 pull 从 1 起」/ 未挂载 pull 不登记 |
+| ② 挂载内 push → push | worker 推送不走注册表盖章 |
+| ③ 释放 → 重挂载 | `release_one` 连带清 `version_floors`（原缺陷） |
+| ④ 挂载 → 释放 → pull | 释放后的 pull 另起号段 |
+
+`lifecycle_tests.rs`：28 → 27 条（净减 1 条夹具重复，覆盖不减）。
+
+### 11.2 R2 — sleep 的真正削减（不是「删注释」）
+
+删除的等待（全部是「等一个由构造保证的空集」）：
+
+| 位置 | 原等待 | 为什么不需要 |
+| --- | --- | --- |
+| `unwatch_stops_delivering_events` | 300ms | `unwatch` → handle 移出 → `DebounceSender` drop → channel 全灭 → 线程退出；回调也已随 handle drop，测试**没有可再喂的入口** |
+| `unwatch_stops_git_worker_snapshots` | `WATCH_SETTLE + QUIET_WINDOW` = 2.3s | 同上：worker / scheduler / debounce 三条线程都已随 handle 关闭 |
+
+保留的窗口（**唯一一处**，且在 PRD 边界内）：
+`writes_in_unmounted_sibling_unit_leak_nothing_into_mounted_unit` 的 `QUIET_WINDOW`
+—— 它要收敛的是「A 自己那次变更引发的异步推送」，属真实调度，无法同步化。
+
+顺带删除死常量 `WATCH_SETTLE`（唯一使用者已被删）。`cargo test --lib watcher`：6.6s。
+
+### 11.3 变异验证（PRD R2「至少 5 条」→ 实际 6 条，逐条红→绿）
+
+| # | 被测守卫 | 变异体 | 变红的用例 |
+| --- | --- | --- | --- |
+| 1 | `classify_git_meta_event` 的 head **精确路径**匹配 | `p == head` → `p.file_name() == head.file_name()` | `sibling_unit_gitdir_event_is_classified_as_nothing` |
+| 2 | `release_one` **不清** `version_floors` | 加 `floors.remove(workspace)` | `version_sequence_stays_monotonic_...` |
+| 3 | 票号 **compare-and-remove** | `if get==seq {remove}` → 无条件 `remove` | `release_does_not_revoke_a_ticket_issued_by_a_concurrent_remount` |
+| 4 | `snapshot` 按**单元**而非项目取 | 改成按 project_id 前缀找第一条 | 4 条（`two_units_...` / `unwatch_drops_only_...` / `poke_after_unit_switch_...` / `writes_in_unmounted_sibling_...`）|
+| 5 | `release_one` **作废数据** | 删掉 `drop_snapshot_if_present` | 5 条（含 `version_sequence_...`）|
+| 6 | `watch` 入口**幂等护栏** | `contains_key` 判定恒 false | `watch_twice_is_idempotent` |
+
+**变异过程中抓到两处假绿（记录以避免重复）**：
+
+1. #1 的第一次变异**没红** —— 原因不是守卫无关，而是新用例喂的路径未 `canonicalize`，
+   过不了回调里的 `starts_with(&ctx.paths.git_dir)` 前缀判定，事件根本没进分类。
+   已修（喂前 `.canonicalize()`，并注明真实 FSEvents 上报的就是 realpath）。
+   这是本仓第二次踩同一个坑（先前 `external_ref_update_*` 已记过一次）。
+2. #3 的第一次变异**没红** —— 原 `remount_rejects_previous_mounts_late_push` 走完整
+   `unwatch` → `watch` 序列，此时「无条件删除」与「compare-and-remove」**行为等价**
+   （删除落点永远是旧票）。真正区分两者的是**交错**：A 取出 handle 后、吊销前，
+   B 完成重挂载并签发新票。为此新增 `revoke_dead_mount_for_test`（暴露
+   `release_one` 的同一条吊销路径）并写了构造该交错的用例。
+
+⇒ **PRD R2「断言内容不得弱化」在本轮才算真正被验证**：第一轮的两条「状态机」用例
+（票号误吊销、跨单元泄漏）在 `without_real_fs` 夹具下其实是**构造性真**，靠变异验证才暴露。
+
+### 11.4 修掉一个实测坏掉的用例
+
+`measure_push_latency` 在 §10 的改造里被一并加了 `.without_real_fs()`，但它是
+**端到端时延测量**（AC4 现场项）：Noop watcher 永不投递事件 ⇒ 第 0 轮必然超时。
+实测确认：`第 0 轮写入后 8s 内快照 version 未前进`。
+
+已恢复为 `WatcherManager::new()`（真实流，`#[ignore]` + `real_fs_guard()`），并复测：
+
+```
+linked worktree 单元: n=20 p50=88.6ms p95=112.8ms max=112.8ms mean=94ms
+主仓单元          : n=20 p50=87.3ms p95=112.4ms max=112.4ms mean=94ms
+```
+
+⇒ `real_fs_guard()` 现在有且仅有这一个使用者（注释已同步，原注释称「3 个用例」已失真）。
+
+### 11.5 下沉「兄弟单元泄漏」的真实判据
+
+`writes_in_unmounted_sibling_unit_leak_nothing_into_mounted_unit` 在 Noop 夹具下的
+负向断言是**构造性真**（watcher = Noop + `skip_real_fs` 跳过 git_meta 流 ⇒ 兄弟单元
+写入无论如何都不产生事件）。它守护的历史缺陷（`.git/worktrees/**` 广播给所有消费者）
+因此失去可证伪性。
+
+真正属于本仓判据的两件事已下沉到 `callback_tests.rs`（合成事件，零流零 sleep）：
+
+- `own_git_index_event_signals_scheduler_without_emitting_a_fact` —— 本单元 index
+  只发查询调度信号、不 emit 事实（公理 1）；
+- `sibling_unit_gitdir_event_is_classified_as_nothing` —— **别的单元**的 gitdir
+  （`<root>/.git/worktrees/other/HEAD`）事件必须归为 `Nothing`。
+
+### 11.6 与 §9「不做什么」的偏差（如实登记）
+
+§9 写「不给 `PlatformWatcher` 加 mock 变体」，实际落地加了 `#[cfg(test)] Noop`
+（`platform/watch_backend/platform_watcher.rs:27`）。§10 未记录这条偏差，现补记：
+
+- `Noop` 只在 `without_real_fs()` 分支出现，`#[cfg(test)]` 门控，不进发布产物；
+- 但仍然**是**一个 `PlatformWatcher` 变体，与 §9 的字面承诺冲突；
+- 采纳理由：`worker_only()` 构造器方案（§2 的 D-3）只能覆盖 D 层，覆盖不到
+  「`watch()` 全流程 + 回调层」——而那正是 6 条必须投喂事件的用例需要的。
+  `Noop` 让 `watch()` 的 7 段编排全部照常执行。
+
+### 11.7 门禁
+
+- `cargo fmt --check` 干净
+- `cargo clippy --all-targets -- -D warnings` 无 issue
+- `cargo test --lib`：2241 passed / 5 ignored / 15.5s
+- `cargo test --lib watcher`：123 passed / 1 ignored / 6.6s
+- `pnpm check:quick`：10 条护栏全通过，含 `check_nondeterministic_event_assertions` 违规 0

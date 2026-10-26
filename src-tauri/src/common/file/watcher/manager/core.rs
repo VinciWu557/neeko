@@ -180,6 +180,16 @@ impl WatcherManager {
         self.watcher_set_creations.load(Ordering::Relaxed)
     }
 
+    /// 测试观测口：走与 `release_one` **同一条**票号吊销路径（`revoke_ticket_if`）。
+    ///
+    /// 为什么要暴露它：`release_one` 里「取出 handle」与「吊销票」之间有一段窗口，
+    /// 真实并发下新挂载可能在这段窗口内完成并签发新票。用完整 `unwatch` → `watch`
+    /// 序列无法构造这个中间态（删除落点永远是旧票），两条策略也就无法区分。
+    #[cfg(test)]
+    pub(crate) fn revoke_dead_mount_for_test(&self, ticket: &MountTicket) {
+        revoke_ticket_if(&self.mount_tickets, &ticket.key, ticket.seq);
+    }
+
     /// 测试观测口：当前在册的挂载票（未挂载 / 已释放 → `None`）。
     #[cfg(test)]
     pub(crate) fn current_ticket(&self, workspace: &str) -> Option<MountTicket> {
@@ -919,8 +929,8 @@ fn drop_snapshot_if_present(
 /// 别的单元写数据（`store_push_snapshot` 以 `debug_assert` 钉住票与快照同单元）。
 #[derive(Clone, Debug)]
 pub(crate) struct MountTicket {
-    key: String,
-    seq: u64,
+    pub(crate) key: String,
+    pub(crate) seq: u64,
 }
 
 /// 挂载凭证的作用域守卫：`watch()` 的 setup 失败出口（watcher 创建失败 / 锁中毒）必须

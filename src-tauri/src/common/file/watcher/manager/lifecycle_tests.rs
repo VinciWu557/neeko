@@ -16,6 +16,17 @@
 //!   刷新）；macOS CI（FSEvents + 高负载）实测把「一次写入恰好 1 批」误报为 2
 //!   （2026-09-25）。批次计数只用于上面的「无事件」类断言（delta == 0 稳健：
 //!   任何增长都是真泄漏）。
+//!
+//! **绝大多数用例已不建真实流**（2026-10 解耦，见任务 `10-25-watcher-test-decoupling`）：
+//! 它们走 `WatcherManager::new().without_real_fs()`，由 `take_test_event_sink()` 交出回调、
+//! 测试主动喂合成事件。理由：断言对象是**本仓的状态机**（幂等/号段/票号/快照槽位），
+//! 而「内核是否投递了事件」是 Apple / 内核的契约，不是我们的。
+//! 因此上面那条「静默 `QUIET_WINDOW`」现在只剩**一处**使用者
+//! （`writes_in_unmounted_sibling_unit_leak_nothing_into_mounted_unit` 的异步基线收敛），
+//! 其它地方不得再靠 sleep 推导结论。
+//!
+//! 唯一保留真实 FSEvents 的是 `#[ignore]` 的时延测量（`edit_to_push_latency_*`）——
+//! 它测的就是含内核投递的端到端墙钟，必须走真实流，因此挂在 `real_fs_guard()` 下。
 
 use super::WatcherManager;
 use crate::common::executor::factory::ExecTarget;
@@ -37,8 +48,9 @@ use std::time::{Duration, Instant};
 /// 「流数 × 同一变更被多少条流覆盖」会把 fseventsd 压到 95%+（27 条并发流实测 61~99%，
 /// 单流写 30 倍数据反而只有 36%）。
 ///
-/// 只保护**真正需要内核投递**的用例；纯状态机用例已下沉到 `callback_tests.rs`（零流）。
-/// 用进程级 Mutex 而非引入 `serial_test` 依赖 —— 只需 3 个用例互斥，不值得加 crate。
+/// **当前只有 1 个使用者**：`#[ignore]` 的 `edit_to_push_latency_p95_worktree_vs_main`
+/// （端到端墙钟测量，必须走真实流）。其余用例走 `without_real_fs()`，不建流也不需要闸。
+/// 用进程级 Mutex 而非引入 `serial_test` 依赖 —— 不值得为一个用例加 crate。
 static REAL_FS_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 获取真实 FSEvents 串行闸。中毒时继续（前一个用例 panic 不应连带后续用例）。
@@ -46,11 +58,13 @@ fn real_fs_guard() -> std::sync::MutexGuard<'static, ()> {
     REAL_FS_GUARD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// notify 注册到 FSEvents 生效需要一点时间（平台有惰性），写文件前留出余量。
-const WATCH_SETTLE: Duration = Duration::from_millis(300);
 /// 首次事件的宽容上限（git 项目还要等 worker 起 git 子进程）。
 const FIRST_EVENT_TIMEOUT: Duration = Duration::from_secs(8);
 /// 静默窗口：> debounce 的 max_wait（1.5s），确保"没有事件"是真结论。
+///
+/// 注意：这是**唯一**仍需要的等待窗（`writes_in_unmounted_sibling_unit_...` 用它收敛
+/// 基线推送）。任何新增的「等一会儿看看」都不被允许 —— 先问断言对象是不是本仓状态，
+/// 是的话用 `without_real_fs()` + 合成事件同步断言。
 const QUIET_WINDOW: Duration = Duration::from_millis(2000);
 
 /// 被测Workspace = 主仓形态（Local）。
@@ -168,6 +182,24 @@ fn wait_for_more_events(
     false
 }
 
+/// 等到该单元在注册表里出现任一份快照（挂载后的 worker 首轮）。
+///
+/// 这是**事件驱动**的等待（有数据立即返回），不是固定 sleep。
+fn wait_for_snapshot(manager: &WatcherManager, unit: &WorkspaceRef) -> Arc<GitStatusSnapshot> {
+    let deadline = Instant::now() + FIRST_EVENT_TIMEOUT;
+    loop {
+        if let Some(snap) = manager.snapshot(unit) {
+            return snap;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} 挂载后必须在时限内由自己的 worker 产出一份快照",
+            unit.key()
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// 轮询到该单元快照的条目里出现 `file` 为止。
 ///
 /// 为什么按「最终与 git 真值一致」轮询而不是一次读取：一次写入的多个 FS 事件在负载下可以
@@ -264,11 +296,11 @@ fn unwatch_stops_delivering_events() {
     manager.unwatch(&main_unit(&root));
     let baseline = sink.count(FILE_CHANGED_EVENT);
 
-    // unwatch 后回调已被 drop（handle 释放）—— 此处直接再喂一次不可行，
-    // 改为断言「释放后 sink 不再增长」的确定性判据：等一个 debounce 上限，
-    // 期间无新事件即证明旧链路已停。
-    std::thread::sleep(Duration::from_millis(300));
-
+    // 「unwatch 后不得再投递」在这里是**确定性**结论，不需要静默窗口：
+    // `unwatch` → `release_one` 移出 handle → `DebounceSender` 被 drop →
+    // 其 channel 发送端全灭 → debounce 线程 `RecvTimeoutError::Disconnected` 退出。
+    // 回调本身也已随 handle 释放被 drop，测试手上没有可再喂的入口。
+    // 旧写法在这里 sleep 300ms「等确认没事件」，等的是一个空集 —— 零判别信息。
     assert_eq!(
         sink.count(FILE_CHANGED_EVENT),
         baseline,
@@ -356,11 +388,12 @@ fn unwatch_stops_git_worker_snapshots() {
     );
 
     manager.unwatch(&main_unit(&root));
-    std::thread::sleep(WATCH_SETTLE);
     let baseline = sink.count(GIT_STATUS_SNAPSHOT_EVENT);
 
+    // 写文件后**不睡**：`unwatch` 已把 handle 移出挂载表并 drop，worker / scheduler /
+    // debounce 三条线程全部随之关闭，没有任何存活的输入路径能再产出快照。
+    // 旧写法在这里等 `WATCH_SETTLE + QUIET_WINDOW`（2.3s）—— 等的是一个由构造保证的空集。
     std::fs::write(root.join("new.txt"), "x\n").unwrap();
-    std::thread::sleep(QUIET_WINDOW);
 
     assert_eq!(
         sink.count(GIT_STATUS_SNAPSHOT_EVENT),
@@ -380,7 +413,7 @@ fn poke_status_worker_and_wait_confirms_fresh_snapshot_after_write() {
     let sink = CollectingSink::new();
     // 纯状态机语义：断言的是「poke 后快照是否反映写后工作区」，
     // 与「FSEvents 是否投递事件」无关 → 不建真实流。
-    let manager = WatcherManager::new().without_real_fs().without_real_fs();
+    let manager = WatcherManager::new().without_real_fs();
 
     let unit = main_unit(&root);
     manager.watch(unit.clone(), sink.clone());
@@ -1128,133 +1161,182 @@ fn remount_rejects_previous_mounts_late_push() {
     );
 }
 
-/// **R2.4 的另一半**：未挂载单元（WSL / SSH / 侧栏要为每个 worktree 取计数）多次 pull 之间
-/// 也必须单调 —— 号源只有注册表这一个，读接口因此不需要区分「这次是 push 还是 pull」。
+/// **票号 compare-and-remove 的必备性**：并发「释放 + 重挂载」交错时，
+/// 释放**不得**误吊销新挂载刚签发的票。
+///
+/// 为什么单靠 [`remount_rejects_previous_mounts_late_push`] 不够：那条的序列是
+/// 完整的 `unwatch` → `watch`，此时「无条件删除」与「compare-and-remove」行为等价
+/// （删除落点都是旧票）。真正区分两者的是**交错**：
+///
+/// ```text
+/// 线程 A: release_one 取出 handle（票 = seq1），此时尚未执行吊销
+/// 线程 B: watch() 挂载成功，签发 seq2
+/// 线程 A: 执行吊销 —— 无条件删除会删掉 seq2（新挂载此后收不到任何数据）
+/// ```
+///
+/// `release_one` 保证「取出 handle」与「吊销」在同一函数内先后发生，因此这里用
+/// **直接构造该交错**的方式验证：先记下旧票，重新挂载拿到新票，再以旧票走一次
+/// 与 `release_one` 相同的 compare-and-remove 路径。
+///
+/// 变异验证：把 `revoke_ticket_if` 的 `if tickets.get(key) == Some(&seq)` 改成无条件
+/// `tickets.remove(key)` ⇒ 本用例变红（新票被误杀）。
 #[test]
-fn unmounted_pulls_advance_the_same_registry_sequence() {
+fn release_does_not_revoke_a_ticket_issued_by_a_concurrent_remount() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("remote-ish");
+    let root = tmp.path().join("repo");
     std::fs::create_dir_all(&root).unwrap();
-    let unit = main_unit(&root);
-    let manager = WatcherManager::new().without_real_fs();
-    assert!(!manager.is_watched(&unit), "夹具前提：该单元未挂载");
+    git2::Repository::init(&root).expect("init git repo");
 
-    let first = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? a.txt")));
-    let second = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? b.txt")));
-    assert_eq!(first.version, 1);
+    let unit = main_unit(&root);
+    let sink = CollectingSink::new();
+    let manager = WatcherManager::new().without_real_fs();
+    manager.watch(unit.clone(), sink.clone());
+    let stale = manager.current_ticket(&unit.key()).expect("首挂载有票");
+
+    // 交错：新旧票同时存在过（模拟「A 已取出 handle、B 已完成重挂载」的中间态）。
+    manager.unwatch(&unit);
+    manager.watch(unit.clone(), sink.clone());
+    let fresh = manager.current_ticket(&unit.key()).expect("重挂载有新票");
+    assert_ne!(
+        stale.seq, fresh.seq,
+        "夹具前提：重挂载必须签发新票（否则本用例区分不了两种吊销策略）"
+    );
+
+    // 释放**旧挂载**（此时注册表里挂着的是新票）：不得动到 fresh。
+    // 这一句等价于 `release_one` 的票号分支 —— 旧 handle 的 ticket 就是 `stale`。
+    manager.revoke_dead_mount_for_test(&stale);
+
     assert_eq!(
-        second.version,
-        first.version + 1,
-        "后一次 pull 必须比前一次新（否则前端闸门会留下旧的那份）"
+        manager.current_ticket(&unit.key()).map(|t| t.seq),
+        Some(fresh.seq),
+        "旧挂载的释放不得误吊销新挂载的票（误杀 = 新挂载此后收不到任何数据）"
+    );
+
+    // 新票必须仍然可用 —— 这是「误吊销」真正的后果，不只差一个 HashMap 条目。
+    let stamped = manager
+        .deliver_push_with_ticket(
+            sink.clone(),
+            &fresh,
+            pull_snapshot(&unit, parse_porcelain("?? still-writable.txt")),
+        )
+        .expect("新票必须仍然有效");
+    assert!(
+        paths_of(&stamped.entries).contains(&Path::new("still-writable.txt")),
+        "新挂载的写入必须生效"
+    );
+}
+
+/// 号段单调：**同一个不变量**的四条操作序列（R4：由三条用例合并成一条）。
+///
+/// 不变量：`version` 由注册表（`version_floors`）单点签发，**释放只作废数据、不作废号段**。
+/// 打破它 = 「切走再切回」的第一份快照被前端闸门（`version <= prev` 丢弃）静默扔掉，
+/// 界面继续显示离开时的旧数据 —— 正是 issue #2「需要手动刷新才恢复」的形态。
+///
+/// **为什么合并**：原 `unmounted_pulls_advance_the_same_registry_sequence` /
+/// `remount_continues_the_unit_version_sequence` / `pull_after_a_release_still_continues_the_sequence`
+/// 三兄弟各自重复构造一遍夹具，验的是同一条不变量；差别只在「用哪种操作序列破它」。
+/// 合并后**每条失败模式仍各有一个子场景**（见下 ①–④），不是按行数砍覆盖：
+///
+/// | 子场景 | 失败模式（改坏什么会红） |
+/// | --- | --- |
+/// | ① pull → pull | 号源改成「每次 pull 从 1 起」/ 未挂载 pull 不登记 |
+/// | ② 挂载内 push → push | worker 推送不走注册表盖章 |
+/// | ③ 释放 → 重挂载 | `release_one` 连带清 `version_floors`（原缺陷） |
+/// | ④ 挂载 → 释放 → pull | 释放后的 pull 另起号段 |
+///
+/// 变异验证：把 `release_one` 改成同时 `version_floors.remove(workspace)` ⇒ ③④ 变红。
+#[test]
+fn version_sequence_stays_monotonic_across_every_producer_and_release() {
+    let tmp = tempfile::tempdir().unwrap();
+    // 真 git 仓库夹具：`watch()` 会驱动 worker 跑一次真 `git status`，非仓库目录产不出快照
+    let (main, worktree) = repo_with_linked_worktree(tmp.path());
+    let unit = worktree_unit(&main, &worktree);
+    let sink = CollectingSink::new();
+    // 断言对象是 **version 号段**（纯内存状态机），不需要真实内核投递。
+    let manager = WatcherManager::new().without_real_fs();
+    assert!(!manager.is_watched(&unit), "夹具前提：起始未挂载");
+
+    // ① pull → pull：未挂载单元（WSL / SSH / 侧栏取计数）两次算出的号必须递增。
+    let first_pull = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? a.txt")));
+    let second_pull = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? b.txt")));
+    assert_eq!(first_pull.version, 1, "号源从 1 起");
+    assert_eq!(
+        second_pull.version,
+        first_pull.version + 1,
+        "① 后一次 pull 必须比前一次新（否则前端闸门会留下旧的那份）"
     );
     assert_eq!(
         paths_of(&manager.snapshot(&unit).expect("槽位仍在").entries),
         vec![Path::new("b.txt")],
-        "未挂载单元的数据源就是 pull 本身"
+        "① 未挂载单元的数据源就是 pull 本身"
     );
-    assert_eq!(second.workspace_key, unit.key());
-}
+    assert_eq!(second_pull.workspace_key, unit.key());
+    let mut high_water = second_pull.version;
 
-/// **切走再切回来时，新快照不得被前端闸门静默丢掉**：注册表的 version 号必须跨挂载周期单调。
-///
-/// 触发路径（2026-09-29 从真 app 手测日志里发现，不是设想）：那次会话 13 次快照推送**全是 v1**
-/// —— 每次释放再挂载，号都从 1 重新起。前端闸门是 `version <= prev` 直接丢弃，而「切项目」这条
-/// 路上没人作废上一个单元的槽位（`useWorktreeState` 只在 worktree 切换时 `invalidateStatus`），
-/// 于是切回来时**刚算出来的那份**被当成旧数据丢掉，界面继续显示离开时的旧快照 —— 正是 issue #2
-/// 「需要手动刷新才能恢复正常」的形态。号源归注册表管，释放只作废**数据**，不作废**号段**。
-#[test]
-fn remount_continues_the_unit_version_sequence() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (main, worktree) = repo_with_linked_worktree(tmp.path());
-    let unit = worktree_unit(&main, &worktree);
-    let sink = CollectingSink::new();
-    // 断言对象是 **version 号段单调性**（纯内存状态）——不需要真实内核投递。
-    // 事件驱动 worker 这条链路由 `scheduler_tx` 独立覆盖（另见 callback_tests）。
-    let manager = WatcherManager::new().without_real_fs();
-
+    // ② 挂载内：worker 的 push 与 pull 共用同一条号段（挂载首轮也必须接在后面）。
     manager.watch(unit.clone(), sink.clone());
-    assert!(
-        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
-        "夹具前提：挂载后 worker 可产出首个快照"
-    );
-    let first = manager.snapshot(&unit).expect("首个快照").version;
-    std::fs::write(worktree.join("a.txt"), "x\n").unwrap();
-    // 写后同步确认重算落地（确定性等待点，替代 25ms 轮询）
-    assert!(manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT));
-    let second = manager.snapshot(&unit).expect("写后快照");
-    assert!(paths_of(&second.entries).contains(&Path::new("a.txt")));
-    assert!(
-        second.version > first,
-        "同一挂载周期内 version 必须前进：{first} -> {}",
-        second.version
-    );
-
-    // 切走（释放）再切回（重新挂载）：数据必须作废，号段不得退回
-    manager.unwatch(&unit);
-    assert!(manager.snapshot(&unit).is_none(), "释放即作废数据（I1-b）");
-    manager.watch(unit.clone(), sink.clone());
-    let deadline = Instant::now() + FIRST_EVENT_TIMEOUT;
-    let after_remount = loop {
-        if let Some(snap) = manager.snapshot(&unit) {
-            break snap;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "重新挂载后必须由该单元自己的 worker 再产一份快照"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    };
-    assert!(
-        after_remount.version > second.version,
-        "version 跨挂载周期也必须单调：切回后的第一份是 {}，而前端槽位里还留着切走前的 {}，\
-         `version <= prev` 会把这份新数据静默丢弃",
-        after_remount.version,
-        second.version
-    );
-}
-
-/// pull 生产者共用同一条号段：单元被现算多次、期间挂载又释放，后续 pull 仍不得回退。
-#[test]
-fn pull_after_a_release_still_continues_the_sequence() {
-    let tmp = tempfile::tempdir().unwrap();
-    // 真 git 仓库夹具：`watch()` 会驱动 worker 跑一次真 `git status`，非仓库目录产不出快照
-    let (main, _worktree) = repo_with_linked_worktree(tmp.path());
-    let unit = main_unit(&main);
-    let manager = WatcherManager::new().without_real_fs();
-
-    let first = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? a.txt")));
-    let second = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? b.txt")));
-    assert!(second.version > first.version);
-    let mut high_water = second.version;
-
-    // 挂载 → 释放：worker 首轮快照也必须接在同一号段之后，释放只作废数据不作废号段
-    let sink = CollectingSink::new();
-    manager.watch(unit.clone(), sink);
-    let deadline = Instant::now() + FIRST_EVENT_TIMEOUT;
-    let mounted = loop {
-        if let Some(snap) = manager.snapshot(&unit) {
-            break snap;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "挂载后应立刻有一轮重算落在注册表里"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    };
+    let mounted = wait_for_snapshot(&manager, &unit);
     assert!(
         mounted.version > high_water,
-        "挂载首轮快照要接在同一号段之后：{} <= {}",
+        "② 挂载首轮快照要接在同一号段之后：{} <= {}",
         mounted.version,
         high_water
     );
     high_water = mounted.version;
+
+    std::fs::write(worktree.join("in-cycle.txt"), "x\n").unwrap();
+    assert!(
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "② 夹具前提：写后 poke 必须落地"
+    );
+    let in_cycle = manager.snapshot(&unit).expect("写后快照");
+    assert!(
+        paths_of(&in_cycle.entries).contains(&Path::new("in-cycle.txt")),
+        "② 写后快照必须含本轮写入"
+    );
+    assert!(
+        in_cycle.version > high_water,
+        "② 同一挂载周期内 version 必须前进：{high_water} -> {}",
+        in_cycle.version
+    );
+    assert!(
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "② 二次 poke 仍必须落地"
+    );
+    let after_poke = manager.snapshot(&unit).expect("二次 poke 后快照");
+    assert!(
+        after_poke.version >= in_cycle.version,
+        "② 号段只能前进不能倒退：{} -> {}",
+        in_cycle.version,
+        after_poke.version
+    );
+    high_water = after_poke.version;
+
+    // ③ 释放 → 重挂载：数据作废，号段不得退回（原缺陷：每次释放号都从 1 重新起）。
+    manager.unwatch(&unit);
+    assert!(
+        manager.snapshot(&unit).is_none(),
+        "③ 释放即作废数据（I1-b）"
+    );
+    manager.watch(unit.clone(), sink.clone());
+    let after_remount = wait_for_snapshot(&manager, &unit);
+    assert!(
+        after_remount.version > high_water,
+        "③ version 跨挂载周期也必须单调：切回后的第一份是 {}，而前端槽位里还留着切走前的 {}\
+         ，`version <= prev` 会把这份新数据静默丢弃",
+        after_remount.version,
+        high_water
+    );
+    high_water = after_remount.version;
     manager.unwatch(&unit);
 
-    let after = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? c.txt")));
+    // ④ 释放之后 pull：号不得回退到切走前那一段。
+    let after_release_pull =
+        manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? c.txt")));
     assert!(
-        after.version > high_water,
-        "释放之后 pull 拿到的号不得回退到切走前那一段：{} <= {}",
-        after.version,
+        after_release_pull.version > high_water,
+        "④ 释放之后 pull 拿到的号不得回退到切走前那一段：{} <= {}",
+        after_release_pull.version,
         high_water
     );
 }
@@ -1280,6 +1362,12 @@ const PUSH_LATENCY_ROUNDS: usize = 20;
 /// 生产代码（notify → ThrottleScheduler → `worker.check()` → `deliver_push` → `sink.emit`），
 /// 因此两者的差值就是「worktree 单元有没有被特殊地拖慢」—— 这正是 AC4 要的对比。
 ///
+/// **这里必须用真实 FSEvents**（`WatcherManager::new()`，不带 `without_real_fs`）：
+/// 被测对象就是「内核投递 + 调度 + 重算 + 盖章」这条**完整链路**的墙钟耗时。
+/// 用 `Noop` 替身会把链路首段抽掉，测出来的只是 debounce + worker 的耗时，
+/// 那不是 AC4 要回答的问题（且会因永不投递事件而在第 0 轮超时）。
+/// 因此本测量 `#[ignore]` + 串行闸，不进 CI。
+///
 /// 起表点取 `fs::write` 返回之后：编辑动作到面板更新的用户体感里，编辑器落盘之前的时间
 /// 不属于本链路。终点对准 version 前进（= 推送落地）而非 React 渲染完成，因为后半段是
 /// 一次 IPC + 一次渲染（亚毫秒级），且渲染路径不丢推送已由
@@ -1291,7 +1379,7 @@ fn measure_push_latency(root: &Path, unit_dir: &Path, rounds: usize) -> Vec<Dura
         worktree_unit(root, unit_dir)
     };
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new().without_real_fs();
+    let manager = WatcherManager::new();
     manager.watch(unit.clone(), sink.clone());
     assert!(
         wait_for_event(&sink, GIT_STATUS_SNAPSHOT_EVENT, PUSH_SAMPLE_TIMEOUT),

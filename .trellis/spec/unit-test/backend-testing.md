@@ -519,8 +519,9 @@ assert!(info.changed_files.iter().any(|f| f.path == "README.md"));
 
 真实源（FS 事件 / 进程 / 时钟 / 调度）只承诺「至少一次」可达，不承诺事件集合精确。
 `assert_eq!(refs.load(..), 0)` 这类跨回调绝对零断言在 Windows `ReadDirectoryChangesW` 的
-目录级事件下必挂（2026-10-08 事故）；正向用 `CallbackProbe::wait_reached`，分类负向下沉
-`units.rs` 纯函数，生命周期负向改差分式（`assert_eq!(count, baseline)`）。
+目录级事件下必挂（2026-10-08 事故）；正向**首选注入合成事件**（原 `CallbackProbe::wait_reached`
+已随 2026-10 解耦删除，不要再按旧名找），分类负向下沉 `units.rs` 纯函数，
+生命周期负向改差分式（`assert_eq!(count, baseline)`）—— 且仅在无法下沉时才保留窗口。
 完整判定表、正/反例与观察原语见 [真实源测试的确定性契约](./real-source-determinism.md)。
 
 **成本面（2026-10 补充）**：即使断言口径合规，**也不为第三方 OS 契约建真实流**。

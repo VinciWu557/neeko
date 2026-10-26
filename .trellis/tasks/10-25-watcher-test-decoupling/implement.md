@@ -188,11 +188,31 @@ cd src-tauri && cargo test --lib watcher
 
 ## 收尾
 
-- [ ] `pnpm check`（全量门禁）
-- [ ] 更新 `.trellis/spec/backend/` 与 `.trellis/spec/unit-test/`：
-      记录「测试按 A/B/C/D 分层」「单元测试禁止固定 sleep」两条约定。
-- [ ] 记录实测对比：测试耗时、fseventsd CPU 峰值（修复前后）。
-- [ ] `python3 ./.trellis/scripts/add_session.py`
+- [x] `pnpm check:quick` 全绿（10 条护栏 / 0 违规）。**未跑** `pnpm check` ——
+      按 AGENTS.md 硬指令，全量门禁由 pre-push hook 与 CI 执行，本地不重复。
+- [x] 更新 `.trellis/spec/unit-test/`：`real-source-determinism.md` 新增「成本约束」节
+      + 注入缝表 + `CallbackProbe` 删除说明；`backend-testing.md` 补成本面判据，
+      并修正了仍指向已删 `CallbackProbe::wait_reached` 的陈旧引用。
+      「测试按层下沉」的约定落在 `real-source-determinism.md` 的判据表，
+      未另开文件（DRY：同一规则只写一处）。
+- [x] 记录实测对比：详见 `design.md §10`（第一轮）与 `§11`（收尾补齐）。
+- [ ] `python3 ./.trellis/scripts/add_session.py` —— 由归档流程统一执行。
+
+## 实际执行顺序（与计划的偏差）
+
+计划是 `P1 → P2 → P5 → P3 → P4`。第一轮实际按 `P1+P2 → P3` 落地（P5 的「3 个 C 层用例
+串行化」随 §10 的「C 层全删」变成只保护 1 个 `#[ignore]` 测量）。第二轮补了 P4 与 P2/P3
+的验证缺口。**P5 的测试用例不存在了，但串行闸保留**（`real_fs_guard()`，1 个使用者）。
+
+## 第二轮补齐的具体项（2026-10-26）
+
+- [x] P4 合并三条号段用例（`design.md §11.1`）
+- [x] 变异验证 6 条红→绿，抓到 2 处假绿（`§11.3`）
+- [x] 修 `measure_push_latency` 的 Noop 化错误（它必须走真实流，`§11.4`）
+- [x] 下沉「兄弟单元泄漏」判据到回调层 2 条新用例（`§11.5`）
+- [x] 删除 `WATCH_SETTLE` 死常量与 2 处装饰性 sleep（`§11.2`）
+- [x] 清理 `CallbackProbe` 陈旧引用（`git_meta/tests/watcher.rs` 头注 + spec）
+- [x] 修 `without_real_fs().without_real_fs()` 重复调用
 
 ## 不做什么
 
