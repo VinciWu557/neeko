@@ -3,7 +3,7 @@
   "name": "agent-config-single-source",
   "title": "Agents 配置单一数据源：消除前端两份副本",
   "description": "后端 AgentManager 已是唯一真相，但前端又叠了 config.agentOverrides 与 config.agentCommandOverrides 两份副本，导致设置页改完终端读不到、双击命令行编辑不落盘。根治：建 agentStore 作为唯一缓存，写操作只有 saveAgent/resetAgent 两个出口（落盘后 refresh），删除两份前端副本与四个辅助函数；顺带修 List Models Args 与会话内模型能力互斥、Detection 类型静默降级两个 bug。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
