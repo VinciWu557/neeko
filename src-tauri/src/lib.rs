@@ -211,6 +211,7 @@ macro_rules! neeko_invoke_handler {
             $crate::notification::commands::notification_settings_get,
             $crate::notification::commands::notification_settings_set,
             $crate::notification::commands::notification_test_send,
+            $crate::notification::commands::notification_claim_reflow_ready,
             // ── agent CLI hooks（源 B：摄入与安装态）──────────────────────────
             $crate::agent::hooks::commands::agent_hooks_apply,
             $crate::agent::hooks::commands::agent_hooks_status,

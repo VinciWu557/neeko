@@ -2,6 +2,7 @@
 
 use tauri::{AppHandle, State};
 
+use crate::notification::boot;
 use crate::notification::dispatch;
 use crate::notification::types::NotificationSettings;
 use crate::{AppError, AppStateWrapper};
@@ -29,10 +30,23 @@ pub fn notification_settings_set(
     Ok(())
 }
 
-/// 发送一条测试通知（R4.5 授权引导）：走与真实投递完全相同的通道
-/// （dispatch → 原生通知 + delivered 事件），失败可见即最佳权限探测。
+/// 发送一条测试通知（R4.5 授权引导）：走与真实投递完全相同的通道，
+/// 失败可见即最佳权限探测。
 #[tauri::command]
 pub fn notification_test_send(app: AppHandle) -> Result<(), AppError> {
     dispatch::deliver_test_sample(app);
     Ok(())
+}
+
+/// 认领「前端回流监听已生效」，并取回在此之前到达的点击深链（无则 `None`）。
+///
+/// 两件事必须在一个命令里（后端内部也是一把锁、一次调用）：拆开就会出现
+/// 「已就绪但没人监听」与「取走了但点击还没写入」两类丢点击窗口。
+///
+/// **必须由前端在 `listen()` 的 Promise resolve 之后调用**，不能提前到挂载时：
+/// 早于订阅生效就等于把状态标错了。幂等（第二次起恒 `None`）。
+#[tauri::command]
+#[must_use]
+pub fn notification_claim_reflow_ready() -> Option<String> {
+    boot::claim_reflow_ready()
 }

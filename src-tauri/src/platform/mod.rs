@@ -27,7 +27,7 @@
 //! | `watch_backend` | `watch_backend` / `create_file_watcher` / `PlatformWatcher` | `common/file/watcher/registration/strategy.rs` + `manager/core.rs` |
 //! | `fonts` | `get_system_fonts` | `common/utils/fonts.rs` |
 //! | `close_tab` | `CloseTabFlag`（`mark` / `take`） | `app/close.rs` |
-//! | `system_notify` | `try_deliver` | `notification/dispatch.rs`（macOS=UNUserNotificationCenter；其余同签名 stub 回退官方插件） |
+//! | `system_notify` | `try_deliver` / `set_click_handler` | `notification/dispatch.rs`（macOS=UNUserNotificationCenter，含 `didReceive` 点击回流；其余同签名 stub 回退官方插件） |
 //! | `hook_command` | `render_report_command` / `resolve_node` | `agent/hooks/install/shape/*`（写进 CLI 配置的 shim 启动命令） |
 
 pub mod close_tab;
@@ -48,6 +48,6 @@ pub mod process_spawn;
 pub mod process_tree;
 pub mod reveal;
 pub mod shell_launch;
-/// 系统通知投递的平台后端（macOS=UNUserNotificationCenter；其余回退官方插件）。
+/// 系统通知投递的平台后端（macOS=UNUserNotificationCenter，含点击回流；其余回退官方插件）。
 pub mod system_notify;
 pub mod watch_backend;

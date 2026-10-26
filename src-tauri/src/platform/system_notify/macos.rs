@@ -25,18 +25,26 @@
 //!
 //! Neeko 是常驻前台的应用，故本模块必须注册 [`NotificationDelegate`] 并在 `willPresent`
 //! 里显式要求 `[Banner, Sound, List]`。
+//!
+//! **点击回流也在这个委托里**（`didReceiveNotificationResponse`）：投递时把 deep link 写进
+//! `userInfo`，点击时取回并交 [`set_click_handler`] 注册的回调 —— 插件那套
+//! `extra` + `onAction` 在 macOS 这条直写 UN 的路径上完全不生效，故这是本平台**唯一**的
+//! 精确回流通道。回调内容由通知域决定（本平台层只透传字符串，不认识「会话」语义）。
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
+use super::types::ClickHandler;
 use objc2::rc::Retained;
-use objc2::runtime::{Bool, ProtocolObject};
+use objc2::runtime::{AnyObject, Bool, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread};
-use objc2_foundation::{NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{NSBundle, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
 use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
-    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationSound,
-    UNNotificationTrigger, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+    UNNotificationSound, UNNotificationTrigger, UNUserNotificationCenter,
+    UNUserNotificationCenterDelegate,
 };
 use tauri::AppHandle;
 
@@ -49,6 +57,30 @@ thread_local! {
     static DELEGATE: RefCell<Option<Retained<NotificationDelegate>>> = const { RefCell::new(None) };
 }
 
+/// `userInfo` 中携带回流地址的键名。
+///
+/// 与 `notification/dispatch.rs::EXTRA_DEEP_LINK_KEY`（插件路径写进 `extra` 的同名键）以及
+/// 前端 `useNotificationReflow.ts` 的读取键三处同值 —— 分属三个语言/层，无法共享常量，
+/// 故本文件末的测试用 `include_str!` 把三者钉成一体（同仓库既有的跨文件字面量护栏模式）。
+///
+/// 平台层刻意不认识「通知」业务语义：它只把点进来的这条字符串**原样交回**调用方注册的
+/// 回调（[`set_click_handler`]），路由到哪个会话是通知域的 `reflow` 路由表的事。
+const USER_INFO_DEEP_LINK_KEY: &str = "deepLink";
+
+/// 点击回流回调的**注册处**（由通知域一次性注册，见 `notification::boot`）。
+///
+/// `OnceLock` 而非 `Mutex`：只注册一次、之后只读 —— 委托方法在 ObjC 回调栈里执行，
+/// 那里再取锁会把「投递层是否在临界区」变成隐藏的时序约束，只读快照没有这个问题。
+static CLICK_HANDLER: OnceLock<ClickHandler> = OnceLock::new();
+
+/// 注册点击回流回调（幂等：重复注册返回 `false` 且保留首次注册的处理函数）。
+///
+/// 回调拿到的是通知里的 `userInfo` 深链原串；空串/缺失不会调用（见 [`deep_link_of`]）。
+#[must_use]
+pub fn set_click_handler(handler: ClickHandler) -> bool {
+    CLICK_HANDLER.set(handler).is_ok()
+}
+
 /// 前台呈现选项（单一常量源）：横幅 + 声音 + 通知中心列表。
 ///
 /// Apple 已废弃 `Alert`（macOS 14+），现行组合是 `Banner`/`List`/`Sound`/`Badge`。
@@ -59,12 +91,13 @@ const FOREGROUND_PRESENTATION: UNNotificationPresentationOptions =
         .union(UNNotificationPresentationOptions::Sound)
         .union(UNNotificationPresentationOptions::List);
 
-// 前台通知呈现委托：`willPresent` 是前台应用唯一能表达「也要弹横幅」的位置。
+// 通知中心委托：`willPresent` 决定前台是否也弹横幅，`didReceive` 是**点击**的唯一入口。
 //
-// 只实现 `willPresentNotification`。点击通知的回流（`didReceiveNotificationResponse` →
-// `userInfo.deepLink` 精确聚焦）仍是登记未做的遗留项（见任务 implement.md），
-// 当前由应用内通知列表兜底；本项目未使用 `UNNotificationCategory` 自定义动作，
-// 故只实现 willPresent 不引入行为回归。
+// 两个选择器都必须实现，且各修的是不同故障：
+// - 缺 `willPresent` → 前台横幅静默消失（模块头的 usernoted 三行实测）；
+// - 缺 `didReceive` → 点击通知只是把应用带到前台，**无法定位到具体会话**。
+//   在后端直写 UN（macOS）这条路径上，插件那套 `extra.deepLink` + `onAction` 回流**完全不生效**，
+//   故这里是 macOS 唯一的精确回流点。本项目未使用 `UNNotificationCategory` 自定义动作。
 define_class!(
     // SAFETY:
     // - `NSObject` 是线程安全超类，本类无 `Drop` 实现、无实例变量。
@@ -83,12 +116,58 @@ define_class!(
         ) {
             completion_handler.call((FOREGROUND_PRESENTATION,));
         }
+
+        #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+        fn did_receive(
+            &self,
+            _center: &UNUserNotificationCenter,
+            response: &UNNotificationResponse,
+            completion_handler: &block2::DynBlock<dyn Fn()>,
+        ) {
+            // 投递前必然已注册（要先有通知才可能被点击），但缺注册也只是少一次回流，静默通过。
+            // 这条三级访问链（response→notification→request→content→userInfo）刻意留在委托里：
+            // 它是不可测的那层薄胶水，提取规则本身在 `deep_link_of` 里直测。
+            if let Some(handler) = CLICK_HANDLER.get() {
+                let user_info = response.notification().request().content().userInfo();
+                if let Some(link) = deep_link_of(&user_info) {
+                    handler(&link);
+                }
+            }
+            // 系统要求必须调用：不调用会被记为一次未完成回调（后续点击节流/丢弃）。
+            completion_handler.call(());
+        }
     }
 
     unsafe impl NSObjectProtocol for NotificationDelegate {}
 
     unsafe impl UNUserNotificationCenterDelegate for NotificationDelegate {}
 );
+
+/// 从 `userInfo` 字典里取出回流地址（**提取规则的唯一实现点**，纯函数、可直接单测）。
+///
+/// 接受 `&NSDictionary` 而非 `UNNotificationResponse`：后者在单测里构造不出来（没有公开
+/// 初始化器），若把访问链 `response.notification().request().content().userInfo()` 写进
+/// 提取函数，这条三级链就完全落在测试射程之外 —— 写错了也全绿。拆开后：
+/// - 本函数用**真实构造的 NSDictionary** 覆盖全部语义分支（有键/无键/空值/非字符串）；
+/// - 委托侧只剩一行取值与分发，链路长度为 1，肉眼可校。
+///
+/// 类型处理：只把**键**重解释为 `NSString`（本模块是唯一写入点，键必是字符串），
+/// **值保持 `AnyObject`** 再逐条 `downcast_ref` —— 这不是样板：`userInfo` 是系统级
+/// 公共字典，他人/未来版本完全可能放非字符串值，把整个字典重解释成 `NSString → NSString`
+/// 会让那种情形变成 UB 而不是可处理的 `None`。
+fn deep_link_of(user_info: &NSDictionary) -> Option<String> {
+    // SAFETY: 本模块是唯一的 userInfo 写入点，键都是 NSString（见 `user_info_with_deep_link`）；
+    // 值不参与 reinterpret，仍为 AnyObject —— 类型安全那一半留在下面的 downcast_ref。
+    let typed = unsafe { user_info.cast_unchecked::<NSString, AnyObject>() };
+    let key = NSString::from_str(USER_INFO_DEEP_LINK_KEY);
+    let value = typed.objectForKey(&key)?;
+    // 非 NSString 值 → 当作无回流目标（不 panic、不把对象描述当深链）。
+    let link = value.downcast_ref::<NSString>()?.to_string();
+    if link.is_empty() {
+        return None;
+    }
+    Some(link)
+}
 
 impl NotificationDelegate {
     /// 新建委托实例（无实例变量，`init` 后即可用）。
@@ -109,9 +188,18 @@ static UNAVAILABLE_LOGGED: AtomicBool = AtomicBool::new(false);
 ///
 /// 返回 `Some(())` = 已由本后端消费；`None` = 无 bundle 的裸二进制（dev），调用方回退插件。
 ///
+/// `deep_link` 写进 `userInfo`：点击时 [`NotificationDelegate::did_receive`] 取回并交回调，
+/// 这是本平台**唯一**的精确回流通道（插件那套 `extra` + `onAction` 不经过这里）。
+///
 /// 借用入参（非 `String`）：门面 stub 必须是 `const fn`（红线 10），而 `const fn` 不能析构
 /// 带 `Drop` 的参数（E0493）；owned 化只发生在本实现真要跳主线程时。
-pub fn try_deliver(app: &AppHandle, title: &str, subtitle: &str, body: &str) -> Option<()> {
+pub fn try_deliver(
+    app: &AppHandle,
+    title: &str,
+    subtitle: &str,
+    body: &str,
+    deep_link: &str,
+) -> Option<()> {
     // 裸 dev 二进制：UN 会 abort，必须回退（返回 None 让调用方走插件路径）。
     if NSBundle::mainBundle().bundleIdentifier().is_none() {
         if !UNAVAILABLE_LOGGED.swap(true, Ordering::Relaxed) {
@@ -129,6 +217,7 @@ pub fn try_deliver(app: &AppHandle, title: &str, subtitle: &str, body: &str) -> 
     let title = title.to_string();
     let subtitle = subtitle.to_string();
     let body = body.to_string();
+    let deep_link = deep_link.to_string();
     let run = app.run_on_main_thread(move || {
         let Some(center) = CENTER.with(|cell| {
             let mut slot = cell.borrow_mut();
@@ -154,12 +243,12 @@ pub fn try_deliver(app: &AppHandle, title: &str, subtitle: &str, body: &str) -> 
         };
 
         if AUTHORIZED.load(Ordering::Relaxed) {
-            post(&center, title, subtitle, body);
+            post(&center, title, subtitle, body, deep_link);
             return;
         }
         // 首次：请求授权（触发系统弹窗；已决定过则立即回调，不再弹）。
         let center2 = center.clone();
-        let payload = std::rc::Rc::new((title, subtitle, body));
+        let payload = std::rc::Rc::new((title, subtitle, body, deep_link));
         let block = block2::RcBlock::new(move |granted: Bool, error: *mut NSError| {
             if bool::from(granted) {
                 AUTHORIZED.store(true, Ordering::Relaxed);
@@ -168,6 +257,7 @@ pub fn try_deliver(app: &AppHandle, title: &str, subtitle: &str, body: &str) -> 
                     payload.0.clone(),
                     payload.1.clone(),
                     payload.2.clone(),
+                    payload.3.clone(),
                 );
             } else {
                 // 区分「用户拒绝/弹窗超时」与「系统无法为该构建注册通知」（未签名 debug 包
@@ -194,7 +284,26 @@ pub fn try_deliver(app: &AppHandle, title: &str, subtitle: &str, body: &str) -> 
     Some(())
 }
 
-fn post(center: &UNUserNotificationCenter, title: String, subtitle: String, body: String) {
+/// 构造带回流地址的 `userInfo`（`NSDictionary<NSString, NSString>` → 擦除成无泛型形式）。
+///
+/// `setUserInfo` 的签名收 `&NSDictionary`（默认泛型 `AnyObject`），而我们要放的是字符串对；
+/// 两侧用 `cast_unchecked` 收敛 —— 值与键都是 `NSString`，reinterpret 成立（读取侧见
+/// [`deep_link_of`]，同一判据的另一个端点）。
+fn user_info_with_deep_link(deep_link: &str) -> Retained<NSDictionary> {
+    let key = NSString::from_str(USER_INFO_DEEP_LINK_KEY);
+    let value = NSString::from_str(deep_link);
+    let dict = NSDictionary::from_slices(&[&*key], &[&*value]);
+    // SAFETY: 泛型参数只描述运行时不变量；这里收窄到 AnyObject 不改变内存布局。
+    unsafe { Retained::cast_unchecked::<NSDictionary>(dict) }
+}
+
+fn post(
+    center: &UNUserNotificationCenter,
+    title: String,
+    subtitle: String,
+    body: String,
+    deep_link: String,
+) {
     let content = {
         let content = UNMutableNotificationContent::new();
         content.setTitle(&NSString::from_str(&title));
@@ -207,6 +316,11 @@ fn post(center: &UNUserNotificationCenter, title: String, subtitle: String, body
         // 「macOS 未设 sound 即静音」）。授权与呈现掩码都申请了 Sound，此处必须落实，
         // 否则那两处声明是空转（「声明了却没人实现」的静默功能缺失形态）。
         content.setSound(Some(&UNNotificationSound::defaultSound()));
+        // 回流坐标：点击时由委托从 `userInfo` 取回（见 `deep_link_of`）。空串也写 ——
+        // 缺键与空串对 `deep_link_of` 同一含义（无回流目标），不必造两种「无」。
+        // SAFETY: 内容对象与字典都是本函数新构造并独占，`setUserInfo` 的泛型
+        // 不变量由 `user_info_with_deep_link` 保证（键值都是 NSString）。
+        unsafe { content.setUserInfo(&user_info_with_deep_link(&deep_link)) };
         content
     };
     let id = format!("neeko-{}", uuid::Uuid::new_v4());
@@ -238,8 +352,26 @@ fn post(center: &UNUserNotificationCenter, title: String, subtitle: String, body
 #[cfg(test)]
 mod tests {
     use super::*;
-    use objc2::runtime::AnyObject;
     use objc2::sel;
+    use objc2_foundation::NSNumber;
+
+    /// 构造 `userInfo` 的静态类型 `NSDictionary<AnyObject, AnyObject>`，值类型任意。
+    ///
+    /// 生产侧只需要 `NSString → NSString`（[`user_info_with_deep_link`]），而测试要能造
+    /// 非字符串值 —— 这条路径正是「把整个字典重解释成 `NSString → NSString` 会变 UB」的验体。
+    fn user_info_of(value: &AnyObject) -> Retained<NSDictionary> {
+        let key: Retained<NSString> = NSString::from_str(USER_INFO_DEEP_LINK_KEY);
+        let dict: Retained<NSDictionary<NSString, AnyObject>> =
+            NSDictionary::from_slices(&[&*key], &[value]);
+        // SAFETY: 泛型参数只描述运行时不变量，擦除到 AnyObject 不改变内存布局。
+        unsafe { Retained::cast_unchecked::<NSDictionary>(dict) }
+    }
+
+    /// `Retained<T>` → `&AnyObject`（ObjC 里任何对象都是 AnyObject）。
+    fn as_any<T: objc2::Message>(object: &T) -> &AnyObject {
+        // SAFETY: 所有 ObjC 对象都是合法的 AnyObject。
+        unsafe { &*(std::ptr::from_ref(object).cast()) }
+    }
 
     /// 呈现掩码必须显式含 `Banner`（空集 = 前台静默，正是本模块要防的故障形态）。
     #[test]
@@ -289,6 +421,92 @@ mod tests {
         assert!(
             responds,
             "委托未实现 willPresentNotification —— 前台横幅会静默丢失"
+        );
+    }
+
+    /// 委托类必须真实实现 `didReceiveNotificationResponse` 选择器。
+    ///
+    /// 在后端直写 UN 的 macOS 路径上，插件那套 `extra.deepLink` + `onAction` 不生效 ——
+    /// 缺这个选择器就意味着「点了系统通知只能把应用带到前台，定位不到会话」，且同样
+    /// 运行时不报错。断言方式与上一条同型（ObjC 运行时查询，不读源码文本）。
+    #[test]
+    fn delegate_implements_did_receive_selector() {
+        let instance: Retained<NotificationDelegate> = NotificationDelegate::new();
+        let obj: &AnyObject = &instance;
+        let selector =
+            sel!(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:);
+        // SAFETY: `respondsToSelector:` 接受任意选择器并对任意对象安全。
+        let responds: bool = unsafe { msg_send![obj, respondsToSelector: selector] };
+        assert!(
+            responds,
+            "委托未实现 didReceiveNotificationResponse —— 点击通知将无法精确回流"
+        );
+    }
+
+    /// 写入侧 → 读取侧的 `userInfo` 往返：`post` 写的键就是 `deep_link_of` 读的键。
+    ///
+    /// 两处各写了一边，任何一侧改名都会让回流静默失效（点击照旧只带应用前台），
+    /// 而单元测试是唯一能在无 GUI 下验证这条通路的地方。
+    #[test]
+    fn user_info_round_trips_the_deep_link() {
+        let dict = user_info_with_deep_link("neeko://agent/s1");
+        assert_eq!(
+            deep_link_of(&dict).as_deref(),
+            Some("neeko://agent/s1"),
+            "写入的深链必须能被 deep_link_of 原样读回"
+        );
+    }
+
+    /// 缺键 → `None`（不是 panic，也不是 `Some("")`）。
+    ///
+    /// 这条路径真实存在：他人往 `userInfo` 写东西、或未来版本换了载荷都是这个形态。
+    #[test]
+    fn missing_key_yields_none() {
+        let other_key: Retained<NSString> = NSString::from_str("someOtherKey");
+        let value: Retained<NSString> = NSString::from_str("neeko://agent/s1");
+        let dict: Retained<NSDictionary<NSString, AnyObject>> =
+            NSDictionary::from_slices(&[&*other_key], &[as_any(&*value)]);
+        // SAFETY: 同 `user_info_with_deep_link`（键值都是 ObjC 对象）。
+        let dict = unsafe { Retained::cast_unchecked::<NSDictionary>(dict) };
+        assert_eq!(deep_link_of(&dict), None, "缺失 deepLink 键时不得凭空造值");
+    }
+
+    /// 键在但值为空串 → `None`（与 `deep_link_of` 的「空串 = 无回流目标」同一语义，
+    /// 不制造第二种「无」）。
+    #[test]
+    fn empty_value_yields_none() {
+        let dict = user_info_with_deep_link("");
+        assert_eq!(deep_link_of(&dict), None);
+    }
+
+    /// 非字符串值 → `None`（不 panic、不把对象描述当深链）。
+    ///
+    /// 这是拆出 `deep_link_of` 之后**新增的可测面**：把整个字典重解释成
+    /// `NSString → NSString` 的写法在这里会变成 UB，而现在是一个确定的 `None`。
+    #[test]
+    fn non_string_value_yields_none() {
+        // `NSNumber` 是本仓 `objc2-foundation` 特性集下可构造的最简单非字符串值。
+        let value = NSNumber::numberWithUnsignedChar(7);
+        let dict = user_info_of(as_any(&*value));
+        assert_eq!(deep_link_of(&dict), None, "非字符串值必须被类型判定拦住");
+    }
+
+    /// `userInfo` 键名三端同值：本文件（写入/读取）· `notification/dispatch.rs`（插件
+    /// `extra` 写入）· 前端 reflow hook（JS 读取）。改名必须三处同改。
+    #[test]
+    fn user_info_key_matches_dispatcher_and_frontend() {
+        const DISPATCH: &str = include_str!("../../notification/dispatch.rs");
+        const FRONTEND: &str =
+            include_str!("../../../../src/features/notification/hooks/useNotificationReflow.ts");
+        let needle = format!("\"{USER_INFO_DEEP_LINK_KEY}\"");
+        let js_needle = format!("'{USER_INFO_DEEP_LINK_KEY}'");
+        assert!(
+            DISPATCH.contains(&needle),
+            "notification/dispatch.rs 缺少 {needle}（三端键名必须同值）"
+        );
+        assert!(
+            FRONTEND.contains(&js_needle),
+            "useNotificationReflow.ts 缺少 {js_needle}（三端键名必须同值）"
         );
     }
 }

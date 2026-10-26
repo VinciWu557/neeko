@@ -124,6 +124,10 @@ fn on_setup(app: &tauri::App) {
 
     crate::library::boot::ensure_default_tag_group(&state.library_store);
 
+    // 通知域启动接线（与四域对称）：注册点击回流通道，一次、长期有效。
+    // 必须早于任何投递 —— 否则冷启动时用户点「上次运行遗留」的通知中心条目无处回流。
+    crate::notification::boot::attach(&app.handle().clone());
+
     // 外部 Agent CLI hook（源 B，design §2.5）：本域启动只暴露一个入口，与四域对称。
     // 旁路能力 —— 域内自记日志，失败只降级 CLI hook 通知，绝不阻断启动。
     //
