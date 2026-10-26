@@ -52,7 +52,7 @@
 | [前端测试](./frontend-testing.md) | Vitest 配置、Hook/组件测试、Tauri API mock | 已填写 |
 | [后端测试](./backend-testing.md) | Rust 单元测试、git2 临时仓库、存储测试 | 已填写 |
 | [Mock 策略](./mock-strategies.md) | Tauri invoke mock、xterm mock、平台存根 | 已填写 |
-| [真实源确定性](./real-source-determinism.md) | 真实源的断言只承诺 `≥`，禁止对观察者做精确集合断言 | 已填写 |
+| [真实源确定性](./real-source-determinism.md) | 断言只承诺 `≥`；且**不为第三方 OS 契约建真实流**（成本 100% CPU / debug 放大百倍） | 已填写 |
 | [变异验证](./mutation-verification.md) | 证明断言真的能红；0 红必须查到底 | 已填写 |
 
 ---

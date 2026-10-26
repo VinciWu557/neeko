@@ -523,6 +523,21 @@ assert!(info.changed_files.iter().any(|f| f.path == "README.md"));
 `units.rs` 纯函数，生命周期负向改差分式（`assert_eq!(count, baseline)`）。
 完整判定表、正/反例与观察原语见 [真实源测试的确定性契约](./real-source-determinism.md)。
 
+**成本面（2026-10 补充）**：即使断言口径合规，**也不为第三方 OS 契约建真实流**。
+判据是「断言的对象属于谁」——
+
+| 断言对象 | 做法 |
+| --- | --- |
+| 本仓的分类 / 过滤 / 状态机 | 下沉纯函数，或注入合成事件（**零流**） |
+| OS 是否真的投递了某事件（Apple / 内核行为） | **不写测试**，那是第三方实现的既成事实 |
+
+反例（已删除）：`git_meta` 的四个 `*_on_real_fs` 用例各建一条真实 FSEvents 流，只为验证
+「notify 能把 `.git/index` 改动送到回调」。实测代价：`cargo test --lib` 期间 `fseventsd`
+100% CPU、`watcher` 相关套件 48s；同逻辑改纯函数后 **0% CPU / 6.6s**。
+
+**若确需真实流**（只在我们自己写 FFI 封装时）：串行 + 只写一次纯等待 + 优先 release
+（debug 放大 ~100 倍）。详见该文件「成本约束」节。
+
 ### 7. 单元测试不得 spawn 真实外部进程
 
 **判据**：`#[test]` / `#[tokio::test]`（**无** `#[ignore]`）里不得启动本机真实二进制

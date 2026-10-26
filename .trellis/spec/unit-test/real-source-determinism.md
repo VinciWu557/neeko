@@ -48,11 +48,11 @@ assert_eq!(refs_changed.load(Ordering::SeqCst), 0);
 // ❌ 反例 2（精确集合，无论快慢）：真实到达次数由后端聚合行为决定，不是契约。
 assert_eq!(index_changed.load(Ordering::SeqCst), 1);
 
-// ✅ 正例 1（单向可达，唯一正向写法）：闭包回调形态用 CallbackProbe。
-assert!(index_changed.wait_reached(Duration::from_secs(5), || {
-    std::fs::write(meta.git_dir.join("index.lock"), "v2").unwrap();
-    std::fs::rename(meta.git_dir.join("index.lock"), meta.git_dir.join("index")).unwrap();
-}));
+// ✅ 正例 1（单向可达）：**首选**注入合成事件，不建真实流。
+// （旧写法 `CallbackProbe::wait_reached` 已随 2026-10 解耦删除，见「观察原语」节）
+dispatch_git_meta_event(std::slice::from_ref(&meta.index), &meta,
+    &mut index_hits, &mut head_hits, &mut refs_hits);
+assert_eq!((index_hits, head_hits, refs_hits), (1, 0, 0));
 
 // ✅ 正例 2（差分式生命周期负向）：与运行时基线比较，quiet > debounce 上限。
 let baseline = sink.count(FILE_CHANGED_EVENT);
@@ -61,26 +61,82 @@ std::thread::sleep(QUIET_WINDOW);
 assert_eq!(sink.count(FILE_CHANGED_EVENT), baseline);
 ```
 
-## 观察原语：`CallbackProbe`
+## 观察原语：优先「注入事件」，其次 `CollectingSink`
 
-非确定性域的**闭包回调**形态有一份受祝福的观察原语（`src-tauri/src/common/file/watcher/probe.rs`，
-`#[cfg(test)]` + `pub(crate)`）：
+> **2026-10 修订**：原 `CallbackProbe`（`watcher/probe.rs`）已删除 —— 它的唯一用法是
+> 「反复写真实文件直到回调命中」，而那条路径在 2026-10 的测试解耦中整体被替换成
+> **事件注入**（见下节「成本约束」）。**不要**再按旧名去找它。
+
+正向断言（「目标发生过」）现在有两条受祝福的路径，**优先第一条**：
+
+**1. 回调注入（首选）** —— 被测对象是纯函数或已有注入缝时，直接喂合成事件：
 
 ```rust
-pub(crate) struct CallbackProbe { /* hits 私有 */ }
+// 回调层：build_notify_callback 返回 impl FnMut(Result<Event,_>)，签名本身就是纯函数
+feed(Ok(notify::Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Content)))
+    .add_path(root.join("a.txt"))));
+assert_eq!(sink.count(FILE_CHANGED_EVENT), 1);   // 同步断言，零 sleep
 
-impl CallbackProbe {
-    pub(crate) fn new() -> Self;
-    pub(crate) fn callback(&self) -> impl FnMut() + Send + 'static;
-    /// 有界轮询：反复 poke（可重试写入）直到回调至少命中一次。只回答「到达过」。
-    pub(crate) fn wait_reached(&self, timeout: Duration, poke: impl FnMut()) -> bool;
-}
+// 状态机层：WatcherManager::new().without_real_fs() 把回调交给测试
+let mut feed = manager.take_test_event_sink().expect("noop 模式必须交出回调");
 ```
 
-- 正向只有「最终到达」一种写法；**不暴露** `count()` / `hits()` 访问器 ⇒ 精确集合 / 绝对零断言
-  在该原语上**没有对应 API**。
-- sink 形态（`sink.rs::test_support::CollectingSink`）是既有原语，保持兼容，不强制迁移；
-  `manager/lifecycle_tests.rs` 的差分式负向已合规，沿用即可。
+**2. `CollectingSink`（真实投递已下沉后的残余）** —— `sink.rs::test_support::CollectingSink`，
+保持兼容；`manager/lifecycle_tests.rs` 的差分式负向已合规，沿用即可。
+
+两条路径都**不暴露**可直接与整数字面量比较的裸观察器 ⇒ 精确集合 / 绝对零断言无处表达。
+
+## 成本约束：真实源测试的「性能税」（2026-10 新增）
+
+断言口径合规**不等于**测试开销合规。真实源还有一条独立的成本特性，违反时测试会：
+
+- 拖慢套件（本任务前：`watcher` 相关 48s → 改造后 6.6s）；
+- 把 `fseventsd` 打到 100% CPU（实测）；
+- 且 **debug 与 release 差异达 ~100 倍**（同一 `MacFseventWatcher` 测试：debug 78%，release 0.1~0.7%）。
+
+### 判据：先问「断言的对象属于谁」
+
+| 断言对象 | 归属 | 正确做法 |
+| --- | --- | --- |
+| **分类 / 分支 / 过滤逻辑** | 本仓代码 | **下沉纯函数，零 IO** |
+| **状态机（号段 / 票号 / 快照槽位）** | 本仓代码 | 注入事件 + `worker_only` 风格替身，**零流** |
+| **OS 是否真的投递了某事件** | **Apple / Linux 内核** | 不为它写测试（外部契约是既成事实） |
+
+第三行是本节的硬结论：**「FSEvents 会把 `.git/index` 的改动送到回调」不是本仓的契约，
+是 Apple 的**。为它建真实流，等于用测试去验证第三方实现的稳定性 —— 收益为零，成本是
+100% CPU + 秒级耗时。`git_meta` 的四个 `*_on_real_fs` 用例因此被删除，改为
+`dispatch_git_meta_event` / `should_handle_event` / `translate_flags` 的纯函数测试。
+
+### 已落地的注入缝（复用，不要另造）
+
+| 位置 | 缝 | 用途 |
+| --- | --- | --- |
+| `manager/callbacks.rs::build_notify_callback` | 返回 `impl FnMut(Result<Event,_>)` | 回调层全部语义（gitignore 过滤 / hard-noise / 结构事件 / git 元数据分类） |
+| `manager/core.rs::WatcherManager::without_real_fs()` + `take_test_event_sink()` | 测试模式不建流、交出回调 | 编排与状态机测试 |
+| `manager/git_meta_merge.rs::dispatch_git_meta_event` | 纯函数 | 「一批路径 → 分类 → 三出口」 |
+| `platform/macos_fsevent.rs::should_handle_event` / `translate_flags` | 纯函数 | 路径过滤与 flags→EventKind 映射 |
+| `git_meta/watcher.rs::create_git_meta_watcher_with(watch_fn)` | 注入 `watch_fn` | 失败分支 |
+
+### 若确需真实流（平台后端契约）
+
+只在「验证我们自己写的那层 FFI 封装」时保留，且：
+
+- **串行**（进程级 `Mutex` 守卫）—— 并发流会把 fseventsd 峰值叠加成持续满载；
+- **只写一次、纯等待**，不要 `while { write; sleep }` 循环重试 ——
+  配合本后端的 `latency: 0.0 + NoDefer`，每次写入立刻唤醒一次处理，
+  8s 超时下最多 40 次写入，实测把 CPU 打到 80%+；
+- 优先在 **release** 下跑（debug 放大 ~100 倍）。
+
+### 排查提示（避免重复踩坑）
+
+`cargo test` 期间 `fseventsd` 高 CPU **不必然**来自本仓测试：
+
+- 先在同一台机器上跑一个**完全不建文件**的测试模块（如 `parsers`）作对照 —— 若也应 0%，
+  说明基线干净；
+- 全量测试会大量创建/删除临时文件，**唤醒系统里所有 FSEvents client**
+  （Electron 应用、WeChat、云盘、编辑器索引等），fseventsd 的 CPU 是它们共同造成的；
+- 判定「本仓是否真的建了流」用确定性手段：在 `with_exclusions` / `watch` 加一次性计数器，
+  比用 `sample` 反推可靠（`sample fseventsd` 需 sudo）。
 
 ## 护栏（机械化兜底）
 
