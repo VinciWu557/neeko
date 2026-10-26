@@ -806,3 +806,25 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 343: composer-token-editor 收口：真机四项手工验证通过（含 Win/macOS IME 矩阵），修正 task.json 元数据后归档
+<!-- trellis-session: v=2 fp=3a418d73b17ccf03 -->
+
+**Date**: 2026-10-26
+**Task**: composer-token-editor 收口：真机四项手工验证通过（含 Win/macOS IME 矩阵），修正 task.json 元数据后归档
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `08a6b59c` | docs(task): close the composer token editor with its manual verification recorded |
+
+### Status
+
+[OK] **Completed**
