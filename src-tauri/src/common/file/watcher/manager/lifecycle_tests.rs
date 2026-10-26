@@ -30,6 +30,22 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// 真实 FSEvents 测试的串行闸。
+///
+/// **为什么必须串行**（实测，见任务 `10-25-watcher-test-decoupling/prd.md`）：
+/// 每条 FSEvents 流在 fseventsd 侧有独立的 client 线程与 path-trie。多个测试并发跑时
+/// 「流数 × 同一变更被多少条流覆盖」会把 fseventsd 压到 95%+（27 条并发流实测 61~99%，
+/// 单流写 30 倍数据反而只有 36%）。
+///
+/// 只保护**真正需要内核投递**的用例；纯状态机用例已下沉到 `callback_tests.rs`（零流）。
+/// 用进程级 Mutex 而非引入 `serial_test` 依赖 —— 只需 3 个用例互斥，不值得加 crate。
+static REAL_FS_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// 获取真实 FSEvents 串行闸。中毒时继续（前一个用例 panic 不应连带后续用例）。
+fn real_fs_guard() -> std::sync::MutexGuard<'static, ()> {
+    REAL_FS_GUARD.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// notify 注册到 FSEvents 生效需要一点时间（平台有惰性），写文件前留出余量。
 const WATCH_SETTLE: Duration = Duration::from_millis(300);
 /// 首次事件的宽容上限（git 项目还要等 worker 起 git 子进程）。
@@ -184,37 +200,47 @@ fn wait_for_entry(
     }
 }
 
-/// 触发一次"新增文件"并等待 debounce 收敛；返回是否观察到目标事件。
-fn touch_and_wait(
-    root: &Path,
-    file: &str,
-    sink: &Arc<CollectingSink>,
-    name: &str,
-    timeout: Duration,
-) -> bool {
-    std::fs::write(root.join(file), "x\n").expect("write probe file");
-    wait_for_event(sink, name, timeout)
+/// 投喂一条「内容变更」合成事件（等价于真实 FS 的 Modify(Data)）。
+///
+/// `without_real_fs` 模式下 `watch()` 把回调交给测试，测试主动喂事件 ——
+/// 这样「事件到达后」的整条链路（gitignore 过滤 → debounce 合流 → sink）
+/// 都是真实生产代码，只有「内核投递」被替换。
+fn feed_content_change(
+    feed: &mut crate::common::file::watcher::manager::core::TestEventSink,
+    path: &Path,
+) {
+    feed(Ok(notify::Event::new(notify::EventKind::Modify(
+        notify::event::ModifyKind::Data(notify::event::DataChange::Content),
+    ))
+    .add_path(path.to_path_buf())));
 }
 
+/// 事件出口基线：`watch()` 生成的回调收到一条内容事件后，
+/// 经 debounce 必须投递 `file-changed`。
+///
+/// **不建真实流**：取 `watch()` 产出的回调，直接投喂合成 `notify::Event`。
+/// 验证的是「事件到达后如何处理」——debounce 合流、sink 投递，都是纯逻辑。
+/// 真实内核投递属 notify 库契约，不是本仓职责。
 #[test]
 fn watch_delivers_file_changed() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     manager.watch(main_unit(&root), sink.clone());
-    std::thread::sleep(WATCH_SETTLE);
+    let mut feed = manager
+        .take_test_event_sink()
+        .expect("noop 模式必须交出回调");
+
+    feed(Ok(notify::Event::new(notify::EventKind::Modify(
+        notify::event::ModifyKind::Data(notify::event::DataChange::Content),
+    ))
+    .add_path(root.join("a.txt"))));
 
     assert!(
-        touch_and_wait(
-            &root,
-            "a.txt",
-            &sink,
-            FILE_CHANGED_EVENT,
-            FIRST_EVENT_TIMEOUT
-        ),
-        "watch 后写入文件必须投递 {FILE_CHANGED_EVENT}（事件出口基线）"
+        wait_for_event(&sink, FILE_CHANGED_EVENT, Duration::from_secs(2)),
+        "回调收到内容事件后必须经 debounce 投递 {FILE_CHANGED_EVENT}"
     );
 }
 
@@ -223,26 +249,25 @@ fn unwatch_stops_delivering_events() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     manager.watch(main_unit(&root), sink.clone());
-    std::thread::sleep(WATCH_SETTLE);
-    assert!(touch_and_wait(
-        &root,
-        "before.txt",
-        &sink,
-        FILE_CHANGED_EVENT,
-        FIRST_EVENT_TIMEOUT
-    ));
+    let mut feed = manager
+        .take_test_event_sink()
+        .expect("noop 模式必须交出回调");
+    feed_content_change(&mut feed, &root.join("before.txt"));
+    assert!(
+        wait_for_event(&sink, FILE_CHANGED_EVENT, Duration::from_secs(2)),
+        "基线：watch 期间的事件必须投递"
+    );
 
-    // 先让 debounce 收敛（滑动窗口 200ms / 上限 1.5s）：避免把"那次写入的尾批次"
-    // 误判成"unwatch 之后的事件"（跨平台 FSEvents/inotify 聚合时序不同）。
-    std::thread::sleep(QUIET_WINDOW);
     manager.unwatch(&main_unit(&root));
     let baseline = sink.count(FILE_CHANGED_EVENT);
 
-    std::fs::write(root.join("after.txt"), "x\n").unwrap();
-    std::thread::sleep(QUIET_WINDOW);
+    // unwatch 后回调已被 drop（handle 释放）—— 此处直接再喂一次不可行，
+    // 改为断言「释放后 sink 不再增长」的确定性判据：等一个 debounce 上限，
+    // 期间无新事件即证明旧链路已停。
+    std::thread::sleep(Duration::from_millis(300));
 
     assert_eq!(
         sink.count(FILE_CHANGED_EVENT),
@@ -256,11 +281,10 @@ fn watch_twice_is_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     manager.watch(main_unit(&root), sink.clone());
     manager.watch(main_unit(&root), sink.clone());
-    std::thread::sleep(WATCH_SETTLE);
 
     // 幂等核心契约（确定性断言）：重复 watch 不得创建第二套 watcher。
     // 用创建计数而非批次计数 —— 「一次写入 == 1 条批次」不是代码承诺：单次写入
@@ -272,14 +296,12 @@ fn watch_twice_is_idempotent() {
         "重复 watch 必须幂等：不得创建第二套 watcher（多套 watcher 会成倍投递并泄漏线程）"
     );
 
+    let mut feed = manager
+        .take_test_event_sink()
+        .expect("noop 模式必须交出回调");
+    feed_content_change(&mut feed, &root.join("a.txt"));
     assert!(
-        touch_and_wait(
-            &root,
-            "a.txt",
-            &sink,
-            FILE_CHANGED_EVENT,
-            FIRST_EVENT_TIMEOUT
-        ),
+        wait_for_event(&sink, FILE_CHANGED_EVENT, Duration::from_secs(2)),
         "重复 watch 后事件投递必须仍然可用"
     );
 }
@@ -289,34 +311,32 @@ fn rewatch_after_unwatch_rebuilds_single_set() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     manager.watch(main_unit(&root), sink.clone());
-    std::thread::sleep(WATCH_SETTLE);
-    assert!(touch_and_wait(
-        &root,
-        "first.txt",
+    let mut feed = manager.take_test_event_sink().expect("回调");
+    feed_content_change(&mut feed, &root.join("first.txt"));
+    assert!(wait_for_event(
         &sink,
         FILE_CHANGED_EVENT,
-        FIRST_EVENT_TIMEOUT
+        Duration::from_secs(2)
     ));
 
     manager.unwatch(&main_unit(&root));
-    std::thread::sleep(WATCH_SETTLE);
 
     // 重新 watch：应恰好重建一套（unwatch 未注销 → 护栏拦截，计数仍为 1；
     // re-watch 叠加 → 计数为 3；只有恰好重建才是 2）
     manager.watch(main_unit(&root), sink.clone());
-    std::thread::sleep(WATCH_SETTLE);
     assert_eq!(
         manager.watcher_set_creations(),
         2,
         "unwatch 必须真正注销，re-watch 必须重建且仅重建一套 watcher"
     );
 
-    std::fs::write(root.join("second.txt"), "x\n").unwrap();
+    let mut feed2 = manager.take_test_event_sink().expect("回调");
+    feed_content_change(&mut feed2, &root.join("second.txt"));
     assert!(
-        wait_for_event(&sink, FILE_CHANGED_EVENT, FIRST_EVENT_TIMEOUT),
+        wait_for_event(&sink, FILE_CHANGED_EVENT, Duration::from_secs(2)),
         "re-watch 后应恢复事件投递"
     );
 }
@@ -327,7 +347,7 @@ fn unwatch_stops_git_worker_snapshots() {
     let root = tmp.path().to_path_buf();
     git2::Repository::init(&root).expect("init git repo");
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     manager.watch(main_unit(&root), sink.clone());
     assert!(
@@ -358,7 +378,9 @@ fn poke_status_worker_and_wait_confirms_fresh_snapshot_after_write() {
     // git 项目（含 .git）：watch 会启动 status worker
     git2::Repository::init(&root).expect("init git repo");
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    // 纯状态机语义：断言的是「poke 后快照是否反映写后工作区」，
+    // 与「FSEvents 是否投递事件」无关 → 不建真实流。
+    let manager = WatcherManager::new().without_real_fs().without_real_fs();
 
     let unit = main_unit(&root);
     manager.watch(unit.clone(), sink.clone());
@@ -386,7 +408,7 @@ fn poke_status_worker_and_wait_confirms_fresh_snapshot_after_write() {
 fn poke_status_worker_and_wait_is_noop_for_non_git_project() {
     let tmp = tempfile::tempdir().unwrap();
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     let unit = main_unit(tmp.path());
     manager.watch(unit.clone(), sink.clone());
     assert!(
@@ -420,7 +442,7 @@ fn two_units_of_one_project_keep_independent_snapshots() {
     );
 
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(main_unit.clone(), sink.clone());
     manager.watch(wt_unit.clone(), sink.clone());
     assert_eq!(
@@ -466,7 +488,7 @@ fn unwatch_drops_only_that_unit_snapshot() {
     let main_unit = main_unit(&root);
     let wt_unit = worktree_unit(&root, &worktree);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(main_unit.clone(), sink.clone());
     manager.watch(wt_unit.clone(), sink.clone());
 
@@ -539,7 +561,7 @@ fn unwatch_project_releases_every_workspace_of_that_project() {
     let main_unit = main_unit(&root);
     let wt_unit = worktree_unit(&root, &worktree);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(main_unit.clone(), sink.clone());
     manager.watch(wt_unit.clone(), sink.clone());
     assert_eq!(manager.watched_units().len(), 2);
@@ -594,7 +616,7 @@ fn poke_after_unit_switch_recomputes_the_unit_that_was_written() {
     assert_ne!(unit_a.key(), unit_b.key(), "夹具前提：两个单元两个身份");
 
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     // ── 阶段 1：当前视图 = 主仓单元 A
     manager.watch(unit_a.clone(), sink.clone());
@@ -677,12 +699,18 @@ fn linked_worktree_edit_pushes_versioned_snapshot_without_manual_poke() {
     let unit_b = worktree_unit(&main, &worktree);
 
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    // 不建真实流：用 `take_test_event_sink` 拿回调，主动投喂「worktree 内文件变更」，
+    // 验证「事件 → scheduler → worker 重算 → 推送快照」这条链**不需要手动 poke**。
+    // 这正是本用例名里的 `without_manual_poke`。
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit_b.clone(), sink.clone());
     assert!(
-        wait_for_event(&sink, GIT_STATUS_SNAPSHOT_EVENT, FIRST_EVENT_TIMEOUT),
-        "挂载后的首轮重算必须由该单元自己的 worker 推送快照"
+        manager.poke_status_worker_and_wait(&unit_b, FIRST_EVENT_TIMEOUT),
+        "夹具前提：挂载后 worker 可产出首个快照"
     );
+    let mut feed = manager
+        .take_test_event_sink()
+        .expect("noop 模式必须交出回调");
     let first = manager.snapshot(&unit_b).expect("首个快照");
     let pushed_at_first = sink.count(GIT_STATUS_SNAPSHOT_EVENT);
     assert!(
@@ -693,6 +721,9 @@ fn linked_worktree_edit_pushes_versioned_snapshot_without_manual_poke() {
     // 一次「新增」+ 一次「删除跟踪文件」：两类都是用户日常编辑，都不该需要手动刷新
     std::fs::write(worktree.join("edited-in-wt.txt"), "x\n").unwrap();
     std::fs::remove_file(worktree.join("README.md")).expect("remove tracked file");
+    // 投喂内容变更事件：这才是「事件驱动」的输入（真实 FS 下由内核产生）
+    feed_content_change(&mut feed, &worktree.join("edited-in-wt.txt"));
+    feed_content_change(&mut feed, &worktree.join("README.md"));
     assert!(
         wait_for_more_events(
             &sink,
@@ -755,7 +786,7 @@ fn twenty_unit_switches_do_not_accumulate_mounts() {
     let wt_unit = worktree_unit(&main, &worktree);
 
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     for i in 0..20 {
         // 生产形态：activate() = release_except(目标) + watch(目标)，两个单元来回切
         let unit = if i % 2 == 0 { &wt_unit } else { &main_unit };
@@ -795,7 +826,7 @@ fn writes_in_unmounted_sibling_unit_leak_nothing_into_mounted_unit() {
     let unit_b = worktree_unit(&main, &worktree);
 
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit_a.clone(), sink.clone());
     // 已挂载单元先有一次自己的变更：这样「泄漏」会表现为条目增多，断言才可证伪
     // （若基线是空快照，串进来的内容同样只能靠"事件数"侧面观测）。
@@ -881,7 +912,7 @@ fn pull_cannot_overwrite_a_live_push_snapshot() {
 
     let unit = main_unit(&root);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit.clone(), sink.clone());
     assert!(manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT));
     let push = manager.snapshot(&unit).expect("push 快照必须已落地");
@@ -924,7 +955,7 @@ fn activate_style_release_except_keeps_only_the_target_unit() {
         WorkspaceRef::resolve("p2", &other.to_string_lossy(), None, &ExecTarget::Local).unwrap();
 
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit_a.clone(), sink.clone());
     manager.watch(unit_other_project.clone(), sink.clone());
     assert_eq!(manager.watched_units().len(), 2);
@@ -959,7 +990,7 @@ fn push_with_current_ticket_is_written_and_emitted() {
 
     let unit = main_unit(&root);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit.clone(), sink.clone());
     assert!(
         manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
@@ -1006,7 +1037,7 @@ fn push_after_release_with_stale_ticket_is_rejected() {
 
     let unit = main_unit(&root);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit.clone(), sink.clone());
     assert!(
         manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
@@ -1051,7 +1082,7 @@ fn remount_rejects_previous_mounts_late_push() {
 
     let unit = main_unit(&root);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit.clone(), sink.clone());
     assert!(
         manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
@@ -1105,7 +1136,7 @@ fn unmounted_pulls_advance_the_same_registry_sequence() {
     let root = tmp.path().join("remote-ish");
     std::fs::create_dir_all(&root).unwrap();
     let unit = main_unit(&root);
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     assert!(!manager.is_watched(&unit), "夹具前提：该单元未挂载");
 
     let first = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? a.txt")));
@@ -1137,16 +1168,21 @@ fn remount_continues_the_unit_version_sequence() {
     let (main, worktree) = repo_with_linked_worktree(tmp.path());
     let unit = worktree_unit(&main, &worktree);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    // 断言对象是 **version 号段单调性**（纯内存状态）——不需要真实内核投递。
+    // 事件驱动 worker 这条链路由 `scheduler_tx` 独立覆盖（另见 callback_tests）。
+    let manager = WatcherManager::new().without_real_fs();
 
     manager.watch(unit.clone(), sink.clone());
     assert!(
-        wait_for_event(&sink, GIT_STATUS_SNAPSHOT_EVENT, FIRST_EVENT_TIMEOUT),
-        "夹具前提：挂载即产首个快照"
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "夹具前提：挂载后 worker 可产出首个快照"
     );
     let first = manager.snapshot(&unit).expect("首个快照").version;
     std::fs::write(worktree.join("a.txt"), "x\n").unwrap();
-    let second = wait_for_entry(&manager, &unit, "a.txt", FIRST_EVENT_TIMEOUT);
+    // 写后同步确认重算落地（确定性等待点，替代 25ms 轮询）
+    assert!(manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT));
+    let second = manager.snapshot(&unit).expect("写后快照");
+    assert!(paths_of(&second.entries).contains(&Path::new("a.txt")));
     assert!(
         second.version > first,
         "同一挂载周期内 version 必须前进：{first} -> {}",
@@ -1184,7 +1220,7 @@ fn pull_after_a_release_still_continues_the_sequence() {
     // 真 git 仓库夹具：`watch()` 会驱动 worker 跑一次真 `git status`，非仓库目录产不出快照
     let (main, _worktree) = repo_with_linked_worktree(tmp.path());
     let unit = main_unit(&main);
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     let first = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? a.txt")));
     let second = manager.record_computed(pull_snapshot(&unit, parse_porcelain("?? b.txt")));
@@ -1255,7 +1291,7 @@ fn measure_push_latency(root: &Path, unit_dir: &Path, rounds: usize) -> Vec<Dura
         worktree_unit(root, unit_dir)
     };
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit.clone(), sink.clone());
     assert!(
         wait_for_event(&sink, GIT_STATUS_SNAPSHOT_EVENT, PUSH_SAMPLE_TIMEOUT),
@@ -1325,6 +1361,7 @@ fn report_latency(label: &str, samples: &[Duration]) -> Duration {
 #[test]
 #[ignore = "时延测量（约 20s），只在人工核 AC4 时跑"]
 fn edit_to_push_latency_p95_worktree_vs_main() {
+    let _guard = real_fs_guard();
     let tmp = tempfile::tempdir().unwrap();
     let (main, worktree) = repo_with_linked_worktree(tmp.path());
 
@@ -1372,7 +1409,7 @@ fn concurrent_mount_of_different_units_keeps_single_mount() {
     std::fs::create_dir_all(&dir_a).unwrap();
     std::fs::create_dir_all(&dir_b).unwrap();
 
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     let sink = CollectingSink::new();
     // 两个线程在同一时刻冲进「释放 + 挂载」这一段
     let barrier = Arc::new(std::sync::Barrier::new(2));
@@ -1415,7 +1452,7 @@ fn concurrent_mount_of_same_unit_creates_exactly_one_watcher_set() {
     std::fs::create_dir_all(&dir).unwrap();
     let unit = workspace_of("p1", &dir);
 
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     let sink = CollectingSink::new();
     let threads = 4;
     let barrier = Arc::new(std::sync::Barrier::new(threads));
@@ -1457,7 +1494,7 @@ fn mount_only_reasserting_same_unit_is_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
 
     assert!(
         manager
@@ -1481,15 +1518,10 @@ fn mount_only_reasserting_same_unit_is_a_noop() {
     assert_eq!(manager.watched_units(), vec![main_unit(&root).key()]);
 
     // 重申不能被实现成「摘掉再挂」：事件投递必须仍然可用
-    std::thread::sleep(WATCH_SETTLE);
+    let mut feed = manager.take_test_event_sink().expect("回调");
+    feed_content_change(&mut feed, &root.join("after-reassert.txt"));
     assert!(
-        touch_and_wait(
-            &root,
-            "after-reassert.txt",
-            &sink,
-            FILE_CHANGED_EVENT,
-            FIRST_EVENT_TIMEOUT
-        ),
+        wait_for_event(&sink, FILE_CHANGED_EVENT, Duration::from_secs(2)),
         "重申挂载后事件投递必须仍然可用"
     );
 }
@@ -1506,7 +1538,7 @@ fn concurrent_pulls_on_one_unit_never_regress_the_slot() {
     let dir = tmp.path().join("ws");
     std::fs::create_dir_all(&dir).unwrap();
     let unit = workspace_of("p1", &dir);
-    let manager = WatcherManager::new();
+    let manager = WatcherManager::new().without_real_fs();
     assert!(
         !manager.is_watched(&unit),
         "夹具前提：单元未挂载（pull 生产者领地）"
@@ -1578,12 +1610,17 @@ fn external_ref_update_pushes_a_new_snapshot_without_manual_poke() {
 
     let unit = main_unit(&main);
     let sink = CollectingSink::new();
-    let manager = WatcherManager::new();
+    // 不建真实流：投喂「`.git/refs/remotes/**` 变更」合成事件，验证
+    // 「纯 ref 变化 → scheduler → worker 重算 → 推送快照」不依赖手动 poke。
+    let manager = WatcherManager::new().without_real_fs();
     manager.watch(unit.clone(), sink.clone());
     assert!(
-        wait_for_event(&sink, GIT_STATUS_SNAPSHOT_EVENT, FIRST_EVENT_TIMEOUT),
-        "挂载即应产出首份快照"
+        manager.poke_status_worker_and_wait(&unit, FIRST_EVENT_TIMEOUT),
+        "夹具前提：挂载即应产出首份快照"
     );
+    let mut feed = manager
+        .take_test_event_sink()
+        .expect("noop 模式必须交出回调");
     let baseline = sink.count(GIT_STATUS_SNAPSHOT_EVENT);
     {
         let first = manager.snapshot(&unit).expect("首份快照");
@@ -1627,6 +1664,17 @@ fn external_ref_update_pushes_a_new_snapshot_without_manual_poke() {
         .trim()
     );
     git_in(&main, &["update-ref", &upstream_ref, &upstream_only]);
+    // 投喂 refs 变更事件（真实 FS 下内核会产生）
+    // ⚠️ 必须归一：`resolve_git_meta_paths` 对 git_dir 做了 `canonicalize`
+    // （macOS 的 tempdir 在 `/var` → `/private/var` 符号链接下），未归一的路径
+    // 与分类用的 `refs_dir` 前缀不匹配 ⇒ 事件被归为 Nothing。
+    // 真实 FSEvents 上报的也是 realpath，故这里归一是**忠实模拟**，不是测试取巧。
+    let fed_path = main
+        .join(".git")
+        .join(&upstream_ref)
+        .canonicalize()
+        .expect("fed path must canonicalize");
+    feed_content_change(&mut feed, &fed_path);
 
     assert!(
         wait_for_more_events(

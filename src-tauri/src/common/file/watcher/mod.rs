@@ -22,9 +22,6 @@ mod types;
 mod registration;
 mod sink;
 
-// 非确定性域（真实异步事件源）的观察原语：仅测试可用，不参与生产路径。
-#[cfg(test)]
-mod probe;
 pub use gitignore::GitIgnoreFilter;
 pub use manager::WatcherManager;
 // 事件出口（组合根注入；测试注入收集器）

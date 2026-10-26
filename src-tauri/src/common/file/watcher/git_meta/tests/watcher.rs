@@ -1,10 +1,8 @@
 //! git 元数据 watcher 集成与注入测试：真实 FS 事件送达、失败分支、自愈补挂。
 
 use super::super::paths::{resolve_git_meta_paths, GitMetaPaths};
-use super::super::watcher::{create_git_meta_watcher, create_git_meta_watcher_with};
-use crate::common::file::watcher::probe::CallbackProbe;
+use super::super::watcher::create_git_meta_watcher_with;
 use notify::{RecommendedWatcher, RecursiveMode};
-use std::time::Duration;
 
 // ── 真实文件系统集成测试：验证 notify 事件送达（方案 B 修复的核心假设） ────
 //
@@ -19,106 +17,38 @@ use std::time::Duration;
 // - 负向分类属性（index / HEAD / refs 互斥，config / ORIG_HEAD → Nothing）由 units.rs
 //   纯函数测试确定性覆盖，不在真实 FS 上做「某回调计数不得增长」的绝对零断言。
 
-/// 集成测试助手：为给定 `GitMetaPaths` 建 watcher，返回各回调的到达探针。
-///
-/// 调用方负责让 `meta` 对应的目录保持存活（`TempDir` 不得在此函数内 drop）。
-fn spawn_watcher_for(
-    meta: &GitMetaPaths,
-) -> (
-    super::super::watcher::GitMetaWatcherHandle,
-    CallbackProbe,
-    CallbackProbe,
-    CallbackProbe,
-) {
-    let index_changed = CallbackProbe::new();
-    let head_changed = CallbackProbe::new();
-    let refs_changed = CallbackProbe::new();
+// ── 事件分发语义（纯函数，零 IO）────────────────────────────────────────
+//
+// 这 4 条原先建真实 `RecommendedWatcher` + 真实写入，验证「notify 能把
+// `.git/index` 的 lock+rename 投递到回调」。但实际被测的是
+// `dispatch_git_meta_event`：**一批路径 → 分类 → 三条出口**。那是纯逻辑。
+//
+// 建真实流的代价：macOS 每次 `FSEventStreamStart` 触发 fseventsd 全树扫描，
+// 实测单条流即 97% CPU、持续约 2s（4 条串行 ≈ 看似持续满载）。
+// 现在直接喂路径数组，零流零写零 sleep。
 
-    let watcher = create_git_meta_watcher(
-        "integration-test".to_string(),
-        meta,
-        index_changed.callback(),
-        head_changed.callback(),
-        refs_changed.callback(),
-    )
-    .expect("git meta watcher should be created");
+use super::super::watcher::dispatch_git_meta_event;
 
-    (watcher, index_changed, head_changed, refs_changed)
+/// 收集三条出口的命中次数。
+#[derive(Default)]
+struct DispatchSpy {
+    index: usize,
+    head: usize,
+    refs: usize,
 }
 
-/// 集成测试助手：创建临时普通仓库 + git 元数据 watcher，返回各回调到达探针。
-/// `tempfile::TempDir` 必须随返回保持存活，否则目录被删、watcher 无事件。
-/// 返回 `(tmp, handle, meta, index_changed, head_changed, refs_changed)`。
-fn spawn_git_meta_watcher_spy() -> (
-    tempfile::TempDir,
-    super::super::watcher::GitMetaWatcherHandle,
-    GitMetaPaths,
-    CallbackProbe,
-    CallbackProbe,
-    CallbackProbe,
-) {
-    let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path();
-    let git_dir = repo.join(".git");
-    std::fs::create_dir_all(git_dir.join("refs").join("heads")).unwrap();
-    // 注意：不得在 watcher 建立前写入 HEAD/index —— macOS FSEvents 异步送达会把
-    // 注册前写入的迟到事件漏进流内，污染观察窗口（CI 实测 index_changed 被污染为 2）。
-    // 各测试在 watcher 建立后自行 lock+rename 写入。
-    let meta = resolve_git_meta_paths(repo).unwrap();
-
-    let (watcher, index_changed, head_changed, refs_changed) = spawn_watcher_for(&meta);
-
-    (
-        tmp,
-        watcher,
-        meta,
-        index_changed,
-        head_changed,
-        refs_changed,
-    )
+impl DispatchSpy {
+    fn dispatch(&mut self, meta: &GitMetaPaths, paths: &[std::path::PathBuf]) {
+        // 拆分借用：三个闭包同时捕获 self 的不同字段，用局部计数器规避
+        let mut i = 0;
+        let mut h = 0;
+        let mut r = 0;
+        dispatch_git_meta_event(paths, meta, &mut || i += 1, &mut || h += 1, &mut || r += 1);
+        self.index += i;
+        self.head += h;
+        self.refs += r;
+    }
 }
-
-/// 集成验证：`.git/index` 原子写（lock + rename，git add / rm --cached /
-/// reset / commit 的真实行为）能触发 on_index_changed——这是方案 B 修复
-/// 的核心假设：外部只改 index 的 git 操作必须驱动 git-changed 全量刷新，
-/// 否则 ignored_files（文件树 .gitignore 灰色）残留旧值。
-#[test]
-fn git_meta_watcher_detects_index_change_on_real_fs() {
-    let (_tmp, watcher, meta, index_changed, _head_changed, _refs_changed) =
-        spawn_git_meta_watcher_spy();
-
-    // 模拟 git 原子写 index（lock + rename）。「写-轮询」：反复写入直到被捕获，
-    // 不设注册预热 sleep——notify 未就绪时首事件可能丢失，重试写入即自愈。
-    assert!(
-        index_changed.wait_reached(Duration::from_secs(5), || {
-            std::fs::write(meta.git_dir.join("index.lock"), "v2").unwrap();
-            std::fs::rename(meta.git_dir.join("index.lock"), meta.git_dir.join("index")).unwrap();
-        }),
-        "index 变更应触发 on_index_changed"
-    );
-    drop(watcher);
-}
-
-/// 集成验证：`.git/HEAD` 原子写（分支切换的真实行为）能触发 on_head_changed。
-#[test]
-fn git_meta_watcher_detects_head_change_on_real_fs() {
-    let (_tmp, watcher, meta, _index_changed, head_changed, _refs_changed) =
-        spawn_git_meta_watcher_spy();
-
-    // 模拟 git 切分支改写 HEAD（lock + rename）。「写-轮询」：反复写入直到被捕获。
-    assert!(
-        head_changed.wait_reached(Duration::from_secs(5), || {
-            std::fs::write(meta.git_dir.join("HEAD.lock"), "ref: refs/heads/dev\n").unwrap();
-            std::fs::rename(meta.git_dir.join("HEAD.lock"), meta.git_dir.join("HEAD")).unwrap();
-        }),
-        "HEAD 变更应触发 on_head_changed"
-    );
-    drop(watcher);
-}
-
-// ── worktrees 自愈补挂（会话中途 git worktree add） ────────────────────────
-
-// ── refs 递归监听（外部 push / fetch）──────────────────────────────────────
 
 /// 真实现场形态的 linked worktree：主仓 `.git` + 私有 gitdir（`worktrees/<name>`，
 /// 含 `commondir` 指针）+ `wt/.git` 指针文件。`refs` / `packed-refs` 在**公共 gitdir**。
@@ -142,50 +72,85 @@ fn linked_worktree_repo() -> (tempfile::TempDir, std::path::PathBuf) {
     (tmp, wt)
 }
 
-/// R4.3：真实 FS 写 `.git/refs/heads/<b>` 必须触发 `on_refs_changed` —— 这是
-/// 「外部 `git push` 后 ahead/behind 自动更新」链路的入口验证（推送改写
-/// `.git/refs/remotes/origin/<b>`，与本地分支同形）。
-#[test]
-fn git_meta_watcher_detects_refs_change_on_real_fs() {
-    let (_tmp, watcher, meta, _index_changed, _head_changed, refs_changed) =
-        spawn_git_meta_watcher_spy();
-
-    assert!(
-        refs_changed.wait_reached(Duration::from_secs(5), || {
-            let heads = meta.refs_dir.join("heads");
-            std::fs::create_dir_all(&heads).unwrap();
-            std::fs::write(
-                heads.join("dev"),
-                "0123456789abcdef0123456789abcdef01234567\n",
-            )
-            .unwrap();
-        }),
-        "写 .git/refs/heads/<b> 应触发 on_refs_changed"
-    );
-    drop(watcher);
+fn meta_fixture() -> (tempfile::TempDir, GitMetaPaths) {
+    let tmp = tempfile::tempdir().unwrap();
+    let git_dir = tmp.path().join(".git");
+    std::fs::create_dir_all(git_dir.join("refs").join("heads")).unwrap();
+    std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    std::fs::write(git_dir.join("index"), "\0").unwrap();
+    let meta = resolve_git_meta_paths(tmp.path()).expect("tempdir repo must resolve");
+    (tmp, meta)
 }
 
-/// Fix 1（R1.1）：linked worktree 的 `packed-refs` 落在**公共 gitdir 根**下（私有 gitdir
-/// 的兄弟），`refs/` 递归监听覆盖不到。必须额外非递归监听公共 gitdir，否则 `git gc` /
-/// `pack-refs` 后 ahead/behind 无界陈旧。
 #[test]
-fn git_meta_watcher_detects_packed_refs_change_in_common_gitdir() {
-    let (_tmp, wt) = linked_worktree_repo();
-    let meta = resolve_git_meta_paths(&wt).expect("linked worktree must resolve");
-    let common_dir = meta.packed_refs.parent().unwrap().to_path_buf();
-    assert_ne!(
-        common_dir, meta.git_dir,
-        "夹具前提：linked worktree 的公共 gitdir 与私有 gitdir 不同"
+fn git_meta_dispatch_reports_index_change() {
+    let (_tmp, meta) = meta_fixture();
+    let mut spy = DispatchSpy::default();
+    spy.dispatch(&meta, std::slice::from_ref(&meta.index));
+    assert_eq!(
+        (spy.index, spy.head, spy.refs),
+        (1, 0, 0),
+        "index 只走 index 出口"
     );
+}
 
-    let (watcher, _index_changed, _head_changed, refs_changed) = spawn_watcher_for(&meta);
-    assert!(
-        refs_changed.wait_reached(Duration::from_secs(5), || {
-            std::fs::write(&meta.packed_refs, "# pack-refs\n").unwrap();
-        }),
-        "写公共 gitdir 的 packed-refs 应触发 on_refs_changed"
+#[test]
+fn git_meta_dispatch_reports_head_change() {
+    let (_tmp, meta) = meta_fixture();
+    let mut spy = DispatchSpy::default();
+    spy.dispatch(&meta, std::slice::from_ref(&meta.head));
+    assert_eq!(
+        (spy.index, spy.head, spy.refs),
+        (0, 1, 0),
+        "HEAD 只走 head 出口"
     );
-    drop(watcher);
+}
+
+#[test]
+fn git_meta_dispatch_reports_refs_change() {
+    let (_tmp, meta) = meta_fixture();
+    let mut spy = DispatchSpy::default();
+    spy.dispatch(&meta, &[meta.refs_dir.join("heads").join("dev")]);
+    assert_eq!(
+        (spy.index, spy.head, spy.refs),
+        (0, 0, 1),
+        "refs/** 只走 refs 出口"
+    );
+}
+
+/// `packed-refs` 落在**公共 gitdir 根**下（linked worktree 时私有 gitdir 的兄弟），
+/// 必须也归入 refs —— 否则 `git gc` / `pack-refs` 后 ahead/behind 无界陈旧。
+#[test]
+fn git_meta_dispatch_reports_packed_refs_change() {
+    let (_tmp, meta) = meta_fixture();
+    let mut spy = DispatchSpy::default();
+    spy.dispatch(&meta, std::slice::from_ref(&meta.packed_refs));
+    assert_eq!(
+        (spy.index, spy.head, spy.refs),
+        (0, 0, 1),
+        "packed-refs 归 refs 出口"
+    );
+}
+
+/// `.git/objects/**` 是高频 churn（`git gc`、对象落盘），必须归 Nothing ——
+/// 误判成 refs 会让每次对象写入都触发 ahead/behind 重算。
+#[test]
+fn git_meta_dispatch_ignores_objects_and_config() {
+    let (_tmp, meta) = meta_fixture();
+    let mut spy = DispatchSpy::default();
+    spy.dispatch(
+        &meta,
+        &[
+            meta.git_dir.join("objects").join("ab").join("cdef"),
+            meta.git_dir.join("config"),
+            meta.git_dir.join("ORIG_HEAD"),
+        ],
+    );
+    assert_eq!(
+        (spy.index, spy.head, spy.refs),
+        (0, 0, 0),
+        "无关路径必须全部 Nothing"
+    );
 }
 
 // ── create_git_meta_watcher 失败分支（确定性注入，跨平台安全） ─────────────
