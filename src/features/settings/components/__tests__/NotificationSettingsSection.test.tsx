@@ -66,8 +66,8 @@ describe('NotificationSettingsSection', () => {
   it('renders the three-layer switch surface after load', async () => {
     await renderLoaded();
     expect(screen.getAllByRole('switch')).toHaveLength(6);
-    expect(screen.getByLabelText('Agent 等待审批')).toBeInTheDocument();
-    expect(screen.getByLabelText('Agent 任务完成')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent needs approval')).toBeInTheDocument();
+    expect(screen.getByLabelText('Agent turn completed')).toBeInTheDocument();
   });
 
   /** 点击全局开关 → 串行链发出一次保存，载荷为打补丁后的完整设置。 */
@@ -86,7 +86,7 @@ describe('NotificationSettingsSection', () => {
   it('writes explicit event override on uncheck', async () => {
     await renderLoaded();
     const user = userEvent.setup();
-    await user.click(screen.getByLabelText('Agent 等待审批'));
+    await user.click(screen.getByLabelText('Agent needs approval'));
     await waitFor(() => expect(saveNotificationSettings).toHaveBeenCalledTimes(1));
     const saved = vi.mocked(saveNotificationSettings).mock.calls[0][0];
     expect(saved.eventOverrides['agent.approval_requested']).toBe(false);

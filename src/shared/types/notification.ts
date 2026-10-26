@@ -52,10 +52,10 @@ export interface NotificationSettings {
 /** 设置页的事件行清单（数据驱动：新业务/新事件 = 加一行数据，组件逻辑零改动）。
  * 事件键与 `src-tauri/src/agent/chat/notify.rs::event_keys` 常量一一对应。 */
 export const NOTIFIABLE_EVENTS = [
-  { key: 'agent.approval_requested', label: 'Agent 等待审批' },
-  { key: 'agent.input_requested', label: 'Agent 等待输入' },
-  { key: 'agent.turn_completed', label: 'Agent 任务完成' },
-  { key: 'agent.session_failed', label: 'Agent 会话异常' },
+  { key: 'agent.approval_requested', label: 'Agent needs approval' },
+  { key: 'agent.input_requested', label: 'Agent needs input' },
+  { key: 'agent.turn_completed', label: 'Agent turn completed' },
+  { key: 'agent.session_failed', label: 'Agent session failed' },
 ] as const;
 
 /** 单个 CLI 的 hook 安装状态（镜像 Rust `agent::hooks::writers::HookInstallStatus`，camelCase）。 */
