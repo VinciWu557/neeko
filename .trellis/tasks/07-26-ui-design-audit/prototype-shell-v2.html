@@ -3,21 +3,24 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Neeko · Shell 精致化原型 v2（基于真实 token）</title>
+<title>Neeko · 样式改动点清单（不是界面效果图）</title>
 <style>
-/* ─────────────────────────────────────────────────────────────
-   本原型的色值与尺寸 100% 取自真实代码：
-   · src/styles/tokens/theme.css（dark / light 主题块）
-   · src/styles/tokens/tailwind.css（@theme 映射）
-   · src/layout/TitleBar.tsx（h-8）
-   · src/features/status-bar/StatusBar.tsx（现状 h-4 → 目标 22px）
-   · src/app/components/DockBarButton.tsx（w-11）
-   标注 [现状] 的元素是今天代码里的真实状态，
-   标注 [目标] 的元素是本任务要落地的形态。
-   ───────────────────────────────────────────────────────────── */
+/* ============================================================================
+   这份原型**不是**界面效果图 —— 它不画「理想中的 Neeko 长什么样」。
+
+   上一版（prototype-shell-v2.html）画的是整个 App 的目标形态，看起来像在
+   重新设计界面 —— 与「不改动当前布局，只做样式 UI 优化」冲突，已废弃。
+
+   这份只做一件事：**逐条列出本轮要改的样式点**，每条给出
+     ① 现状（真实 class，来自真实源码）
+     ② 目标 class
+     ③ 改后效果（局部分样，不是整界面）
+     ④ 精确文件:行
+
+   界面布局在所有样例中**完全相同** —— 只有颜色 / 焦点态 / 分割线不同。
+   ============================================================================ */
 
 :root {
-  /* ==== 真实 token（dark）==== */
   --bg-primary:   oklch(0.178 0 0);
   --bg-secondary: oklch(0.205 0 0);
   --bg-tertiary:  oklch(0.269 0 0);
@@ -31,7 +34,7 @@
   --accent-red:  #ff453a;
   --accent-green:#30d158;
   --accent-yellow:#ffd60a;
-  --accent-orange:#ff9f0a;
+  --accent-brick:#d1675a;
   --text-on-accent: oklch(0.205 0 0);
   --git-status-added:    #30d158;
   --git-status-modified: #2997ff;
@@ -42,443 +45,370 @@
   --diff-removed:    #ff453a30;
   --diff-added-text: #30d158;
   --diff-removed-text:#ff453a;
-  --font-size: 12px;
-
-  /* ==== 新增：density token（目标，ui-tokens-foundation 落地）==== */
-  --chrome-titlebar-h: 32px;
-  --chrome-statusbar-h: 22px;   /* [现状] 16px */
-  --chrome-dockbar-w: 44px;
-  --chrome-panel-header-h: 32px;
-  --chrome-tab-h: 28px;
-  --chrome-toolbar-h: 32px;
-  --row-h-sm: 24px;
-  --row-h-md: 28px;
-  --row-h-lg: 32px;
-  --icon-sm: 14px;
-  --icon-md: 16px;
-  --icon-lg: 20px;
-  --radius-panel: 8px;
-  --radius-control: 6px;
-  --radius-chip: 9999px;
-  --gap-island: 6px;
-
-  /* ==== 新增：字体阶梯（目标，ui-tokens-foundation 落地）==== */
-  --text-micro: 10px;   /* 时间戳 / 快捷键 hint */
-  --text-meta:  11px;   /* 次级元数据 */
-  --text-ui:    12px;   /* 默认 UI */
-  --text-ui-md: 13px;   /* 列表主标题 */
-  --text-ui-lg: 14px;   /* 面板标题 */
-  --text-section: 16px; /* Settings section */
-
-  /* ==== 新增：z-index 阶梯（目标，≤6 层）==== */
-  --z-base: 0;
-  --z-dropdown: 100;
-  --z-sticky: 200;
-  --z-modal: 1000;
-  --z-toast: 1100;
-  --z-devtools: 9999;
 }
-
 * { box-sizing: border-box; margin: 0; padding: 0; }
-
 body {
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  background: var(--bg-primary); color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: var(--font-size);
-  line-height: 1.4;
-  padding: 24px;
+  font-size: 12px; line-height: 1.5; padding: 24px;
 }
+.wrap { max-width: 1080px; margin: 0 auto; }
+h1 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.sub { color: var(--text-secondary); font-size: 11px; margin-bottom: 6px; }
+.warn {
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-left: 3px solid var(--accent-yellow);
+  border-radius: 6px; padding: 10px 12px; margin: 14px 0 22px;
+  font-size: 11px; color: var(--text-secondary);
+}
+.warn b { color: var(--text-primary); }
 
-/* ── 原型说明头 ── */
-.proto-head { max-width: 1240px; margin: 0 auto 24px; }
-.proto-head h1 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
-.proto-head p { color: var(--text-secondary); font-size: var(--text-meta); margin-bottom: 10px; }
-.legend { display: flex; gap: 8px; flex-wrap: wrap; }
-.legend span {
-  font-size: var(--text-micro); padding: 2px 8px; border-radius: var(--radius-chip);
-  border: 1px solid var(--border-color); color: var(--text-secondary);
+/* ── 改动点卡片 ── */
+.item {
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 8px; margin-bottom: 16px; overflow: hidden;
 }
-.legend .now { border-color: var(--accent-yellow); color: var(--accent-yellow); }
-.legend .tgt { border-color: var(--accent-blue); color: var(--accent-blue); }
-
-/* ── 窗口 ── */
-.stage { max-width: 1240px; margin: 0 auto 32px; }
-.win {
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-panel);
-  overflow: hidden;
-  background: var(--bg-primary);
-}
-.win-label {
-  font-size: var(--text-micro); color: var(--text-muted);
-  padding: 8px 12px 0; letter-spacing: .04em; text-transform: uppercase;
-}
-
-/* ── TitleBar ── */
-.titlebar {
-  height: var(--chrome-titlebar-h);
-  display: flex; align-items: center;
-  background: linear-gradient(var(--bg-gradient-start, var(--bg-primary)), var(--bg-primary));
+.item-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 11px 14px; background: var(--bg-tertiary);
   border-bottom: 1px solid var(--border-color);
-  position: relative;
 }
-.tb-logo { display: flex; align-items: center; padding: 0 10px; }
-.tb-logo-mark {
-  width: 18px; height: 18px; border-radius: 5px;
-  background: linear-gradient(135deg, var(--accent-blue), #7c5cff);
-  box-shadow: 0 1px 3px rgb(0 0 0 / .4);
+.num {
+  font-size: 10px; font-weight: 700; color: var(--bg-primary);
+  background: var(--accent-blue); border-radius: 4px; padding: 1px 6px;
 }
-/* [目标] 上下文：项目名 + 环境 + 分支 —— 当前 TitleBar 只有 logo + 空白 */
-.tb-context { display: flex; align-items: center; gap: 8px; padding-left: 4px; min-width: 0; }
-.tb-project {
-  font-size: var(--text-ui-md); font-weight: 600; color: var(--text-primary);
-  letter-spacing: -.01em; white-space: nowrap;
-}
-.tb-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  height: 18px; padding: 0 7px;
-  font-size: var(--text-micro); font-weight: 500;
-  border-radius: var(--radius-chip);
-  background: var(--bg-tertiary); color: var(--text-secondary);
-  white-space: nowrap;
-}
-.tb-chip .dot { width: 5px; height: 5px; border-radius: 50%; }
-.tb-chip.env .dot { background: var(--accent-green); }
-.tb-chip.branch { font-family: var(--font-mono, monospace); }
-.tb-chip.branch .dot { background: var(--accent-blue); }
-.tb-spacer { flex: 1; }
-.tb-actions { display: flex; align-items: center; gap: 2px; padding-right: 8px; }
-/* [目标] IconButton 原语：24/28/32 热区 + focus-visible */
-.icon-btn {
-  width: 26px; height: 26px; display: grid; place-items: center;
-  border: 0; background: transparent; border-radius: var(--radius-control);
-  color: var(--text-secondary); cursor: pointer;
-  transition: background .12s ease, color .12s ease;
-}
-.icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.icon-btn:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
-.icon-btn svg { width: var(--icon-md); height: var(--icon-md); }
+.title { font-size: 13px; font-weight: 600; }
+.loc { font-size: 10px; color: var(--text-muted); margin-left: auto; font-family: ui-monospace, monospace; }
+.item-body { padding: 14px; }
+.what { font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; }
+.what b { color: var(--text-primary); }
 
-/* ── 主体三栏 ── */
-.body { display: flex; height: 420px; }
-
-/* Dock bar（左侧竖排） */
-.dockbar {
-  width: var(--chrome-dockbar-w); flex: 0 0 var(--chrome-dockbar-w);
-  background: var(--bg-primary);
-  border-right: 1px solid var(--border-color);
-  display: flex; flex-direction: column; align-items: center;
-  padding: var(--gap-island) 0; gap: var(--gap-island);
-}
-.dock-btn {
-  width: 34px; height: 34px; border: 0; border-radius: var(--radius-control);
-  background: transparent; color: var(--text-secondary);
-  display: grid; place-items: center; cursor: pointer;
-  transition: background .12s ease, color .12s ease;
-  position: relative;
-}
-.dock-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
-.dock-btn:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
-.dock-btn.active { background: var(--bg-selected); color: var(--text-primary); }
-/* [目标] 选中态指示条 —— design §5.6 */
-.dock-btn.active::before {
-  content: ''; position: absolute; left: -5px; top: 50%; transform: translateY(-50%);
-  width: 2px; height: 16px; border-radius: 1px; background: var(--accent-blue);
-}
-.dock-btn svg { width: var(--icon-lg); height: var(--icon-lg); }
-.dock-sep { width: 20px; height: 1px; background: var(--border-color); margin: 2px 0; }
-
-/* 面板 */
-.panel {
-  flex: 1; min-width: 0; display: flex; flex-direction: column;
-  background: var(--bg-primary);
-  padding: var(--gap-island);
-  gap: var(--gap-island);
-}
-.island {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-panel);
-  overflow: hidden;
-  display: flex; flex-direction: column;
-  min-height: 0;
-}
-.island.grow { flex: 1; }
-
-/* [目标] PanelHeader 原语：标题 + actions，固定高度 32px */
-.panel-header {
-  height: var(--chrome-panel-header-h); flex: 0 0 var(--chrome-panel-header-h);
-  display: flex; align-items: center; gap: 8px;
-  padding: 0 10px;
+/* 前后对照 */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 820px) { .pair { grid-template-columns: 1fr; } }
+.side { border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
+.side-head {
+  font-size: 10px; padding: 5px 9px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .05em;
   border-bottom: 1px solid var(--border-color);
-  background: var(--bg-tertiary);
 }
-.panel-title { font-size: var(--text-ui-lg); font-weight: 600; letter-spacing: -.01em; }
-.panel-sub { font-size: var(--text-meta); color: var(--text-muted); }
-.panel-head-actions { margin-left: auto; display: flex; gap: 2px; }
+.side.now .side-head { background: rgb(255 214 10 / .12); color: var(--accent-yellow); }
+.side.tgt .side-head { background: rgb(41 151 255 / .12); color: var(--accent-blue); }
+.side-body { padding: 12px; background: var(--bg-primary); min-height: 62px; }
+.cls {
+  font-family: ui-monospace, monospace; font-size: 10px;
+  color: var(--text-muted); margin-top: 9px; word-break: break-all;
+  padding-top: 8px; border-top: 1px dashed var(--border-color);
+}
+.cls del { color: var(--accent-red); text-decoration: none; }
+.cls ins { color: var(--accent-green); text-decoration: none; }
 
-/* 行 */
-.row {
-  height: var(--row-h-md); display: flex; align-items: center; gap: 8px;
-  padding: 0 10px; font-size: var(--text-ui);
+/* ── 样例元素（布局完全一致，只差颜色）── */
+.demo-row { display: flex; align-items: center; gap: 8px; }
+.err {
+  font-size: 0.79em; line-height: 1.5; margin: 0;
 }
-.row.sm { height: var(--row-h-sm); font-size: var(--text-meta); }
-.row:hover { background: var(--bg-hover); }
-.row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .meta { font-size: var(--text-micro); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.err.broken { color: var(--text-secondary); }      /* 现状：类不存在 → 继承文字色 */
+.err.fixed  { color: var(--accent-red); }          /* 目标：语义 token */
 
-/* [目标] StatusDot 原语 */
-.status-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
-.status-dot.idle { background: var(--accent-green); }
-.status-dot.running { background: var(--accent-yellow); animation: pulse 1.6s ease-in-out infinite; }
-.status-dot.failed { background: var(--accent-red); }
-.status-dot.unknown { background: var(--text-muted); }
-@keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.35 } }
-
-/* Git 状态 —— 全部走 --git-status-* token（不再 #3fb950 硬编码） */
-.st-added    { color: var(--git-status-added); }
-.st-modified { color: var(--git-status-modified); }
-.st-deleted  { color: var(--git-status-deleted); }
-.st-untracked{ color: var(--git-status-untracked); }
-.st-conflict { color: var(--git-status-conflict); }
-.badge {
-  font-size: var(--text-micro); font-weight: 600; padding: 1px 5px;
-  border-radius: var(--radius-chip);
-}
-.badge.added { background: var(--diff-added); color: var(--diff-added-text); }
-.badge.removed{ background: var(--diff-removed); color: var(--diff-removed-text); }
-
-/* ── StatusBar ── */
-.statusbar {
-  height: var(--chrome-statusbar-h);
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 12px;
-  font-size: var(--text-meta);
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
-}
-.sb-group { display: flex; align-items: center; gap: 12px; height: 100%; }
-.sb-item { display: inline-flex; align-items: center; gap: 5px; height: 100%; }
-.sb-item.clickable { cursor: pointer; padding: 0 4px; border-radius: 3px; }
-.sb-item.clickable:hover { background: var(--bg-hover); color: var(--text-primary); }
-.sb-item.clickable:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: -2px; }
-/* [目标] StatusBar 内的热区必须 22px 内可点（现状 h-4 = 16px 太小） */
-.sb-item.danger { color: var(--accent-red); }
-.sb-sep { width: 1px; height: 12px; background: var(--border-color); }
-
-/* ── EmptyState 原语 ── */
-.empty {
-  flex: 1; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 10px; padding: 28px 20px; text-align: center;
-}
-.empty-icon {
-  width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center;
-  background: var(--bg-tertiary); color: var(--text-muted);
-  border: 1px solid var(--border-color);
-}
-.empty-title { font-size: var(--text-ui-md); font-weight: 600; }
-.empty-desc { font-size: var(--text-meta); color: var(--text-muted); max-width: 260px; }
-.empty-ctas { display: flex; gap: 8px; margin-top: 4px; }
 .btn {
-  height: 28px; padding: 0 12px; border-radius: var(--radius-control);
-  font-size: var(--text-ui); font-weight: 500; cursor: pointer;
-  border: 1px solid transparent;
-  display: inline-flex; align-items: center; gap: 6px;
-  transition: filter .12s ease, background .12s ease;
+  height: 28px; padding: 0 12px; border-radius: 6px; font-size: 12px;
+  font-weight: 500; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid transparent; cursor: pointer;
 }
-.btn:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
-.btn.primary { background: var(--accent-blue); color: var(--text-on-accent); }
-.btn.primary:hover { filter: brightness(1.1); }
-.btn.ghost { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-color); }
-.btn.ghost:hover { background: var(--bg-hover); }
+.btn.now-accent { background: var(--accent-blue); color: #fff; }
+.btn.tgt-accent { background: var(--accent-blue); color: var(--text-on-accent); }
 
-/* ── 标注 ── */
-.note {
-  font-size: var(--text-micro); color: var(--text-muted);
-  padding: 6px 12px; background: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
+.divider { height: 1px; }
+.divider.now-white { background: rgb(255 255 255 / .04); }
+.divider.tgt-token { background: var(--border-color); }
+
+.focus-demo {
+  width: 34px; height: 34px; border-radius: 6px; display: grid; place-items: center;
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid var(--border-color); cursor: pointer;
 }
+.focus-demo.now { outline: none; }
+.focus-demo.tgt { outline: 2px solid var(--accent-blue); outline-offset: 1px; }
+
+.nav-item {
+  display: flex; align-items: center; gap: 8px;
+  height: 28px; padding: 0 8px; border-radius: 6px; font-size: 0.86em;
+}
+.nav-item.now-sel { background: var(--accent-blue); color: var(--text-on-accent); }
+.nav-item.tgt-sel { background: var(--bg-selected); color: var(--text-primary); position: relative; }
+.nav-item.tgt-sel::before {
+  content:''; position:absolute; left: -6px; top: 50%; transform: translateY(-50%);
+  width: 2px; height: 14px; border-radius: 1px; background: var(--accent-blue);
+}
+.nav-icon { width: 16px; height: 16px; opacity: .85; }
+
+.badge {
+  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 9999px;
+}
+.badge.now-purple { background: #a371f720; color: #a371f7; }
+.badge.tgt-token { background: var(--diff-added); color: var(--diff-added-text); }
+
+.danger {
+  font-size: 0.86em; padding: 4px 0; cursor: pointer;
+}
+.danger.now { color: #e06c75; }
+.danger.tgt { color: var(--accent-red); }
+.danger:hover { background: var(--bg-hover); }
+
+/* 主题对比条 */
+.themes { display: flex; gap: 0; margin-top: 12px; border-radius: 6px; overflow: hidden; }
+.themes > div { flex: 1; padding: 9px 10px; font-size: 10px; }
+.themes .t-dark { background: oklch(0.178 0 0); color: oklch(0.985 0 0); }
+.themes .t-light { background: #ebecf0; color: #1f2328; }
+.themes .t-claude { background: #26292f; color: #f5f0e8; }
+.themes .t-one { background: #282c34; color: #abb2bf; }
+.themes .sep { background: #ff9f0a; color: #000; flex: 0 0 3px; padding: 0; }
+.themes b { display: block; margin-bottom: 3px; font-size: 9px; opacity: .7; }
 </style>
 </head>
 <body>
+<div class="wrap">
 
-<div class="proto-head">
-  <h1>Neeko · Shell 精致化原型 v2</h1>
-  <p>
-    基于<b>真实代码</b>重做：色值取自 <code>src/styles/tokens/theme.css</code>，
-    尺寸取自 <code>TitleBar.tsx</code> / <code>StatusBar.tsx</code> / <code>DockBarButton.tsx</code>。
-    旧的 5 份原型（optimized-shell / statusbar-compare / settings-hifi / projects-panel / git-credential-compare）作废。
-  </p>
-  <div class="legend">
-    <span class="now">● 现状（今天的代码）</span>
-    <span class="tgt">● 目标（本任务落地）</span>
-    <span>密度：22px StatusBar / 32px PanelHeader / 28px Tab</span>
-    <span>字体阶梯：10 / 11 / 12 / 13 / 14 / 16</span>
-    <span>z-index ≤ 6 层</span>
+  <h1>Neeko · 本轮样式改动点清单</h1>
+  <div class="sub">6 个改动点 · 全部是纯 class / token 替换 · 布局与几何零改动</div>
+
+  <div class="warn">
+    <b>这份不是界面效果图。</b>
+    上一版原型画的是「理想中的完整界面」，看起来像在重新设计整个 App ——
+    与「不改动当前布局，只做样式 UI 优化」冲突，已废弃。
+    <br/>
+    下面每个样例的<b>布局完全一致</b>（同样的元素、同样的间距、同样的尺寸），
+    唯一的差别是颜色 / 焦点态 / 分割线 —— 那正是本轮要改的东西。
   </div>
-</div>
 
-<div class="stage">
-  <div class="win-label">完整壳层 · 目标形态</div>
-  <div class="win">
-    <!-- TitleBar -->
-    <div class="titlebar">
-      <div class="tb-logo"><div class="tb-logo-mark"></div></div>
-      <!-- [目标] 项目上下文：当前 TitleBar 只有 logo + flex-1 空白 + actions -->
-      <div class="tb-context">
-        <span class="tb-project">neeko</span>
-        <span class="tb-chip env"><span class="dot"></span>local</span>
-        <span class="tb-chip branch"><span class="dot"></span>feat/agent-hub</span>
+  <!-- ══ 1 ══ -->
+  <div class="item">
+    <div class="item-head">
+      <span class="num">1</span>
+      <span class="title">错误提示没有颜色（真 bug）</span>
+      <span class="loc">LspPanel.tsx:208 · LspCustomServersSection.tsx:96,214 · HtmlPreview.tsx:171</span>
+    </div>
+    <div class="item-body">
+      <div class="what">
+        <b>问题：</b>这 4 处用 <code>text-status-error</code>，但主题只定义了
+        <code>--status-failed</code>，tailwind 只映射了
+        <code>--color-status-{idle,running,failed}</code> —— <b>没有</b>
+        <code>--color-status-error</code>。Tailwind 根本不生成这个类，
+        所以错误提示<b>没有红色</b>（就挨着有颜色的 <code>text-status-failed</code>）。
+        <br/><b>修法：</b>主题补 <code>--status-error: var(--status-failed)</code> alias
+        + tailwind 补映射。<b>只改 CSS 定义，不改任何组件。</b>
       </div>
-      <div class="tb-spacer"></div>
-      <div class="tb-actions">
-        <button class="icon-btn" title="Open IDE"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3v4a1 1 0 0 0 1 1h4M10 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4" stroke-linecap="round"/></svg></button>
-        <button class="icon-btn" title="Launch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m7 8-4 4 4 4M17 8l4 4-4 4M14 4l-4 16" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-        <button class="icon-btn" title="Debug"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 9 6 6-6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <div class="pair">
+        <div class="side now">
+          <div class="side-head">现状 · 类不存在</div>
+          <div class="side-body">
+            <p class="err broken">Command not found</p>
+            <div class="cls"><del>text-status-error</del> → 无对应样式</div>
+          </div>
+        </div>
+        <div class="side tgt">
+          <div class="side-head">目标 · 有颜色</div>
+          <div class="side-body">
+            <p class="err fixed">Command not found</p>
+            <div class="cls"><ins>text-status-error</ins> → --status-error → --status-failed</div>
+          </div>
+        </div>
       </div>
     </div>
+  </div>
 
-    <!-- Body -->
-    <div class="body">
-      <!-- DockBar -->
-      <div class="dockbar">
-        <button class="dock-btn active" title="Projects"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke-linejoin="round"/></svg></button>
-        <button class="dock-btn" title="Skills"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 3 2.4 5 5.6.8-4 4 1 5.6-5-2.7-5 2.7 1-5.6-4-4 5.6-.8z" stroke-linejoin="round"/></svg></button>
-        <div class="dock-sep"></div>
-        <button class="dock-btn" title="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3v4a1 1 0 0 0 1 1h4M10 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4" stroke-linejoin="round"/></svg></button>
-        <button class="dock-btn" title="Git"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="6" r="2.4"/><circle cx="7" cy="18" r="2.4"/><circle cx="17" cy="10" r="2.4"/><path d="M7 8.4v7.2M9.4 6H14a1 1 0 0 1 1 1v1" stroke-linecap="round"/></svg></button>
-        <button class="dock-btn" title="History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 4v4h4" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7v5l3 2" stroke-linecap="round"/></svg></button>
+  <!-- ══ 2 ══ -->
+  <div class="item">
+    <div class="item-head">
+      <span class="num">2</span>
+      <span class="title">accent 底色上的白字 → text-on-accent</span>
+      <span class="loc">全仓 36 处（ui/Button、ToggleGroup、Checkbox、ErrorBoundary、TerminalPanel、RemoteDialog、WSLDialog…）</span>
+    </div>
+    <div class="item-body">
+      <div class="what">
+        <b>问题：</b><code>bg-accent-blue</code> 底上写死 <code>text-white</code>。
+        主题里已有 <code>--text-on-accent</code>（随主题变）—— dark 下是深色，
+        Claude / Light 下不同。<b>写死白字在某些主题下对比失效。</b>
+        <br/><b>修法：</b><code>text-white</code> → <code>text-[var(--text-on-accent)]</code>。纯 class 替换。
       </div>
+      <div class="pair">
+        <div class="side now">
+          <div class="side-head">现状 · 写死白</div>
+          <div class="side-body">
+            <button class="btn now-accent">Save</button>
+            <div class="cls"><del>bg-accent-blue text-white</del></div>
+          </div>
+        </div>
+        <div class="side tgt">
+          <div class="side-head">目标 · 随主题</div>
+          <div class="side-body">
+            <button class="btn tgt-accent">Save</button>
+            <div class="cls"><ins>bg-accent-blue text-[var(--text-on-accent)]</ins></div>
+          </div>
+        </div>
+      </div>
+      <div class="themes">
+        <div class="t-dark"><b>dark</b>text-on-accent = 深色</div>
+        <div class="t-light"><b>light</b>text-on-accent = ?</div>
+        <div class="t-claude"><b>claude</b>text-on-accent = ?</div>
+        <div class="t-one"><b>one-dark</b>text-on-accent = ?</div>
+      </div>
+    </div>
+  </div>
 
-      <!-- 面板区 -->
-      <div class="panel">
-        <!-- 左：Projects（带上下文） -->
-        <div class="island" style="flex: 0 0 260px">
-          <div class="panel-header">
-            <span class="panel-title">Projects</span>
-            <span class="panel-sub">3</span>
-            <div class="panel-head-actions">
-              <button class="icon-btn" title="Add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  <!-- ══ 3 ══ -->
+  <div class="item">
+    <div class="item-head">
+      <span class="num">3</span>
+      <span class="title">暗色假设的分割线</span>
+      <span class="loc">39 处 border-white/ · bg-white/（Settings 面板最多）</span>
+    </div>
+    <div class="item-body">
+      <div class="what">
+        <b>问题：</b><code>border-white/[0.04]</code> 假设底色是暗的。
+        Light / Claude 主题下这条线<b>会消失或发脏</b>。
+        <br/><b>修法：</b>→ <code>border-border</code>（= <code>--border-color</code>，随主题变）。纯 class 替换。
+      </div>
+      <div class="pair">
+        <div class="side now">
+          <div class="side-head">现状 · 白色半透明</div>
+          <div class="side-body">
+            <div class="demo-row"><span>Custom server</span></div>
+            <div class="divider now-white" style="margin-top:8px"></div>
+            <div class="cls"><del>border-b border-white/[0.04]</del></div>
+          </div>
+        </div>
+        <div class="side tgt">
+          <div class="side-head">目标 · 语义 token</div>
+          <div class="side-body">
+            <div class="demo-row"><span>Custom server</span></div>
+            <div class="divider tgt-token" style="margin-top:8px"></div>
+            <div class="cls"><ins>border-b border-border</ins></div>
+          </div>
+        </div>
+      </div>
+      <div class="themes">
+        <div class="t-dark"><b>dark</b>white/4% ≈ 不可见</div>
+        <div class="t-light"><b>light</b>white/4% ≈ <b style="color:#d32f2f">看不见</b></div>
+        <div class="t-claude"><b>claude</b>white/4% ≈ <b style="color:#d32f2f">看不见</b></div>
+        <div class="t-one"><b>one-dark</b>white/4% ≈ 不可见</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 4 ══ -->
+  <div class="item">
+    <div class="item-head">
+      <span class="num">4</span>
+      <span class="title">键盘焦点不可见</span>
+      <span class="loc">DockBarButton.tsx:48 · ToolbarFooter.tsx:49,78 · ui/Badge.tsx:7</span>
+    </div>
+    <div class="item-body">
+      <div class="what">
+        <b>问题：</b><code>focus:outline-none</code> 之后<b>没有</b>任何替代 ——
+        键盘用户 Tab 到主导航上<b>看不到焦点在哪</b>。
+        <br/><b>修法：</b>补 <code>focus-visible:ring-2 focus-visible:ring-accent-blue</code>。纯 class 追加。
+      </div>
+      <div class="pair">
+        <div class="side now">
+          <div class="side-head">现状 · 无焦点环</div>
+          <div class="side-body">
+            <button class="focus-demo now">⌘</button>
+            <div class="cls"><del>focus:outline-none</del>（无替代）</div>
+          </div>
+        </div>
+        <div class="side tgt">
+          <div class="side-head">目标 · focus-visible 环</div>
+          <div class="side-body">
+            <button class="focus-demo tgt">⌘</button>
+            <div class="cls"><ins>focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue</ins></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ 5 ══ -->
+  <div class="item">
+    <div class="item-head">
+      <span class="num">5</span>
+      <span class="title">Settings 选中态：大色块 → surface</span>
+      <span class="loc">SettingsSidebar.tsx:72,102 · SettingsPanel.tsx:197,257</span>
+    </div>
+    <div class="item-body">
+      <div class="what">
+        <b>问题：</b>选中项用整块高饱和 <code>!bg-accent-blue</code>，
+        5 个主题下都刺眼，且与 Dock 的 <code>bg-bg-selected</code> 选中语言不一致。
+        <br/><b>修法：</b>→ <code>bg-bg-selected text-text-primary</code> + 左侧 2px 指示条。
+        纯 class 替换，<b>DOM 结构与间距不变</b>。
+      </div>
+      <div class="pair">
+        <div class="side now">
+          <div class="side-head">现状 · 大色块</div>
+          <div class="side-body">
+            <div class="nav-item now-sel">
+              <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/></svg>
+              Appearance
             </div>
-          </div>
-          <div class="row">
-            <span class="status-dot idle"></span>
-            <span class="name">neeko</span>
-            <span class="meta">main</span>
-          </div>
-          <div class="row">
-            <span class="status-dot running"></span>
-            <span class="name">dsh-harness</span>
-            <span class="meta">dev</span>
-          </div>
-          <div class="row">
-            <span class="status-dot unknown"></span>
-            <span class="name">remote-box</span>
-            <span class="meta">ssh</span>
+            <div class="cls"><del>!bg-accent-blue !text-[var(--text-on-accent)]</del></div>
           </div>
         </div>
-
-        <!-- 中：Git 变更（演示 token 化的状态色） -->
-        <div class="island grow">
-          <div class="panel-header">
-            <span class="panel-title">Changes</span>
-            <span class="panel-sub">3 files</span>
-            <div class="panel-head-actions">
-              <button class="icon-btn" title="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" stroke-linejoin="round"/><path d="M21 4v4h-4" stroke-linejoin="round"/></svg></button>
+        <div class="side tgt">
+          <div class="side-head">目标 · surface + 指示条</div>
+          <div class="side-body">
+            <div class="nav-item tgt-sel">
+              <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/></svg>
+              Appearance
             </div>
-          </div>
-          <div class="row">
-            <span class="badge added">M</span>
-            <span class="name">src/app/shell/AppShell.tsx</span>
-            <span class="meta st-modified">modified</span>
-          </div>
-          <div class="row">
-            <span class="badge added">A</span>
-            <span class="name">src/ui/IconButton.tsx</span>
-            <span class="meta st-added">added</span>
-          </div>
-          <div class="row">
-            <span class="badge removed">D</span>
-            <span class="name">src/layout/ActivityBar.tsx</span>
-            <span class="meta st-deleted">deleted</span>
-          </div>
-          <div class="row sm">
-            <span class="name" style="color:var(--text-muted)">src/styles/tokens/theme.css</span>
-            <span class="meta st-untracked">untracked</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- StatusBar -->
-    <div class="statusbar">
-      <div class="sb-group">
-        <span class="sb-item clickable"><span class="status-dot idle"></span> LSP</span>
-        <span class="sb-sep"></span>
-        <span class="sb-item clickable"><span class="st-modified">●</span> 3 changes</span>
-        <span class="sb-sep"></span>
-        <span class="sb-item clickable">Launch</span>
-      </div>
-      <div class="sb-group">
-        <span class="sb-item">main*</span>
-        <span class="sb-sep"></span>
-        <span class="sb-item">Ln 42, Col 8</span>
-        <span class="sb-sep"></span>
-        <span class="sb-item">UTF-8</span>
-      </div>
-    </div>
-
-    <div class="note">
-      <b>对比要点</b>：① TitleBar 补上项目名 / 环境 / 分支（现状只有 logo + 空白）；
-      ② StatusBar 16px → 22px，热区可点；③ Git 状态色全部走 <code>--git-status-*</code>，
-      不再写死 <code>#3fb950</code>；④ Dock 选中态有指示条；⑤ 字体分 6 档不写死 px。
-    </div>
-  </div>
-</div>
-
-<!-- ── 现状 vs 目标 对照 ── -->
-<div class="stage">
-  <div class="win-label">StatusBar 高度 · 现状 vs 目标</div>
-  <div class="win">
-    <div class="statusbar" style="height:16px; background:var(--bg-tertiary); opacity:.85">
-      <div class="sb-group" style="font-size:10px">
-        <span class="sb-item">● LSP</span><span class="sb-sep"></span><span class="sb-item">3 changes</span>
-      </div>
-      <div class="sb-group" style="font-size:10px">
-        <span class="sb-item">main*</span><span class="sb-sep"></span><span class="sb-item">Ln 42, Col 8</span>
-      </div>
-    </div>
-    <div class="note">
-      <b>[现状]</b> <code>h-4</code> = 16px。行高 16px 的条里塞 11px 文字 + 图标 +
-      可点热区 → 命中区小于 16px，且与 32px 的 TitleBar 视觉头重脚轻。
-      实际代码：<code>src/features/status-bar/StatusBar.tsx:14</code>
-    </div>
-  </div>
-</div>
-
-<!-- ── EmptyState ── -->
-<div class="stage">
-  <div class="win-label">EmptyState 原语 · Projects 空态</div>
-  <div class="win" style="height:300px">
-    <div class="panel" style="height:100%">
-      <div class="island grow">
-        <div class="panel-header"><span class="panel-title">Projects</span></div>
-        <div class="empty">
-          <div class="empty-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" stroke-linejoin="round"/></svg></div>
-          <div class="empty-title">No projects yet</div>
-          <div class="empty-desc">Add a local folder, connect over WSL, or link a remote host over SSH.</div>
-          <div class="empty-ctas">
-            <button class="btn primary">Add Local</button>
-            <button class="btn ghost">WSL</button>
-            <button class="btn ghost">SSH</button>
+            <div class="cls"><ins>bg-bg-selected text-text-primary</ins> + 指示条</div>
           </div>
         </div>
       </div>
     </div>
   </div>
-</div>
 
+  <!-- ══ 6 ══ -->
+  <div class="item">
+    <div class="item-head">
+      <span class="num">6</span>
+      <span class="title">主题逃逸：硬编码色 → 语义 token</span>
+      <span class="loc">9 处（SessionChips / ContextMenu / prDisplay / ChangesSection / PRDetail* / TabOverflowMenu）</span>
+    </div>
+    <div class="item-body">
+      <div class="what">
+        <b>问题：</b>Git 面板写死 GitHub 的绿红紫（<code>#3fb950</code> /
+        <code>#f85149</code> / <code>#a371f7</code>），在 Light / Claude 主题下
+        与整个界面不搭。
+        <br/><b>修法：</b>接回主题<b>已有</b>的 <code>--git-status-*</code> /
+        <code>--diff-*</code>（覆盖全部 5 个主题）—— <b>不需要新建色板</b>。纯 class 替换。
+      </div>
+      <div class="pair">
+        <div class="side now">
+          <div class="side-head">现状 · 硬编码</div>
+          <div class="side-body">
+            <div class="demo-row"><span class="badge now-purple">PR</span><span>feat(agent): unify session config</span></div>
+            <div class="cls"><del>bg-[#a371f7]/20 text-[#a371f7]</del></div>
+          </div>
+        </div>
+        <div class="side tgt">
+          <div class="side-head">目标 · 语义 token</div>
+          <div class="side-body">
+            <div class="demo-row"><span class="badge tgt-token">PR</span><span>feat(agent): unify session config</span></div>
+            <div class="cls"><ins>bg-diff-added text-diff-added-text</ins></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="warn" style="border-left-color: var(--accent-blue)">
+    <b>不在这份清单里的东西（刻意排除）：</b>
+    TitleBar 项目上下文、StatusBar 高度、Dock / Tab 尺寸、Projects 空态 CTA、
+    Skills 单树渲染、ActivityBar 删除、字体阶梯与 density token 的套用 ——
+    这些都改布局或几何，已移出本轮。
+  </div>
+
+</div>
 </body>
 </html>

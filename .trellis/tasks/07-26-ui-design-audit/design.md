@@ -341,13 +341,29 @@
 
 ### 5.7 布局 refinement
 
-1. **TitleBar**：logo | 项目名 + 环境 badge + 分支 | 分组 actions
-2. **StatusBar**：22px；左 LSP/Git 摘要；中任务；右行列/通知；详细管理进菜单
-3. **Settings**：v1 保持中心岛替换；选中态与 dock 一致（selected surface）；全文搜索为 P1（见 §11 Decision Log）
-4. **Skills IA**：v1 推荐 **master-detail**（左列表 + 中心详情）；禁止 `hidden` 双挂载（见 §11）
-5. **DockZoneTabs**：v1 **禁止 zone 多面板**；组件保留但主路径不挂载（见 §11）
-6. **删除/冻结** ActivityBar 等遗留导航（`ui-nav-cleanup`）
-7. **Apple spacing token**：废弃业务叙事；density token 成为唯一间距权威（见 §11）
+> **2026-10-27：本节全部移出本轮**（用户明确「不改动当前布局，只做样式 UI 优化」）。
+> 保留原文作为后续参考 —— 每一项都会改 DOM 结构或几何。
+
+1. **TitleBar**：logo | 项目名 + 环境 badge + 分支 | 分组 actions ← 新增 DOM 节点
+2. **StatusBar**：22px；左 LSP/Git 摘要；中任务；右行列/通知 ← 改容器高度
+3. **Settings**：v1 保持中心岛替换；选中态与 dock 一致（selected surface）←
+   **仅「选中态」部分在本轮**（纯 class 替换）；全文搜索为 P1
+4. **Skills IA**：v1 推荐 master-detail；禁止 `hidden` 双挂载 ← 改挂载结构
+5. **DockZoneTabs**：v1 禁止 zone 多面板；组件保留但主路径不挂载 ← 组件至今不存在
+6. **删除/冻结** ActivityBar 等遗留导航 ← 删文件
+7. **Apple spacing token**：废弃业务叙事；density token 成为唯一间距权威 ←
+   **仅「废弃」部分在本轮**（清理引用）；token 套用会改几何，不在本轮
+
+**本轮仍执行的部分**（不改变任何几何）：
+
+| 项 | 改动 | 是否动布局 |
+| --- | --- | --- |
+| Settings nav 选中态 | `!bg-accent-blue` → `bg-bg-selected` + 指示条 | ❌ 纯 class |
+| 语义色统一 | 硬编码 hex → 语义 token | ❌ 纯 class |
+| 断链 token 修复 | `--status-error` alias + tailwind 映射 | ❌ 只改 CSS 定义 |
+| focus-visible | `focus:outline-none` → 补 `focus-visible:ring` | ❌ 纯 class |
+| 暗色假设 | `border-white/` / `bg-white/` → 语义 token | ❌ 纯 class |
+| 字体阶梯 / density / z-index | **只定义 token**，不套用 | ❌ 只改 CSS 定义 |
 
 ---
 
@@ -454,15 +470,30 @@ rg -n 'status-error|accent-orange|bg-surface' src --glob '!**/*test*'
 
 > 原 8 个子任务是「先把 IA 定好再逐层做」的思路。D1–D5 去掉后主线只剩视觉一致性，
 > 合并压缩为 6 个，**并把护栏提到最前**（理由见 `prd.md`「为什么护栏必须第一个做」）。
+>
+> **2026-10-27 再次收窄**：用户明确「**不改动当前布局，只做样式 UI 优化**」。
+> 于是凡涉及几何 / DOM 结构的项全部移出本轮 —— 见下方「已移出本轮」表。
 
 | # | ID | 范围 | 依赖 | v1? |
 | --- | --- | --- | --- | --- |
-| 1 | `ui-quality-gate` | eslint 规则 + 1 条护栏：禁止新增 `text-[#hex]` / 未定义 token 类 / 裸 `<button>` | — | **Yes**（最先） |
-| 2 | `ui-tokens-foundation` | density token（§5.1 九项）/ 字体阶梯（§5.2 五项）/ z-index 阶梯（§5.4 六层）/ `status-error` 断链修复 / 清理 `--spacing-apple-*` | 1 | **Yes** |
-| 3 | `ui-primitives` | `IconButton` / `PanelHeader` / `Toolbar` / `EmptyState` / `StatusDot` / `FormField`（§5.5）+ §5.6 交互状态契约 | 2 | **Yes** |
-| 4 | `ui-chrome-polish` | TitleBar 补项目上下文 / StatusBar 16→22 / Dock / Tab 迁移 token | 3 | **Yes** |
-| 5 | `ui-key-surfaces` | Settings 选中态 + 表单密度 + Projects 空态 + Skills 单树渲染 | 3 | **Yes** |
-| 6 | `ui-theme-escape-fix` | 9 处硬编码色 → 语义 token | 2 | **Yes** |
+| 1 | `ui-quality-gate` | eslint 规则 + 1 条护栏：禁止新增 `text-[#hex]` / 未定义 token 类 | — | **Yes**（最先） |
+| 2 | `ui-tokens-foundation` | 语义色 alias / `status-error` 断链修复 / 字体阶梯定义 / z-index 阶梯定义 / 清理 `--spacing-apple-*` | 1 | **Yes** |
+| 3 | `ui-primitives` | `IconButton` / `PanelHeader` / `Toolbar` / `EmptyState` / `StatusDot` / `FormField`（§5.5）+ §5.6 交互状态契约 | 2 | ⏸ **移出本轮**（见下方说明） |
+| 4 | `ui-theme-escape-fix` | 9 处硬编码色 → 语义 token | 2 | **Yes** |
+| 5 | `ui-interaction-states` | 暗色假设 39 处 / `text-white` → `text-on-accent` / focus-visible 补齐 / Settings 选中态 | 3 | **Yes** |
+
+### 已移出本轮（涉及几何 / DOM 结构）
+
+| 原 ID / 项 | 移出原因 |
+| --- | --- |
+| `ui-chrome-polish`（TitleBar 上下文 / StatusBar 16→22 / Dock / Tab） | 改 chrome 几何、新增 DOM 节点 |
+| `ui-key-surfaces`（Projects 空态 / Skills 单树） | 新增交互元素、改挂载结构 |
+| density token **套用** | 改容器高度 |
+| 字体阶梯 **套用** | 改字级 |
+| raw button 收敛 | 换组件 = 改结构与行为 |
+
+> **字体阶梯与 density token 本轮只「定义」不「套用」** ——
+> token 定义本身是纯 CSS 声明，不改任何现有元素；套用才会改几何。
 
 ### 10.1a 子任务清单（2026-10-27 实际落点）
 
@@ -471,25 +502,29 @@ rg -n 'status-error|accent-orange|bg-surface' src --glob '!**/*test*'
 | `ui-quality-gate` | `tools/guards/checks/check_ui_style_tokens.py`（新增）· `eslint.config.js`（新增规则） |
 | `ui-tokens-foundation` | `src/styles/tokens/theme.css` · `src/styles/tokens/tailwind.css` |
 | `ui-primitives` | `src/ui/IconButton.tsx` · `PanelHeader.tsx` · `Toolbar.tsx` · `EmptyState.tsx` · `StatusDot.tsx` · `FormField.tsx` · `src/ui/index.ts` |
-| `ui-chrome-polish` | `src/layout/TitleBar.tsx` · `src/features/status-bar/StatusBar.tsx` · `src/app/components/DockBarButton.tsx` · `src/layout/dock-layout/DockBar.tsx` |
-| `ui-key-surfaces` | `src/features/settings/components/SettingsSidebar.tsx` · `SettingsPanel.tsx` · `src/features/project/components/*` |
 | `ui-theme-escape-fix` | `src/shared/components/SessionChips.tsx` · `ContextMenu.tsx` · `src/features/git/utils/prDisplay.ts` · `src/features/git/components/ChangesSection.tsx` · `src/features/git/components/pr-detail/{PRDetailView,PRDetailSkeleton}.tsx` · `src/features/editor/components/TabOverflowMenu.tsx` |
+| `ui-interaction-states` | `src/ui/{Badge,Button,Checkbox,Dialog,Resizable,Switch,ToggleGroup}.tsx` · `src/app/components/{DockBarButton,ToolbarFooter,ErrorBoundary}.tsx` · `src/features/settings/components/{SettingsSidebar,SettingsPanel,CliHooksSection,BuiltInAgentsSection}.tsx` · `src/features/settings/components/LspCustomServersSection.tsx` · `src/features/runner/components/LaunchConfigDialog.tsx` · `src/features/connection/components/{RemoteDialog,WSLDialog}.tsx` · `src/shared/components/ProjectSettingsDialog.tsx` · `src/features/{skill,notification,editor,git,action-menu}/**`（`text-white` 剩余处） |
 
 > 原 §15 落点表列的 `src/styles/theme.css` / `index.css` / `shadcn-theme.css` 已迁移到
 > `src/styles/tokens/`（见 `implement.md` 头部的 CSS 架构优化记录）。
+>
+> **`text-white` 实际是 36 处，不是 6 处** —— 首次统计只 grep 了部分文件。
+> 全量清单见 `rg 'text-white' src --glob '!**/*test*'`。
 
-### 10.2 阶段映射（A–F ↔ 子任务）
+### 10.2 阶段映射（2026-10-27 重写）
 
 ```text
-A 地基        → ui-tokens-density + ui-quality-gate(雏形)
-B 原语        → ui-primitives-chrome（组件新建）
-C Chrome      → ui-primitives-chrome（TitleBar/StatusBar/Dock 迁移）
-                 + ui-nav-cleanup
-D 主题逃逸    → ui-theme-escape-fix
-E 关键面      → ui-empty-loading + ui-settings-ia + ui-skills-ia
-                 + Conversation type scale（可并入 tokens 后续 PR）
-F 质量闸门    → ui-quality-gate（收口）
+A 护栏     → ui-quality-gate（先落）
+B 地基     → ui-tokens-foundation（语义色 / 断链修复 / 阶梯定义）
+C 原语     → ui-primitives（6 个新组件，不替换现有用法）
+D 主题逃逸 → ui-theme-escape-fix
+E 交互态   → ui-interaction-states（暗色假设 / text-white / focus-visible / Settings 选中态）
+
+F 质量闸门（收口）→ 已并入 A —— 护栏先落，不放在最后
 ```
+
+> 原映射里的 C（Chrome 迁移）、E（关键面）阶段因涉及几何 / DOM 结构，
+> 已随「不改动布局」约束移出本轮。
 
 ### 10.3 依赖图
 
@@ -498,11 +533,8 @@ ui-quality-gate（先落，贯穿全部）
       │
       ▼
 ui-tokens-foundation
-      ├─► ui-primitives
-      │      ├─► ui-chrome-polish
-      │      ├─► ui-key-surfaces
-      │      └─► ui-theme-escape-fix
-      └──────────────────────────► ui-theme-escape-fix
+      ├─► ui-primitives ──► ui-interaction-states
+      └──────────────────────────────► ui-theme-escape-fix
 ```
 
 **与原图的差异**：原图把 `ui-quality-gate` 标为「贯穿全程」的并行项，
@@ -513,17 +545,19 @@ ui-tokens-foundation
 
 ### 10.4 v1 cut line
 
-**v1 必做（= 全部 6 个子任务）**：护栏 → token 地基 → 6 原语 → 壳层 → 关键面 → 主题逃逸。
+**v1 必做（= 全部 5 个子任务）**：护栏 → token 地基 → 6 原语 → 主题逃逸 → 交互状态。
+
+**本轮边界**：**只改样式层**。DOM 结构、容器几何、字级、布局类一律不动（`prd.md` AC0）。
 
 **v1 可延后（P1）**：Settings 全文搜索、全局面板骨架铺齐、Conversation 全量 type scale、
 Motion 语言、Badge 产品化、Skills IA 重排（D1）、Settings 路由形态（D2）、
-Dock 多面板（D3）、语义色全量 rename。
+Dock 多面板（D3）、语义色全量 rename、**全部 chrome 几何调整**（StatusBar 高度、
+TitleBar 上下文、Dock / Tab 尺寸、Projects 空态）。
 
-**注意**：原 v1 里的「nav cleanup」已不作为独立子任务 ——
-`ActivityBar` 实测主路径已无人使用（只剩 `LibraryActivityBar` 是 library 域自己的东西），
-直接删除即可，不需要「冻结」这么重的处置。`DockZoneTabs` 至今不存在，无需处置。
-
-实现前每个子任务再写独立 prd/design；本文件是父任务权威方案。
+> **注意**：原 v1 里的「nav cleanup」已不作为独立子任务 ——
+> `ActivityBar` 实测主路径已无人使用（只剩 `LibraryActivityBar` 是 library 域自己的东西），
+> 直接删除即可，不需要「冻结」这么重的处置。`DockZoneTabs` 至今不存在，无需处置。
+> **两者均涉及删文件 / 改导航，本轮不执行。**
 
 ---
 
@@ -553,26 +587,49 @@ Dock 多面板（D3）、语义色全量 rename。
 
 ## 12. 原型索引
 
-> **2026-10-27 重做**：旧 5 份原型（optimized-shell / statusbar-compare / settings-hifi /
-> projects-panel / git-credential-compare）**已作废并删除** ——
-> 它们基于 7 月的纸面设计，与今天的真实代码脱节（StatusBar 实际 16px、
-> 主题实际色值、`ui/` 原语实际清单都不同）。
-> 新原型基于**真实代码**重做：色值取自 `src/styles/tokens/theme.css`，
-> 尺寸取自实际组件，现状问题标注了精确源码位置。
+> **2026-10-27 重做（第三次）**：旧 5 份原型（optimized-shell / statusbar-compare /
+> settings-hifi / projects-panel / git-credential-compare）**已作废并删除** ——
+> 它们基于 7 月的纸面设计，与今天的真实代码脱节。
+>
+> 第二版（两份）也已作废：第一份画的是「理想中的完整界面」，
+> 第二份与之内容重复 —— **两者的呈现方式都是「界面效果图」，
+> 看起来像在重新设计整个 App**，与「不改动当前布局，只做样式 UI 优化」冲突。
+>
+> **当前唯一原型**：[`prototype-shell-v2.html`](./prototype-shell-v2.html)
+> —— 形态是**改动点清单**，不是界面效果图：
+> - 6 个改动点，逐条给出「现状 class / 目标 class / 改后效果 / 精确文件:行」
+> - 每个样例的**布局完全相同**（同元素、同间距、同尺寸），
+>   唯一差别是颜色 / 焦点态 / 分割线 —— 那正是本轮要改的东西
+> - 末尾显式列出**刻意排除**的项（那些改布局 / 几何）
 
-| 原型文件 | 覆盖问题 | 对应子任务 | 验收看点 |
-| --- | --- | --- | --- |
-| [`prototype-shell-v2.html`](./prototype-shell-v2.html) | 壳层（TitleBar / Dock / StatusBar / PanelHeader / StatusDot / EmptyState） | `ui-primitives` + `ui-chrome-polish` | TitleBar 有项目上下文；StatusBar 22px；Git 状态色走 token；Dock 选中态有指示条 |
-| [`prototype-surfaces-v2.html`](./prototype-surfaces-v2.html) | Settings 选中态 / FormField 错误态 / 主题逃逸 | `ui-key-surfaces` + `ui-tokens-foundation` + `ui-theme-escape-fix` | nav 选中是 surface 不是大色块；错误提示**有颜色**；Git 取色走 token |
+**原型的三条硬约束**：
 
-**新原型的三条硬约束**（与旧原型的区别）：
-
-1. **色值必须来自 `theme.css`** —— 不允许原型里出现 theme.css 没有的色值，
+1. **色值必须来自 `theme.css`** —— 不允许出现 theme.css 没有的色值，
    否则原型就成了新的「纸面设计」。
-2. **现状问题必须标注精确源码位置** —— 如 `StatusBar.tsx:14`、
-   `SettingsSidebar.tsx:72`、`PRDetailView.tsx:51`。这样实现 PR 知道自己改哪里。
-3. **密度与字体阶梯用 token 表达** —— 原型里的 `22px` 写成
-   `var(--chrome-statusbar-h)`，实现时才知道该建哪个 token。
+2. **现状问题必须标注精确源码位置** —— 如 `SettingsSidebar.tsx:72`、
+   `PRDetailView.tsx:51`。这样实现 PR 知道自己改哪里。
+3. **呈现方式必须是「改动点清单」** —— 不画完整界面。
+   画完整界面会让人误解为「要重新设计这个界面」。
+
+### 实施结果（2026-10-27）
+
+6 个改动点**全部落地**：
+
+| # | 原型上的改动点 | 实际改动 | 落地位置 |
+| --- | --- | --- | --- |
+| 1 | 错误提示没有颜色 | 主题 5 块补 `--status-error` alias + tailwind 映射 | `theme.css` · `tailwind.css` |
+| 2 | accent 底上的白字 | **32 处** `text-white` → `text-text-on-accent` | 18 个文件 |
+| 3 | 暗色假设的分割线 | **40 处** → `border-border-subtle` / `bg-bg-hover` | 18 个文件 |
+| 4 | 键盘焦点不可见 | **8 个文件**补 `focus-visible:ring-2`；另 3 处 `focus:ring-2` → `focus-visible:ring-2` | 8 个文件 |
+| 5 | Settings 选中态大色块 | **4 处** → `!bg-bg-selected !text-text-primary` | `SettingsSidebar` · `SettingsPanel` |
+| 6 | 主题逃逸 | **9 处** → `accent-brick` / `diff-added-text` / `diff-removed-text` / `accent-red` | 7 个文件 |
+
+**原型与实现的偏差**（原型写错了，实现时纠正）：
+
+- 原型 #2 写「36 处 `text-white`」→ 实际 **32 处**（首轮统计只 grep 了部分文件）。
+- 原型 #4 写「7 个文件真缺 focus-visible」→ 实际 **8 个**（`Switch.tsx` 未列，
+  它是护栏首跑才抓出来的裸 `bg-white` 连带发现）。
+- 原型 #3 写「39 处暗色假设」→ 实际 **40 处**（同上，多的是 `Switch.tsx` 的裸 `bg-white`）。
 
 ---
 

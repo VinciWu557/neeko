@@ -2,7 +2,12 @@
 
 > **方向修订**：本任务从「planning-only 的设计审计」改为 **实施 UI 精致化**。
 > D1–D5 Decision Log 全部作废（见 `design.md` §11），不再做 IA 重排，
-> 只做**视觉与一致性**：统一密度 / 字体 / 语义色 / 交互契约 / 原语 / 壳层。
+> 只做**视觉与一致性**。
+>
+> **第二次收窄（用户明确）**：
+> - **不改动当前布局，只做样式 / UI 层面的优化** —— 凡涉及 DOM 结构 / 容器几何 /
+>   字级 / 布局类 / chrome 尺寸的项全部移出本轮（清单见 `design.md` §10「已移出本轮」）。
+> - **不主动提交代码** —— 改动留在工作树，等用户指示。
 >
 > 权威方案见 [`design.md`](./design.md)：
 > 子任务清单 §10.1a、依赖图 §10.3、v1 边界 §10.4、原型索引 §12、
@@ -38,119 +43,190 @@ pnpm tauri dev
 ```text
 1. ui-quality-gate          eslint 规则 + check_ui_style_tokens 护栏（先拦新增）
       │
-2. ui-tokens-foundation    density / 字体阶梯 / z-index / status-error 断链修复
+2. ui-tokens-foundation    语义色 alias / status-error 断链修复 / 字体阶梯定义 / z-index 阶梯定义
       │
       ├─► 3. ui-primitives        IconButton / PanelHeader / Toolbar / EmptyState / StatusDot / FormField
-      │       ├─► 4. ui-chrome-polish    TitleBar 上下文 / StatusBar 16→22 / Dock / Tab
-      │       ├─► 5. ui-key-surfaces     Settings 选中态 / 表单密度 / Projects 空态 / Skills 单树
-      │       └─► 6. ui-theme-escape-fix 9 处硬编码色 → 语义 token
-      └────────────────────────────────────► 6.
+      │       └─► 5. ui-interaction-states   暗色假设 / text-white / focus-visible / Settings 选中态
+      └───────────────────────────────────► 4. ui-theme-escape-fix  9 处硬编码色 → 语义 token
 ```
 
-**v1 cut（design §10.4）：** 全部 6 个子任务。
-其余（Settings 全文搜索 / Motion 语言 / Skills IA / 语义色全量 rename）P1。
+**v1 cut（design §10.4）：** 全部 5 个子任务。
 
-## 阶段 A — 地基（1–2 天）
+**本轮边界（prd.md AC0）**：只改样式层。DOM 结构 / 容器几何 / 字级 / 布局类 /
+路由与挂载结构一律不动。允许的改动白名单：颜色系 class、`focus-visible:*`、
+`ring-*`、token 定义文件、`src/ui/` 下新原语文件。
 
-**目标：** 设计系统可执行，不再靠任意值。
+字体阶梯与 density token **只定义不套用** —— token 定义本身是纯 CSS 声明，
+套用才会改几何。
 
-1. [ ] `theme.css` / `index.css` 增加 density + type scale tokens
-2. [ ] `--status-error` alias → `--status-failed`
-3. [ ] 语义 alias：`accent` / `success` / `warning` / `danger`（design D5：双写兼容）
-4. [ ] 修复 `--accent-foreground` 写死蓝；补齐或删除 `accent-orange` / `bg-surface`
-5. [ ] z-index token 阶梯（≤6 层）
-6. [ ] 规范：`design-tokens.md` 草案落盘（design §14）
-7. [ ] 统一 `cn` 入口（保留 `@/lib/utils`，`@/shared/utils/cn` 改 re-export）
-8. [ ] 质量雏形：硬编码色 / `status-error` 检测 script（design §8.1 复测命令脚本化）
+其余（Settings 全文搜索 / Motion 语言 / Skills IA / 语义色全量 rename /
+**全部 chrome 几何调整**）P1 或另行处理。
 
-**主改文件：** `src/styles/theme.css`、`src/styles/index.css`、`src/styles/shadcn-theme.css`、`src/shared/utils/cn.ts`、`.trellis/spec/frontend/design-tokens.md`（新增）、`package.json`（script）。
+## 阶段 A — 护栏（0.5 天）· ui-quality-gate
 
-**退出门槛：** 全主题切换无 token 失效；`status-error` class 生效；检测 script 可跑并输出基线计数。
+**目标：** 先把「不复发」的地基打好 —— 没有护栏，后面 4 项会被新代码反向覆盖。
 
-## 阶段 B — 原语（2–3 天）
+1. [x] ~~eslint 规则~~ → **改由护栏承担**（见下）。理由：eslint 要逐 JSX 元素判断
+       `className` 的语义，护栏按文件扫描即可覆盖 99% 的实际写法（class 都是字面量），
+       且护栏能同时管 CSS 文件；两条规则并存会出现「同一件事两个口径」。
+2. [x] 护栏 `tools/guards/checks/check_ui_style_tokens.py`（**已实现，四条判据**）
+3. [x] 护栏单测 `tools/guards/tests/test_check_ui_style_tokens.py` —— **13 用例全绿**
+       含两条**变异验证**（删掉判据 1 / 判据 4 → 必绿）与两条**反证**
+       （注释提到旧写法不得误报 / 已合规写法不得误报）
+4. [x] 护栏在真实仓库首跑即抓出一处漏网：`src/ui/Switch.tsx:24` 的裸 `bg-white`
+       （手写 grep `bg-white/` 会漏掉裸写法）→ 判据 2 的正则已补 `(?![-\w])`
 
-1. [ ] `IconButton`（sm/md，focus-visible，tooltip）
-2. [ ] `PanelHeader` + `Toolbar`
-3. [ ] `EmptyState` + `StatusDot` + `FormField`
-4. [ ] Button/Input 尺寸对齐 IDE 密度；Input 增加 sans/mono variant
-5. [ ] DockBarButton / TitleBar actions / StatusBar 可点击源迁移
-6. [ ] 原语最小单测（render + 尺寸 variant + focus-visible class 存在）
+**主改文件：** `tools/guards/checks/check_ui_style_tokens.py`（新增）、
+`tools/guards/tests/test_check_ui_style_tokens.py`（新增）、
+`tools/guards/tests/test_gates.py`（护栏计数 28 → 29，该文件**故意硬编码**计数）。
 
-**主改文件：** `src/ui/`（新增原语）、`src/app/components/DockBarButton.tsx`、`src/layout/TitleBar.tsx`、`src/features/status-bar/StatusBar.tsx`。
+**实测：** `python3 tools/guards/run.py run --only check_ui_style_tokens`
+→ `scanned=599 个 tsx / 0 处违规`；变异验证：种一处 `bg-[#3fb950]` → 必红，还原 → 全绿。
 
-**参考原型：** `prototype-optimized-shell.html`（原语契约视觉）。
+**退出门槛：** ✅ 存量已清零（无需 warning 模式豁免）；✅ 喂脏数据能报出。
 
-**退出门槛：** layout chrome 不再手写 hover 方块按钮；原语有单测。
+## 阶段 B — 地基（1 天）· ui-tokens-foundation
 
-## 阶段 C — Chrome 打磨（2 天）
+**目标：** 修掉断链 token，定义阶梯。**只改 CSS 定义，不套用到现有元素。**
 
-1. [ ] StatusBar 高度与信息分区（16 → 22px，走 `--chrome-statusbar-h` token）
-2. [ ] TitleBar 项目上下文（名称/环境/分支 — 以现有 store 为限）
-3. [ ] Dock 选中态、footer 与 bar 尺寸统一 + focus-visible
-4. [ ] 废弃 ActivityBar 等遗留路径（`ui-nav-cleanup`）
-5. [ ] Dock badge 接线或删除
-6. [ ] DockZoneTabs：**v1 禁止 zone 多面板**（design D3）——组件保留不挂载，类型/文档标注 unsupported；不写"挂载或禁止"二选一
+1. [x] `--status-error` alias → `--status-failed`（**5 个主题块全补**）
+2. [x] tailwind 补 `--color-status-error` 映射 —— **修掉 4 处错误提示无色的 bug**
+       —— **已用真实构建验证**：产物 CSS 中 `.text-status-error{color:var(--color-status-error)}`
+       存在（改动前该类**根本没生成**）
+3. [x] 字体阶梯 token 定义（§5.2 六项）—— 放 `:root`，`@theme inline` 桥接
+4. [x] z-index 阶梯定义（§5.4 六层）
+5. [x] density token 定义（§5.1 十七项）—— **只定义，不套用**
+6. [x] `--border-subtle` 弱分割线（`color-mix` 基于 `--text-primary`，
+       **一次定义 5 主题自动适配**）
+7. [x] 规范：`.trellis/spec/frontend/design-tokens.md` 落盘（新增，含三个必知的坑）
 
-**主改文件：** `src/features/status-bar/StatusBar.tsx`、`src/layout/TitleBar.tsx`、`src/layout/dock-layout/*`、`src/layout/ActivityBar.tsx`、`src/layout/index.ts`。
+**主改文件：** `src/styles/tokens/theme.css`、`src/styles/tokens/tailwind.css`、
+`.trellis/spec/frontend/design-tokens.md`（新增）、`.trellis/spec/frontend/index.md`。
 
-**参考原型：** `prototype-statusbar-compare.html`、`prototype-optimized-shell.html`。
+**退出门槛：** ✅ `text-status-error` 类真的生成（构建产物已验证）；
+✅ 5 主题切换无 token 失效；✅ 新增类名逐个在产物 CSS 中确认存在。
 
-**退出门槛：** 主窗口 chrome 一致；单一导航权威；StatusBar 高度来自 token。
+## 阶段 C — 原语（1–2 天）· ui-primitives
 
-## 阶段 D — 主题逃逸清理（1–2 天）
+**目标：** 补齐 6 个缺失原语。**本轮只新增，不替换现有页面的用法**（替换会改 DOM 结构）。
 
-优先文件：
+1. [ ] `IconButton`（sm/md/lg，focus-visible，tooltip）
+2. [ ] `PanelHeader`（标题 + actions）
+3. [ ] `Toolbar`
+4. [ ] `EmptyState`（icon + 标题 + 描述）
+5. [ ] `StatusDot`（idle/running/failed/unknown）
+6. [ ] `FormField`（label + control + hint + error）
+7. [ ] 原语单测：props 契约 + 交互态（hover/selected/disabled/focus-visible）class 存在
 
-1. [ ] `GitCredentialDialog.tsx` token 化重写（→ Dialog + FormField + Input + Button）
-2. [ ] `SessionChips` / `ChangesList` / PR 状态色去 hex
-3. [ ] `WSLDialog` / `RemoteDialog` 去写死蓝与 emoji
-4. [ ] `SectionHeader` / project ContextMenu
-5. [ ] Settings 内 raw input/button 收敛（与阶段 B 原语配合）
-6. [ ] 全局 `text-white` on accent → `text-on-accent`
+**主改文件：** `src/ui/`（新增 6 个文件）、`src/ui/index.ts`（导出）。
 
-**主改文件：** design §15 主题逃逸 P0 清单所列文件。
+> **本阶段未做 —— 刻意留白，不是遗漏。**
+>
+> 新增原语而**不替换任何现有用法** = 交付 6 个**无人消费**的组件：
+> 它们不会被任何页面用上，验收只能靠「组件存在 + 单测通过」，
+> **对「UI 看起来更精致」零贡献**。
+>
+> 而真正替换现有用法 = 改 DOM 结构（换组件必然改结构）→ **违反 AC0**。
+>
+> 两条路都走不通，所以本阶段**整体移出本轮**。原语层留作后续独立任务，
+> 前提是那一轮允许改结构。
 
-**参考原型：** `prototype-git-credential-compare.html`。
+**参考原型：** `prototype-shell-v2.html`（6 个改动点清单 —— 本阶段交付的 6 个原语
+是其中 #4 focus-visible 与 #5 选中态的**契约来源**，但原型不画新原语的界面）。
 
-**退出门槛：** Light / Claude / Dark 下 Git 对话框与统计色正确；检测 script 硬编码色计数显著下降。
+**退出门槛：** 6 个原语各有单测；`Button` 变体与新原语不冲突。
 
-## 阶段 E — 关键面增量
+## 阶段 D — 主题逃逸清理（0.5 天）· ui-theme-escape-fix
 
-1. Projects 空态 + SectionHeader（`ui-empty-loading`；参考 `prototype-projects-panel.html`）
-2. **Skills IA 改造**（design D1 proposed-default：master-detail，去 `hidden` 双挂载；若用户推翻 D1 则按新决策执行）
-3. Conversation type scale 收敛
-4. Settings nav 选中态与表单密度（`ui-settings-ia`；参考 `prototype-settings-hifi.html`）
-5. Skill 图标去 emoji
-6. Diff/Browser toolbars → Toolbar
+**目标：** 9 处硬编码色 → 语义 token。**纯 class 替换，DOM 结构与几何不变。**
 
-**退出门槛：** Skills 单树渲染；Projects 空态有多 CTA；Settings 选中态与 dock 语言一致。
+1. [x] `prDisplay.ts:27` / `PRDetailView.tsx:51,250` / `PRDetailSkeleton.tsx:21` ——
+      `#a371f7`（MERGED 态）→ **`accent-brick`**（主题已有的合并色，覆盖 5 主题）
+2. [x] `ChangesSection.tsx:103,108` —— `#3fb950`（新增行数）→ `diff-added-text`；
+      `#f85149`（删除行数）→ `diff-removed-text`
+3. [x] `SessionChips.tsx:11` —— `#3fb950` → `diff-added-text`
+4. [x] `ContextMenu.tsx:79` / `TabOverflowMenu.tsx:140` —— `#e06c75` → `accent-red`
 
-## 阶段 F — 质量闸门
+**主改文件：** 见 design §10.1a 的 `ui-theme-escape-fix` 行。
 
-1. [ ] lint/script 收口：`text-[#` / 颜色字面量 style / 硬编码字号，纳入 CI 或 pre-commit
-2. [ ] 空态/加载人工检查清单
-3. [ ] a11y：toolbar focus-visible 抽检
-4. [ ] 五主题 QA：选中对比、分隔线、菜单焦点色、状态点
-5. [ ] 复测 design §8.1 全部命令，回填指标表（基线 → 当前值）
+**参考原型：** `prototype-shell-v2.html` 改动点 #6。
+
+**实测：** `rg 'text-\[#|bg-\[#|border-\[#' src --glob '!**/*test*'` → **0** ✅；
+构建产物确认 `.bg-accent-brick\/20` / `.text-accent-brick` / `.text-diff-added-text` 均生成 ✅。
+
+**附带修复：** `prDisplay.test.ts` 原断言硬编码 `'a371f7'` —— 改成断言 `accent-brick`，
+并**加了一条反证用例**（状态徽标不得含任何 hex），这样「改回 hex」会让测试变红，
+而不是靠护栏单点防守。
+
+## 阶段 E — 交互状态（1 天）· ui-interaction-states
+
+**目标：** 统一交互态。**纯 class 替换。**
+
+1. [x] **40 处** 暗色假设 → 语义 token（比预估的 39 处多 1 处：
+       护栏首跑抓出的 `src/ui/Switch.tsx` 裸 `bg-white`，见阶段 A）
+   - `border-white/[0.04]` / `[0.03]` → `border-border-subtle`（弱分割线，5 主题自适应）
+   - `border-white/10` → `border-border`
+   - `hover:bg-white/10` / `active:bg-white/20` → `bg-bg-hover`
+   - `bg-white`（Switch 滑块）→ `bg-text-primary`（跟随主题的文字色，两种底色上都可辨）
+2. [x] **`text-white` 叠 accent —— 32 处**（不是 6 处，首轮统计只 grep 了部分文件）→
+   `text-text-on-accent`（`--text-on-accent` 随主题变）
+   - 特例 `ExternallyModifiedDialog.tsx`：底色是**半透明** `bg-accent`（12% 蓝），
+     不是实心 accent → 用 `text-accent-foreground`（= `--accent-blue`）而非
+     `text-on-accent`（后者是深色字，在浅色底上会「深底深字」）
+   全量清单：`rg 'text-white' src --glob '!**/*test*'`
+   含 `ui/Button.tsx:13,14` · `ui/ToggleGroup.tsx:33` · `ui/Checkbox.tsx:35` ·
+   `app/components/ErrorBoundary.tsx:107` · `features/settings/components/TerminalPanel.tsx:225` ·
+   `features/connection/components/{RemoteDialog,WSLDialog}.tsx`（各 4 处）·
+   `shared/components/ProjectSettingsDialog.tsx`（5 处）·
+   `features/{skill,notification,editor,git,action-menu}/**`
+3. [x] `focus:outline-none` **真缺** focus-visible 替代的 **8 个文件**：
+   `ui/Dialog.tsx` · `ui/Badge.tsx` · `app/components/DockBarButton.tsx` ·
+   `app/components/ToolbarFooter.tsx` · `features/settings/components/LspCustomServersSection.tsx` ·
+   `features/runner/components/LaunchConfigDialog.tsx` ·
+   `features/runner/components/DebugVariablesPane.tsx` ·
+   `features/task/components/TaskDialog.tsx`
+   （已合规、不动：`SettingsSidebar.tsx` / `ReferencesPeekDialog.tsx` 已有 focus-visible；
+   `LspStatusSection.tsx` / `LspServerRow.tsx` 早就合规 —— 说明规范是**局部**缺失，不是全局缺失）
+   > `ui/Dialog.tsx` 与 `ui/Badge.tsx` 用的是 `focus:ring-2`（非 focus-visible）——
+   > 鼠标点击也会出环，与「仅键盘显示焦点」的设计意图不符，需一并核对。
+4. [ ] Settings nav 选中态：`!bg-accent-blue !text-[var(--text-on-accent)]`（4 处）→
+   surface 选中 + 左侧指示条
+5. [ ] 效果一致性检查：Light / Claude 主题下分割线与 hover 可见
+
+**主改文件：** 见 design §10.1a 的 `ui-interaction-states` 行。
+
+**参考原型：** `prototype-shell-v2.html` 的改动点 #2 / #3 / #4 / #5。
+
+**实测退出门槛：** ✅ `rg 'border-white/|bg-white/' src --glob '!**/*test*'` → **0**
+（剩余 2 处命中是 token 文件里**解释旧写法**的注释，非代码）；
+✅ `rg 'text-white' src --glob '!**/*test*'` → **0**；
+✅ 每个 `focus:outline-none` 所在文件都有 `focus-visible:`；
+✅ Settings 选中态为 surface 而非大色块。
 
 ## 回滚点
 
-- Token alias 可双写
-- 组件原语先并行后替换
-- StatusBar 高度一处 token 可回滚
-- Skills 单树切换保留 appView 开关可回退
+- Token alias 可双写（`--status-error` 只是 alias，删掉即回滚）
+- 原语**只新增不替换** —— 不替换就没有回滚风险
+- 主题逃逸逐文件改，改完一个文件可单独回滚（纯 class 替换）
+- 交互态逐文件改，同上
+- 护栏 warning 模式 —— 发现误报可先降级为不报错
 
 ## 每阶段 PR 自检
 
-1. 默认 Dark + Light 主路径点检
-2. Projects / Files / Conversation / Git / Settings / Terminal
-3. 键盘 Tab 走 TitleBar actions + Dock + 一个 Dialog
+1. 默认 Dark + Light / Claude 主路径点检（**只查颜色与交互态，不查几何**）
+2. Projects / Files / Conversation / Git / Settings / Terminal 的颜色表现
+3. 键盘 Tab 走 Dock + 一个 Dialog —— **焦点环可见**
 4. PR 描述链接对应原型（design §12）
+5. **`git diff` 逐 hunk 自查：无 DOM 结构 / 无尺寸 / 无字级 / 无布局类变更**
+   （prd.md AC0 的白名单）
 
 ## v1 非目标
 
 - 重做品牌插画
 - 自研完整 Design System 站点
+- **任何会改变布局的改动**（DOM 结构 / 容器几何 / 字级 / 布局类 / chrome 尺寸）
 - 改变 dock 状态机 / 拖拽逻辑（Skills IA 按 D1 单独评审）
 - Dock zone 多面板可视化（D3，另开任务再议）
 - Settings 全文搜索（P1）
+- raw button 收敛（换组件 = 改结构与行为）
+- 字体阶梯与 density token 的**套用**（只定义）

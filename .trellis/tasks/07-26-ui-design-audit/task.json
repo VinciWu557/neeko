@@ -2,7 +2,7 @@
   "id": "ui-design-audit",
   "name": "ui-design-audit",
   "title": "UI Design Audit and Optimization Plan",
-  "description": "UI 精致化实施：统一密度 token / 字体阶梯 / z-index 阶梯 / 语义色，补齐 6 个缺失原语（IconButton/PanelHeader/Toolbar/EmptyState/StatusDot/FormField），壳层精致化（TitleBar 补项目上下文、StatusBar 16→22px）、关键面（Settings 选中态 / Projects 空态 / Skills 单树）、9 处主题逃逸清零，并以 eslint + 护栏防复发。**2026-10-27 方向修订**：原为 planning-only 设计审计，现改为实际实施；Decision Log D1-D5 全部作废（不做 IA 重排，只做视觉与一致性）。",
+  "description": "UI 精致化实施（**仅样式层**）：统一语义色、补齐 6 个缺失原语（IconButton/PanelHeader/Toolbar/EmptyState/StatusDot/FormField）、9 处主题逃逸清零、39 处暗色假设清理、focus-visible 补齐、Settings 选中态改 surface，并以 eslint + 护栏防复发。**2026-10-27 两次收窄**：① 原为 planning-only 设计审计，现改为实际实施，Decision Log D1-D5 全部作废；② 用户明确「不改动当前布局，只做样式 UI 优化」——凡涉及 DOM 结构 / 容器几何 / 字级 / 布局类 / chrome 尺寸的项全部移出本轮。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -21,9 +21,8 @@
     "ui-quality-gate",
     "ui-tokens-foundation",
     "ui-primitives",
-    "ui-chrome-polish",
-    "ui-key-surfaces",
-    "ui-theme-escape-fix"
+    "ui-theme-escape-fix",
+    "ui-interaction-states"
   ],
   "children": [
     "08-02-mcp-marketplace"
@@ -49,6 +48,6 @@
     "src/lib/utils.ts",
     "src/shared/utils/cn.ts"
   ],
-  "notes": "2026-10-27 方向修订：用户明确目标为「让 UI 看起来更精致和更有设计感」，并去掉 D1-D5 五道决策门。本任务从 planning-only 审计改为实施。关键现状（实测）：planning 100% 交付 / 实施 0% —— task.json 里 8 个 subtasks 从未创建；density/字体阶梯/z-index token 全缺；6 个目标原语全缺（ui/ 有 21 个组件但不含这 6 个）；StatusBar 实测 h-4=16px（目标 22px）；TitleBar 只有 logo+空白，无项目上下文；Settings 选中态是 !bg-accent-blue 大色块（SettingsSidebar.tsx:72）。一个正在生效的 bug：text-status-error 被 4 处使用，但 theme.css 只定义 --status-failed、tailwind.css 只映射 --color-status-{idle,running,failed} → Tailwind 根本不生成该类 → 那 4 处错误提示没有红色（紧邻的 text-status-failed 有）。列为 tokens 子任务第一修复项。重要资产：主题已有 --git-status-{added,modified,deleted,untracked,conflict} 与 --diff-* 覆盖全部 5 主题 → 9 处主题逃逸不需要新建色板，只需接回。旧 5 份原型已作废删除（基于 7 月纸面设计、与真实代码脱节），新原型 2 份基于真实代码重做：prototype-shell-v2.html / prototype-surfaces-v2.html。护栏必须最先落 —— 三个月间代码量 +68%（235→396 tsx）而硬编码色 33→39、raw button 311→520，比率持平 = 每个新 PR 都在复制旧问题（tools/guards/checks/ 30 条无一条管 UI 样式）。",
+  "notes": "实施完成（2026-10-27，未提交 —— 用户要求不主动提交）。**本轮边界**：只改样式层；DOM 结构 / 容器几何 / 字级 / 布局类一律不动（prd.md AC0，已机器验证：新增布局类 0 处、JSX 标签集合未变）。**实际交付**：① status-error 断链修复（4 处错误提示从「没有颜色」恢复为红色，构建产物已验证类生成）；② 主题逃逸 9 处清零（MERGED 用 accent-brick、增删行数用 diff-*-text、danger 用 accent-red —— 全部接回主题已有 token，未新建色板）；③ 暗色假设 40 处清零（新增 --border-subtle 弱分割线，基于 --text-primary 的 color-mix，一次定义 5 主题自动适配）；④ text-white 32 处 → text-text-on-accent；⑤ focus-visible 补齐 8 个文件（另把 3 处 focus:ring-2 改 focus-visible:ring-2）；⑥ Settings nav 选中态大色块 → bg-bg-selected；⑦ 字体阶梯 / z-index 阶梯 / density token **只定义不套用**；⑧ 新护栏 check_ui_style_tokens（4 判据 + 13 单测含变异验证与反证）；⑨ spec .trellis/spec/frontend/design-tokens.md 落盘。**门禁**：pnpm check:quick 全绿（31 护栏 0 违规 + eslint/tsc/clippy + 126 test files /1114 tests）；护栏自身单测 673 用例全绿。**过程中纠正的三处自己的错误**：① text-white 是 32 处不是 6 处（首轮只 grep 部分文件）；② Dock 选中态早就是 bg-bg-selected（原型里画的「Dock 改造」是我自己发明的）；③ focus-visible 缺失是局部的（10 个文件里只有 8 个真缺）。**未做**：ui-primitives（6 个原语）—— 新增但不替换 = 无人消费；替换 = 改 DOM 违反 AC0。",
   "meta": {}
 }

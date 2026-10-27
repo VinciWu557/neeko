@@ -1290,3 +1290,43 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 下一步：按依赖顺序实施 ui-quality-gate（先 warning 模式）→ ui-tokens-foundation（含 status-error 断链修复）
+
+
+## Session 354: UI 精致化实施：status-error 断链修复 + 主题逃逸清零 + 暗色假设清理 + 新护栏
+<!-- trellis-session: v=2 fp=eaab3f64fc862337 -->
+
+**Date**: 2026-10-27
+**Task**: UI 精致化实施：status-error 断链修复 + 主题逃逸清零 + 暗色假设清理 + 新护栏
+**Branch**: `main`
+
+### Summary
+
+只改样式层（DOM/几何/字级零改动，已机器验证）：修掉 4 处错误提示无颜色的真 bug、9 处主题逃逸清零、40 处暗色假设清理、32 处 text-white→text-on-accent、8 文件补 focus-visible、Settings 选中态改 surface；新增 check_ui_style_tokens 护栏（4 判据 13 单测）；check:quick 全绿
+
+### Main Changes
+
+- theme.css 5 主题块补 --status-error alias + tailwind 映射（构建产物已验证 text-status-error 类现在生成）
+- 新增 --border-subtle（color-mix 基于 --text-primary，一次定义 5 主题自适应）+ 字体/密度/z-index 阶梯（只定义不套用）
+- 9 处硬编码 hex → 主题已有 token（MERGED→accent-brick、增删行数→diff-*-text、danger→accent-red）
+- 40 处暗色假设 → border-border-subtle / bg-bg-hover；32 处 text-white → text-text-on-accent
+- 8 个文件补 focus-visible:ring-2；3 处 focus:ring-2 → focus-visible:ring-2；Settings nav 选中态 → bg-bg-selected
+- 新增 tools/guards/checks/check_ui_style_tokens.py + 13 个单测（含 2 变异验证 + 2 反证）
+- 新增 .trellis/spec/frontend/design-tokens.md（token 分层、三个必知的坑、禁止写法）
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] pnpm check:quick 全绿：31 护栏 0 违规 + eslint/tsc/clippy + 126 test files / 1114 tests；护栏自身 673 用例全绿
+- [OK] AC0 机器验证：新增布局类 0 处、JSX 标签集合未变（第一版脚本因未做集合差报 126 处假阳性）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 用户需跑起来目视验证（尤其 Light/Claude 主题 —— 暗色假设的差别只在亮色下可见）
+- 6 个原语与全部 chrome 几何调整仍卡在「不许动布局」约束上，待用户决定是否另开任务

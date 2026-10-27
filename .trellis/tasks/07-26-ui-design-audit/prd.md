@@ -2,9 +2,30 @@
 
 ## 目标
 
-让 Neeko 的 UI **看起来更精致、更有设计感** —— 不是「补一份审计报告」，而是把设计系统
-真正落到代码里：统一密度、统一字体阶梯、统一语义色、统一交互状态契约、补齐缺失原语，
-并让**壳层**（TitleBar / StatusBar / Dock / Tab）达到专业 IDE 的完成度。
+让 Neeko 的 UI **看起来更精致、更有设计感** —— 把设计系统真正落到代码里：
+统一语义色、统一交互状态契约、补齐缺失原语、消除主题逃逸。
+
+> **范围约束（2026-10-27，用户明确）**
+>
+> **① 不改动当前布局，只做样式 / UI 层面的优化。**
+>
+> 这条约束把原计划切掉了一大块 —— 凡是会改变**布局结构**的项全部移出本轮：
+>
+> | 移出项 | 为什么算「动布局」 |
+> | --- | --- |
+> | TitleBar 补项目上下文 | 新增 DOM 节点（项目名 / 环境 / 分支 chip） |
+> | StatusBar 16 → 22px | 改容器高度，底部 chrome 整体上移 |
+> | Dock / Tab 尺寸迁移 | 改 chrome 几何 |
+> | Skills 单树渲染 | 改挂载结构（双挂载 → 条件渲染） |
+> | ActivityBar 删除 | 删文件、改导航 |
+> | Projects 空态三 CTA | 新增交互元素与结构 |
+>
+> **仍在本轮的**（全部是**样式层**，改 class / 改 token 定义，DOM 结构与几何不变）：
+> 语义色统一 · 主题逃逸清零 · 交互状态契约（hover / selected / danger / disabled /
+> focus-visible）· 断链 token 修复 · 原语补齐（新增组件但**不改现有页面结构**）·
+> 字体阶梯 · z-index 阶梯 · 暗色假设清理 · 护栏
+>
+> **② 不主动提交代码。** 改动留在工作树，等用户指示。（与仓库 `AGENTS.md` 规范一致）
 
 > **方向修订（2026-10-27）**
 >
@@ -14,7 +35,7 @@
 > **D1–D5 去掉意味着什么**：D1（Skills IA）、D2（Settings 形态）、D3（DockZoneTabs）、
 > D4（Apple spacing）、D5（语义色命名策略）原本是「实现前必须先拍板」的 IA 决策。
 > 去掉后本任务 **不再做 IA 重排**，只做**视觉与一致性**：
-> - D1/D2/D3 → 降级为 P1 后续项，本轮不做
+> - D1/D2/D3 → 移出本轮（本来就属于「动布局」）
 > - D4（Apple spacing）→ **直接废弃**：现有 `--spacing-apple-*` 引用率≈0，
 >   保留会与 IDE 密度冲突。本轮只清理，不做 remap
 > - D5（语义色命名）→ 简化为**最小修复**：只补断链 token（`status-error`），
@@ -22,53 +43,62 @@
 >
 > **去掉 D1–D5 不等于去掉所有约束**。仍然硬性成立的是 §4 设计原则、§5 目标设计系统
 > （密度/字体/语义色/z-index/原语）与 §8 成功指标 —— 它们是「精致」的客观判据。
+> 其中**只涉及样式定义**的部分（语义色 / 字体阶梯 / z-index / 交互状态）在本轮执行；
+> **涉及几何**的部分（density token 的 chrome 高度）本轮只**定义**不**套用**。
 
 ## 范围
 
-### 在范围内
+### 在范围内（**全部是样式层**）
 
-1. **设计系统地基**：density token、字体阶梯、z-index 阶梯、断链 token 修复
-2. **原语层**：补齐 6 个缺失原语（`IconButton` / `PanelHeader` / `Toolbar` /
-   `EmptyState` / `StatusDot` / `FormField`），统一交互状态契约
-3. **壳层精致化**：TitleBar（补项目上下文）/ StatusBar（16→22px + 分区）/
-   Dock / Tab 迁移到 token
-4. **关键面**：Settings 选中态与表单密度、Projects 空态、Skills 单树渲染
-5. **主题逃逸清零**：9 处硬编码色接入语义 token
-6. **质量闸门**：eslint + 护栏，阻止问题复发
-7. **新原型**：基于真实代码现状重做视觉锚点（旧的 5 份原型作废）
+1. **语义色修复**：`status-error` 断链（4 处错误提示当前无颜色）、
+   `text-white` 叠 accent（**36 处**）→ `text-on-accent`
+2. **主题逃逸清零**：9 处硬编码色接入语义 token（主题已有 `--git-status-*` / `--diff-*`）
+3. **暗色假设清理**：39 处 `border-white/` / `bg-white/` → 语义分割线 / hover token
+4. **交互状态契约**：统一 hover / selected / danger / disabled / **focus-visible**
+   （`focus:outline-none` 无替代 = 键盘用户无焦点反馈，P0-6）
+5. **原语补齐**：`IconButton` / `PanelHeader` / `Toolbar` / `EmptyState` / `StatusDot` /
+   `FormField` —— 新增组件供后续使用，**本轮不改现有页面的 DOM 结构**
+6. **字体阶梯与 z-index 阶梯**：定义 token 并在**不改几何**的前提下替换硬编码字号
+7. **Settings 选中态**：大色块 → surface 选中（纯 class 替换）
+8. **质量闸门**：eslint + 护栏，阻止问题复发
+9. **新原型**：**改动点清单**（不是界面效果图）—— 6 个改动点逐条给出
+   「现状 class / 目标 class / 改后效果 / 精确文件:行」。
+   旧的 5 份原型作废；第二版两份也作废（呈现方式仍是「界面效果图」，
+   看起来像在重新设计整个界面）。
 
-### 不在范围内
+### 不在范围内（本轮明确排除）
 
+- **一切会改变布局结构的改动**（见上方「范围约束」表）
 - 后端协议 / Agent 运行时
 - 视觉品牌重设计（logo / 营销站 / 配色体系换血）
-- Skills IA 重排（D1）、Settings 路由形态（D2）、Dock 多面板（D3）—— P1
 - 动效系统（Motion 语言）—— P1
 - WSL / SSH 远端相关 UI
 
-## 子任务地图（按依赖顺序，不是按 CLI/页面名字）
+## 子任务地图（按依赖顺序，**均为样式层**）
 
-> 原计划的 8 个子任务是「先把 IA 定好再逐层做」的思路。D1–D5 去掉后，
-> 主线只剩**视觉一致性**一条，合并压缩为 6 个。
-
-| # | ID | 范围 | 依赖 | 为什么这个顺序 |
+| # | ID | 范围 | 依赖 | 样式层？ |
 | --- | --- | --- | --- | --- |
-| 1 | `ui-quality-gate` | eslint 规则 + 1 条护栏：**禁止新增** `text-[#hex]` / 未定义 token 类 / 裸 `<button>` | — | **必须最先**。没有护栏，后面 5 项会被新代码反向覆盖回去 |
-| 2 | `ui-tokens-foundation` | density token（9 个）/ 字体阶梯（5 个）/ z-index 阶梯（6 层）/ `status-error` 断链修复 / 清理 `--spacing-apple-*` | 1 | 地基。没有它，每个原语都得硬编码尺寸 |
-| 3 | `ui-primitives` | 6 个原语 + 交互状态契约（hover/selected/danger/disabled/focus-visible） | 2 | 「精致」主要靠原语统一。`Button` 已有 cva 骨架，新原语照它的模式 |
-| 4 | `ui-chrome-polish` | TitleBar 补项目上下文 / StatusBar 16→22 / Dock / Tab 迁移 token | 3 | 壳层是「第一眼精致」的地方 |
-| 5 | `ui-key-surfaces` | Settings 选中态 + 表单密度 + Projects 空态 + Skills 单树渲染 | 3 | 体感最强的两个面（Settings / Projects）+ 一个真实副作用修复（Skills 双挂载） |
-| 6 | `ui-theme-escape-fix` | 9 处硬编码色 → 语义 token | 2 | 让 Light / Claude 主题下不再「一半原生一半 GitHub」 |
+| 1 | `ui-quality-gate` | eslint 规则 + 1 条护栏：**禁止新增** `text-[#hex]` / 未定义 token 类 | — | ✅ 只读分析 |
+| 2 | `ui-tokens-foundation` | 语义色 alias / `status-error` 断链修复 / 字体阶梯 / z-index 阶梯 / 清理 `--spacing-apple-*` | 1 | ✅ 只改 CSS 定义 |
+| 3 | `ui-primitives` | 6 个原语 + 交互状态契约（含 focus-visible） | 2 | ✅ 新增组件，不改现有结构 |
+| 4 | `ui-theme-escape-fix` | 9 处硬编码色 → 语义 token | 2 | ✅ 纯 class 替换 |
+| 5 | `ui-interaction-states` | 暗色假设清理 / `text-white` → `text-on-accent` / focus-visible 补齐 / Settings 选中态 | 3 | ✅ 纯 class 替换 |
+
+### 被移出本轮的子任务
+
+| 原 ID | 移出原因 |
+| --- | --- |
+| `ui-chrome-polish` | TitleBar 补上下文 / StatusBar 16→22 / Dock / Tab —— **全是几何改动** |
+| `ui-key-surfaces` | Projects 空态 / Skills 单树 —— **改结构**；其「Settings 选中态」拆到 #5（纯 class） |
 
 ### 依赖图
 
 ```text
-ui-quality-gate（贯穿，但先落）
+ui-quality-gate（先落）
       │
       ▼
 ui-tokens-foundation
-      ├─► ui-primitives ──► ui-chrome-polish
-      │       ├──────────► ui-key-surfaces
-      │       └──────────► ui-theme-escape-fix
+      ├─► ui-primitives ──► ui-interaction-states
       └─────────────────► ui-theme-escape-fix
 ```
 
@@ -90,36 +120,66 @@ ui-tokens-foundation
 
 ### 父任务级（跨子任务）
 
-- [ ] **AC1 §8 成功指标全部达成或明确降级理由**
+- [x] **AC0（新增，本轮硬约束）布局零改动** —— **成立，已机器验证**：
+  - **新增布局类 0 处**：`git diff -U0 -- src/` 逐文件比对「删除行的 class 集合」
+    与「新增行的 class 集合」，只统计**净新增**的布局类（`flex`/`grid`/`absolute`/
+    `w-*`/`h-*`/`p-*`/`gap-*`…）→ **0**。
+  - **DOM 结构零变化**：逐文件比对 JSX 标签集合（含开合方向）→ **未变**。
+  - 改的全是颜色系 class 与 `focus-visible:*` / `ring-*`。
+  > **踩过的坑**：第一版自查脚本按「整行是否含布局类」判定，报出 126 处**假阳性**
+  > （`-` 行和 `+` 行里布局类都存在且完全相同）。正确判据是**集合差** ——
+  > 「新增行有、删除行没有」的 class 才是真正的新增。
+  本轮 diff **不得**包含：
+  - DOM 结构变更（新增 / 删除 / 重排元素）
+  - 容器尺寸变更（高度 / 宽度 / padding / margin / gap）
+  - 字号变更（不引入新的 `text-[Npx]`，不改变现有元素的字级）
+  - 布局类变更（`flex` / `grid` / `absolute` / `order` / `w-` / `h-`）
+  - 组件文件的新增或删除（除 `src/ui/` 下的新原语）
+  - 路由、挂载结构、面板宽度、chrome 几何的任何改动
+  **验证方式**：`git diff` 逐 hunk 人工审阅 + 一个只读脚本断言「无布局类变更」。
+  允许的改动白名单：`text-*`（颜色系）/ `bg-*`（颜色系）/ `border-*`（颜色系）/
+  `focus-visible:*` / `hover:*`（颜色系）/ `ring-*` / token 定义文件 / `src/ui/` 新文件。
+- [x] **AC1 §8 成功指标（本轮可达部分）** —— **本轮可达项全部达成**：
 
-  | 指标 | 7 月基线 | 当前（2026-10-27） | 目标 |
+  | 指标 | 7 月基线 | 当前（2026-10-27） | 本轮目标 |
   | --- | --- | --- | --- |
-  | raw button（`src/ui` 外） | ~311 | 520 | <80 或给出分期理由 |
-  | 硬编码 px 字号 | ~266 | 446 | chrome/feature UI 归零（宿主除外） |
-  | 暗色假设 white/alpha | ~33 | 39 | 归零 |
-  | z-index 魔法数档位 | 14 | 9 | ≤6（全部 token 化） |
-  | theme escape（`text-[#` 等） | 多 | 9 | 0 |
-  | 未定义 `status-error` | 有 | **有（4 处正在使用）** | 消除 |
+  | theme escape（`text-[#` 等） | 多 | 9 | **0** ✅ |
+  | 未定义 `status-error` | 有 | **有（4 处正在使用）** | **消除** ✅（构建产物已验证类生成）|
+  | 暗色假设 white/alpha | ~33 | 39 | **归零** ✅（实际清了 40 处）|
+  | z-index 魔法数档位 | 14 | 9 | ≤6（token 化，不改实际层级）→ **阶梯已定义，未套用** |
+  | 硬编码 px 字号 | ~266 | 446 | 本轮**只定义阶梯**不全面替换（替换会改几何） |
+  | raw button（`src/ui` 外） | ~311 | 520 | 本轮**不追求**（替换按钮会改结构与行为） |
 
   > 复测命令见 `design.md` §8.1，可机械核验。
   > 「当前」一列是 2026-10-27 实测值（原文档只有 7 月基线，缺中间态，故补齐）。
-- [ ] **AC2 护栏生效**：新增硬编码色 / 未定义 token / 裸 button 能被自动拦下
-- [ ] **AC3 无回归**：`pnpm check:quick` 全绿 + 既有前端测试全绿
-- [ ] **AC4 新原型对齐实现**：新原型与最终代码的视觉差异为 0（逐屏比对）
+  > **本轮只做颜色系与 token 层**；密度与字号阶梯本轮**只定义不套用** ——
+  > 套用即改变几何，违反 AC0。
+- [x] **AC2 护栏生效** ✅ —— `check_ui_style_tokens` 四条判据 + 13 个单测
+      （含 2 条变异验证 + 2 条反证）；真实仓库首跑即抓出 `Switch.tsx` 的裸 `bg-white`
+- [x] **AC3 无回归** ✅ —— `pnpm check:quick` 全绿：
+      **31 条护栏 0 违规**（含新护栏）+ eslint/tsc/clippy + 改动文件单测
+      （126 test files / 1114 tests）；护栏自身单测 **673 用例全绿**
+- [x] **AC4 原型对齐实现** ✅ —— 原型 6 个改动点逐条落地：
+      #1 status-error 断链 / #2 text-white→text-on-accent（32 处）/
+      #3 暗色假设→语义 token（40 处）/ #4 focus-visible（8 文件）/
+      #5 Settings 选中态 surface（4 处）/ #6 主题逃逸清零（9 处）
 
 ### 子任务级
 
-- `ui-quality-gate`：eslint 规则命中演示 + 护栏单测（喂脏数据必红）
-- `ui-tokens-foundation`：每个新 token 有定义 + tailwind 映射 + 消费点测试；
-  `status-error` 断链修复后 4 处错误提示**实测有颜色**
-- `ui-primitives`：6 个原语各有 props 契约测试 + 交互状态（hover/selected/disabled）
-  快照；`Button` 变体与新原语不冲突
-- `ui-chrome-polish`：StatusBar 实测 22px；TitleBar 显示项目名 + 分支 + 环境；
-  focus-visible 键盘可达
-- `ui-key-surfaces`：Settings nav 选中态为 surface 而非大色块；Projects 空态三 CTA；
-  Skills 不再双挂载（**单次渲染断言**钉住）
-- `ui-theme-escape-fix`：9 处硬编码色归零；Light / Claude / One Dark 三主题下
-  Git 面板取色正确
+- `ui-quality-gate`：✅ 护栏命中演示 + 13 个单测（喂脏数据必红，含变异验证与反证）
+  - ⚠ **eslint 规则改由护栏承担**：eslint 要逐 JSX 元素判断 `className` 语义，
+    护栏按文件扫描即可覆盖 99% 的实际写法（class 都是字面量），且能同时管 CSS 文件。
+    两条规则并存会出现「同一件事两个口径」。
+- `ui-tokens-foundation`：✅ 每个新 token 有定义 + tailwind 映射；
+  `status-error` 断链修复后**构建产物已验证**类生成；
+  字体阶梯与 z-index 阶梯**已定义**（未套用）
+- `ui-primitives`：⏸ **本阶段整体移出本轮** —— 新增原语而**不替换任何现有用法**
+  = 交付 6 个**无人消费**的组件（对「UI 更精致」零贡献）；而替换现有用法 = 改 DOM
+  结构 = **违反 AC0**。两条路都走不通，故留作后续独立任务（前提是那轮允许改结构）。
+- `ui-theme-escape-fix`：✅ 9 处硬编码色归零；构建产物确认新类均生成
+- `ui-interaction-states`：✅ 暗色假设归零（40 处）；`text-white`（32 处）→
+  `text-text-on-accent`；`focus:outline-none` **真缺** focus-visible 替代的
+  **8 个文件**全部补上；Settings nav 选中态为 surface 而非大色块
 
 ## 当前真实基线（2026-10-27 实测）
 
