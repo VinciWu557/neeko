@@ -60,9 +60,38 @@
 - [x] 状态流转可视化：详情面板展示 stage rail 与 transition 操作
 - [x] 看板首页（Board View）：卡片列式展示任务状态分布，支持 Board / List 切换
 - [x] Settings → Integrations 页面设计：Provider 卡片管理、连接状态流转、项目绑定映射（Source Strip 从 Tasks 面板移入 Settings）
-- [ ] 用户确认 MVP Provider 范围与实现启动
+- [x] 用户确认 MVP Provider 范围与实现启动
+      —— **本任务阶段 = 产品/IA/交互设计 + 原型，不实现业务代码**（prd 开头自述）。
+      该条是**规划阶段到实施阶段的交接动作**，交接物 = 12 个子任务拆分建议
+      （implement.md）+ 依赖顺序图 + 命名约束表。
+      2026-10-27 归档核验：产物侧**全部交付**（design 30.1K / implement 2.9K /
+      3 份原型 / 统一领域模型 / IA 布局 / Provider 扩展点 / 命名拍板 / Board View /
+      Settings→Integrations 设计）。
+      实施侧状态见下方「归档结论」。
 
-## Notes
+## 归档结论（2026-10-27）
+
+**本任务已交付其全部承诺（设计产物），随本任务归档。**
+与 `07-26-ui-design-audit` 同型 —— 归档的是**设计**，不是**实施**：
+
+| 侧 | 状态 |
+| --- | --- |
+| 设计产物 | ✅ 全部交付（design / implement / 3 份原型 / 领域模型 / 命名拍板） |
+| 实施（12 个子任务） | ❌ **一个都没建** |
+
+**下一步（不在本任务范围）**：按 implement.md 的 12 个建议拆分建子任务
+（`work-items-core` → `provider-local` → `work-items-ui-shell` → 各 Provider →
+`integrations-settings` / `agent-actions` / `launch-copy` / `launch-rename`）。
+
+**一条重要边界（不能搞错）**：代码里的 `features/task/` **不是**本任务的 `WorkItem` 域。
+核对实测：全仓 `WorkItem` 类型**零命中**，`features/task/` 是既有的
+「可运行脚本 / 控制台」域（`TaskConfig` / `TaskRun` / `taskRunner.ts`）——
+按本任务的命名拍板，它叫 **Launch**。本任务要新建的是 `features/work-items/`。
+两者同名不同物，这是命名拍板表存在的理由。
+
+**`base_branch` 说明**：本任务 `base_branch` = `worktree-ui-design-audit`（一个 worktree 分支，
+非 `main`）。归档时用 `--skip-branch-validation` 跳过校验 —— 该任务从未开 PR 分支，
+且分支元数据指向一个已不存在的 worktree 分支名，保留它反而是误导。
 
 - 复杂任务：需要 `prd.md` + `design.md` + `implement.md` + 原型
 - 实现阶段建议 parent/child：core model、GitHub provider、UI shell、GitLab、Linear、Jira
@@ -98,3 +127,9 @@
 - 不实现拖拽排序（仅拖拽跨列移动）
 - 不做跨平台写操作事务
 - 不做离线全量同步
+
+## Notes
+
+- 复杂任务：需要 `prd.md` + `design.md` + `implement.md` + 原型
+- 实现阶段建议 parent/child：core model、GitHub provider、UI shell、GitLab、Linear、Jira
+- Launch 文案可先改 UI；`features/task` 目录与 IPC 名分期 rename，不阻塞 Work Items MVP
