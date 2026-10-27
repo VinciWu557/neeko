@@ -111,4 +111,112 @@ describe('theme token integrity', () => {
     );
     expect(missing).toEqual([]);
   });
+
+  // ── Switch 轨道：控件对比度是硬判据，不能靠人眼看 ──────────────────────
+
+  it('defines --switch-track in every block that carries the surface palette', () => {
+    // 2026-10-27 用户反馈「特别在 claude、light 主题下面特别明显的不协调」：
+    // 未勾选态的轨道曾复用 --bg-tertiary（表面层级色），与海面对比只有
+    // 1.08（light）/ 1.11（claude）—— 轨道消失，只剩一颗深色圆球漂着。
+    const surfaceBlocks = [...themes.entries()].filter(([, vars]) => vars.has('--bg-tertiary'));
+    expect(surfaceBlocks.length).toBeGreaterThanOrEqual(5);
+
+    const missing = surfaceBlocks
+      .filter(([, vars]) => !vars.has('--switch-track'))
+      .map(([selector]) => `${selector} 缺少 --switch-track`);
+    expect(missing).toEqual([]);
+  });
+
+  it('keeps every --switch-track distinguishable from its own --bg-primary', () => {
+    // 判据不是「值存在」而是「真的成形」：轨道 vs 海面 ≥1.5。
+    // 这条会随着主题调色而自动把关 —— 改任何一个主题的底色都要重算轨道色。
+    const surfaceBlocks = [...themes.entries()].filter(
+      ([, vars]) => vars.has('--bg-tertiary') && vars.has('--switch-track'),
+    );
+
+    const failures: string[] = [];
+    for (const [selector] of surfaceBlocks) {
+      const bg = readColor(css, selector, '--bg-primary');
+      const track = readColor(css, selector, '--switch-track');
+      if (!bg || !track) {
+        failures.push(`${selector} 颜色无法解析`);
+        continue;
+      }
+      const ratio = contrastRatio(bg, track);
+      if (ratio < 1.5) {
+        failures.push(`${selector} 轨道对比 ${ratio.toFixed(2)} < 1.5（轨道会消失）`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('mirrors --switch-track into the Tailwind bridge', () => {
+    const tailwindCss = readFileSync(resolve(__dirname, '../tailwind.css'), 'utf8');
+    expect(tailwindCss).toContain('--color-switch-track:');
+  });
 });
+
+// ── 颜色对比度工具（仅支持本仓用到的 #rrggbb 与 oklch(L C H)）─────────────
+
+type Rgb = [number, number, number];
+
+/** 从指定主题块里读出某个 token 的原始值（只在该块体内搜索，避免跨块串味） */
+function readColor(cssText: string, selector: string, token: string): Rgb | null {
+  const blockRe = /(^:root[^{]*)\{([^}]*)\}/gm;
+  for (const match of cssText.matchAll(blockRe)) {
+    const sel = (match[1] ?? '').replace(/\s+/g, ' ').trim();
+    if (sel !== selector) continue;
+    const valueRe = new RegExp(`${token}\\s*:\\s*([^;]+);`);
+    const value = (match[2] ?? '').match(valueRe)?.[1]?.trim();
+    return value ? parseColor(value) : null;
+  }
+  return null;
+}
+
+function parseColor(value: string): Rgb | null {
+  const hex = value.match(/^#([0-9a-fA-F]{6})$/);
+  if (hex) {
+    const h = hex[1] as string;
+    return [
+      parseInt(h.slice(0, 2), 16) / 255,
+      parseInt(h.slice(2, 4), 16) / 255,
+      parseInt(h.slice(4, 6), 16) / 255,
+    ];
+  }
+  const ok = value.match(/^oklch\(([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/[^)]*)?\)$/);
+  if (ok) return oklchToRgb(Number(ok[1]), Number(ok[2]), Number(ok[3]));
+  return null;
+}
+
+function oklchToRgb(L: number, C: number, H: number): Rgb {
+  const h = (H * Math.PI) / 180;
+  const a = C * Math.cos(h);
+  const b = C * Math.sin(h);
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ ** 3;
+  const m = m_ ** 3;
+  const s = s_ ** 3;
+  const lin = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  const enc = (c: number) => {
+    const clamped = Math.max(0, Math.min(1, c));
+    return clamped <= 0.0031308 ? 12.92 * clamped : 1.055 * clamped ** (1 / 2.4) - 0.055;
+  };
+  return lin.map(enc) as Rgb;
+}
+
+function relativeLuminance([r, g, b]: Rgb): number {
+  const f = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function contrastRatio(a: Rgb, b: Rgb): number {
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}

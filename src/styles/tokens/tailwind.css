@@ -26,10 +26,20 @@
   --color-status-idle: var(--status-idle);
   --color-status-running: var(--status-running);
   --color-status-failed: var(--status-failed);
+  /* status-error 是 status-failed 的别名（主题层已定义）。
+   * 没有这条映射时 Tailwind 根本不生成 `text-status-error` 类 ——
+   * 而业务层有 4 处在用它（LspPanel / LspCustomServersSection ×2 / HtmlPreview），
+   * 结果是那些错误提示**没有颜色**。 */
+  --color-status-error: var(--status-error);
   --color-diff-added: var(--diff-added);
   --color-diff-removed: var(--diff-removed);
   --color-diff-added-text: var(--diff-added-text);
   --color-diff-removed-text: var(--diff-removed-text);
+  --color-text-on-accent: var(--text-on-accent);
+  /* Switch 轨道底色：控件专属，不随 surface 层级走。
+   * 复用 `bg-tertiary` 时与海面对比只有 1.08（light）/ 1.11（claude），
+   * 轨道几乎不可见 —— 见 theme.css 的取值说明。 */
+  --color-switch-track: var(--switch-track);
   --font-size-ui: var(--font-size);
   --font-size-terminal: var(--terminal-font-size);
   --spacing-sidebar: var(--sidebar-width);
@@ -64,4 +74,30 @@
 @theme inline {
   --font-sans: var(--font-ui);
   --font-mono: var(--font-code);
+
+  /* 字体阶梯（绑定 --font-size，用户改字号时联动）。业务层禁止再写 text-[Npx]。
+   * 放在 @theme inline 而非 @theme：后者会对同名键形成自引用
+   * （`--text-micro: var(--text-micro)` → 解析到自身 → 无效）。 */
+  --text-micro: var(--text-micro);
+  --text-meta: var(--text-meta);
+  --text-ui: var(--text-ui);
+  --text-ui-md: var(--text-ui-md);
+  --text-ui-lg: var(--text-ui-lg);
+  --text-section: var(--text-section);
+}
+
+/* 弱分割线：**必须用 @utility 而非 @theme**。
+ *
+ * 实测（2026-10-27）：写成 `--color-border-subtle: var(--border-subtle)` 时，
+ * Tailwind 的 @theme 会在**编译期**求值这个变量 —— 遇到 color-mix 里的 var()
+ * 就无法求值，于是**退化成第一个分量**，产物里实际是
+ * `--border-subtle: var(--text-primary)`（强度与颜色全丢）。
+ *
+ * 注：后来 --border-subtle 本身也改成了显式 rgba（不再用 color-mix，
+ * 因为 lightningcss 会为 color-mix 生成 @supports 降级、回退值取第一个分量）。
+ * 但 @utility 仍然是正确写法 —— 它让这个变量的解析时机由 CSS 运行时决定，
+ * 不受任何编译期优化影响。
+ */
+@utility border-border-subtle {
+  border-color: var(--border-subtle);
 }
