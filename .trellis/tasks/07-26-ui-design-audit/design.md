@@ -450,20 +450,33 @@ rg -n 'status-error|accent-orange|bg-surface' src --glob '!**/*test*'
 
 ---
 
-## 10. 建议后续实现子任务
+## 10. 实现子任务（2026-10-27 重排）
 
-### 10.1 子任务清单
+> 原 8 个子任务是「先把 IA 定好再逐层做」的思路。D1–D5 去掉后主线只剩视觉一致性，
+> 合并压缩为 6 个，**并把护栏提到最前**（理由见 `prd.md`「为什么护栏必须第一个做」）。
 
-| ID | 范围 | 依赖 | v1? |
-| --- | --- | --- | --- |
-| `ui-tokens-density` | density/type/z-index tokens；`status-error` alias；语义色 alias；修 `accent-foreground`；补/删 `accent-orange` `bg-surface` | — | **Yes** |
-| `ui-primitives-chrome` | IconButton / PanelHeader / Toolbar / EmptyState / StatusDot / FormField；迁移 Dock/TitleBar/StatusBar | tokens | **Yes** |
-| `ui-theme-escape-fix` | GitCredential / SessionChips / ChangesList / PR / WSL / Remote 去硬编码 | tokens（原语优先） | **Yes** |
-| `ui-empty-loading` | Projects 等空态 + 统一骨架 | primitives | **Yes**（至少 Projects） |
-| `ui-settings-ia` | Settings 选中态/密度/表单收敛；搜索保持 label-only | tokens + primitives | **Yes**（视觉）；全文搜索 P1 |
-| `ui-skills-ia` | 取消双挂载；master-detail | 产品决策已定；可与 chrome 并行后段 | **Yes** |
-| `ui-nav-cleanup` | 冻结/删除 ActivityBar 等；DockZoneTabs 不挂载写进约定 | chrome 后 | **Yes**（小） |
-| `ui-quality-gate` | lint 脚本、a11y/主题抽检清单 | 贯穿全程 | **Yes**（雏形随 tokens） |
+| # | ID | 范围 | 依赖 | v1? |
+| --- | --- | --- | --- | --- |
+| 1 | `ui-quality-gate` | eslint 规则 + 1 条护栏：禁止新增 `text-[#hex]` / 未定义 token 类 / 裸 `<button>` | — | **Yes**（最先） |
+| 2 | `ui-tokens-foundation` | density token（§5.1 九项）/ 字体阶梯（§5.2 五项）/ z-index 阶梯（§5.4 六层）/ `status-error` 断链修复 / 清理 `--spacing-apple-*` | 1 | **Yes** |
+| 3 | `ui-primitives` | `IconButton` / `PanelHeader` / `Toolbar` / `EmptyState` / `StatusDot` / `FormField`（§5.5）+ §5.6 交互状态契约 | 2 | **Yes** |
+| 4 | `ui-chrome-polish` | TitleBar 补项目上下文 / StatusBar 16→22 / Dock / Tab 迁移 token | 3 | **Yes** |
+| 5 | `ui-key-surfaces` | Settings 选中态 + 表单密度 + Projects 空态 + Skills 单树渲染 | 3 | **Yes** |
+| 6 | `ui-theme-escape-fix` | 9 处硬编码色 → 语义 token | 2 | **Yes** |
+
+### 10.1a 子任务清单（2026-10-27 实际落点）
+
+| ID | 落点文件（真实路径） |
+| --- | --- |
+| `ui-quality-gate` | `tools/guards/checks/check_ui_style_tokens.py`（新增）· `eslint.config.js`（新增规则） |
+| `ui-tokens-foundation` | `src/styles/tokens/theme.css` · `src/styles/tokens/tailwind.css` |
+| `ui-primitives` | `src/ui/IconButton.tsx` · `PanelHeader.tsx` · `Toolbar.tsx` · `EmptyState.tsx` · `StatusDot.tsx` · `FormField.tsx` · `src/ui/index.ts` |
+| `ui-chrome-polish` | `src/layout/TitleBar.tsx` · `src/features/status-bar/StatusBar.tsx` · `src/app/components/DockBarButton.tsx` · `src/layout/dock-layout/DockBar.tsx` |
+| `ui-key-surfaces` | `src/features/settings/components/SettingsSidebar.tsx` · `SettingsPanel.tsx` · `src/features/project/components/*` |
+| `ui-theme-escape-fix` | `src/shared/components/SessionChips.tsx` · `ContextMenu.tsx` · `src/features/git/utils/prDisplay.ts` · `src/features/git/components/ChangesSection.tsx` · `src/features/git/components/pr-detail/{PRDetailView,PRDetailSkeleton}.tsx` · `src/features/editor/components/TabOverflowMenu.tsx` |
+
+> 原 §15 落点表列的 `src/styles/theme.css` / `index.css` / `shadcn-theme.css` 已迁移到
+> `src/styles/tokens/`（见 `implement.md` 头部的 CSS 架构优化记录）。
 
 ### 10.2 阶段映射（A–F ↔ 子任务）
 
@@ -481,80 +494,85 @@ F 质量闸门    → ui-quality-gate（收口）
 ### 10.3 依赖图
 
 ```text
-ui-tokens-density
-  ├─► ui-primitives-chrome
-  │     ├─► ui-empty-loading
-  │     ├─► ui-settings-ia
-  │     └─► ui-nav-cleanup
-  ├─► ui-theme-escape-fix
-  └─► ui-skills-ia（不依赖 chrome 完成，但共享 token）
-
-ui-quality-gate ──贯穿以上全部──
+ui-quality-gate（先落，贯穿全部）
+      │
+      ▼
+ui-tokens-foundation
+      ├─► ui-primitives
+      │      ├─► ui-chrome-polish
+      │      ├─► ui-key-surfaces
+      │      └─► ui-theme-escape-fix
+      └──────────────────────────► ui-theme-escape-fix
 ```
+
+**与原图的差异**：原图把 `ui-quality-gate` 标为「贯穿全程」的并行项，
+但**执行上必须最先落**。理由：三个月前审计结论 0 落地，根因就是没有护栏 ——
+`tools/guards/checks/` 30 条护栏无一条管 UI 样式，eslint 也无相关规则；
+三个月间代码量 +68%（235→396 个 tsx）而硬编码色字面量从 33 涨到 39、raw button
+从 311 涨到 520，**比率持平 = 每个新 PR 都在复制旧问题**。
 
 ### 10.4 v1 cut line
 
-**v1 必做：** A–D + Projects EmptyState + Skills 去双挂载 + nav cleanup + quality 雏形。  
-**v1 可延后：** Settings 全文搜索、全局面板骨架铺齐、Conversation 全量 type scale、Motion 语言、Badge 产品化。
+**v1 必做（= 全部 6 个子任务）**：护栏 → token 地基 → 6 原语 → 壳层 → 关键面 → 主题逃逸。
+
+**v1 可延后（P1）**：Settings 全文搜索、全局面板骨架铺齐、Conversation 全量 type scale、
+Motion 语言、Badge 产品化、Skills IA 重排（D1）、Settings 路由形态（D2）、
+Dock 多面板（D3）、语义色全量 rename。
+
+**注意**：原 v1 里的「nav cleanup」已不作为独立子任务 ——
+`ActivityBar` 实测主路径已无人使用（只剩 `LibraryActivityBar` 是 library 域自己的东西），
+直接删除即可，不需要「冻结」这么重的处置。`DockZoneTabs` 至今不存在，无需处置。
 
 实现前每个子任务再写独立 prd/design；本文件是父任务权威方案。
 
 ---
 
-## 11. Decision Log（默认推荐，实现前可推翻）
+## 11. Decision Log
 
-> 状态：`proposed-default`。用户若反对某条，改 status 为 `overridden` 并写新选择即可。  
-> 日期：2026-07-26
+> **2026-10-27：全部作废（D1–D5 去掉）。**
+>
+> 原 Decision Log 的作用是「实现前必须先拍板的 IA 决策」。用户明确去掉这五道门，
+> 本任务不再做 IA 重排，改为专注**视觉与一致性**。
+>
+> | ID | 原决策 | 现状 |
+> | --- | --- | --- |
+> | D1 | Skills master-detail | ❌ 作废 → 双挂载修复降为 P1（属性能/焦点副作用，不属「精致」） |
+> | D2 | Settings 保持中心岛整页 | ❌ 作废 → 选中态视觉仍要改（D2 是**路由形态**，不是**视觉**） |
+> | D3 | DockZoneTabs 保留不挂载 | ❌ 作废 → 组件至今不存在，无需处置；ActivityBar 实测已无人使用，直接删 |
+> | D4 | 废弃 Apple spacing 叙事 | ✅ **保留并直接执行** —— 现有 `--spacing-apple-*` 引用率≈0，与 IDE 密度冲突，本轮清理 |
+> | D5 | 语义色双写渐进 rename | 🔻 **简化为最小修复** —— 只补断链 token（`status-error`），不做全量 rename |
 
-### D1 · Skills 信息架构
+**仍然硬性成立的约束**（不是 Decision，是「精致」的客观判据）：
 
-- **决策（推荐）：** master-detail — 左 dock `skills` 列表保留；中心区仅在选中 skill 时显示详情；**禁止** workspace + SkillContent 同时 mount 后靠 `hidden` 切换。
-- **理由：** 保留“从项目上下文进 skill”的路径，同时消除双挂载带来的状态/焦点/性能副作用（见 `src/app/App.tsx`）。
-- **备选否决：**
-  - 仅 rail：详情空间不足，复杂 skill 编辑吃亏
-  - 仅中心模式：与 dock 项目工作流割裂
-- **迁移要点：** 单树条件渲染；离开 skill 时恢复 workspace 焦点；不要用 CSS `hidden` 保活整棵编辑器树
-- **Status：** proposed-default
-
-### D2 · Settings 形态
-
-- **决策（推荐）：** v1 继续 **中心岛整页替换**（`appView === 'settings'`）；视觉上 nav 选中改 `bg-bg-selected`，去掉大面积 accent fill；搜索仍过滤 nav label。
-- **P1：** 命令式/全文设置搜索；是否改为中心岛内嵌页（不杀 workspace）另开任务评估。
-- **理由：** 改 IA 成本高且与 `unified-task-hub` Integrations 并行；v1 先统一视觉语言。
-- **Status：** proposed-default
-
-### D3 · DockZoneTabs / zone 多面板
-
-- **决策（推荐）：** v1 **禁止** 同一 zone 多面板可视化切换；`DockZoneTabs` 保留实现但不挂载；文档与类型层面对 multi-panel zone 标为 unsupported。
-- **理由：** 组件已实现但主路径未接线；半吊子多面板比没有更伤专业感。需要时另开 `dock-multi-panel` 任务。
-- **Status：** proposed-default
-
-### D4 · Apple spacing tokens
-
-- **决策（推荐）：** **废弃业务叙事**；不在 feature 中推广 Apple spacing 名。间距/高度以 §5.1 density token 为唯一权威。现有 `@theme` Apple 变量可暂留以免破坏未知引用，但不写进 frontend 规范正文化。
-- **理由：** 与 compact IDE 密度冲突；组件采用率 ~0。
-- **Status：** proposed-default
-
-### D5 · 语义色命名策略
-
-- **决策（推荐）：** 兼容期 **双写**：新增 `--color-accent/success/warning/danger`，旧 `accent-blue/green/...` 与 `status-*` 作 alias；`--status-error` → `--status-failed`。
-- **理由：** 降低大爆炸 rename 风险，先修正确性再收旧名。
-- **Status：** proposed-default
+- §4 七条设计原则
+- §5 目标设计系统（density / 字体阶梯 / 语义色 / z-index / 8 原语）
+- §5.6 交互状态契约（hover / selected / danger / disabled / focus-visible）
+- §8 成功指标 + §8.1 复测命令
 
 ---
 
 ## 12. 原型索引
 
-| 原型文件 | 覆盖问题 | 对应阶段 / 子任务 | 验收看点 |
-| --- | --- | --- | --- |
-| [`prototype-optimized-shell.html`](./prototype-optimized-shell.html) | TitleBar 上下文、密度、EmptyState、选中态、focus-visible | C / `ui-primitives-chrome` | 壳层一屏：项目上下文 + 22px StatusBar + selected surface |
-| [`prototype-statusbar-compare.html`](./prototype-statusbar-compare.html) | StatusBar 16→22 | C / `ui-primitives-chrome` | 热区可点；与 TitleBar 32 不再头重脚轻 |
-| [`prototype-settings-hifi.html`](./prototype-settings-hifi.html) | Settings 选中态/表单密度 | E / `ui-settings-ia` | nav 非大蓝块；FormField 对齐 |
-| [`prototype-projects-panel.html`](./prototype-projects-panel.html) | Projects 空态与多环境列表 | E / `ui-empty-loading` | EmptyState 三 CTA；环境色点 |
-| [`prototype-git-credential-compare.html`](./prototype-git-credential-compare.html) | Git 凭据主题逃逸 | D / `ui-theme-escape-fix` | Light/Dark/Claude 下 Dialog 跟 token |
-| `docs/prototypes/git-log-panel.html`（主仓库既有，本 worktree 未签出） | Git 列表密度参考 | D/E 参考 | 行高/meta 字号对齐 density |
+> **2026-10-27 重做**：旧 5 份原型（optimized-shell / statusbar-compare / settings-hifi /
+> projects-panel / git-credential-compare）**已作废并删除** ——
+> 它们基于 7 月的纸面设计，与今天的真实代码脱节（StatusBar 实际 16px、
+> 主题实际色值、`ui/` 原语实际清单都不同）。
+> 新原型基于**真实代码**重做：色值取自 `src/styles/tokens/theme.css`，
+> 尺寸取自实际组件，现状问题标注了精确源码位置。
 
-实现 PR 描述应链接对应原型；视觉争议以原型 + Decision Log 为准。
+| 原型文件 | 覆盖问题 | 对应子任务 | 验收看点 |
+| --- | --- | --- | --- |
+| [`prototype-shell-v2.html`](./prototype-shell-v2.html) | 壳层（TitleBar / Dock / StatusBar / PanelHeader / StatusDot / EmptyState） | `ui-primitives` + `ui-chrome-polish` | TitleBar 有项目上下文；StatusBar 22px；Git 状态色走 token；Dock 选中态有指示条 |
+| [`prototype-surfaces-v2.html`](./prototype-surfaces-v2.html) | Settings 选中态 / FormField 错误态 / 主题逃逸 | `ui-key-surfaces` + `ui-tokens-foundation` + `ui-theme-escape-fix` | nav 选中是 surface 不是大色块；错误提示**有颜色**；Git 取色走 token |
+
+**新原型的三条硬约束**（与旧原型的区别）：
+
+1. **色值必须来自 `theme.css`** —— 不允许原型里出现 theme.css 没有的色值，
+   否则原型就成了新的「纸面设计」。
+2. **现状问题必须标注精确源码位置** —— 如 `StatusBar.tsx:14`、
+   `SettingsSidebar.tsx:72`、`PRDetailView.tsx:51`。这样实现 PR 知道自己改哪里。
+3. **密度与字体阶梯用 token 表达** —— 原型里的 `22px` 写成
+   `var(--chrome-statusbar-h)`，实现时才知道该建哪个 token。
 
 ---
 
@@ -574,40 +592,46 @@ ui-quality-gate ──贯穿以上全部──
 
 ## 14. Frontend Spec 大纲（实现时写入 `.trellis/spec/frontend/`）
 
-建议新增或扩写（名称可调）：
+> 当前 `.trellis/spec/frontend/` **没有** token / 原语专项文档（只有 `component-guidelines.md`
+> 里的表单控件约定）。下列两份是本任务的**核心知识产出**。
 
-1. **`design-tokens.md`**
-   - density / type scale / z-index / 语义色 alias 表
-   - 禁止业务 hex、`text-[Npx]`（列宿主例外：xterm、CodeMirror、第三方 diff）
+1. **`design-tokens.md`**（新建）
+   - density token 表（§5.1 九项）
+   - 字体阶梯（§5.2）与「业务层禁止再写 `text-[11px]`」的例外清单（xterm / CodeMirror / 第三方 diff）
+   - z-index 阶梯（§5.4 六层）
+   - 语义色与 alias 规则（`--status-error` → `--status-failed` 的兼容期写法）
    - Light 主题禁止 `*-white/N` 当分割线或 hover 海面
-2. **`ui-primitives.md`**
-   - IconButton / PanelHeader / Toolbar / EmptyState / StatusDot / FormField 的 props 与尺寸
-   - 何时允许 raw `<button>`（极少数性能/虚拟列表 cell 需注释理由）
-3. **`chrome-layout.md`**
-   - TitleBar / DockBar / StatusBar / 面板头高度契约
-   - 导航权威仅 Dock；ActivityBar 等为 legacy frozen
+2. **`ui-primitives.md`**（新建）
+   - 6 个新原语的 props 与尺寸契约
+   - §5.6 交互状态契约（hover / selected / danger / disabled / focus-visible）
+   - 何时允许 raw `<button>`（极少数性能 / 虚拟列表 cell，需注释理由）
+3. **`component-guidelines.md`**（扩写）
+   - 补「表单控件必须复用 `ui/` 原语」之外的**按钮 / 面板头 / 空态**约束
+   - 补「新增业务代码必须用 semantic token，不写 `text-[#hex]`」
 4. **质量钩子**
-   - ESLint 或 `pnpm` script：`text-[#` / 颜色字面量 style / 可选 `status-error` 已定义检查
+   - eslint 规则 + `tools/guards/checks/check_ui_style_tokens.py`
    - PR 自检：Dark + Light 主路径；Tab 焦点走 Dock + 一 Dialog
 
-阶段 A（tokens）合并前应至少落盘 `design-tokens.md` 草案。
+阶段 2（`ui-tokens-foundation`）合并前应至少落盘 `design-tokens.md` 草案。
 
 ---
 
-## 15. 关键文件清单（父任务 related surface）
+## 15. 关键文件清单（**已按 2026-10-27 实际路径更新**）
 
 | 区域 | 路径 |
 | --- | --- |
-| App 壳 / Skills 双挂载 | `src/app/App.tsx` |
-| Dock chrome | `src/layout/dock-layout/*`、`src/app/components/DockBarButton.tsx` |
-| 遗留导航 | `src/layout/ActivityBar.tsx`、`RightPanel.tsx`、`PanelArea`（若仍导出） |
-| Title / Status | `src/layout/TitleBar.tsx`、`src/features/status-bar/StatusBar.tsx` |
-| Tokens | `src/styles/theme.css`、`src/styles/index.css`、`src/styles/shadcn-theme.css` |
-| 主题逃逸 P0 | `src/features/git/components/GitCredentialDialog.tsx`、`ChangesList.tsx`、`PullRequestsPanel.tsx`、`pr-detail/*`、`src/features/project/components/SessionChips.tsx`、`ContextMenu.tsx` |
-| 连接对话框 | WSL/Remote 相关 dialog 组件 |
-| Settings | `src/features/settings/components/SettingsView.tsx`、`SettingsPanel.tsx` |
-| 原语层 | `src/ui/*`、`src/lib/utils.ts`、`src/shared/utils/cn.ts` |
-| 本任务原型 | `.trellis/tasks/07-26-ui-design-audit/prototype-*.html` |
+| App 壳 / Skills 双挂载 | `src/app/App.tsx` · `src/app/shell/AppShell.tsx` |
+| TitleBar | `src/layout/TitleBar.tsx` · `src/app/panels/TitleBarActions.tsx` |
+| StatusBar | `src/features/status-bar/StatusBar.tsx` · `src/features/status-bar/StatusBarCluster.tsx` |
+| Dock chrome | `src/layout/dock-layout/DockBar.tsx` · `src/app/components/DockBarButton.tsx` |
+| 遗留导航 | `src/layout/ActivityBar.tsx` · `RightPanel.tsx` · `PanelArea`（实测主路径已不用） |
+| Tokens | `src/styles/tokens/theme.css` · `src/styles/tokens/tailwind.css` · `src/styles/tokens/shadcn.css` |
+| 原语层 | `src/ui/*`（现 21 个组件，缺 6 个） · `src/lib/utils.ts` · `src/shared/utils/cn.ts` |
+| Settings | `src/features/settings/components/SettingsSidebar.tsx` · `SettingsPanel.tsx` · `constants.ts` |
+| 主题逃逸 9 处 | `src/shared/components/SessionChips.tsx` · `ContextMenu.tsx` · `src/features/git/utils/prDisplay.ts` · `src/features/git/components/ChangesSection.tsx` · `src/features/git/components/pr-detail/PRDetailView.tsx` · `PRDetailSkeleton.tsx` · `src/features/editor/components/TabOverflowMenu.tsx` |
+| 项目空态 | `src/features/project/components/*` · `src/app/components/ProjectView.tsx` |
+| 护栏 | `tools/guards/checks/check_ui_style_tokens.py`（新建） · `eslint.config.js` |
+| 本任务原型 | `.trellis/tasks/07-26-ui-design-audit/prototype-*-v2.html` |
 
 ---
 

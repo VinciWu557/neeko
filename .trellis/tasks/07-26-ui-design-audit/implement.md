@@ -1,6 +1,12 @@
-# 实现路线图 — UI 设计优化（审计后）
+# 实现路线图 — UI 精致化（2026-10-27 方向修订）
 
-> 本任务本身 **不改代码**。本文件是审计后的执行路线图，用户确认优先级后再拆子任务实现。  
+> **方向修订**：本任务从「planning-only 的设计审计」改为 **实施 UI 精致化**。
+> D1–D5 Decision Log 全部作废（见 `design.md` §11），不再做 IA 重排，
+> 只做**视觉与一致性**：统一密度 / 字体 / 语义色 / 交互契约 / 原语 / 壳层。
+>
+> 权威方案见 [`design.md`](./design.md)：
+> 子任务清单 §10.1a、依赖图 §10.3、v1 边界 §10.4、原型索引 §12、
+> 跨任务边界 §13、spec 大纲 §14、复测命令 §8.1。
 
 ## ✅ 已实施：CSS 架构优化（2026-08-07）
 
@@ -14,9 +20,7 @@
 - **测试同步**：`DiffNoWrap.test.tsx` 读取路径 → `components/diff.css`（红→绿验证）。
 - **验证**：`pnpm build` 无 CSS 警告（原 7 条消失）、`pnpm test:run` 1191 通过、`pnpm lint:fe` 全绿。
 
-> 权威方案见 [`design.md`](./design.md)：子任务清单 §10.1、依赖图 §10.3、v1 边界 §10.4、Decision Log §11、原型索引 §12、跨任务边界 §13、spec 大纲 §14、复测命令 §8.1。
-
-## 未来实现阶段校验命令
+## 实施阶段校验命令
 
 ```bash
 npx tsc --noEmit
@@ -25,18 +29,26 @@ pnpm exec eslint src/ui src/layout src/styles --max-warnings 0
 pnpm tauri dev
 ```
 
-## 阶段映射速览（对齐 design §10.2）
+## 实施顺序（对齐 design §10.1a / §10.3）
+
+> **护栏最先**。不是「贯穿全程的并行项」，而是执行上的第一步 ——
+> 三个月前审计结论 0 落地，根因就是没有护栏（30 条护栏无一条管 UI 样式）。
+> 先做清理、新代码继续灌入，就是这三个月发生的事。
 
 ```text
-A 地基     → ui-tokens-density + ui-quality-gate(雏形)
-B 原语     → ui-primitives-chrome（组件新建）
-C Chrome   → ui-primitives-chrome（chrome 迁移）+ ui-nav-cleanup
-D 主题逃逸 → ui-theme-escape-fix
-E 关键面   → ui-empty-loading + ui-settings-ia + ui-skills-ia
-F 质量闸门 → ui-quality-gate（收口）
+1. ui-quality-gate          eslint 规则 + check_ui_style_tokens 护栏（先拦新增）
+      │
+2. ui-tokens-foundation    density / 字体阶梯 / z-index / status-error 断链修复
+      │
+      ├─► 3. ui-primitives        IconButton / PanelHeader / Toolbar / EmptyState / StatusDot / FormField
+      │       ├─► 4. ui-chrome-polish    TitleBar 上下文 / StatusBar 16→22 / Dock / Tab
+      │       ├─► 5. ui-key-surfaces     Settings 选中态 / 表单密度 / Projects 空态 / Skills 单树
+      │       └─► 6. ui-theme-escape-fix 9 处硬编码色 → 语义 token
+      └────────────────────────────────────► 6.
 ```
 
-**v1 cut（design §10.4）：** A–D + Projects EmptyState + Skills 去双挂载 + nav cleanup + quality 雏形。其余 P1。
+**v1 cut（design §10.4）：** 全部 6 个子任务。
+其余（Settings 全文搜索 / Motion 语言 / Skills IA / 语义色全量 rename）P1。
 
 ## 阶段 A — 地基（1–2 天）
 

@@ -2,7 +2,7 @@
   "id": "ui-design-audit",
   "name": "ui-design-audit",
   "title": "UI Design Audit and Optimization Plan",
-  "description": "UI 设计审计与优化方案（planning-only，不改代码）。产出 IA/布局地图、设计系统盘点、P0-P2 问题清单、目标 token/原语体系、分阶段路线图；含 Decision Log（D1-D5 proposed-default）、原型索引（5 份任务内原型）、子任务依赖图与 v1 cut、与 unified-task-hub 的跨任务边界。",
+  "description": "UI 精致化实施：统一密度 token / 字体阶梯 / z-index 阶梯 / 语义色，补齐 6 个缺失原语（IconButton/PanelHeader/Toolbar/EmptyState/StatusDot/FormField），壳层精致化（TitleBar 补项目上下文、StatusBar 16→22px）、关键面（Settings 选中态 / Projects 空态 / Skills 单树）、9 处主题逃逸清零，并以 eslint + 护栏防复发。**2026-10-27 方向修订**：原为 planning-only 设计审计，现改为实际实施；Decision Log D1-D5 全部作废（不做 IA 重排，只做视觉与一致性）。",
   "status": "in_progress",
   "dev_type": null,
   "scope": null,
@@ -12,20 +12,18 @@
   "assignee": "tincopper",
   "createdAt": "2026-07-26",
   "completedAt": null,
-  "branch": null,
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
   "pr_url": null,
   "subtasks": [
-    "ui-tokens-density",
-    "ui-primitives-chrome",
-    "ui-theme-escape-fix",
-    "ui-empty-loading",
-    "ui-settings-ia",
-    "ui-skills-ia",
-    "ui-nav-cleanup",
-    "ui-quality-gate"
+    "ui-quality-gate",
+    "ui-tokens-foundation",
+    "ui-primitives",
+    "ui-chrome-polish",
+    "ui-key-surfaces",
+    "ui-theme-escape-fix"
   ],
   "children": [
     "08-02-mcp-marketplace"
@@ -51,6 +49,6 @@
     "src/lib/utils.ts",
     "src/shared/utils/cn.ts"
   ],
-  "notes": "2026-07-27: Decision Log D1-D5 为 proposed-default，待用户确认或推翻；确认后即可按 design.md §10.1 拆 8 个子任务并 task.py start。v1 cut = 阶段 A-D + Projects EmptyState + Skills 去双挂载 + nav cleanup + quality 雏形。注意：docs/prototypes/git-log-panel.html 仅主仓库有，本 worktree 未签出。",
+  "notes": "2026-10-27 方向修订：用户明确目标为「让 UI 看起来更精致和更有设计感」，并去掉 D1-D5 五道决策门。本任务从 planning-only 审计改为实施。关键现状（实测）：planning 100% 交付 / 实施 0% —— task.json 里 8 个 subtasks 从未创建；density/字体阶梯/z-index token 全缺；6 个目标原语全缺（ui/ 有 21 个组件但不含这 6 个）；StatusBar 实测 h-4=16px（目标 22px）；TitleBar 只有 logo+空白，无项目上下文；Settings 选中态是 !bg-accent-blue 大色块（SettingsSidebar.tsx:72）。一个正在生效的 bug：text-status-error 被 4 处使用，但 theme.css 只定义 --status-failed、tailwind.css 只映射 --color-status-{idle,running,failed} → Tailwind 根本不生成该类 → 那 4 处错误提示没有红色（紧邻的 text-status-failed 有）。列为 tokens 子任务第一修复项。重要资产：主题已有 --git-status-{added,modified,deleted,untracked,conflict} 与 --diff-* 覆盖全部 5 主题 → 9 处主题逃逸不需要新建色板，只需接回。旧 5 份原型已作废删除（基于 7 月纸面设计、与真实代码脱节），新原型 2 份基于真实代码重做：prototype-shell-v2.html / prototype-surfaces-v2.html。护栏必须最先落 —— 三个月间代码量 +68%（235→396 tsx）而硬编码色 33→39、raw button 311→520，比率持平 = 每个新 PR 都在复制旧问题（tools/guards/checks/ 30 条无一条管 UI 样式）。",
   "meta": {}
 }
