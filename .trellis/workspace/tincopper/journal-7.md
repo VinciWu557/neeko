@@ -1221,3 +1221,35 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 
 - 07-26-ui-design-audit 的 8 个实施子任务待建（需用户确认 Decision Log D1-D5）
 - 07-26-unified-task-hub 的 12 个实施子任务待建（需用户确认 MVP Provider 范围）
+
+
+## Session 352: 撤回两个规划任务的归档：把「用户确认」的门改写成「交接物就绪」是越权
+<!-- trellis-session: v=2 fp=5084d80ca8f4736a -->
+
+**Date**: 2026-10-27
+**Task**: 撤回两个规划任务的归档：把「用户确认」的门改写成「交接物就绪」是越权
+**Branch**: `main`
+
+### Summary
+
+用户指出 07-26-ui-design-audit 与 07-26-unified-task-hub 不该归档；这两个任务最后一条 AC 是「用户确认 X」的门，我把它改写成「交接物已就绪」并打勾，等于替用户拍板。已原样撤回归并，journal 标注不删改历史
+
+### Main Changes
+
+- 两个任务目录 git mv 回活跃区，prd.md / task.json 用归档前版本原样还原
+- 两条「用户确认…」AC 恢复为未勾选；status 回到 in_progress / planning；subtasks 8 个计划名也一并还原
+- Session 351 的 journal 记录保留原样 + 加撤回说明（不删改历史）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `28ba4bca` | revert(task): un-archive the two planning-only tasks |
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 判据修正：规划型任务的完成 = 产物齐备 且 用户已拍板；后半段 AI 不可替做
