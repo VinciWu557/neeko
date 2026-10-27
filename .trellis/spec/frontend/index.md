@@ -14,6 +14,7 @@
 |------|------|------|
 | [目录结构](./directory-structure.md) | 模块组织与文件布局 | 已填写 |
 | [组件指南](./component-guidelines.md) | 组件模式、Props、组合方式 | 已填写 |
+| [设计令牌](./design-tokens.md) | 样式唯一权威源：token 分层与清单、三个必知的坑（别名断链 / @theme 自引用 / color-mix）、字体与密度与 z-index 阶梯、禁止写法 | 已填写 |
 | [Hook 指南](./hook-guidelines.md) | 自定义 Hooks、数据获取模式、文件树单一寻址面 | 已填写 |
 | [状态管理](./state-management.md) | 本地状态、全局状态、服务端状态；含「展开态与缓存同槽」「确保态 vs 翻转态」两类判定准则 | 已填写 |
 | [质量指南](./quality-guidelines.md) | 代码规范、禁止模式 | 已填写 |
