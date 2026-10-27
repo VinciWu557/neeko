@@ -75,7 +75,15 @@ Read the task's prd.md, design.md if present, and implement.md if present:
 
 ### 4. Verify
 
-Run project's lint and typecheck commands to verify changes.
+Your job is implementation, not gating. Do NOT run the project's lint / test / type-check
+standalone, and do not run the dev-loop check command after every edit — the `trellis-check`
+agent runs it once over your accumulated change set, and the pre-push hook / CI own the full gate.
+
+Run a command only when it is red/green feedback you actually need:
+- a single test file while making a test pass (`vitest related <file>` / `cargo test <name>`)
+- a quick compile sanity check after a large refactor (`cargo check` / `tsc --noEmit`)
+
+In the report, say which of those you ran — never claim a gate passed if you did not run it.
 
 ---
 

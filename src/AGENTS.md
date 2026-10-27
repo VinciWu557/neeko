@@ -36,7 +36,7 @@ Feature-Based 架构，`src/` 顶层：
 3. **Ref 同步集中**：所有 refs 在单个 effect 中同步
 4. **功能域代码**放在 `src/features/` 对应子目录
 5. 页面容器逻辑下沉到 hooks，`App.tsx` 维持组合层职责；改动优先落在 `useAppShell` 或 domain
-   hook，不把业务逻辑回填到 `App.tsx`，改完更新类型并跑 `pnpm type-check`
+   hook，不把业务逻辑回填到 `App.tsx`，改完更新类型（类型检查由收尾的 `pnpm check:quick` 覆盖）
 
 ### React 性能优化
 

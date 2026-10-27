@@ -491,7 +491,7 @@ try {
 
 提交代码前，验证以下项目：
 
-- [ ] `pnpm lint:fe` 通过（eslint + `tsc --noEmit`，脚本名定义在 `package.json`）
+- [ ] `pnpm check:quick` 通过（它的 lint 档就是 eslint + `tsc --noEmit`，**不要**再单独跑 `pnpm lint:fe`）
 - [ ] 没有引入新的无理由 `any` 类型
 - [ ] 新组件使用 `React.memo` 导出
 - [ ] 作为 Props 传递的回调使用了 `useCallback`
@@ -545,6 +545,11 @@ pnpm check:quick    # 开发循环的默认检查（纯业务改动 ~12s，见�
 >
 > **`pnpm check:quick` 是开发循环的默认检查** —— 开发期一律跑它，不要本地跑 `pnpm check`。
 > 它的覆盖面窄于全量（见下表），全量由 `pre-push` hook 与 CI 承担。
+>
+> **频次：收尾跑一次，不是每改一个文件跑一遍。** 它已含全部静态检查，所以开发中也不要
+> 单独补 `pnpm lint` / `pnpm test` / `pnpm type-check` —— 那些不是更细的检查，只是重做
+> 同一批工作（额外付出进程启动与冷缓存代价）。把一轮改动攒完再确认绿。唯一例外是 TDD 的
+> 红绿反馈：跑**单个**测试文件（`vitest related <file>` / `cargo test <name>`）是观察，不是门禁。
 >
 > 定位（第一性原理）：**阶段边界按延迟预算划，不按语言划** —— 这条原则本仓库早已写在
 > `lefthook.yml` 文件头（commit = 快静态检查 / push = 全套分钟级门禁 / CI = 三平台终审）。

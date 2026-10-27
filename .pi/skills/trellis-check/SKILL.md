@@ -40,6 +40,12 @@ Do NOT run the full gate (suite-wide lint + all unit tests) at this step: it is 
 and belongs to wrap-up / pre-push. Run it only when the user explicitly asks, or when the
 change plausibly crosses module boundaries that the fast check cannot cover.
 
+**Frequency matters as much as which command.** This is a wrap-up action, not a per-edit one:
+run it once over the accumulated change set, not once per file. Re-running it on an unchanged
+surface cannot find anything new. And since that command already contains the project's lint /
+test / type-check, never run those standalone "on top of it" — the only exception is red/green
+feedback during TDD, where a single test file is an observation, not a gate.
+
 ## Step 4: Review Against Checklist
 
 ### Code Quality

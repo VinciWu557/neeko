@@ -49,7 +49,9 @@ You are already the `trellis-check` sub-agent that the main session dispatched. 
 3. Read and follow the spec and research files listed in the task's `check.jsonl`.
 4. Review all changed code against the task artifacts and project specs.
 5. Fix issues directly when they are within scope.
-6. Run the relevant lint, typecheck, and focused tests available for the touched code.
+6. Run the project's dev-loop check command once over the accumulated change set — it already
+   contains lint and typecheck, so do not run those standalone on top of it, and do not re-run it
+   per file. A single test file is fine for spot checks; the full gate belongs to pre-push / CI.
 
 ## Review Priorities
 

@@ -88,7 +88,8 @@
       → 跳过 Step 1–3 → 直接归档（R5.3 父任务允许缩小范围）。
 - [ ] 分支 A/B 路径：
       - [ ] 实测（AC5）：DSH 会话触发审批/提问 → Neeko 失焦 → 收到系统通知。
-      - [ ] `pnpm check:quick` 每轮；收尾 `pnpm check` **一次**。
+      - [ ] `pnpm check:quick` **收尾一次**（已含全部静态检查 + 护栏 + 改动文件相关单测）。
+            开发中不要每轮重跑，也不要单独再敲 `pnpm lint` / `pnpm test`。
       - [ ] 确认 `src-tauri/src/agent/hooks/**` 无 diff（AC3）。
       - [ ] 确认 `src-tauri/src/notification/**` 无 diff（AC4）。
       - [ ] 同步 spec（若 DSH 接入产生了可复用的模式）。
@@ -99,15 +100,12 @@
 ## 验证命令速查
 
 ```bash
-# 开发循环
+# 收尾检查（整个任务一次；含静态检查 + 护栏 + 改动文件相关单测）
 pnpm check:quick
 
-# 本域
+# 定点：TDD 红绿 / 排查（这是观察，不是验证；开发中可跑）
 cargo test --manifest-path src-tauri/Cargo.toml agent::chat   # 分支 A
 cargo test --manifest-path src-tauri/Cargo.toml agent::dsh    # 分支 B
-
-# 收尾全量（一次）
-pnpm check
 
 # 零耦合自证
 git diff <base>..HEAD -- src-tauri/src/agent/hooks/         # 应为空（AC3）
@@ -117,6 +115,9 @@ git diff <base>..HEAD -- src-tauri/src/notification/        # 应为空（AC4）
 lsof -nP -iTCP:3081 -sTCP:LISTEN
 curl -s http://127.0.0.1:3081/neeko-health
 ```
+
+> `pnpm check` 以及更细的 `pnpm lint` / `pnpm test` 不在本地开发流程内 —— push / CI 兜底。
+> `pnpm check:quick` 是收尾动作，不是每次编辑的收尾动作。
 
 ---
 

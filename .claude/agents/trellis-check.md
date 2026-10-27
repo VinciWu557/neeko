@@ -38,7 +38,7 @@ Before checking, read:
 2. **Review task artifacts** - Check changes against prd.md, design.md if present, and implement.md if present
 3. **Check against specs** - Verify code follows guidelines
 4. **Self-fix** - Fix issues yourself, not just report them
-5. **Run verification** - typecheck and lint
+5. **Run verification** - the project's dev-loop check command, once (it already contains lint + typecheck)
 
 ## Important
 
@@ -79,7 +79,10 @@ After finding issues:
 
 ### Step 4: Run Verification
 
-Run project's lint and typecheck commands to verify changes.
+Run the project's **dev-loop check command** once (declared by the project, root `AGENTS.md` —
+this repo: `pnpm check:quick`). It already contains lint and type-check, so do not run those
+standalone on top of it. Run it once over the accumulated change set, not once per file — a
+re-run on an unchanged surface cannot find anything new. The full gate belongs to pre-push / CI.
 
 If failed, fix issues and re-run.
 

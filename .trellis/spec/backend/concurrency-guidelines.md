@@ -415,7 +415,7 @@ async fn resolve_base(target: &ExecTarget, root_path: Option<&str>, wd: &str)
   同步函数体、池内闭包（`spawn_blocking` / `run_blocking` / `run_blocking_result` 三形态）、
   异步入口、`#[cfg(test)]` 豁免、scope 外文件；外加**判据自身的健壮性**：注释里的 `}`、闭包里的
   `'('`、`mod tests;` 分号形态、`use` 导入后的裸名（四个都曾是真实漏报 / 误报窗口）。
-- 回归：`cargo test --lib` 与 `pnpm test:fe` 逐条不变 —— 这是「只改边界、不改行为」的判据。
+- 回归：既有断言逐条不变 —— 这是「只改边界、不改行为」的判据。用收尾的一次 `pnpm check:quick` 确认（Rust 侧它不跑 `cargo test`，所以定向用 `cargo test --lib <name>` 补，而不是跑全集）。
 
 ### 7. Wrong vs Correct
 

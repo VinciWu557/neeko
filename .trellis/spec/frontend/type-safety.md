@@ -164,7 +164,7 @@ type WorktreeStateMap = Record<string, WorktreeState>;
 **修改 Tauri 命令返回类型时：**
 1. 更新 `src-tauri/` 中的 Rust 结构体
 2. 更新 `src/shared/types/<domain>.ts` 中对应的接口
-3. 用 `pnpm type-check` 和 `cargo check` 验证
+3. 收尾跑一次 `pnpm check:quick` 验证（已含 `tsc`）；Rust 侧编译错误可先 `cargo check` 定点确认
 
 ### 层间命名约定
 

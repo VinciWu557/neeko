@@ -26,7 +26,7 @@ Before reviewing, read in this order:
 2. **Review against task artifacts** — does the diff satisfy `prd.md` (and `design.md` / `implement.md` if present)?
 3. **Review against specs** — naming, structure, type safety, error handling, conventions in `.trellis/spec/`
 4. **Self-fix** — when an issue is mechanical and small, fix it directly with the editing tools you have
-5. **Run verification** — project lint and typecheck on the changed scope
+5. **Run verification** — the project's dev-loop check command, **once** over the accumulated change set. It already contains lint and typecheck, so never run those standalone on top of it; a re-run on an unchanged surface cannot find anything new. The full gate belongs to pre-push / CI.
 6. **Report** — concrete findings with `file:line` citations and what was fixed vs. what is open
 
 ## Forbidden Operations
@@ -44,7 +44,7 @@ The supervising main session owns commits. Report the post-fix state; do not com
 3. For each issue:
    - If mechanical (lint nit, missing type, wrong import, dead branch) → fix in-place
    - If a design/judgment issue → record and report, do not silently rewrite
-4. Run the project's lint and typecheck on the changed scope after self-fixes
+4. Run the project's dev-loop check command once after self-fixes — not once per file, and not together with a standalone lint/typecheck run
 5. Report
 
 ## Report Format

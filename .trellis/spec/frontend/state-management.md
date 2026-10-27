@@ -359,8 +359,8 @@ interface FileActionsContextValue {
 `FilesPanel`（原 `FileViewer` / `AppLayout` 时代）读 `@/features/file/store` 的 `dirs` / `activeFilePath` 渲染。
 文件动作经 `FileActionsContext` 下发，组件不直接 invoke。
 - 回归断言
-`pnpm type-check` 必须通过。
-`pnpm test:fe` 必须通过。
+收尾跑一次 `pnpm check:quick`（已含 `pnpm type-check` 与改动文件相关的 `vitest`）；
+不要再单独补跑 `pnpm type-check` / `pnpm test:fe` —— 它们不是更细的检查，只是重做同一批工作。
 
 ### 7. Wrong vs Correct
 

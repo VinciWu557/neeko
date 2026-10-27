@@ -29,9 +29,14 @@ Rules:
 - When touching platform registries or template lists, search first so you do not miss mirrored update paths.
 - If you modify `.trellis/scripts/`, keep `packages/cli/src/templates/trellis/scripts/` in sync.
 - Do not make destructive git changes unless explicitly asked.
+- Your job is implementation, not gating. Do NOT run the project's lint / test / type-check
+  standalone, and do not run the dev-loop check command after every edit — the `trellis-check`
+  agent runs it once over your accumulated change set, and the pre-push hook / CI own the full gate.
+  Run a command only when it is red/green feedback you actually need (a single test file, or a
+  compile sanity check after a large refactor).
 
 Before finishing, summarize:
 - Files changed
-- Tests/checks run
+- Which red/green commands you ran (and which you did not)
 - Remaining risks or follow-ups
 """

@@ -26,7 +26,9 @@ Do the review and fixes directly.
 2. Read and follow the spec and research files listed in the task's `check.jsonl`.
 3. Review all changed code against the task PRD and project specs.
 4. Fix issues directly when they are within scope.
-5. Run the relevant lint, typecheck, and focused tests for the touched code.
+5. Run the project's dev-loop check command once over the accumulated change set — it already
+   contains lint and typecheck, so do not run those standalone on top of it, and do not re-run it
+   per file. A single test file is fine for spot checks; the full gate belongs to pre-push / CI.
 
 ## Review Priorities
 

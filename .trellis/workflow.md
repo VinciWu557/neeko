@@ -488,7 +488,7 @@ Goal: turn reviewed planning artifacts into code that passes quality checks.
 Spawn the implement sub-agent:
 
 - **Agent type**: `trellis-implement`
-- **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`; finish by running project lint and type-check
+- **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`. Do NOT gate: the quality check in 2.2 runs the project's dev-loop check command once over the accumulated change set — running it here per edit only duplicates it.
 - **Dispatch prompt guard**: The prompt MUST start with `Active task: <task path>`, then tell the spawned agent it is already the `trellis-implement` sub-agent and must implement directly, not spawn another `trellis-implement` / `trellis-check`.
 
 The platform hook/plugin auto-handles:
@@ -503,7 +503,7 @@ The platform hook/plugin auto-handles:
 Spawn the implement sub-agent:
 
 - **Agent type**: `trellis-implement`
-- **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`; finish by running project lint and type-check
+- **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`. Do NOT gate: the quality check in 2.2 runs the project's dev-loop check command once over the accumulated change set — running it here per edit only duplicates it.
 - **Dispatch prompt guard**: The prompt MUST start with `Active task: <task path>`, then explicitly say the spawned agent is already `trellis-implement` and must implement directly without spawning another `trellis-implement` / `trellis-check`.
 
 The pull-based sub-agent definition auto-handles the context load requirement:
@@ -517,7 +517,7 @@ The pull-based sub-agent definition auto-handles the context load requirement:
 Spawn the implement sub-agent:
 
 - **Agent type**: `trellis-implement`
-- **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`; finish by running project lint and type-check
+- **Task description**: Implement the reviewed task artifacts, consulting materials under `{TASK_DIR}/research/`. Do NOT gate: the quality check in 2.2 runs the project's dev-loop check command once over the accumulated change set — running it here per edit only duplicates it.
 - **Dispatch prompt guard**: Tell the spawned agent it is already the `trellis-implement` sub-agent and must implement directly, not spawn another `trellis-implement` / `trellis-check`.
 
 The platform prelude auto-handles the context load requirement:
@@ -532,7 +532,9 @@ The platform prelude auto-handles the context load requirement:
 2. Read `{TASK_DIR}/prd.md`, then `design.md` if present, then `implement.md` if present
 3. Consult materials under `{TASK_DIR}/research/`
 4. Implement the code per reviewed artifacts
-5. Run project lint and type-check
+5. Do NOT gate — 2.2 runs the project's dev-loop check command once over the accumulated change set.
+   Run commands only for red/green feedback you actually need (a single test file, or a compile
+   sanity check after a large refactor).
 
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 
@@ -543,7 +545,7 @@ The platform prelude auto-handles the context load requirement:
 Spawn the check sub-agent:
 
 - **Agent type**: `trellis-check`
-- **Task description**: Review all code changes against specs and task artifacts; fix any findings directly; ensure lint and type-check pass
+- **Task description**: Review all code changes against specs and task artifacts; fix any findings directly; run the project's dev-loop check command **once** over the accumulated change set (it already contains lint and type-check — do not run those standalone, and do not re-run per file)
 - **Dispatch prompt guard**: The prompt MUST start with `Active task: <task path>`, then tell the spawned agent it is already the `trellis-check` sub-agent and must review/fix directly, not spawn another `trellis-check` / `trellis-implement`.
 
 The check agent's job:
@@ -553,6 +555,15 @@ The check agent's job:
 - Run the project's **dev-loop check command** to verify. That command is declared by the
   project (root `AGENTS.md`); do not assume it is the full gate — the heavy gate is reserved
   for wrap-up / pre-push.
+
+**Frequency**: this is a wrap-up action, not a per-edit one. The main session does not re-run
+its check command after every small edit, and neither does this agent: run it once over the
+accumulated change set, not once per file. Re-running the same command on an unchanged
+surface cannot find anything new — it only costs wall-clock.
+
+The same rule governs the individual commands the check command already contains (`lint`,
+`test`, `type-check` in this repo): never run them standalone "on top of" it. The only
+exception is red/green feedback during TDD — a single test file is an observation, not a gate.
 
 [/Claude Code, Cursor, OpenCode, codex-sub-agent, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi, Oh My Pi, ZCode, Snow, Reasonix, Trae, Grok, Kimi Code]
 
@@ -564,6 +575,10 @@ Load the `trellis-check` skill and verify the code per its guidance:
 - Cross-layer consistency (when changes span layers)
 
 If issues are found → fix → re-check, until green.
+
+**Frequency**: this is a wrap-up action, not a per-edit one. Run the check command once over
+the accumulated change set, not once per file. See root `AGENTS.md` for the project's rule on
+how often the check command runs — do not add extra standalone `lint` / `test` runs on top.
 
 [/codex-inline, Kilo, Antigravity, Devin, DeepSeek Harness]
 

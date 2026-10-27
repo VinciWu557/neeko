@@ -73,16 +73,18 @@
 
 ---
 
-## 3. 验证命令（每个子任务收尾时跑）
+## 3. 验证命令（**收尾时**跑一次，不是每轮）
 
 | 目的 | 命令 |
 | --- | --- |
-| 开发循环（每轮） | `pnpm check:quick` |
-| 收尾全量（每个子任务**一次**） | `pnpm check` |
-| 只看本域 | `cargo test --manifest-path src-tauri/Cargo.toml agent::hooks` |
-| 通知核心域 | `cargo test --manifest-path src-tauri/Cargo.toml notification` |
-| 依赖方向护栏 | `pnpm guards list` → 找 `check_notification_core_direction` |
-| 双端类型镜像 | `pnpm type-check`（`notification.ts` 与 Rust 手动同步） |
+| 收尾检查（**整个任务一次**；已含全部静态检查 + 护栏 + 改动文件相关单测） | `pnpm check:quick` |
+| 收尾全量（本地非必要，pre-push / CI 兜底） | `pnpm check` |
+| 定点：只看本域（TDD 红绿 / 排查，**不是**验证） | `cargo test --manifest-path src-tauri/Cargo.toml agent::hooks` |
+| 定点：通知核心域（同上） | `cargo test --manifest-path src-tauri/Cargo.toml notification` |
+| 定点：依赖方向护栏（已含在 `check:quick`） | `pnpm guards list` → 找 `check_notification_core_direction` |
+
+> `pnpm type-check` 已含在 `check:quick`（它复用框架 lint 档，eslint + tsc 同一条），
+> 开发中不要单独再跑；`notification.ts` 与 Rust 双端镜像由那个门禁统一覆盖。
 
 ---
 

@@ -26,7 +26,7 @@
 - [ ] **定义与使用点同 cfg（平台 cfg 独占消费者）**：平台专属 `use` 引入名 / 局部 `let` 绑定名，是否会被某个平台把全部使用点都编译掉？是则把定义收进唯一消费者的作用域 —— `use` 加同条件 `#[cfg(...)]`，或在被门控的测试函数内**局部 `use`**（最紧作用域，天然不会 unused）；`let` 挪进平台块，或给每个平台补一条真实判据（如 reveal 测试的 Linux 分支）。**`#[cfg(test)]` 模块不是免检区**（`factory.rs` 的 `ExecError`、`instance.rs` 的 `info` 都只被非 Windows 的测试消费 → Windows 红）；成对门控（`#[cfg(unix)]` + `#[cfg(windows)]` 各消费一次）不违规。历史三连：`fonts.rs` 2026-09（Linux/Windows 红）、`commands.rs`/`factory.rs`/`instance.rs` 2026-10（Linux 与 Windows 各红一处）。
 - [ ] **Platform Adapter 分层**：多平台/单平台专属实现是否已抽入 `src-tauri/src/platform/<theme>/`（`mod.rs` 仅 `mod` + `pub use` 门控，业务代码无 `#[cfg]` 块）？独立模块（`job_object`/`wsl`）是否豁免但仍保持 import 门控？
 - [ ] **门控粒度 ≥ 作用域粒度（测试域硬禁令）**：测试域（内联 `#[cfg(test)] mod tests` / 外部 `#[cfg(test)] mod tests;` 的 `tests.rs` / `#[cfg(all(test, …))]` item）里的平台 `#[cfg]` 是否只挂在 **item 声明**上（整测试 / item 级 gated const / helper）？**禁止**挂在语句 / 裸块 / 断言 / match arm / 字段 init 上 —— 那是 `unused_*` 与「断言在非目标平台静默消失」的共同温床。三条正路：① 平台断言 → 按平台命名的**整测试**（平台维度上移测试名）；② 平台常量 / 夹具 → item 级 `#[cfg]` const / helper（每平台一条真实腿，无腿平台给空 stub，如 `common::testing::make_executable`）；③ 差异本身 → `platform/<theme>/` 适配器数据。护栏 `check_platform_cfg_placement`（判据=附着位置，零容忍）。
-- [ ] **本地门禁 ≠ 跨平台门禁**：`pnpm lint:rust`（fmt + clippy）只在宿主机（macOS）跑，平台 `unused_imports` / `unused_variables` 问题需靠 `pnpm guards run --only check_platform_imports`（独占消费者）与 `check_platform_cfg_placement`（门控粒度，已接入 `pnpm lint`）或 CI 三平台矩阵兜底；改动后是否已跑 `pnpm lint`（含两条护栏）且通过？
+- [ ] **本地门禁 ≠ 跨平台门禁**：`pnpm lint:rust`（fmt + clippy）只在宿主机（macOS）跑，平台 `unused_imports` / `unused_variables` 问题需靠 `pnpm guards run --only check_platform_imports`（独占消费者）与 `check_platform_cfg_placement`（门控粒度，已接入 `pnpm lint`）或 CI 三平台矩阵兜底；收尾是否已跑一次 `pnpm check:quick`（它复用框架 lint 档，含这两条护栏）且通过？—— **不需要**再单独跑 `pnpm lint`。
 
 ---
 
@@ -915,6 +915,11 @@ pnpm guards run --stage local   # 只跑护栏
 护栏清单的唯一事实源是 `tools/guards/checks/` 目录本身（放一个模块即完成注册，
 不需要改 package.json / CI / lefthook），因此**本文件不复制清单** —— 逐条列出必然滞后
 （这里曾长期写着「3 个 Python 护栏」而实际有 6 条）。
+
+**频次：这些命令都不是「每轮」要跑的。** 开发循环一律用 `pnpm check:quick`（已含上面整组
+静态检查 + 护栏），**收尾跑一次**即可；不要在上面再叠加 `pnpm lint` / `pnpm test:rust` /
+`pnpm test` —— 它们不是更细的检查，只是把同一批工作重做一遍（额外付出 cargo 启动与冷缓存代价）。
+例外：TDD 红绿反馈可跑**单个**测试（`cargo test <name>`）。
 
 - `check_platform_imports.py`：扫描 `src-tauri/src/**/*.rs`，判据 = **平台 cfg 独占消费者**：无平台门控的 `use` 引入名 / `let` 绑定名，若存在一个平台（linux/macos/windows）使其全部使用点都被编译掉则报错。含 `#[cfg(test)]` 模块内的定义（测试不再是免检区），成对门控（unix + windows 各消费一次）不误报；判不了的条件（`feature` 等）与函数参数、`for` 绑定一律放行（宁可少报）。本地单平台 `clippy` 无法发现这类 `unused_imports` / `unused_variables`，靠此护栏在 macOS 本机提前暴露，需与 CI 三平台矩阵互补。
 - `check_platform_cfg_placement.py`：扫描 `src-tauri/src/**/*.rs`，判据 = **门控粒度 ≥ 作用域粒度**（结构约束）：测试域内平台 `#[cfg]` 只允许附着 item 声明（`fn`/`mod`/`use`/`struct`/`enum`/`impl`/`trait`/`const`/`static`/`type`/`macro_rules`），附着于语句 / 裸块 / 断言 / match arm / 字段 init 即违规 —— 这是 `unused_*` 与平台断言静默消失的共同结构条件。与 `check_platform_imports` 互补：本护栏是**位置判据**（可完备、零误报），后者是**消费者分析**（语义近似、作兜底）。存量迁移期用 `ledger/platform_test_cfg.json` ratchet（按文件 × `{stmt, block}` 只许减小，台账由模块 docstring 的命令生成）；清零后删除台账即进入**零容忍**。生产域（含派生门控：match arm / 字段 init 镜像 cfg-gated 变体/字段）不在其判据内 —— 需类型平台中立化，属 L1 课题。

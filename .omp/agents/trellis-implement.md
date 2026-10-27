@@ -26,7 +26,10 @@ Do the implementation work directly.
 1. Understand the active task requirements.
 2. Read and follow the spec and research files listed in the task's `implement.jsonl`.
 3. Implement the requested change using existing project patterns.
-4. Run the relevant lint, typecheck, and focused tests for the touched code.
+4. Run commands only for red/green feedback you actually need (a single test file, or a compile
+   sanity check after a large refactor). Do NOT run the project's lint / test / type-check
+   standalone, and do not run the dev-loop check command per edit — `trellis-check` runs it once
+   over the accumulated change set; pre-push / CI own the full gate.
 5. Report files changed and verification results.
 
 ## Forbidden Operations

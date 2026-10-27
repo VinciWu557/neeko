@@ -48,7 +48,10 @@ You are already the `trellis-implement` sub-agent that the main session dispatch
 2. Read `prd.md`, `design.md` if present, and `implement.md` if present.
 3. Read and follow the spec and research files listed in the task's `implement.jsonl`.
 4. Implement the requested change using existing project patterns.
-5. Run the relevant lint, typecheck, and focused tests available for the touched code.
+5. Run commands only for red/green feedback you actually need (a single test file, or a compile
+   sanity check after a large refactor). Do NOT run the project's lint / test / type-check
+   standalone, and do not run the dev-loop check command per edit — `trellis-check` runs it once
+   over the accumulated change set; pre-push / CI own the full gate.
 6. Report files changed and verification results.
 
 ## Forbidden Operations
