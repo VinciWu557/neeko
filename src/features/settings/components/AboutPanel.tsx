@@ -5,7 +5,7 @@ import { useAppInfo } from '@/features/settings/hooks/useAppInfo';
 
 /** About 页键值行（value 为独立文本节点，便于测试与样式控制）。 */
 const InfoRow: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <div className="flex items-start justify-between py-2.5 border-b border-white/[0.04] gap-6">
+  <div className="flex items-start justify-between py-2.5 border-b border-border-subtle gap-6">
     <span className="text-[0.86em] text-text-muted shrink-0 w-28">{label}</span>
     <span className="text-[0.86em] text-text-primary text-right break-all">{value}</span>
   </div>
@@ -34,7 +34,7 @@ function AboutPanel() {
 
       {state.status === 'ready' && (
         <>
-          <div className="flex items-center gap-4 pb-5 border-b border-white/[0.04] mb-3">
+          <div className="flex items-center gap-4 pb-5 border-b border-border-subtle mb-3">
             <img src={neekoIcon} className="w-14 h-14 object-contain" alt={state.info.name} />
             <div>
               <div className="text-lg font-semibold text-text-primary">{state.info.name}</div>

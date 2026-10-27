@@ -129,7 +129,7 @@ function LaunchConfigDialog({
               placeholder="e.g. Debug main binary"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors"
             />
           </div>
 
@@ -144,7 +144,7 @@ function LaunchConfigDialog({
               id="launch-type"
               value={type}
               onChange={(e) => handleTypeChange(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary focus:outline-none focus:border-accent-blue transition-colors cursor-pointer"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors cursor-pointer"
             >
               {TYPES.map((t) => (
                 <option key={t.value} value={t.value}>
@@ -171,7 +171,7 @@ function LaunchConfigDialog({
               }
               value={program}
               onChange={(e) => setProgram(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors font-mono text-[13px]"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors font-mono text-[13px]"
             />
             {type === 'go' ? (
               <p className="text-[11px] text-text-muted leading-relaxed">
@@ -196,7 +196,7 @@ function LaunchConfigDialog({
               placeholder="${workspaceFolder}"
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors font-mono text-[13px]"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors font-mono text-[13px]"
             />
           </div>
 
@@ -213,7 +213,7 @@ function LaunchConfigDialog({
               placeholder="--flag value"
               value={argsText}
               onChange={(e) => setArgsText(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors font-mono text-[13px]"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors font-mono text-[13px]"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSubmit();
               }}
@@ -232,7 +232,7 @@ function LaunchConfigDialog({
                 id="launch-mode"
                 value={mode}
                 onChange={(e) => setMode(e.target.value)}
-                className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary focus:outline-none focus:border-accent-blue transition-colors cursor-pointer"
+                className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors cursor-pointer"
               >
                 <option value="debug">debug</option>
                 <option value="test">test</option>
@@ -254,7 +254,7 @@ function LaunchConfigDialog({
               placeholder="e.g. cargo build"
               value={preLaunchTask}
               onChange={(e) => setPreLaunchTask(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors font-mono text-[13px]"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors font-mono text-[13px]"
             />
             <p className="text-[11px] text-text-muted">
               Runs in the project environment before starting the debugger.

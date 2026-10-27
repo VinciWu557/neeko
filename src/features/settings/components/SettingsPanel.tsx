@@ -194,14 +194,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(
                   key={item.id}
                   className={cn(
                     'flex items-center gap-2.5 py-2 px-3 bg-none border-none rounded-md text-text-secondary text-[0.86em] cursor-pointer text-left transition-[background-color,color] duration-150 w-full hover:bg-bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-blue focus-visible:ring-offset-1',
-                    activeNav === item.id && '!bg-accent-blue !text-[var(--text-on-accent)]',
+                    activeNav === item.id && '!bg-bg-selected !text-text-primary',
                   )}
                   onClick={() => setActiveNav(item.id)}
                 >
                   <span
                     className={cn(
                       'text-text-muted shrink-0 flex items-center',
-                      activeNav === item.id && '!text-[var(--text-on-accent)]',
+                      activeNav === item.id && '!text-text-primary',
                     )}
                   >
                     {item.icon}
@@ -254,14 +254,14 @@ const SettingsPanel: React.FC<SettingsPanelProps> = React.memo(
                   key={item.id}
                   className={cn(
                     'flex items-center gap-2.5 py-2 px-3 bg-none border-none rounded-md text-text-secondary text-[0.86em] cursor-pointer text-left transition-[background-color,color] duration-150 w-full hover:bg-bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-blue focus-visible:ring-offset-1',
-                    activeNav === item.id && '!bg-accent-blue !text-[var(--text-on-accent)]',
+                    activeNav === item.id && '!bg-bg-selected !text-text-primary',
                   )}
                   onClick={() => setActiveNav(item.id)}
                 >
                   <span
                     className={cn(
                       'text-text-muted shrink-0 flex items-center',
-                      activeNav === item.id && '!text-[var(--text-on-accent)]',
+                      activeNav === item.id && '!text-text-primary',
                     )}
                   >
                     {item.icon}

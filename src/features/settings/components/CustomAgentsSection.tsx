@@ -59,7 +59,7 @@ const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04] [&:last-child]:border-b-0 mt-2">
+    <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle [&:last-child]:border-b-0 mt-2">
       <div className="flex w-full items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Custom Agents</div>
@@ -108,7 +108,7 @@ const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
               <React.Fragment key={agent.id}>
                 <div
                   className={cn(
-                    'group flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em] hover:bg-bg-hover/40 transition-colors duration-150',
+                    'group flex items-center gap-2.5 py-[7px] px-3 border-b border-border-subtle text-[0.86em] hover:bg-bg-hover/40 transition-colors duration-150',
                     isEditing && 'bg-accent-blue/5 shadow-[inset_2px_0_0_0_var(--accent-blue)]',
                   )}
                 >
@@ -181,7 +181,7 @@ const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
                 {/* 编辑表单插在被编辑行与其 Skill Path 行之间 —— 行内锚定。
                     无内层边框盒：AgentForm 自带分区，叠套边框只会制造噪音。 */}
                 {isEditing && (
-                  <div className="px-3 py-3 border-b border-white/[0.03] bg-bg-secondary/40 animate-agents-expand">
+                  <div className="px-3 py-3 border-b border-border-subtle bg-bg-secondary/40 animate-agents-expand">
                     <AgentForm
                       initial={editingAgent}
                       onSaved={async (a) => {
@@ -193,7 +193,7 @@ const CustomAgentsSection: React.FC<CustomAgentsSectionProps> = ({
                   </div>
                 )}
 
-                <div className="flex items-center gap-2.5 py-[5px] px-3 pb-2 border-b border-white/[0.03] text-[0.79em] [&:last-child]:border-b-0 bg-bg-secondary/30">
+                <div className="flex items-center gap-2.5 py-[5px] px-3 pb-2 border-b border-border-subtle text-[0.79em] [&:last-child]:border-b-0 bg-bg-secondary/30">
                   <span className="w-[18px] shrink-0" />
                   <span className="text-text-muted min-w-[100px] shrink-0">Skill Path:</span>
 

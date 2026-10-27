@@ -56,7 +56,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
   };
 
   return (
-    <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04] [&:last-child]:border-b-0">
+    <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle [&:last-child]:border-b-0">
       <div className="flex-1 min-w-0">
         <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Built-in Agents</div>
         <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -80,7 +80,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
             <React.Fragment key={agent.id}>
               <div
                 className={cn(
-                  'flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em] hover:bg-bg-hover/40 transition-colors duration-150',
+                  'flex items-center gap-2.5 py-[7px] px-3 border-b border-border-subtle text-[0.86em] hover:bg-bg-hover/40 transition-colors duration-150',
                   isEditing && 'bg-accent-blue/5 shadow-[inset_2px_0_0_0_var(--accent-blue)]',
                 )}
               >
@@ -158,7 +158,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
               {/* 编辑表单插在被编辑行与其 Skill Path 行之间 —— 行内锚定。
                   无内层边框盒：AgentForm 自带分区，叠套边框只会制造噪音。 */}
               {isEditing && (
-                <div className="px-3 py-3 border-b border-white/[0.03] bg-bg-secondary/40 animate-agents-expand">
+                <div className="px-3 py-3 border-b border-border-subtle bg-bg-secondary/40 animate-agents-expand">
                   <AgentForm
                     initial={getEffectiveAgent(agent)}
                     onSaved={async (a) => {
@@ -170,7 +170,7 @@ const BuiltInAgentsSection: React.FC<BuiltInAgentsSectionProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center gap-2.5 py-[5px] px-3 pb-2 border-b border-white/[0.03] text-[0.79em] [&:last-child]:border-b-0 bg-bg-secondary/30">
+              <div className="flex items-center gap-2.5 py-[5px] px-3 pb-2 border-b border-border-subtle text-[0.79em] [&:last-child]:border-b-0 bg-bg-secondary/30">
                 <span className="w-[18px] shrink-0" />
                 <span className="text-text-muted min-w-[100px] shrink-0">Skill Path:</span>
                 <button

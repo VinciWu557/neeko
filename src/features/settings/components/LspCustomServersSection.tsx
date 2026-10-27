@@ -35,7 +35,7 @@ export default function LspCustomServersSection({
   const isEditing = draft != null && servers.some((s) => s.id === draft.id);
 
   return (
-    <div className="flex flex-col items-start gap-3 py-3 mt-2 border-b border-white/[0.04] last:border-b-0">
+    <div className="flex flex-col items-start gap-3 py-3 mt-2 border-b border-border-subtle last:border-b-0">
       <div className="flex w-full items-start justify-between gap-4">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Custom servers</div>
@@ -62,7 +62,7 @@ export default function LspCustomServersSection({
               key={s.id}
               className={
                 idx < servers.length - 1
-                  ? 'flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em]'
+                  ? 'flex items-center gap-2.5 py-[7px] px-3 border-b border-border-subtle text-[0.86em]'
                   : 'flex items-center gap-2.5 py-[7px] px-3 text-[0.86em]'
               }
             >
@@ -204,7 +204,7 @@ export default function LspCustomServersSection({
               }}
               placeholder='{"hoverKind": "FullDocumentation"}'
               rows={3}
-              className="w-full min-h-[72px] rounded-md border border-border bg-bg-tertiary px-3 py-2 text-[0.86em] font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-accent-blue resize-y"
+              className="w-full min-h-[72px] rounded-md border border-border bg-bg-tertiary px-3 py-2 text-[0.86em] font-mono text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-1 focus:ring-accent-blue resize-y"
               spellCheck={false}
               autoComplete="off"
               data-form-type="other"

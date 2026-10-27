@@ -46,7 +46,7 @@ const ToolbarFooter: React.FC<ToolbarFooterProps> = React.memo(
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                className="relative w-9 h-9 flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors duration-150 focus:outline-none"
+                className="relative w-9 h-9 flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue"
                 onClick={() => setShowAddMenu((v) => !v)}
                 aria-haspopup="menu"
                 aria-expanded={showAddMenu}
@@ -75,7 +75,7 @@ const ToolbarFooter: React.FC<ToolbarFooterProps> = React.memo(
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              className="relative w-9 h-9 flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors duration-150 focus:outline-none"
+              className="relative w-9 h-9 flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue"
               onClick={onOpenSettings}
             >
               <span

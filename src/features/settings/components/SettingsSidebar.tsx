@@ -69,14 +69,14 @@ function SettingsSidebar({
             key={item.id}
             className={cn(
               'flex items-center gap-2.5 py-2 px-3 bg-none border-none rounded-md text-text-secondary text-[0.86em] cursor-pointer text-left transition-[background-color,color] duration-150 w-full hover:bg-bg-hover hover:text-text-primary focus-visible:ring-2 focus-visible:ring-accent-blue focus-visible:ring-offset-1',
-              activeNav === item.id && '!bg-accent-blue !text-[var(--text-on-accent)]',
+              activeNav === item.id && '!bg-bg-selected !text-text-primary',
             )}
             onClick={() => onSelectNav(item.id)}
           >
             <span
               className={cn(
                 'text-text-muted shrink-0 flex items-center',
-                activeNav === item.id && '!text-[var(--text-on-accent)]',
+                activeNav === item.id && '!text-text-primary',
               )}
             >
               {item.icon}
@@ -99,7 +99,7 @@ function SettingsSidebar({
                   key={p.id}
                   className={cn(
                     'flex items-center gap-2.5 py-2 px-3 pl-5 bg-none border-none rounded-md text-text-secondary text-[0.86em] cursor-pointer text-left transition-[background-color,color] duration-150 w-full hover:bg-bg-hover hover:text-text-primary',
-                    activeNav === navId && '!bg-accent-blue !text-[var(--text-on-accent)]',
+                    activeNav === navId && '!bg-bg-selected !text-text-primary',
                   )}
                   onClick={() => onSelectNav(navId)}
                 >
@@ -107,7 +107,7 @@ function SettingsSidebar({
                     size={14}
                     className={cn(
                       'shrink-0 text-text-muted',
-                      activeNav === navId && '!text-[var(--text-on-accent)]',
+                      activeNav === navId && '!text-text-primary',
                     )}
                   />
                   <span className="font-medium truncate">{p.name}</span>

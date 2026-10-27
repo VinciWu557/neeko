@@ -42,7 +42,7 @@ const AppearancePanel: React.FC<AppearancePanelProps> = ({
   return (
     <div className="flex flex-col">
       <h3 className="text-base font-semibold text-text-primary mb-4">Appearance</h3>
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6">
+      <div className="flex items-center justify-between py-3 border-b border-border-subtle gap-6">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Font Size</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -84,7 +84,7 @@ const AppearancePanel: React.FC<AppearancePanelProps> = ({
             onClick={() => onThemeChange(s.id)}
           >
             <div
-              className="w-16 h-10 rounded border border-white/10 flex items-center justify-center"
+              className="w-16 h-10 rounded border border-border flex items-center justify-center"
               style={{ backgroundColor: s.bg }}
             >
               <span className="text-xs font-semibold" style={{ color: s.textColor }}>
@@ -111,7 +111,7 @@ const AppearancePanel: React.FC<AppearancePanelProps> = ({
                 )}
                 onClick={() => onThemeChange(ct.name)}
               >
-                <div className="w-16 h-10 rounded border border-white/10 bg-bg-primary flex items-center justify-center">
+                <div className="w-16 h-10 rounded border border-border bg-bg-primary flex items-center justify-center">
                   <span className="text-accent-blue text-xs font-semibold">Aa</span>
                 </div>
                 <span className="text-sm text-text-primary">{ct.label}</span>
@@ -126,7 +126,7 @@ const AppearancePanel: React.FC<AppearancePanelProps> = ({
       </div>
 
       {/* Pi Theme Sync Toggle */}
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04]">
+      <div className="flex items-center justify-between py-3 border-b border-border-subtle">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Sync Pi Theme</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">

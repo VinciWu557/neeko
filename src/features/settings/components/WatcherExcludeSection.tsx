@@ -53,7 +53,7 @@ const WatcherExcludeSection: React.FC<WatcherExcludeSectionProps> = ({
   };
 
   return (
-    <div className="flex flex-col gap-2 py-3 border-b border-white/[0.04]">
+    <div className="flex flex-col gap-2 py-3 border-b border-border-subtle">
       <div className="text-[0.86em] text-text-primary font-medium">Watcher Exclusions</div>
       <div className="text-[0.79em] text-text-muted leading-relaxed">
         One glob per line, relative to the project root (gitignore syntax, <code>**</code>{' '}

@@ -25,13 +25,13 @@ const ResizableHandle = ({
 }) => (
   <ResizablePrimitive.Separator
     className={cn(
-      'relative flex w-px items-center justify-center bg-transparent hover:bg-white/10 active:bg-white/20 transition-colors cursor-col-resize',
+      'relative flex w-px items-center justify-center bg-transparent hover:bg-bg-hover active:bg-bg-hover transition-colors cursor-col-resize',
       className,
     )}
     {...props}
   >
     {withHandle && (
-      <div className="z-10 flex h-8 w-px items-center justify-center rounded-none bg-transparent hover:bg-white/20">
+      <div className="z-10 flex h-8 w-px items-center justify-center rounded-none bg-transparent hover:bg-bg-hover">
         {/* No grip icon �?keep it invisible like original resize handles */}
       </div>
     )}

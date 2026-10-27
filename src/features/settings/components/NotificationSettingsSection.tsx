@@ -217,7 +217,7 @@ interface SettingRowProps {
 }
 
 const SettingRow: React.FC<SettingRowProps> = ({ label, hint, children }) => (
-  <div className="flex items-start justify-between gap-4 py-2 border-b border-white/[0.04]">
+  <div className="flex items-start justify-between gap-4 py-2 border-b border-border-subtle">
     <div className="flex flex-col gap-0.5 min-w-0">
       <span className="text-[0.86em] text-text-primary">{label}</span>
       {hint && <span className="text-[0.72em] text-text-muted truncate">{hint}</span>}

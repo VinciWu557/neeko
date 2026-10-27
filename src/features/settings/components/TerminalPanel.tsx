@@ -53,7 +53,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({
     <>
       <h3 className="text-base font-semibold text-text-primary mb-4">Terminal</h3>
 
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] gap-6 [&:last-child]:border-b-0">
+      <div className="flex items-center justify-between py-3 border-b border-border-subtle gap-6 [&:last-child]:border-b-0">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Font Size</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -81,7 +81,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04] [&:last-child]:border-b-0">
+      <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle [&:last-child]:border-b-0">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Font Family</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -164,7 +164,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({
                     <button
                       key={font}
                       className={cn(
-                        'flex items-center justify-between w-full py-[7px] px-3 bg-none border-none border-b border-white/[0.03] text-text-secondary text-[0.86em] cursor-pointer text-left box-border transition-[background-color] duration-100 gap-3 hover:bg-bg-hover hover:text-text-primary [&:last-child]:border-b-0',
+                        'flex items-center justify-between w-full py-[7px] px-3 bg-none border-none border-b border-border-subtle text-text-secondary text-[0.86em] cursor-pointer text-left box-border transition-[background-color] duration-100 gap-3 hover:bg-bg-hover hover:text-text-primary [&:last-child]:border-b-0',
                         fontFamily === font && '!bg-accent-blue/15 !text-accent-blue',
                       )}
                       onClick={() => onApplyFont(font)}
@@ -208,7 +208,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04] [&:last-child]:border-b-0">
+      <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle [&:last-child]:border-b-0">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Shell</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -222,7 +222,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({
               key={value}
               className={cn(
                 'py-1 px-3 bg-bg-tertiary border border-border rounded text-text-secondary text-[0.82em] cursor-pointer transition-all duration-150 whitespace-nowrap hover:bg-bg-hover hover:text-text-primary hover:border-text-muted',
-                shellInput === value && '!bg-accent-blue !border-accent-blue !text-white',
+                shellInput === value && '!bg-accent-blue !border-accent-blue !text-text-on-accent',
               )}
               onClick={() => onApplyShell(value)}
               title={value || 'Use $SHELL environment variable'}
@@ -248,7 +248,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({
         />
       </div>
 
-      <div className="flex items-center justify-between py-3 border-b border-white/[0.04] [&:last-child]:border-b-0">
+      <div className="flex items-center justify-between py-3 border-b border-border-subtle [&:last-child]:border-b-0">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">
             GPU Acceleration

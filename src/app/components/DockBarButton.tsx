@@ -45,7 +45,7 @@ const DockBarButton: React.FC<DockBarButtonProps> = ({ panelId, side = 'right' }
           className={cn(
             'relative w-11 h-11 flex items-center justify-center',
             'text-text-secondary hover:text-text-primary transition-colors duration-150',
-            'focus:outline-none',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue',
           )}
           aria-label={def.title}
         >

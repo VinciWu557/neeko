@@ -45,7 +45,7 @@ const IdePanel: React.FC<IdePanelProps> = ({
     <>
       <h3 className="text-base font-semibold text-text-primary mb-4">IDE</h3>
 
-      <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04] [&:last-child]:border-b-0">
+      <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle [&:last-child]:border-b-0">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Preset IDEs</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -63,7 +63,7 @@ const IdePanel: React.FC<IdePanelProps> = ({
             return (
               <div
                 key={ide.id}
-                className="flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em] [&:last-child]:border-b-0"
+                className="flex items-center gap-2.5 py-[7px] px-3 border-b border-border-subtle text-[0.86em] [&:last-child]:border-b-0"
               >
                 <img
                   src={iconSrc}
@@ -122,7 +122,7 @@ const IdePanel: React.FC<IdePanelProps> = ({
         </div>
       </div>
 
-      <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04] [&:last-child]:border-b-0 mt-2">
+      <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle [&:last-child]:border-b-0 mt-2">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Custom IDEs</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -135,7 +135,7 @@ const IdePanel: React.FC<IdePanelProps> = ({
             {(config.customIdes || []).map((ide, index) => (
               <div
                 key={index}
-                className="flex items-center gap-2.5 py-[7px] px-3 border-b border-white/[0.03] text-[0.86em] [&:last-child]:border-b-0"
+                className="flex items-center gap-2.5 py-[7px] px-3 border-b border-border-subtle text-[0.86em] [&:last-child]:border-b-0"
               >
                 <img
                   src={getIdeIconSrc(null)}

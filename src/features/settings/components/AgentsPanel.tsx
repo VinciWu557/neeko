@@ -47,7 +47,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
     <>
       <h3 className="text-base font-semibold text-text-primary mb-4">Agents</h3>
 
-      <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04]">
+      <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Show Agent Bar</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">
@@ -65,7 +65,7 @@ const AgentsPanel: React.FC<AgentsPanelProps> = ({
         />
       </div>
 
-      <div className="flex flex-col items-start gap-3 py-3 border-b border-white/[0.04]">
+      <div className="flex flex-col items-start gap-3 py-3 border-b border-border-subtle">
         <div className="flex-1 min-w-0">
           <div className="text-[0.86em] text-text-primary font-medium mb-0.75">Compact Mode</div>
           <div className="text-[0.79em] text-text-muted leading-relaxed">

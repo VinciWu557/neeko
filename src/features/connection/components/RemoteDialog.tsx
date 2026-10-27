@@ -11,6 +11,7 @@ import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/ui/Dialog';
 import { Input } from '@/ui/Input';
+import { optionSecondary } from '@/ui/selection';
 
 import serverIcon from '../../../assets/server.svg';
 import { testRemoteConnection, listRemoteDirectories } from '../api/connectionApi';
@@ -482,8 +483,8 @@ export function RemoteDialog({
                           tabIndex={0}
                           aria-selected={i === activeSuggestion}
                           className={cn(
-                            'flex items-center gap-2 py-[7px] px-3 cursor-pointer border-b border-white/[0.04] transition-[background-color] duration-100 last:border-b-none hover:bg-[rgba(97,175,239,0.15)]',
-                            i === activeSuggestion && 'bg-[rgba(97,175,239,0.15)]',
+                            'flex items-center gap-2 py-[7px] px-3 cursor-pointer border-b border-border-subtle transition-[background-color] duration-100 last:border-b-none hover:bg-accent-blue/15',
+                            i === activeSuggestion && 'bg-accent-blue/15',
                           )}
                           onMouseDown={() => handleSelectSuggestion(s)}
                           onKeyDown={(e) => {
@@ -510,7 +511,7 @@ export function RemoteDialog({
 
             {/* 项目名预览 */}
             {projectPath && projectPath !== '/' && (
-              <div className="flex items-center gap-2.5 px-3 py-2.5 bg-[rgba(97,175,239,0.08)] border border-[rgba(97,175,239,0.3)] rounded-md mt-3">
+              <div className="flex items-center gap-2.5 px-3 py-2.5 bg-accent-blue/8 border border-accent-blue/30 rounded-md mt-3">
                 <span className="text-xs text-text-secondary shrink-0">Project name:</span>
                 <span className="font-mono text-[13px] text-accent-blue font-medium whitespace-nowrap overflow-hidden text-ellipsis">
                   {previewName}
@@ -553,7 +554,7 @@ export function RemoteDialog({
                     aria-selected={!selectedAgentId}
                     className={cn(
                       'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                      !selectedAgentId && 'bg-accent-blue text-white',
+                      !selectedAgentId && 'bg-accent-blue text-text-on-accent',
                     )}
                     onClick={() => {
                       setSelectedAgentId(null);
@@ -580,7 +581,7 @@ export function RemoteDialog({
                         aria-selected={selectedAgentId === agent.id}
                         className={cn(
                           'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                          selectedAgentId === agent.id && 'bg-accent-blue text-white',
+                          selectedAgentId === agent.id && 'bg-accent-blue text-text-on-accent',
                         )}
                         onClick={() => {
                           setSelectedAgentId(agent.id);
@@ -596,7 +597,9 @@ export function RemoteDialog({
                       >
                         <AgentIcon icon={agent.icon} />
                         <span className="font-medium">{agent.name}</span>
-                        <span className="ml-auto text-xs text-text-muted">{agent.command}</span>
+                        <span className={optionSecondary(selectedAgentId === agent.id)}>
+                          {agent.command}
+                        </span>
                       </div>
                     ))}
                 </div>
@@ -648,7 +651,7 @@ export function RemoteDialog({
                     aria-selected={!selectedIdeId}
                     className={cn(
                       'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                      !selectedIdeId && 'bg-accent-blue text-white',
+                      !selectedIdeId && 'bg-accent-blue text-text-on-accent',
                     )}
                     onClick={() => {
                       setSelectedIdeId(null);
@@ -673,7 +676,7 @@ export function RemoteDialog({
                         aria-selected={selectedIdeId === preset.id}
                         className={cn(
                           'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                          selectedIdeId === preset.id && 'bg-accent-blue text-white',
+                          selectedIdeId === preset.id && 'bg-accent-blue text-text-on-accent',
                         )}
                         onClick={() => {
                           setSelectedIdeId(preset.id);
@@ -689,7 +692,7 @@ export function RemoteDialog({
                       >
                         <img src={getIdeIconSrc(preset.icon)} alt="" className="w-4 h-4" />
                         <span className="font-medium">{preset.name}</span>
-                        <span className="ml-auto text-xs text-text-muted">
+                        <span className={optionSecondary(selectedIdeId === preset.id)}>
                           {config.ideCommandOverrides?.[preset.id] ?? getIdeCommand(preset)}
                         </span>
                       </div>

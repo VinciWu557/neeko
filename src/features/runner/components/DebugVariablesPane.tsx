@@ -138,7 +138,7 @@ function DebugVariablesPane() {
                 : 'Evaluate when paused'
           }
           disabled={!isStopped || !evaluationAvailable}
-          className="flex-1 min-w-0 bg-transparent text-[var(--font-size)] text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-40 font-mono"
+          className="flex-1 min-w-0 bg-transparent text-[var(--font-size)] text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue disabled:opacity-40 font-mono"
         />
       </div>
 
