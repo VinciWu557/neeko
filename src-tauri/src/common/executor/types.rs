@@ -176,7 +176,12 @@ impl ExecChild {
     ///
     /// 生产路径不需要它：登记已由 [`Self::new_with_pid`] 按 `kill_tree` 自动完成。
     /// 保留下来的唯一用途是测试——验证「退出收敛在 wait future 仍 poking 时不死锁」。
-    #[cfg(test)]
+    ///
+    /// **门控必须与消费者一致（`test` + `unix`，不是仅 `test`）**：唯一消费者是
+    /// `local.rs` 的 `#[cfg(all(test, unix))]` 测试模块。只写 `cfg(test)` 时，Windows 的
+    /// `cargo clippy --all-targets` 会编出这个方法却找不到使用者，`-D dead-code` 直接判死
+    /// （本地 macOS 全绿、CI 的 Windows job 红 —— 平台盲区，不是抖动）。
+    #[cfg(all(test, unix))]
     #[must_use]
     pub(crate) fn kill_action(&self) -> KillFn {
         std::sync::Arc::clone(&self.kill)
