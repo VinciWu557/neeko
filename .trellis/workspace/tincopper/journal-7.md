@@ -1136,3 +1136,38 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 
 - 遗留一：design.md §2.2 落点表未随 a86aa437 重构追改（映射已补在 prd.md）
 - 遗留二：OMP/Claude/CodeBuddy/Qoder 四家真实登录态下通知未逐个实测
+
+
+## Session 350: 回填六家 CLI 真机验证闭环：把「未验证」与「验证失败」在台账里分开
+<!-- trellis-session: v=2 fp=f3a806a2d2b6744b -->
+
+**Date**: 2026-10-27
+**Task**: 回填六家 CLI 真机验证闭环：把「未验证」与「验证失败」在台账里分开
+**Branch**: `main`
+
+### Summary
+
+用户确认 OMP/Claude/CodeBuddy/Codex/Qoder 五家真机均正常，回填 4 处登记把开放缺口改为闭环；顺带修正 AC6 那条 ⚠ 的误读风险
+
+### Main Changes
+
+- claude-compat prd AC6：从 [x]⚠ 升为 [x]，写明五家全部通过 + 补登说明
+- 父任务 prd 归档结论 / implement 收尾清单 / task.json notes 同步改为闭环
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `62717550` | docs(task): close the real-CLI verification gap across six agents |
+
+### Testing
+
+- [OK] grep 未逐个验证|未逐个实测 四处全扫 → 0 命中，无残留反向陈述
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 剩余两条遗留均与实机无关：design.md §2.2 落点表未追改、10-12 的 in-app 通道被独立工作删除
