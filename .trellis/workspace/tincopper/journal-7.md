@@ -1060,3 +1060,40 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 待用户提交；提交后 /trellis:finish-work 归档 10-16-notify-dsh
+
+
+## Session 348: 复核并归档 10-16-notify-dsh：8 条 AC 逐项取证后归档
+<!-- trellis-session: v=2 fp=86c395657e4ec24e -->
+
+**Date**: 2026-10-27
+**Task**: 复核并归档 10-16-notify-dsh：8 条 AC 逐项取证后归档
+**Branch**: `main`
+
+### Summary
+
+逐条重跑 AC 判据（不抄任务自述表）：Rust 163/7、dsh-neeko 1067、CliHooksSection 18；7 个路径零 diff 自证 AC7/AC8；随后 task.py archive 归档
+
+### Main Changes
+
+- cargo test --lib agent::hooks 163 passed；--test unit http_gateway 7 passed
+- packages/dsh-neeko pnpm test 1067 passed / 61 files；CliHooksSection.test.tsx 18 passed
+- AC7/AC8 零改动自证：agent/chat、common/agent、notification、server、install/shape、targets/shape.rs、targets/dirs.rs 全 0 行（区间 7211cc59..HEAD）
+- task.py archive 10-16-notify-dsh --skip-branch-validation -> archive/2026-10/
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e459c1f` | chore(task): archive 10-16-notify-dsh |
+
+### Testing
+
+- [OK] 本轮全部实跑，未采信历史记录
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 父任务 10-16-agent-notify-more-clis 仍 planning，四个子任务已全完成，是否收敛由用户定

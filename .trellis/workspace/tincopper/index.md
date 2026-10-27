@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 347
+- **Total Sessions**: 348
 - **Last Active**: 2026-10-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~1062 | Active |
+| `journal-7.md` | ~1099 | Active |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 348 | 2026-10-27 | 复核并归档 10-16-notify-dsh：8 条 AC 逐项取证后归档 | `2e459c1f` | `main` |
 | 347 | 2026-10-27 | 审查 10-16-notify-dsh：三个 Block 缺陷 + 文档对齐 | - | `main` |
 | 346 | 2026-10-27 | 10-18-dsh-tui 归档复核通过并归档；ctrl+g 定案不做 | `500b54b2`, `bfdf7995` | `main` |
 | 345 | 2026-10-27 | 收敛验证命令频率：check:quick 只在收尾跑一次，三层指令同时改 | `4c4aa3be` | `main` |
