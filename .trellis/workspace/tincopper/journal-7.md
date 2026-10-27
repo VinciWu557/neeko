@@ -1330,3 +1330,39 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 
 - 用户需跑起来目视验证（尤其 Light/Claude 主题 —— 暗色假设的差别只在亮色下可见）
 - 6 个原语与全部 chrome 几何调整仍卡在「不许动布局」约束上，待用户决定是否另开任务
+
+
+## Session 355: 修复 UI 精致化的视觉回归：弱分割线强度变粗 + color-mix 被降级
+<!-- trellis-session: v=2 fp=6806e0e3a31a18b2 -->
+
+**Date**: 2026-10-27
+**Task**: 修复 UI 精致化的视觉回归：弱分割线强度变粗 + color-mix 被降级
+**Branch**: `main`
+
+### Summary
+
+用户反馈「projects 优化后更难看，每个项目之间多了横杠」——根因不是加了横杠而是强度变了：原值 4% 白几乎不可见，首版 8% 近白清晰可见。改为逐主题显式 rgba + @utility 桥接，验证看构建产物
+
+### Main Changes
+
+- --border-subtle 改逐主题显式 rgba：暗色 4% 白（等效原值）/ claude 8% 黑 / light 9% 黑
+- tailwind.css 改用 @utility border-border-subtle（@theme 会在编译期求值 color-mix 里的 var() 而退化成第一个分量）
+- spec design-tokens.md 坑从 3 个增到 5 个（新增「强度不变」与「color-mix 被降级」），开头加护栏盲区提醒
+- implement.md 阶段 B + task.json notes 记录返工根因与两个坑
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] 构建产物验证：6 处 --border-subtle 分别为 #ffffff0a×3 / #00000014 / #00000017，无 @supports 降级包裹
+- [OK] pnpm check:quick 全绿：31 护栏 0 违规 + eslint/tsc/clippy + 改动文件单测
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 用户需再目视确认（尤其 Light/Claude 主题 —— 亮色下分割线从不可见变为刚好可见，若嫌重可再降一档）

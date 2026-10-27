@@ -96,8 +96,10 @@ pnpm tauri dev
 3. [x] 字体阶梯 token 定义（§5.2 六项）—— 放 `:root`，`@theme inline` 桥接
 4. [x] z-index 阶梯定义（§5.4 六层）
 5. [x] density token 定义（§5.1 十七项）—— **只定义，不套用**
-6. [x] `--border-subtle` 弱分割线（`color-mix` 基于 `--text-primary`，
-       **一次定义 5 主题自动适配**）
+6. [x] `--border-subtle` 弱分割线 —— **逐主题显式 rgba**（不是 color-mix，见下）
+       - dark / classic-dark / one-dark-pro：`rgb(255 255 255 / 0.04)`（等效原值）
+       - claude：`rgb(0 0 0 / 0.08)` · light：`rgb(0 0 0 / 0.09)`（亮底可见）
+       - 桥接用 `@utility border-border-subtle`（**不能**用 `@theme`，见下）
 7. [x] 规范：`.trellis/spec/frontend/design-tokens.md` 落盘（新增，含三个必知的坑）
 
 **主改文件：** `src/styles/tokens/theme.css`、`src/styles/tokens/tailwind.css`、
@@ -105,6 +107,31 @@ pnpm tauri dev
 
 **退出门槛：** ✅ `text-status-error` 类真的生成（构建产物已验证）；
 ✅ 5 主题切换无 token 失效；✅ 新增类名逐个在产物 CSS 中确认存在。
+
+> **⚠ 返工记录（2026-10-27，用户反馈触发）**
+>
+> 首版 `--border-subtle` 用 `color-mix(in srgb, var(--text-primary) 8%, transparent)`，
+> 放在 `:root` 一次定义。**用户反馈：「projects 优化后还没优化前好看，
+> 每个项目之间都加了一个横杠，很丑」。**
+>
+> **根因不是「加了横杠」，而是横杠的强度变了**：
+> 原值 `border-white/[0.04]` = **4% 白**（几乎不可见）；
+> 新值 = **8% 近白**（`--text-primary` 在暗色主题下是 `#ffffff` / `oklch(0.985)`）
+> → 暗色海面上是一条**清晰可见**的横线。
+>
+> **教训：token 化只保证「跟随主题」，不保证「强度不变」。**
+> 替换一个**低对比度**元素时，视觉强度是必须保持的量。
+> 护栏拦不住这类问题（它只判「有没有用 token」）。
+>
+> **第二个坑：`color-mix` 在本仓库会被降级。** 产物里出现
+> `@supports (color:color-mix(...))` 包裹，回退值取 color-mix 的**第一个分量**
+> → `--border-subtle: var(--text-primary)`（近白实色，比原来粗得多）。
+> 同理 Tailwind 的 `@theme` 会在编译期求值变量，遇到 color-mix 里的 `var()`
+> 也退化成第一个分量。
+>
+> **最终方案**：逐主题显式 rgba + `@utility` 桥接（运行时解析）。
+> 验证方式：**看构建产物**（`dist/assets/*.css`）里的最终值，不是看源码 ——
+> 源码对、产物被降级，是静默的。
 
 ## 阶段 C — 原语（1–2 天）· ui-primitives
 
