@@ -750,8 +750,11 @@ curl -s http://127.0.0.1:3197/neeko-health
 
 #### 待办（下一轮起点）
 
-- [ ] P0-2 `keymap.ts`：`routeKey` + `KeyScope` 优先级栈；`/hotkeys` 命令
+- [x] P0-2 `keymap.ts`：`routeKey` + `KeyScope` 优先级栈；`/hotkeys` 命令
+      *（后续轮次已完成：`src/tui/keymap.ts` 26.6K + `tests/tui-keymap.spec.ts` 34.5K；
+      `/hotkeys` 在 `commands.ts:67`）*
 - [ ] P1-3 `overlay-host.ts`：`showOverlay` 替 `replaceInputSlot`
+      *（未落地，转为归档遗留项 2）*
 
 ### Step 39–40：pi-tui 原生对齐（S1…S4）+ 屏幕/滚动定案
 
@@ -775,8 +778,10 @@ curl -s http://127.0.0.1:3197/neeko-health
 
 #### 待办
 
-- [ ] P3 剩余：`setTitle` / `setProgress` / `ctrl+z` / `ctrl+g` / `ctrl+v`（`docs/keybindings.md` 全表）
-- [ ] 退出乱码 `9;5:3u`：需用户提供终端类型才能定向验证
+- [x] P3 部分：`setTitle` / `setProgress`（`program-status.ts:76-77`）、`ctrl+z`
+      （`suspend.ts`）、`ctrl+v`（`clipboard.ts`）—— 归档复核确认均已落地
+- [ ] P3 剩余：`ctrl+g`（归档遗留项 3）
+- [ ] 退出乱码 `9;5:3u`：需用户提供终端类型才能定向验证（归档遗留项 4，本机未复现）
 
 ### Step 41：neeko-check 审核修复 + `app.ts` 拆分
 
@@ -804,7 +809,9 @@ curl -s http://127.0.0.1:3197/neeko-health
 
 #### 待办
 
-- [ ] P3 剩余：`setTitle` / `setProgress` / `ctrl+z` / `ctrl+g` / `ctrl+v`
-- [ ] `index.ts:467,475` 的 `requestId` 是 `for...of` Map 的无用键（改 `.values()` 即可），
+- [ ] P3 剩余：仅 `ctrl+g`（详见 Step 39–40；其余已在后续轮次落地）
+- [ ] `index.ts` 的 `requestId` 是 `for...of` Map 的无用键（改 `.values()` 即可），
       属桥侧代码，不在本轮 TUI 范围
-- [ ] 退出乱码 `9;5:3u`：需用户提供终端类型才能定向验证
+- [ ] 退出乱码：需用户提供终端类型才能定向验证（本机未复现）
+
+> 归档（2026-10-27）时遗留项统一登记在 `prd.md`「归档时的遗留项」，本节不再各自维护。

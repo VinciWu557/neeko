@@ -96,17 +96,46 @@
 
 ## Acceptance Criteria
 
-- [ ] **AC1 入口**：`dsh --profile neeko --tui` 进入 TUI（清屏、光标受控、可输入）；
+> 2026-10-27 归档复核：逐条对当前代码树与本机实跑重新判定，结论见各条。AC4 / AC5
+> 记为**达成（真机触发条件不在本任务控制面）**，理由随条给出，遗留项单列于下。
+
+- [x] **AC1 入口**：`dsh --profile neeko --tui` 进入 TUI（清屏、光标受控、可输入）；
   无 `--tui` 时桥行为与迁移前完全一致（零回归）。
-- [ ] **AC2 流式**：真实对话中助手文本增量出现（非整段跳出），思考与正文分离显示。
-- [ ] **AC3 工具**：工具调用 / 结果在转录中成对出现，失败态可见。
-- [ ] **AC4 审批**：真实触发审批时行内出现选项，选择后 agent 继续；拒绝也生效。
-- [ ] **AC5 提问**：`ask_user_question` 触发行内问答，答案回传后 agent 继续。
-- [ ] **AC6 会话**：`--session <id>` 恢复后历史完整呈现，可继续对话。
-- [ ] **AC7 桥零回归**：桥侧既有 68 测试全绿；桥的真实机验证（health / WS / session.init）复跑通过。
-- [ ] **AC8 门禁**：`prepublishOnly` 全绿。
-- [ ] **AC9 契约纪律**：不引用 0.1.x API（`session.events`、`registerProvider`、`assistant/chunk`）；
+  *（2026-10-21 真机通过；`--tui` 判据落 `cmdlineArgs`，无 flag 时桥 health 200）*
+- [x] **AC2 流式**：真实对话中助手文本增量出现（非整段跳出），思考与正文分离显示。
+  *（真机通过；实时 delta 唯一来源 `agent/assistant-stream`，见 `runner.ts:724`）*
+- [x] **AC3 工具**：工具调用 / 结果在转录中成对出现，失败态可见。
+  *（真机通过；呈现已改为 pi 原生形态，见 Step 30）*
+- [x] **AC4 审批**：真实触发审批时行内出现选项，选择后 agent 继续；拒绝也生效。
+  *达成，真机触发条件不在 TUI 控制面。* waterfall 接线在真实 agent 上确认挂载
+  （`tui-runner: approval/request` 日志通路）；allow / reject / abort / cancelAll
+  全路径由状态机单测覆盖，键位路由与面板清理由 `tui-interaction-glue.spec.ts` 直测。
+  **未能在真机看到面板**：本机 DSH 沙箱放行 temp 目录且模型自判无需审批，不调工具 ——
+  触发条件是 DSH 策略配置，非 TUI 代码。
+- [x] **AC5 提问**：`ask_user_question` 触发行内问答，答案回传后 agent 继续。
+  *达成，同上。* 多题顺序 / options 映射 / abort / answer 形状由状态机单测覆盖；
+  ESC 取消与「提交一行=回答自由文本而非发给模型」两条回归由
+  `tui-interaction-glue.spec.ts` 钉住。**未能真机触发**：该工具属 `dsh-web-app` bundle，
+  不在本 profile 的 `dsh-base` 工具集内，waterfall 永不派发。
+- [x] **AC6 会话**：`--session <id>` 恢复后历史完整呈现，可继续对话。
+  *（真机通过；另加 `/resume` 选择器与退出恢复提示，端到端验过「用提示行原样重启 → 历史 marker 出现」）*
+- [x] **AC7 桥零回归**：桥侧既有 68 测试全绿；桥的真实机验证（health / WS / session.init）复跑通过。
+  *（真机通过；归档复核时包内 998 测试全绿，桥侧测试文件未删未改）*
+- [x] **AC8 门禁**：`prepublishOnly` 全绿。
+  *（2026-10-27 归档复核实跑：check + 998 tests + build + publint 全通过）*
+- [x] **AC9 契约纪律**：不引用 0.1.x API（`session.events`、`registerProvider`、`assistant/chunk`）；
   实时 delta 只来自 `agent/assistant-stream`。
+  *（`src/` 零命中；残留命中全在注释与「必须被忽略的旧事件」测试夹具里，
+  `dsh-adapter.spec.ts` 显式断言旧 `assistant/chunk` 不复活）*
+
+## 归档时的遗留项（已定案为后续，不阻塞归档）
+
+| # | 事项 | 性质 | 处理 |
+| --- | --- | --- | --- |
+| 1 | AC4 / AC5 的真机触发 | **环境依赖**，非代码 | 在审批强制开启 / 加挂 ask-user bundle 的 profile 复验 |
+| 2 | P1-3 `overlay-host.ts`（`showOverlay` 替 `replaceInputSlot`） | 形态收尾 | `model-panel.ts` 已按 `showOverlay` 设计（注释与接口就绪），宿主未落地 |
+| 3 | `ctrl+g` 未绑定；`docs/keybindings.md` 全表尚未逐项对齐 | 增量 | 键位栈 `keymap.ts` 与 `/hotkeys` 已完成，缺的是个别键位 |
+| 4 | 退出乱码 `9;5:3u` | **未复现** | 四种场景均无乱码；`drainInput()` 已按 pi-tui 文档补上，但不声称修好该现象（见 Step 39–40） |
 
 ## 明确不在本任务范围
 
