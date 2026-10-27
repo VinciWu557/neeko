@@ -1171,3 +1171,44 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 剩余两条遗留均与实机无关：design.md §2.2 落点表未追改、10-12 的 in-app 通道被独立工作删除
+
+
+## Session 351: 归档最后 4 个活跃任务：实施型 AC 全达成但未登记，规划型产物齐备实施未启动
+<!-- trellis-session: v=2 fp=828f11a1aac56b10 -->
+
+**Date**: 2026-10-27
+**Task**: 归档最后 4 个活跃任务：实施型 AC 全达成但未登记，规划型产物齐备实施未启动
+**Branch**: `main`
+
+### Summary
+
+4 个活跃任务分两种性质分别取证：08-17/08-24 代码全落地但 AC 从未勾选（含实现名与 PRD 不同），07-26 两个是规划型任务产物齐备但下游子任务未建；全部归档，活跃任务归零
+
+### Main Changes
+
+- 08-24 prd 6 条 AC 回填：实际实现是 chat_capabilities() 枚举而非 PRD 写的 bool，capability_probe 4 条探针 + modelTarget 4 态 union
+- 08-17 implement-agent-chat-resume.md 的 R1-R6 回填（此前从未勾选，实为已实现）
+- 07-26-ui-design-audit prd 补归档结论 + task.json 清空 8 个从未创建的 subtasks 计划名
+- 07-26-unified-task-hub prd 补归档结论 + task.json 补 description/notes（含 features/task 与 WorkItem 同名不同物的边界）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `627514b7` | chore(task): archive 08-17-web-agent-page-design |
+| `55727ea5` | chore(task): archive 08-24-agent-config-unify |
+| `44320a95` | chore(task): archive 07-26-ui-design-audit |
+| `fbe4cca7` | chore(task): archive 07-26-unified-task-hub |
+
+### Testing
+
+- [OK] cargo test --lib agent::chat 331 passed / 2 ignored；vitest agent-chat 67 files 531 tests
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 07-26-ui-design-audit 的 8 个实施子任务待建（需用户确认 Decision Log D1-D5）
+- 07-26-unified-task-hub 的 12 个实施子任务待建（需用户确认 MVP Provider 范围）

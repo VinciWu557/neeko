@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 350
+- **Total Sessions**: 351
 - **Last Active**: 2026-10-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~1173 | Active |
+| `journal-7.md` | ~1214 | Active |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 351 | 2026-10-27 | 归档最后 4 个活跃任务：实施型 AC 全达成但未登记，规划型产物齐备实施未启动 | `627514b7`, `55727ea5`, `44320a95`, `fbe4cca7` | `main` |
 | 350 | 2026-10-27 | 回填六家 CLI 真机验证闭环：把「未验证」与「验证失败」在台账里分开 | `62717550` | `main` |
 | 349 | 2026-10-27 | 归档父任务 10-16-agent-notify-more-clis：AC 取证抓出三处偏差 + 一处悬空 child | `3248e41b` | `main` |
 | 348 | 2026-10-27 | 复核并归档 10-16-notify-dsh：8 条 AC 逐项取证后归档 | `2e459c1f` | `main` |
