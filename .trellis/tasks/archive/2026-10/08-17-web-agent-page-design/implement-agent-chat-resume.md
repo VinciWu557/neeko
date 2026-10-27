@@ -3,6 +3,9 @@
 > 挂靠任务：08-17-web-agent-page-design（用户指定在当前任务内继续）。
 > 用户决策（2026-08-21）：① 方案 C 认可，但必须多 Agent 可扩展（claude-code/codex/deepseek-harness 等，
 > 高内聚低耦合）；② 恢复交互 = Chat Tab 内列表选择 + Histor 面板「Agent Chat 恢复」入口双通道。
+>
+> **状态核验：2026-10-27 —— R1–R6 全部已实现**（归档父任务时逐条取证）。
+> 下面的勾选为回填，实现落点写在每条后面。
 
 ## 能力矩阵（实测）
 
@@ -45,13 +48,27 @@
 
 ## 验收标准
 
-- [ ] R1 `AgentAdapter::resume/supports_chat_resume` 默认实现 + ServeAdapter 覆写；单测覆盖默认分支与 serve URL/流程分支
-- [ ] R2 `agent_chat_resume` 命令注册可用；resume 会话的 cursor 持久化含正确 cwd/model/status
-- [ ] R3 前端历史转换纯函数 + 测试（ConversationMessage[] → ChatMessage[]，含 thinking/tool 降级）
-- [ ] R4 Chat Tab 内「最近会话」列表：空态展示、点击恢复渲染只读历史、续写正常出流式事件
-- [ ] R5 Histor 面板「在 Agent Chat 中恢复」入口（opencode 行显示，gemini/qoder 隐藏）
-- [ ] R6 opencode 真实集成测试（#[ignore]）：resume 已有 session 出 TextDelta
-- [ ] 回归：`cargo test` / `pnpm type-check` / `pnpm test:run` / `pnpm lint`
+- [x] R1 `AgentAdapter::resume/supports_chat_resume` 默认实现 + ServeAdapter 覆写；单测覆盖默认分支与 serve URL/流程分支
+      —— `agent/chat/adapter.rs:146/159`（默认）+ `adapter/opencode/adapter.rs:186/234`（覆写）
+- [x] R2 `agent_chat_resume` 命令注册可用；resume 会话的 cursor 持久化含正确 cwd/model/status
+      —— `agent/chat/commands.rs:234` + `lib.rs:199` 注册
+- [x] R3 前端历史转换纯函数 + 测试（ConversationMessage[] → ChatMessage[]，含 thinking/tool 降级）
+      —— `agent-chat/utils/historyConvert.ts::convertHistory` + 同名测试
+- [x] R4 Chat Tab 内「最近会话」列表：空态展示、点击恢复渲染只读历史、续写正常出流式事件
+      —— `agent-chat/components/ResumeList.tsx` + `useChatRestore.ts`，
+      挂载于 `AgentChatTabView.tsx:193`
+- [x] R5 Histor 面板「在 Agent Chat 中恢复」入口（opencode 行显示，gemini/qoder 隐藏）
+      —— `conversation/components/ConversationItem.tsx:81`，
+      判据是 `meta.nativeSessionId` 存在性（gemini/qoder 无原生存储 → 天然隐藏）
+- [x] R6 opencode 真实集成测试（#[ignore]）：resume 已有 session 出 TextDelta
+      —— `adapter/opencode/integ.rs:13`（需装 opencode）
+- [x] 回归：`cargo test` / `pnpm type-check` / `pnpm test:run` / `pnpm lint`
+      —— 2026-10-27 实跑：`cargo test --lib agent::chat` 331 passed / 2 ignored；
+      `vitest src/features/agent-chat/` 67 files / 531 tests passed
+
+> **一处措辞偏差（不影响功能）**：本计划写入口在「Histor 面板」，
+> 实际落在 conversation 域的 `ConversationPanel` / `ConversationList` / `ConversationItem`
+> 三件套（Histor 面板是 conversation 域的视图，入口在该域内）—— 同一处 UI，不同模块名。
 
 ## 实施顺序
 

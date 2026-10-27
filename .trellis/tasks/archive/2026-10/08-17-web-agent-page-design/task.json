@@ -3,7 +3,7 @@
   "name": "agent-chat-page-design",
   "title": "Agent Chat 页面设计与 Tab 集成（设计 v2/v3 + 原型）",
   "description": "Agent Chat（Agent 对话）页面设计与 Tab 集成：以 Tab 形式集成进 Neeko（TabKind 'agent-chat'），后端多 Agent 适配层（opencode/claude-code/gemini/codex/qoder/codebuddy/custom + DeepSeek Harness 首个参考适配器，统一 StreamEvent 协议 + 双向通道/话轮/上下文协议化 v3 增量），打通项目切换/文件浏览/Skills。进度（2026-08-21 同步）：设计产物（架构 v2 + v3 审查 + 原型）完成；M0-M3 代码已落地（src/features/agent-chat/ + src-tauri/src/agent/chat/ 三 adapter），trellis-check 审查通过、全量门禁绿；后续扩展 Conversation 查看器 P0-P3 与 opencode serve 迁移均已完成。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "tincopper",
   "assignee": "tincopper",
   "createdAt": "2026-08-17",
-  "completedAt": null,
+  "completedAt": "2026-10-27",
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "归档（2026-10-27）。AC 逐条取证后全部达成：prd 7 条 + 6 份 implement 全部回填。取证方式：不抄文档自述，逐个查代码落点。关键证据——后端 `agent/chat/`（acp/deepseek/opencode/pi_rpc 四 adapter + 统一 StreamEvent + 双向审批通道 + 上下文协议化）、前端 `features/agent-chat/`（67 test files / 531 tests）；cargo test --lib agent::chat 331 passed / 2 ignored。本次回填了 implement-agent-chat-resume.md 的 R1-R6（此前从未勾选，实为已实现）：R1 adapter.rs:146/159 默认 + opencode/adapter.rs:186/234 覆写；R2 commands.rs:234 + lib.rs:199 注册；R3 agent-chat/utils/historyConvert.ts；R4 agent-chat/components/ResumeList.tsx + useChatRestore.ts；R5 conversation/components/ConversationItem.tsx:81（判据 nativeSessionId 存在性）；R6 opencode/integ.rs:13（#[ignore]，需装 opencode）。一处措辞偏差：计划写入口在「Histor 面板」，实际落在 conversation 域的 ConversationPanel/ConversationList/ConversationItem 三件套（同一处 UI，不同模块名）。",
   "meta": {}
 }
