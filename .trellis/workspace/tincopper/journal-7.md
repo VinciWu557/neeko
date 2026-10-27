@@ -1097,3 +1097,42 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 父任务 10-16-agent-notify-more-clis 仍 planning，四个子任务已全完成，是否收敛由用户定
+
+
+## Session 349: 归档父任务 10-16-agent-notify-more-clis：AC 取证抓出三处偏差 + 一处悬空 child
+<!-- trellis-session: v=2 fp=17155e7e7d5d17b3 -->
+
+**Date**: 2026-10-27
+**Task**: 归档父任务 10-16-agent-notify-more-clis：AC 取证抓出三处偏差 + 一处悬空 child
+**Branch**: `main`
+
+### Summary
+
+逐条取证父任务 5 条 AC（不抄子任务自述）：AC1 字面零改动不成立（6 文件改动来自三个独立提交）、AC2 dsh 拓扑判断翻转、AC5④ 落点表 6 路径全失效；移除从未创建过的悬空 child；cargo test --lib 2247 绿后归档
+
+### Main Changes
+
+- prd.md AC 段重写为三级判定 + 新增 AC6 children 卫生 + 归档结论段
+- task.json 修正 description 里的 dsh 拓扑错误（源 A -> 源 B）+ 补 notes 记录全部偏差
+- implement.md 实施顺序与收尾打勾，两条遗留保留未勾
+- children 移除 10-16-notify-review-remediation（git log --all 证明从未创建）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3248e41b` | chore(task): archive 10-16-agent-notify-more-clis |
+
+### Testing
+
+- [OK] cargo test --lib 2247 passed / 5 ignored（notification 42 + agent::hooks 163）
+- [OK] guards run --only check_notification_core_direction 违规 0
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 遗留一：design.md §2.2 落点表未随 a86aa437 重构追改（映射已补在 prd.md）
+- 遗留二：OMP/Claude/CodeBuddy/Qoder 四家真实登录态下通知未逐个实测
