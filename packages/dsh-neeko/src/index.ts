@@ -31,6 +31,8 @@ import type { StreamStart } from './dsh-adapter.ts'
 import { NeekoAdapter } from './neeko-adapter.ts'
 import { NeekoWsServer } from './ws-server.ts'
 import type { NeekoConnection } from './ws-server.ts'
+import { installNotifyReporter } from './notify-wiring.ts'
+import { defaultEndpointsDir } from './notify-transport.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'neeko'
@@ -170,6 +172,12 @@ export class NeekoBridge {
     // service. `userQuestions` stays in `inject` because we consume the events
     // it dispatches: without the service those events never fire and the
     // bridge would silently lose the ability to ask anything.
+
+    // 通知上报：与 WS 连接无关，故挂在宿主的 ctx 上（而不是挂在 connection 生命周期里）。
+    // 同样的挂载必须出现在 TUI 腿 —— 见 `notify-wiring.ts` 模块头的事故说明。
+    this.disposers.push(
+      installNotifyReporter(this.ctx, [defaultEndpointsDir()]),
+    )
 
     this.boundPort = await this.server.start()
     this.io.stderr.write(`dsh-neeko: bridge listening on ${this.server.websocketUrl()}\n`)

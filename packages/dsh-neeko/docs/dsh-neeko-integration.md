@@ -145,6 +145,105 @@ interface Envelope {
 }
 ```
 
+
+### 3.5 通知上报（独立于 WebSocket 协议）
+
+通知**不走** WebSocket 协议，走 Neeko 的 hook ingest（源 B）。理由：通知是「知会」，
+不需要往返；而 WS 那条链路要求 Neeko 已连接并持有会话，通知不该依赖它。
+
+```
+DSH host 事件
+  ├─ 对话 → WS → Neeko chat          （既有通道，本图不变）
+  └─ 通知 → POST /hook/dsh → Neeko ingest → NotificationCenter
+```
+
+**模块分工**（三层，互不越界）：
+
+| 文件 | 职责 |
+| --- | --- |
+| `notify-reporter.ts` | **纯函数**：事件 → 语义键；`HookEvent` 请求体渲染 + 截断 |
+| `notify-transport.ts` | **传输**：坐标发现 + fan-out + 失败清单（`DeliveryFailure[]`） |
+| `notify-wiring.ts` | **挂载**：cordis 订阅 + 跨事件状态（`titles` / `running` / `lastTurn`） |
+
+**两条运行腿都必须挂载**（真机事故）：`cordis.patch.yml` 里 `id: neeko` 那一行在 `--tui`
+时是 `disabled` 的，故 `index.ts::start()`（headless）与 `tui/runner.ts`（TUI）**各自**
+调用 `installNotifyReporter`。只挂一处 = 用户日常模式零通知、零日志。
+
+**事件映射**（`src/notify-reporter.ts::notifyEventOf`，只覆盖 `session/event`）：
+
+| DSH 事件 | 语义键 | 说明 |
+| --- | --- | --- |
+| `session/event` → `approval/asked` | `approval_requested` | **审计事件**，旁路可听、零副作用 |
+| `session/event` → `tool/call` 且 `name === 'ask_user_question'` | `input_requested` | 提问 / 计划待审都经此工具 |
+| `agent/status` 的 `running → idle` 边沿，**且**该轮 `turn/end.reason.kind === 'completed'` | `turn_completed` | 时机来自 `agent/status`，**原因**来自 `turn/end`（见下） |
+| `agent/error` | `session_failed` | 附带错误消息（截断 300） |
+
+**为什么不用 `approval/request` / `user-questions/request`**：那两个是 cordis **waterfall**
+——第一个不调 `next()` 的监听器终结整条链。本插件（`agent-handlers.ts`）自己就是这两个
+waterfall 的 answerer，再挂一个监听器会把内置审批面板挤掉或吞掉答案。
+
+**为什么完成信号不用 `turn/end` 定时**：那是**历史重建**用的事件
+（`dsh-adapter.ts::buildHistory`）；实时路径只保证事件被 append，不保证「一轮结束」
+这个语义边界。`agent/status` 的边沿才是权威**时机**。
+
+**但「结束」≠「完成」**：只取时机的话，失败轮（`agent/error` → 收敛到 idle）与
+用户中止轮（`agent.cancel` → 收敛到 idle）都会被报成 `turn_completed`，于是
+`session_failed` 与 `turn_completed` 两条互斥文案同时到达。原因在
+`turn/end.reason.kind` 上：`notify-wiring` 记下它，`agent/status` 落到 idle 时消费并清零
+（失败不污染下一轮）。与 `.trellis/spec/backend/agent-chat-transports.md` §4.6b 的
+pi 判据同型（「失败不可被追认为完成」）。
+
+**`agent/*` 的载荷是 `Agent`，不是 `Session`**：`Agent` 只有 `id`
+（`@deepseek-ai/dsh-agent` 的 `types.d.ts`），`header` 在 `agent.session` 上
+（`@deepseek-ai/dsh-session`）。把 `Agent` 当 `Session` 读**类型上完全合法**
+（两边的 `id` 同名），运行时才暴露：子代理过滤失效 + `cwd` 恒 `null`。
+归一集中在 `notify-wiring.ts::observedOf`，测试必须用真实 `Agent` 形状
+（`{ id, session: { header } }`）—— 用 `{ id, header }` 会让缺陷在类型与单测上双双合法。
+
+**载荷**（与 Neeko `agent/hooks/ingest/event.rs::HookEvent` 逐字段对齐）：
+
+```jsonc
+{
+  "agent_session_id": "session-…",   // 必填；空则整条不发
+  "event": "approval_requested",     // 语义键，与源 A 同命名空间
+  "cwd": "/work/proj",               // 来自 session.header.cwd
+  "detail": "bash — needs network",  // 工具名/原因/错误，截断 500
+  "title": "Refactor the parser",    // 最近一次 session/title，截断 200
+  "hints": { "neeko_session_id": null, "project_id": null }
+}
+```
+
+**六个字段必须在位**（可为 `null`，键不能缺）：Neeko 的 `validate()` 对缺字段的载荷
+静默丢弃，而 HTTP 仍回 204 —— 表现为「装了但没通知」。
+
+**子代理过滤**：`session.header.origin === 'subagent'` 的会话不通知。
+**不能用 `parentSession`**：分叉会话的 header 也带它，但 `origin` 为空，仍是顶层会话。
+
+**坐标契约**（与 Neeko `agent/hooks/ingest/endpoint.rs` 同一契约的两端）：
+
+```
+~/.neeko/agent-hooks/endpoints/<instance_id>.env
+  NEEKO_AGENT_HOOK_PORT=<随机端口>
+  NEEKO_AGENT_HOOK_TOKEN=<uuid-v4>
+```
+
+多实例：扫全部 `*.env`，逐个 POST，单坐标失败不影响其余。
+端点覆盖有两个 env，**都必须支持**（与既有 7 个源同契约）：
+
+| env | 作用 |
+| --- | --- |
+| `NEEKO_AGENT_HOOK_ENDPOINT` | 指向单文件 → 只读它（调试 / 测试夹具，优先级最高） |
+| `NEEKO_AGENT_HOOK_ENDPOINTS_DIR` | 指向目录 → 只扫它（把坐标根整体搬走的环境） |
+
+只实现前者会让搬过坐标根的机器上 DSH 恒零请求，而其余源正常工作。
+
+**失败策略**：800ms 超时、`Promise.allSettled`、任何异常吞掉、**永不 await**。
+DSH 会 `await` 监听器，上报阻塞的用户可见后果是「会话卡住」，而不是「少一条通知」。
+
+但「永不 reject」不等于「永不报告」：`postToEndpoints` 返回 `DeliveryFailure[]`
+（`status === 0` = 连不上/超时，`>= 400` = 服务端拒绝），`NEEKO_NOTIFY_DEBUG=1` 时打到
+stderr。丢弃状态码会让 401 / 白名单缺行与成功在代码里完全同形 —— 那正是「204 假绿灯」。
+
 ---
 
 ## 四、启动时序
@@ -247,6 +346,9 @@ dsh-neeko/
 |   +-- protocol.ts           # 协议类型定义
 |   +-- dsh-adapter.ts        # DSH 事件 -> 协议翻译
 |   +-- neeko-adapter.ts      # 协议 -> DSH API 调用
+|   +-- notify-reporter.ts    # 通知：事件 -> 语义键（纯函数）
+|   +-- notify-transport.ts   # 通知：坐标发现 + POST fan-out + 失败清单
+|   +-- notify-wiring.ts      # 通知：cordis 订阅 + 跨事件状态（titles/running/lastTurn）
 +-- README.md
 ```
 
@@ -257,6 +359,7 @@ dsh-neeko/
 3. **协议翻译**：DSH 原始事件 ↔ 标准协议消息
 4. **会话管理**：维护 session 状态，处理模式切换
 5. **自动拉起 Neeko**：CLI 模式下 spawn Neeko 桌面应用
+6. **通知上报**：把「需要注意」的 host 事件经 `POST /hook/dsh` 送到 Neeko（见 §3.5）
 
 #### 模式检测逻辑
 

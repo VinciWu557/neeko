@@ -21,6 +21,8 @@ import type { LlmModelReasoningInfo } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { AskUserQuestionAnswer, AskUserQuestionRequest } from '@deepseek-ai/dsh-user-questions'
+import { installNotifyReporter } from '../notify-wiring.ts'
+import { defaultEndpointsDir } from '../notify-transport.ts'
 import { planSession } from './session-plan.ts'
 import { runStateOfStatus } from './program-status.ts'
 import { loadKeybindingOverrides } from './keymap.ts'
@@ -688,6 +690,13 @@ export function apply(ctx: Context, config: TuiConfig): void {
           live.notify(`could not resume ${sessionId}: ${error instanceof Error ? error.message : String(error)}`, 'error')
         }
       }
+
+      // 通知上报：TUI 是**用户日常跑的形态**（`dsh --profile neeko --tui`）。
+      // `cordis.patch.yml` 里 bridge 那行在 `--tui` 时是 `disabled` 的，所以这里
+      // 必须自己挂 —— 否则通知代码一行都不跑，且没有任何日志（真机事故，2026-10-27）。
+      // 释放交给 ctx 的 effect：TUI 进程退出时整个树 dispose。
+      const disposeNotify = installNotifyReporter(ctx, [defaultEndpointsDir()])
+      ctx.effect(() => disposeNotify, 'neeko-tui: notify reporter')
 
       app.mountTranscript(transcript)
       // Session timing (pi-timing's model): generation spans are measured from
