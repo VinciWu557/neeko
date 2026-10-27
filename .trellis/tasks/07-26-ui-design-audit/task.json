@@ -3,7 +3,7 @@
   "name": "ui-design-audit",
   "title": "UI Design Audit and Optimization Plan",
   "description": "UI 设计审计与优化方案（planning-only，不改代码）。产出 IA/布局地图、设计系统盘点、P0-P2 问题清单、目标 token/原语体系、分阶段路线图；含 Decision Log（D1-D5 proposed-default）、原型索引（5 份任务内原型）、子任务依赖图与 v1 cut、与 unified-task-hub 的跨任务边界。",
-  "status": "completed",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,13 +11,22 @@
   "creator": "tincopper",
   "assignee": "tincopper",
   "createdAt": "2026-07-26",
-  "completedAt": "2026-10-27",
+  "completedAt": null,
   "branch": null,
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,
   "pr_url": null,
-  "subtasks": [],
+  "subtasks": [
+    "ui-tokens-density",
+    "ui-primitives-chrome",
+    "ui-theme-escape-fix",
+    "ui-empty-loading",
+    "ui-settings-ia",
+    "ui-skills-ia",
+    "ui-nav-cleanup",
+    "ui-quality-gate"
+  ],
   "children": [
     "08-02-mcp-marketplace"
   ],
@@ -42,6 +51,6 @@
     "src/lib/utils.ts",
     "src/shared/utils/cn.ts"
   ],
-  "notes": "归档（2026-10-27）。**planning-only 任务**：prd 开头自述「本任务只产出规划文档，不改代码」。产物侧全部交付（design 26.1K / implement 7.1K / 5 份任务内原型 / Decision Log D1-D5 / §10.1 八个子任务清单 / §10.3 依赖图 / §10.4 v1 cut）。实施侧：§10.1 的 8 个子任务一个都没建（名字全仓零引用）—— 归档的是规划，不是实施。唯一已落地的代码是 implement.md 头部的 CSS 架构优化（2026-08-07，src/styles/ 分层重构 + token 修复 + 硬编码消除），它不属于那 8 个子任务中的任何一个。subtasks 数组已清空：那 8 个名字是未创建的计划名，而 subtasks 是 children 的旧拼写，语义是「真实存在的子任务引用」，留着会成为悬空引用（同 10-16-notify-review-remediation）。计划清单的正确位置是 design.md §10.1。children 保留 08-02-mcp-marketplace（已于 2026-08 单独归档完成，task.py 语义：缺失子任务视为已完成）。",
+  "notes": "2026-07-27: Decision Log D1-D5 为 proposed-default，待用户确认或推翻；确认后即可按 design.md §10.1 拆 8 个子任务并 task.py start。v1 cut = 阶段 A-D + Projects EmptyState + Skills 去双挂载 + nav cleanup + quality 雏形。注意：docs/prototypes/git-log-panel.html 仅主仓库有，本 worktree 未签出。",
   "meta": {}
 }
