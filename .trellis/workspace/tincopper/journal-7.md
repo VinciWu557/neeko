@@ -1366,3 +1366,40 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 用户需再目视确认（尤其 Light/Claude 主题 —— 亮色下分割线从不可见变为刚好可见，若嫌重可再降一档）
+
+
+## Session 356: 去掉项目间分割线：连带删除 isLast 整条数据链并纠正一处错误注释
+<!-- trellis-session: v=2 fp=85a47b6091489b9a -->
+
+**Date**: 2026-10-27
+**Task**: 去掉项目间分割线：连带删除 isLast 整条数据链并纠正一处错误注释
+**Branch**: `main`
+
+### Summary
+
+用户反问「横杠的意义是什么呢」——确实没有：项目头本身已是视觉单元（avatar + 粗体名 + 计数），hover 背景块已承担分组职责，再加线是三重分隔。删 class 会触发 TS6133，顺势看清 isLast 是一条完整数据链，整链删除
+
+### Main Changes
+
+- ProjectGroup 去掉项目间 border-b；连带删除 isLast 链（groupProjects/ProjectsPanel/ProjectItem/ConnectionProjectCard/types）
+- groupProjects.test.ts 4 个用例改写为断言分组行为本身（lastGroup 断言原本只在喂分割线）
+- 纠正 groupProjects 错误注释：lastGroup 并非「DnD 排序落点用」，DnD 用的是 over.id
+- spec design-tokens.md 坑增至 6 个，新增「加一条分割线与把分割线变明显是两回事」判据
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] tsc 通过；vitest src/features/project/ 22 files / 187 tests 通过；AC0 复核 DOM 未变 + 新增布局类 0 处
+- [OK] pnpm check:quick 全绿：31 护栏 0 违规 + eslint/tsc/clippy（中途有 5 处 prettier 缩进错误，eslint --fix 修复）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 护栏盲区待定：bg-[rgba(...)] 形式的主题逃逸未拦（WSLDialog/RemoteDialog 共 6 处写死蓝）
+- Settings 里 16 处的分割线保留（分隔的是不同设置分组，有语义）—— 若也嫌重可同样去掉

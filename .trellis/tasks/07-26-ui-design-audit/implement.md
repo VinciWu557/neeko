@@ -132,6 +132,33 @@ pnpm tauri dev
 > **最终方案**：逐主题显式 rgba + `@utility` 桥接（运行时解析）。
 > 验证方式：**看构建产物**（`dist/assets/*.css`）里的最终值，不是看源码 ——
 > 源码对、产物被降级，是静默的。
+>
+> **⚠ 第二轮返工（2026-10-27，用户反馈触发）**
+>
+> 用户：「**直接去掉不要横杠，横杠的意义是什么呢**」
+>
+> 第一轮把强度改回等效值只是**止损**（回到「几乎不可见」）。但用户要的是**去掉**。
+>
+> **定案：项目之间不画分割线。** 理由：
+> - 项目头本身已是视觉单元（avatar + 粗体名称 + 计数）
+> - hover 时整行有 `bg-bg-hover` 背景块 —— **背景块已承担分组职责**
+> - 再加一条线 = 三重分隔
+>
+> **落地不只删 class**：`isLast` 这条数据链
+> （`groupProjects` → `ProjectsPanel` → `ProjectItem` → `ConnectionProjectCard` →
+> `ProjectGroup`）**唯一的消费者就是那条线**，故整条链一并删除 ——
+> 否则留下无人消费的 prop（TS `noUnusedParameters` 直接报 TS6133）。
+>
+> **顺带纠正一处错误注释**：`groupProjects` 原注释称 `lastGroup` 是
+> 「**DnD 排序落点用**」—— 那是错的：DnD 用的是 `over.id`（拖放目标的项目 id），
+> 与该字段无关。它只是那条分割线的燃料。
+>
+> **未动**：`useProjectList` 里另有一份 `isLast`（另一条平行链）——
+> 它有自己的测试断言、且**无外部消费者**，属更早的遗留死代码，
+> 与本次分割线无关，**不扩大改动范围**。
+>
+> **验证**：`tsc --noEmit` 通过；`vitest src/features/project/` 22 files / 187 tests 通过；
+> AC0 机器复核：**DOM 标签集合未变 + 新增布局类 0 处**。
 
 ## 阶段 C — 原语（1–2 天）· ui-primitives
 
