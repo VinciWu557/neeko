@@ -18,7 +18,7 @@ function getStateBadgeClass(state: string): string {
     case 'CLOSED':
       return 'bg-accent-red/15 text-accent-red';
     case 'MERGED':
-      return 'bg-[#a371f7]/20 text-[#a371f7]';
+      return 'bg-accent-brick/20 text-accent-brick';
     default:
       return 'bg-bg-tertiary text-text-muted';
   }

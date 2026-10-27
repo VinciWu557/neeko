@@ -157,7 +157,7 @@ const ProjectSkillCard: React.FC<ProjectSkillCardProps> = React.memo(
                 className={cn(
                   'shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors',
                   checked
-                    ? 'bg-accent-blue border-accent-blue text-white'
+                    ? 'bg-accent-blue border-accent-blue text-text-on-accent'
                     : 'border-border bg-bg-secondary',
                   selectionMode ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
                 )}

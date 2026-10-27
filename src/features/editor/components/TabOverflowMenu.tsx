@@ -137,7 +137,7 @@ const TabOverflowMenu: React.FC<TabOverflowMenuProps> = ({
             {renderLeading?.(tab)}
             <span className="flex-1 min-w-0 truncate">{tab.title}</span>
             <button
-              className="tb-icon-btn w-4 h-4 rounded text-text-muted hover:text-[#e06c75] hover:bg-bg-primary transition-colors flex items-center justify-center shrink-0 leading-none opacity-0 group-hover:opacity-100"
+              className="tb-icon-btn w-4 h-4 rounded text-text-muted hover:text-accent-red hover:bg-bg-primary transition-colors flex items-center justify-center shrink-0 leading-none opacity-0 group-hover:opacity-100"
               style={{ fontSize: 'var(--terminal-font-size)' }}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => handleCloseTab(e, tab.id)}

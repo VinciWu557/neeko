@@ -129,7 +129,7 @@ const PRCommentItem: React.FC<PRCommentItemProps> = ({
             />
             <div className="flex items-center gap-2">
               <button
-                className="px-3 py-1.5 text-[calc(var(--font-size)-2px)] bg-accent-blue text-white rounded hover:opacity-90 transition-opacity"
+                className="px-3 py-1.5 text-[calc(var(--font-size)-2px)] bg-accent-blue text-text-on-accent rounded hover:opacity-90 transition-opacity"
                 onClick={handleSaveEdit}
               >
                 Save

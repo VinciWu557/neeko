@@ -66,7 +66,7 @@ const PRCommentInput: React.FC<PRCommentInputProps> = ({
           className={cn(
             'px-4 py-1.5 text-[calc(var(--font-size)-1px)] font-medium rounded transition-all',
             body.trim() && !isSubmitting
-              ? 'bg-accent-blue text-white hover:opacity-90'
+              ? 'bg-accent-blue text-text-on-accent hover:opacity-90'
               : 'bg-bg-tertiary text-text-muted cursor-not-allowed',
           )}
           onClick={handleSubmit}

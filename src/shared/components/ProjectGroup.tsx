@@ -34,7 +34,6 @@ interface ProjectGroupProps {
   /** 是否 active 项目（影响 header bg + hover 槽位常驻可见） */
   isActive?: boolean;
   /** 是否最后一个项目卡（决定要不要画 hairline 分隔） */
-  isLast?: boolean;
   actions: ProjectGroupActions;
   /** 自定义 IDE 图标（src）。caller 通常通过 getIdeIconByCommand 提供 */
   ideIconSrc?: string;
@@ -89,7 +88,6 @@ const ProjectGroup: React.FC<ProjectGroupProps> = ({
   avatarColor,
   sessionCount,
   expanded,
-  isLast = false,
   actions,
   ideIconSrc,
   headerExtra,
@@ -100,7 +98,13 @@ const ProjectGroup: React.FC<ProjectGroupProps> = ({
   const initials = getProjectInitials(name);
 
   return (
-    <div className={cn('group/proj', !isLast && 'border-b border-white/[0.04]')}>
+    // 项目之间不画分割线（2026-10-27 用户定案）：项目头本身已经是视觉单元
+    // （avatar + 粗体名称 + 计数），且 hover 时整行有 bg-bg-hover 背景块 ——
+    // 背景块已经承担了「分组」职责，再加一条横杠是三重分隔，反而显脏。
+    // 原实现：`!isLast && 'border-b border-white/[0.04]'`（4% 白，亮色主题下还完全不可见）。
+    // 连带删除了 isLast 这条数据链（groupProjects → ProjectsPanel → ProjectItem →
+    // ConnectionProjectCard → ProjectGroup）—— 它唯一的消费者就是这条线。
+    <div className="group/proj">
       <div
         role="button"
         tabIndex={0}

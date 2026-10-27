@@ -7,6 +7,7 @@ import { IDE_PRESETS, getIdeCommand, getIdeIconSrc } from '@/shared/utils/idePre
 import type { ProjectId } from '@/shared/utils/workspaceRef';
 import { Button } from '@/ui/Button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/ui/Dialog';
+import { optionSecondary } from '@/ui/selection';
 
 // eslint-disable-next-line import/no-restricted-paths -- ProjectSettingsDialog needs to call agent API for saving project agents
 import { setProjectAgents } from '../../features/agent/api/agentApi';
@@ -166,7 +167,7 @@ function ProjectSettingsDialog({
                 aria-selected={!selectedAgentId}
                 className={cn(
                   'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                  !selectedAgentId && 'bg-accent-blue text-white',
+                  !selectedAgentId && 'bg-accent-blue text-text-on-accent',
                 )}
                 onClick={() => {
                   setSelectedAgentId(null);
@@ -193,7 +194,7 @@ function ProjectSettingsDialog({
                     aria-selected={selectedAgentId === agent.id}
                     className={cn(
                       'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                      selectedAgentId === agent.id && 'bg-accent-blue text-white',
+                      selectedAgentId === agent.id && 'bg-accent-blue text-text-on-accent',
                     )}
                     onClick={() => {
                       setSelectedAgentId(agent.id);
@@ -209,7 +210,9 @@ function ProjectSettingsDialog({
                   >
                     <AgentIcon icon={agent.icon} size={16} />
                     <span className="font-medium">{agent.name}</span>
-                    <span className="ml-auto text-xs text-text-muted">{agent.command}</span>
+                    <span className={optionSecondary(selectedAgentId === agent.id)}>
+                      {agent.command}
+                    </span>
                   </div>
                 ))}
             </div>
@@ -252,7 +255,7 @@ function ProjectSettingsDialog({
                 aria-selected={!selectedIdeId}
                 className={cn(
                   'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                  !selectedIdeId && 'bg-accent-blue text-white',
+                  !selectedIdeId && 'bg-accent-blue text-text-on-accent',
                 )}
                 onClick={() => {
                   setSelectedIdeId(null);
@@ -277,7 +280,7 @@ function ProjectSettingsDialog({
                   aria-selected={selectedIdeId === ide.id}
                   className={cn(
                     'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                    selectedIdeId === ide.id && 'bg-accent-blue text-white',
+                    selectedIdeId === ide.id && 'bg-accent-blue text-text-on-accent',
                   )}
                   onClick={() => {
                     setSelectedIdeId(ide.id);
@@ -297,7 +300,7 @@ function ProjectSettingsDialog({
                     alt=""
                   />
                   <span className="font-medium">{ide.name}</span>
-                  <span className="ml-auto text-xs text-text-muted">
+                  <span className={optionSecondary(selectedIdeId === ide.id)}>
                     {config.ideCommandOverrides?.[ide.id] ?? getIdeCommand(ide)}
                   </span>
                 </div>
@@ -312,7 +315,7 @@ function ProjectSettingsDialog({
                     aria-selected={selectedIdeId === customId}
                     className={cn(
                       'flex items-center gap-2.5 p-2.5 px-3 cursor-pointer transition-colors duration-150 hover:bg-bg-hover',
-                      selectedIdeId === customId && 'bg-accent-blue text-white',
+                      selectedIdeId === customId && 'bg-accent-blue text-text-on-accent',
                     )}
                     onClick={() => {
                       setSelectedIdeId(customId);
@@ -328,7 +331,9 @@ function ProjectSettingsDialog({
                   >
                     <span style={{ fontSize: 16 }}>&#128187;</span>
                     <span className="font-medium">{ide.name}</span>
-                    <span className="ml-auto text-xs text-text-muted">{ide.command}</span>
+                    <span className={optionSecondary(selectedIdeId === customId)}>
+                      {ide.command}
+                    </span>
                   </div>
                 );
               })}

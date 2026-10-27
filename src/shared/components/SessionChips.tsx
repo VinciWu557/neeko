@@ -8,7 +8,7 @@ const AheadChip: React.FC<AheadChipProps> = ({ ahead }) => {
   if (ahead <= 0) return null;
   return (
     <span
-      className="text-[0.92em] font-mono font-semibold text-[#3fb950]"
+      className="text-[0.92em] font-mono font-semibold text-diff-added-text"
       title={`${ahead} commit(s) ahead of upstream`}
     >
       ↑{ahead}

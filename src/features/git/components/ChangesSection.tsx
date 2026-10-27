@@ -100,12 +100,12 @@ const Section: React.FC<SectionProps> = ({
           {title} ({count})
         </span>
         {additions != null && additions > 0 && (
-          <span className="text-[#3fb950] text-[calc(var(--font-size)-2px)] font-semibold">
+          <span className="text-diff-added-text text-[calc(var(--font-size)-2px)] font-semibold">
             +{additions}
           </span>
         )}
         {deletions != null && deletions > 0 && (
-          <span className="text-[#f85149] text-[calc(var(--font-size)-2px)] font-semibold">
+          <span className="text-diff-removed-text text-[calc(var(--font-size)-2px)] font-semibold">
             -{deletions}
           </span>
         )}

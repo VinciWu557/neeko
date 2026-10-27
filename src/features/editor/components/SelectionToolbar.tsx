@@ -77,7 +77,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-bg-tertiary border border-border shadow-lg text-sm whitespace-nowrap">
           <span className="text-text-muted">No agent terminal open</span>
           <button
-            className="px-2 py-0.5 rounded bg-accent-blue text-white text-xs font-medium hover:opacity-90 transition"
+            className="px-2 py-0.5 rounded bg-accent-blue text-text-on-accent text-xs font-medium hover:opacity-90 transition"
             onClick={onCreateTab}
           >
             Open {agentName || 'Agent'} Terminal
@@ -98,7 +98,7 @@ const SelectionToolbar: React.FC<SelectionToolbarProps> = ({
             }}
           />
           <button
-            className="px-2 py-1 rounded bg-accent-blue text-white text-xs font-medium hover:opacity-90 transition"
+            className="px-2 py-1 rounded bg-accent-blue text-text-on-accent text-xs font-medium hover:opacity-90 transition"
             onClick={handleAskSend}
           >
             Send

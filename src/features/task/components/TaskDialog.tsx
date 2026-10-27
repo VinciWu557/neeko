@@ -68,7 +68,7 @@ function TaskDialog({ onClose, onSubmit, editConfig }: TaskDialogProps) {
               placeholder="Enter a name for this task (optional)"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors"
             />
           </div>
 
@@ -85,7 +85,7 @@ function TaskDialog({ onClose, onSubmit, editConfig }: TaskDialogProps) {
               placeholder="Enter command (for example, npm run dev)"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
-              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue transition-colors"
+              className="w-full px-3 py-2.5 text-[var(--font-size)] rounded-md bg-bg-primary border border-border text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-blue focus:border-accent-blue transition-colors"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleSubmit();
               }}

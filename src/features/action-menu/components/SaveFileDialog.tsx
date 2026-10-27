@@ -238,7 +238,7 @@ const SaveFileDialog: React.FC = () => {
             </button>
             <button
               type="button"
-              className="px-4 py-1.5 rounded-md text-sm text-white bg-accent-blue hover:bg-accent-blue/90 disabled:opacity-50 transition-colors cursor-pointer"
+              className="px-4 py-1.5 rounded-md text-sm text-text-on-accent bg-accent-blue hover:bg-accent-blue/90 disabled:opacity-50 transition-colors cursor-pointer"
               disabled={submitting}
               onClick={handleSubmit}
             >

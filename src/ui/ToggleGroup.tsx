@@ -30,7 +30,7 @@ const ToggleGroupItem = React.forwardRef<
       'py-1 px-3.5 bg-none border-none text-text-secondary text-[0.86em] cursor-pointer transition-[background-color,color] duration-150',
       'hover:bg-bg-hover hover:text-text-primary',
       'border-r border-border last:border-r-0',
-      'data-[state=on]:bg-accent-blue data-[state=on]:text-white',
+      'data-[state=on]:bg-accent-blue data-[state=on]:text-text-on-accent',
       'focus-visible:ring-2 focus-visible:ring-accent-blue focus-visible:ring-offset-1',
       className,
     )}

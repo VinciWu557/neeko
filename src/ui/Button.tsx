@@ -10,8 +10,8 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary: 'bg-accent-blue text-[var(--text-on-accent)] hover:brightness-110',
-        destructive: 'bg-accent-red text-white hover:brightness-110',
-        danger: 'bg-accent-red text-white hover:brightness-110',
+        destructive: 'bg-accent-red text-text-on-accent hover:brightness-110',
+        danger: 'bg-accent-red text-text-on-accent hover:brightness-110',
         outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground',
         secondary: 'bg-bg-tertiary border border-border text-text-primary hover:bg-bg-hover',
         ghost: 'text-text-primary hover:bg-bg-hover',

@@ -30,7 +30,7 @@ function ExternallyModifiedDialog({
             保留当前编辑
           </button>
           <button
-            className="px-3 py-1.5 text-sm rounded bg-accent text-white hover:bg-accent/90 transition-colors"
+            className="px-3 py-1.5 text-sm rounded bg-accent text-accent-foreground hover:bg-accent/90 transition-colors"
             onClick={onReload}
           >
             重新加载

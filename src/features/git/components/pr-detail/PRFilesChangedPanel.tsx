@@ -197,7 +197,7 @@ const PRFilesChangedPanel: React.FC<PRFilesChangedPanelProps> = ({
             <button
               className={cn(
                 'bg-transparent border-none text-text-secondary px-2.5 py-0.5 cursor-pointer text-[calc(var(--font-size)-1px)] transition-all duration-150 hover:bg-bg-hover hover:text-text-primary border-r border-border last:border-r-0',
-                viewMode === 'unified' && '!bg-accent-blue !text-white',
+                viewMode === 'unified' && '!bg-accent-blue !text-text-on-accent',
               )}
               onClick={() => setViewMode('unified')}
             >
@@ -206,7 +206,7 @@ const PRFilesChangedPanel: React.FC<PRFilesChangedPanelProps> = ({
             <button
               className={cn(
                 'bg-transparent border-none text-text-secondary px-2.5 py-0.5 cursor-pointer text-[calc(var(--font-size)-1px)] transition-all duration-150 hover:bg-bg-hover hover:text-text-primary',
-                viewMode === 'split' && '!bg-accent-blue !text-white',
+                viewMode === 'split' && '!bg-accent-blue !text-text-on-accent',
               )}
               onClick={() => setViewMode('split')}
             >
@@ -510,7 +510,7 @@ const DiffBody: React.FC<DiffBodyProps> = ({
                   Cancel
                 </button>
                 <button
-                  className="bg-accent-blue border-none text-white px-2.5 py-1 rounded text-[calc(var(--font-size)-1px)] cursor-pointer disabled:opacity-50"
+                  className="bg-accent-blue border-none text-text-on-accent px-2.5 py-1 rounded text-[calc(var(--font-size)-1px)] cursor-pointer disabled:opacity-50"
                   onClick={handleSubmitComment}
                   disabled={submitting || !commentText.trim()}
                 >

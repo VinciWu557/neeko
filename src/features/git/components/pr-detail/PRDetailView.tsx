@@ -48,7 +48,7 @@ function getStateBadgeClass(state: string): string {
     case 'CLOSED':
       return 'bg-accent-red/15 text-accent-red';
     case 'MERGED':
-      return 'bg-[#a371f7]/20 text-[#a371f7]';
+      return 'bg-accent-brick/20 text-accent-brick';
     default:
       return 'bg-bg-tertiary text-text-muted';
   }
@@ -247,7 +247,7 @@ const PRDetailView: React.FC<PRDetailViewProps> = ({
 
           <span className="text-border">·</span>
 
-          <span className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded text-[10px] font-medium bg-[#a371f7]/15 text-[#a371f7]">
+          <span className="inline-flex items-center gap-0.5 px-1.5 py-[1px] rounded text-[10px] font-medium bg-accent-brick/15 text-accent-brick">
             <GitCommitHorizontal size={11} />
             {totalCommits} {totalCommits === 1 ? 'commit' : 'commits'}
           </span>

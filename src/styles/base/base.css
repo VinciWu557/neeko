@@ -47,9 +47,10 @@
     background-color: var(--bg-hover);
     color: var(--text-primary);
   }
+  /* #fff 在 dark 主题只有 1.40 对比 → 用随主题的 --text-on-accent */
   .wc-close:hover {
     background-color: var(--accent-red) !important;
-    color: #fff !important;
+    color: var(--text-on-accent) !important;
   }
 
   /* Scrollbars — 滚动时显示，停止 3s 后隐藏（.is-scrolling 由

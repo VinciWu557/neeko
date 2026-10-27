@@ -32,7 +32,7 @@ function Checkbox({
         {...props}
       >
         <CheckboxPrimitive.Indicator>
-          <svg width="9" height="5" viewBox="0 0 9 5" fill="none" className="text-white">
+          <svg width="9" height="5" viewBox="0 0 9 5" fill="none" className="text-text-on-accent">
             <path
               d="M1 2.5L3 4.5L8 0.5"
               stroke="currentColor"

@@ -104,7 +104,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <button
               type="button"
               onClick={this.handleRetry}
-              className="px-3 py-1.5 rounded-md bg-accent-blue text-white text-xs hover:opacity-90"
+              className="px-3 py-1.5 rounded-md bg-accent-blue text-text-on-accent text-xs hover:opacity-90"
             >
               Retry
             </button>

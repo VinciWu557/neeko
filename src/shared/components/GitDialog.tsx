@@ -60,7 +60,6 @@ const GitDialog: React.FC<GitDialogProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [homeDirPath, setHomeDirPath] = useState('');
-  // Sync homeDirPath from remoteHomeDir
   useEffect(() => {
     if (dialog.type === 'new-worktree' && dialog.source?.type === 'remote' && remoteHomeDir) {
       // Defer to avoid sync setState in effect
@@ -217,8 +216,9 @@ const GitDialog: React.FC<GitDialogProps> = ({
                 >
                   <span
                     className={cn(
-                      'absolute top-0.5 left-0.5 w-3 h-3 bg-text-secondary rounded-full transition-all duration-200',
-                      customMode && 'translate-x-4 bg-accent-blue',
+                      // accent 实底上的滑块 → text-on-accent（原 bg-text-secondary：dark 1.19 / claude 1.41，几乎同色）
+                      'absolute top-0.5 left-0.5 w-3 h-3 bg-text-primary rounded-full transition-all duration-200',
+                      customMode && 'translate-x-4 bg-text-on-accent',
                     )}
                   />
                 </button>

@@ -62,7 +62,7 @@ export function WelcomeScreen({ onAddProject }: WelcomeScreenProps) {
 
       <button
         type="button"
-        className="add-project-btn w-full max-w-[280px] px-6 py-2.5 bg-accent-blue border-none rounded-md text-text-primary text-[var(--font-size)] font-medium cursor-pointer transition-colors duration-200 hover:opacity-90"
+        className="add-project-btn w-full max-w-[280px] px-6 py-2.5 bg-accent-blue border-none rounded-md text-text-on-accent text-[var(--font-size)] font-medium cursor-pointer transition-colors duration-200 hover:opacity-90"
         onClick={onAddProject}
       >
         Add Your First Project

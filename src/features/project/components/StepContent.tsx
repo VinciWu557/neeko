@@ -20,7 +20,7 @@ export default function StepContent({
   return (
     <>
       <div className={checkClasses}>
-        {done && <Check size={12} className="text-white" strokeWidth={3} />}
+        {done && <Check size={12} className="text-text-on-accent" strokeWidth={3} />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
