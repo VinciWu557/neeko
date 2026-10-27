@@ -932,3 +932,112 @@ route_group_with(move |source, envelope| {
 // ✅ 测试缝注入记录型 sink，走真引擎真 socket
 route_group_with(move |s, e| recorded.lock().unwrap().push((s.to_owned(), e)));
 ```
+
+---
+
+## 场景：**自供源**（`shapes` 为空 —— 收上报，但不提供安装腿）
+
+> 任务源：`10-16-notify-dsh`（2026-10-27）。
+
+### 1. Scope / Trigger
+
+- **Trigger**：要接入的 CLI **自己就有进程内插件**能上报，Neeko 既不该也不需要往它的用户目录
+  写文件。DSH 是第一个：上报由 `packages/dsh-neeko`（DSH 自己的 cordis 插件）完成。
+- **Scope**：`agent/hooks/targets/data.rs`（数据行）、`agent/hooks/install/status.rs`
+  （`self_supplied` 字段）、`src/features/settings/components/CliHooksSection.tsx`（隐藏开关行）。
+
+### 2. Contracts
+
+`HOOK_TARGETS` 同时驱动**两件不同的事**，这是本形态存在的全部理由：
+
+| 用途 | 需要的条件 |
+| --- | --- |
+| `/hook/{source}` 的**接收白名单**（`ingest/validation.rs::hook_source`） | 只要在表里 |
+| 设置页「Neeko 能装哪些 CLI」+ `apply_selection` 安装遍历 | `shapes` 非空 |
+
+**自供源 = `shapes: &[]` + `dir: || None`**，表达「接收上报，但不安装、不展示开关」。
+
+- 若把 DSH 建模成「有 shapes 但 dir 恒 None」：设置页的 `hookStatus.map` **无条件渲染**，
+  会多出一行「dsh — not installed」+ 拨动无效果的开关 —— 正是本任务要避免的「看起来有、实际没有」。
+- 若不把 DSH 放进 `HOOK_TARGETS`：`/hook/dsh` 返回 **204 但事件被静默丢弃**
+  （`hook_source` 的 fail-open 出口），表现为「装了但没通知」。
+
+### 3. `self_supplied` 不是 `path.is_empty()`
+
+`HookInstallStatus::self_supplied` 是**显式字段**。UI 判据必须是它，不能是 `path === ''`：
+
+| 情况 | `path` | `self_supplied` | 应否展示开关 |
+| --- | --- | --- | --- |
+| 自供源（dsh） | `""` | `true` | **否**（装了也没用） |
+| 正常 CLI，目录定位不到（本机没装 pi） | `""` | `false` | **是**（用户可能要装它） |
+
+把两者压进一个字段 = 「未初始化的 pi」从列表里消失，用户再也装不上。
+
+### 3b. 收敛路径必须显式跳过自供源（不只是「不展示」）
+
+`apply_selection_over` 的 `dir_of(target) == None` 分支返回
+`Failed("cannot locate user config directory")`。自供源的 `dir()` 恒 `None` ——
+若只在 UI 上过滤而忘了收敛腿，每次开机都会记一条 `dsh:Failed`，让开机日志谎报
+「改了什么」（`boot::reconcile` 的 `changed` 过滤器**包含 `Failed`**）。
+
+**代价面**：设置页在 `getCliHookStatus()` 失败（回 `[]`）时 `enabledSourcesFor` 返回
+`null`，Rust 侧谓词退化成 `|_| true` → 自供源走 `dir_of` None → `Failed` →
+前端弹 **error** toast。用户看到的是「CLI hooks 失败了」，而什么都没失败。
+
+护栏：`install/selection.rs::self_supplied_targets_produce_no_outcome`
+（两个 `master` 取值各断言一次；变异验证：删掉 filter 立刻红）。
+
+### 4. Tests Required
+
+- `targets/tests.rs::self_supplied_sources_are_not_installable` —— 自供源清单的**唯一登记处**
+  （新增自供源必须同步改这条断言，否则说明有人漏填 `shapes`）。
+- `targets/tests.rs::self_supplied_sources_are_still_accepted_by_ingest`
+- `targets/tests.rs::self_supplied_sources_have_no_directory`
+- `tests/unit/http_gateway_test.rs::dsh_source_is_accepted_by_ingest` —— **断言「投递了」**
+  而非「204」（204 假绿灯是本形态的主要陷阱）。反证：删掉 `dsh` 行必红。
+- `CliHooksSection.test.tsx::installableHookRows` —— 含反证钉子
+  「`path === ''` 的正常 CLI 不得被过滤」。
+- `templates/tests.rs::embedded_templates_keep_contract_anchors` 必须**跳过**空 shapes
+  （自供源没有 Neeko 嵌入的模板）。
+- `install/selection.rs::self_supplied_targets_produce_no_outcome` —— 收敛回执里不得出现
+  自供源，**尤其不得是 `Failed`**（见 §3b）。
+
+### 4b. 上报端住在 CLI 自己的包里时，跨栈契约仍需护栏
+
+自供源的上报代码不在 `agent/hooks/templates/`，而在 `packages/dsh-neeko/src/notify-*.ts`
+（`packages/` 不纳入根门禁）。于是**没有任何测试把两侧的字符串绑在一起** ——
+改 Rust 的 `ENV_KEY_PORT` / `TOKEN_HEADER` / `event_keys` 或 `/hook/{source}` 路由段，
+包侧静默断裂，两侧测试各自全绿。
+
+护栏：`packages/dsh-neeko/tests/notify-contract.spec.ts`（5 条）**读 Rust 源码取常量**
+再断言本包行为。已做变异验证（改路由段 / 改 token 头 / 改 event_key 各变红一条）。
+
+判据与红线 5 同源：名字只允许来自单一源、改一端必须红。红线字面只覆盖 Tauri
+Event 名，此处把同一判据用在 hook wire 契约上。
+
+### 5. Wrong vs Correct
+
+#### Wrong
+
+```rust
+// ❌ 忘了加白名单 → 204 但事件被丢弃（Step 0 P6b 实测形态）
+// ❌ 或者：有 shapes 但 dir 恒 None → 设置页多一行死开关
+HookTarget { source: "dsh", dir: || None, shapes: &[InstallShape::Standalone] }
+```
+
+```ts
+// ❌ 用 path 空判自供源 → 把「本机没装 pi」也过滤掉
+rows.filter((r) => r.path !== '')
+```
+
+#### Correct
+
+```rust
+// ✅ 空 shapes = 自供源（唯一标记，由 targets/tests.rs 登记）
+HookTarget { source: "dsh", dir: || None, shapes: &[] }
+```
+
+```ts
+// ✅ 显式字段
+rows.filter((r) => !r.selfSupplied)
+```
