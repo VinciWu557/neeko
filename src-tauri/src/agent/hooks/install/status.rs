@@ -31,6 +31,8 @@ pub fn status_all() -> Vec<HookInstallStatus> {
                 path: String::new(),
                 installed: false,
                 version_current: false,
+                // 目录都定位不到 ≠ 自供源：它仍可被安装（只是本机没有该 CLI）。
+                self_supplied: target.shapes.is_empty(),
                 // 目录都定位不到：不报「未信任」（那是误导），报不适用。
                 trusted: None,
             },
@@ -51,6 +53,7 @@ pub(crate) fn status_at(target: &HookTarget, dir: &Path) -> HookInstallStatus {
         path: file.display().to_string(),
         installed,
         version_current,
+        self_supplied: target.shapes.is_empty(),
         trusted: trust_status(target, dir),
     }
 }

@@ -52,6 +52,12 @@ pub(crate) fn apply_selection_over(
 ) -> Vec<HookApplyOutcome> {
     let mut outcomes: Vec<HookApplyOutcome> = targets
         .iter()
+        // **自供源不参与收敛**（`shapes` 为空 = 接收上报但无安装腿，见
+        // `targets::HOOK_TARGETS` 的 dsh 行）。它们必须在这里被排除，而不是走下面的
+        // `dir_of` 分支：自供源的 `dir()` 恒 `None`，那会把「没有安装腿」误报成
+        // `Failed("cannot locate user config directory")` —— 开机日志每次都说改了什么，
+        // 设置页在 `getCliHookStatus()` 失败那档还会弹错误提示。
+        .filter(|target| !target.shapes.is_empty())
         .map(|target| {
             if !master || !should_install(target.source) {
                 return outcome(
@@ -77,6 +83,7 @@ pub(crate) fn apply_selection_over(
     outcomes.extend(
         targets
             .iter()
+            .filter(|target| !target.shapes.is_empty())
             .filter(|target| !master || !should_install(target.source))
             .filter_map(|target| dir_of(target).and_then(|dir| uninstall_at(target, &dir))),
     );
@@ -179,5 +186,53 @@ mod tests {
             HookApplyStatus::Unchanged,
             "第二次收敛必须零写盘（幂等）"
         );
+    }
+
+    /// **自供源不参与收敛**：`shapes` 为空的行不得产生任何回执，尤其不得是 `Failed`。
+    ///
+    /// 自供源（`dsh`）的 `dir()` 恒 `None`（它根本没有安装腿）。若它落到
+    /// `dir_of(target) == None` 分支，每次开机都会记一条
+    /// `dsh:Failed("cannot locate user config directory")` —— 开机日志因此谎报「改了什么」，
+    /// 设置页在 `getCliHookStatus()` 失败那档还会弹一个错误提示。
+    ///
+    /// **反证**：删掉 `apply_selection_over` 里的 `filter(|t| !t.shapes.is_empty())`，
+    /// 本用例立刻变红（fail 分支出现在两份回执里）。
+    ///
+    /// 走可注入内核（红线 13），目录由 `dir_of` 给，不触真实用户目录。
+    #[test]
+    fn self_supplied_targets_produce_no_outcome() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("cli");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let targets = [
+            HookTarget {
+                source: "installable",
+                file_name: "neeko-status.js",
+                template: "BODY",
+                dir: || None,
+                shapes: &[InstallShape::Standalone],
+            },
+            // 自供源：没有安装腿，也不该去任何目录。
+            HookTarget {
+                source: "self-supplied",
+                file_name: "unused",
+                template: "",
+                dir: || None,
+                shapes: &[],
+            },
+        ];
+        let dir_of = |t: &HookTarget| (t.source == "installable").then(|| dir.clone());
+
+        for master in [true, false] {
+            let outcomes = apply_selection_over(&targets, dir_of, master, |_| true);
+            assert!(
+                outcomes.iter().all(|o| o.source != "self-supplied"),
+                "自供源不得出现在收敛回执里（master={master}）: {outcomes:?}"
+            );
+            assert!(
+                !outcomes.iter().any(|o| o.status == HookApplyStatus::Failed),
+                "自供源不得被误报成 Failed（master={master}）: {outcomes:?}"
+            );
+        }
     }
 }

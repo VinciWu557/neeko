@@ -50,6 +50,14 @@ pub struct HookInstallStatus {
     pub installed: bool,
     /// 受管文件版本与当前应用一致（false 且 installed 时提示需更新）。
     pub version_current: bool,
+    /// **自供源**：上报由该 CLI 自己的插件完成，Neeko 不提供安装腿。
+    ///
+    /// 与 `path.is_empty()` **不是同一件事**：`path` 空还可能是「目录定位不到」
+    /// （CLI 本机未初始化）—— 那种情况仍应展示（用户可能要装它）。
+    /// 自供源则根本不该出现在开关列表里（拨动它没有任何效果）。
+    ///
+    /// 当前唯一自供源是 `dsh`（`packages/dsh-neeko` 负责上报）。
+    pub self_supplied: bool,
     /// CLI 侧信任态：`None` = 该 CLI 无信任概念（无需展示）；
     /// `Some(true)` = 需要且用户已确认（或无需确认）；`Some(false)` = **已安装但用户还没确认**
     /// —— 此时功能不生效（需要信任门的 CLI 的 `hooks.json` 面），UI 必须如实提示，

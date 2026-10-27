@@ -206,3 +206,29 @@ fn wire_contract_uses_the_hook_targets_table() {
         .iter()
         .any(|target| target.source == "pi"));
 }
+
+/// **DSH 是自供源**：`/hook/dsh` 必须被接收（否则 `dsh-neeko` 的通知全被静默丢弃）。
+///
+/// 反证钉子：删掉 `HOOK_TARGETS` 里的 `dsh` 行 → 本用例必红。
+/// 这正是 Step 0 P6b 实测到的形态 —— 服务端回 **204** 但事件**不投递**，
+/// 只看状态码会得到假绿灯。故本用例断言的是「**投递了**」，不是「状态码 204」。
+///
+/// 与既有 `post_notifies_only_registered_sources` 的分工：那条验「未知源被丢弃」，
+/// 这条验「已知的自供源能被接收」。两条合起来才说明白名单是**双向**正确的。
+#[tokio::test]
+async fn dsh_source_is_accepted_by_ingest() {
+    let (h, delivered) = start_engine(MAX_BODY_BYTES);
+    let body = r#"{"agent_session_id":"session-dsh-1","event":"turn_completed","cwd":"/work/proj","detail":null,"title":"Headless reply","hints":{"neeko_session_id":null,"project_id":null}}"#;
+
+    let status = h.post("/hook/dsh", Some(TOKEN), body).await;
+    assert_eq!(status, 204);
+
+    let got = delivered.lock().expect("lock").clone();
+    assert_eq!(got.len(), 1, "必须投递（204 但丢弃 = 假绿灯）: {got:?}");
+    let (source, event) = &got[0];
+    assert_eq!(source, "dsh");
+    assert_eq!(event.event, "turn_completed");
+    assert_eq!(event.agent_session_id, "session-dsh-1");
+    assert_eq!(event.title.as_deref(), Some("Headless reply"));
+    h.stop().await;
+}

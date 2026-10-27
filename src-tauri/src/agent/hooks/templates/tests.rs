@@ -19,6 +19,13 @@ fn embedded_templates_keep_contract_anchors() {
     use crate::agent::hooks::ingest::endpoint;
     use crate::agent::hooks::ingest::validation;
     for target in HOOK_TARGETS {
+        // **自供源没有 Neeko 嵌入的模板** —— 上报代码在 CLI 自己的插件里
+        // （DSH 的是 `packages/dsh-neeko/src/notify-*.ts`，由它的 `prepublishOnly` 门禁）。
+        // 这里对它断言「模板含锚点」永远不可能成立，故跳过；它的契约由
+        // `targets/tests.rs::self_supplied_sources_are_not_installable` 钉住。
+        if target.shapes.is_empty() {
+            continue;
+        }
         // Structured 行共用 shim 模板，其锚点由下方 `report_shim_keeps_contract_anchors`
         // 单独钉死（避免同一断言重复两次）。
         if target

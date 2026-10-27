@@ -363,22 +363,27 @@ fn claude_compat_entries_cover_action_and_completion() {
         .all(|e| e.matcher.is_none()));
 }
 
-/// 每个 Structured 行都必须声明配置文件名（否则 writers 无从定位用户配置）。
+/// 每个 Structured 面都必须声明配置文件名（否则 writers 无从定位用户配置）。
+///
+/// 遍历**全部** shape 而非只取 `shapes[0]`：自供源（`dsh`）的 `shapes` 为空数组，
+/// 按下标取会 panic；而「一个 CLI 的 Structured 面可能在第二位」（Codex 正是如此）。
 #[test]
 fn structured_targets_declare_settings_file() {
     for target in HOOK_TARGETS {
-        if let InstallShape::Structured {
-            settings_file,
-            entries,
-            ..
-        } = &target.shapes[0]
-        {
-            assert!(
-                !settings_file.is_empty(),
-                "{} 缺 settings_file",
-                target.source
-            );
-            assert!(!entries.is_empty(), "{} 的 entries 不得为空", target.source);
+        for shape in target.shapes {
+            if let InstallShape::Structured {
+                settings_file,
+                entries,
+                ..
+            } = shape
+            {
+                assert!(
+                    !settings_file.is_empty(),
+                    "{} 缺 settings_file",
+                    target.source
+                );
+                assert!(!entries.is_empty(), "{} 的 entries 不得为空", target.source);
+            }
         }
     }
 }
@@ -451,6 +456,58 @@ fn omp_template_keeps_shared_contract_anchors() {
         assert!(
             omp.template.contains(anchor),
             "OMP 模板缺少契约锚点 {anchor:?}"
+        );
+    }
+}
+
+/// **自供源**：不需要 Neeko 安装、但仍在 ingest 白名单里的源（`shapes` 为空）。
+///
+/// 存在理由：`HOOK_TARGETS` 同时驱动两件事 —— ①`/hook/{source}` 的**接收白名单**；
+/// ②设置页的**「Neeko 能装哪些 CLI」**。DSH 只满足前者：它的上报由
+/// `packages/dsh-neeko`（DSH 自己的插件）完成，Neeko 既不该也不需要在用户的
+/// profile 里写文件。
+///
+/// 若把 DSH 建模成一个「有 shapes 但 dir 恒 None」的行，设置页会多出一行
+/// 「dsh — not installed」+ 一个拨动无效果的开关（`CliHooksSection` 的
+/// `hookStatus.map` 是无条件渲染）。
+///
+/// 故 `shapes` 为空 = **自供源的唯一标记**，且必须显式声明（不是「忘了填」）。
+#[test]
+fn self_supplied_sources_are_not_installable() {
+    let self_supplied: Vec<&str> = HOOK_TARGETS
+        .iter()
+        .filter(|t| t.shapes.is_empty())
+        .map(|t| t.source)
+        .collect();
+    // 当前只有 DSH 是自供源；新增时必须在这里登记（否则说明有人漏填 shapes）。
+    assert_eq!(
+        self_supplied,
+        ["dsh"],
+        "自供源清单变了 —— 新增自供源要同步：①本断言 ②设置页过滤 ③文档"
+    );
+}
+
+/// 自供源仍必须在接收白名单里（否则它的上报会被 `hook_source` 静默丢弃）。
+#[test]
+fn self_supplied_sources_are_still_accepted_by_ingest() {
+    let source = "dsh";
+    assert!(
+        HOOK_TARGETS.iter().any(|t| t.source == source),
+        "{source} 必须在 HOOK_TARGETS 里（否则 /hook/{source} 会被白名单丢掉）"
+    );
+}
+
+/// **不是每个 target 都要能被安装** —— 但每个 target 都必须能定位到自己该看的地方。
+///
+/// 自供源的 `dir` 恒 `None`（Neeko 不去任何目录写东西）；其余源的 `dir` 必须可解析
+/// （解析不到 = 该 CLI 本机未安装，那是运行时事实，不是数据错误）。
+#[test]
+fn self_supplied_sources_have_no_directory() {
+    for target in HOOK_TARGETS.iter().filter(|t| t.shapes.is_empty()) {
+        assert!(
+            (target.dir)().is_none(),
+            "{} 是自供源，不该去任何用户目录（dir 必须恒 None）",
+            target.source
         );
     }
 }

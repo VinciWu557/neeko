@@ -129,6 +129,30 @@ pub const HOOK_TARGETS: &[HookTarget] = &[
             trust: None,
         }],
     },
+    // ── DSH（2026-10-27：**自供源**，Neeko 不装任何东西）────────────────────────
+    //
+    // 为什么 `shapes` 是空的：DSH 的上报由 `packages/dsh-neeko`（DSH 自己的 cordis
+    // 插件）完成 —— 它已经在用户的 profile 里跑着，且已经能拿到全部 host 事件
+    // （`approval/asked` / ``tool/call`` / `agent/status` / `agent/error`）。
+    // Neeko 既不该也不需要往用户的 `~/.dsh/profiles/<p>/**` 写文件：
+    // 那个目录由 `dsh plugin` 管理，且有 pnpm store 依赖（实测
+    // `ERR_PNPM_UNEXPECTED_STORE`，且会把 `node_modules` 重建为真实目录抹掉软链）。
+    //
+    // 但 DSH **必须在**这张表里：否则 `/hook/dsh` 会被 `validation::hook_source()`
+    // 的白名单静默丢弃（返回 204，事件不见）—— 正是 2026-10-16 记录的那个
+    // 可观测性缺口，也是 Step 0 P6b 实测复现的形态。
+    //
+    // 空 `shapes` 的语义（见 `targets/tests.rs::self_supplied_sources_are_not_installable`）：
+    // **自供源** —— 接收上报，但不提供安装腿，也不出现在设置页的开关列表里。
+    HookTarget {
+        source: "dsh",
+        // 自供源不落任何文件；这两个字段保持与其它行同形，但不被使用。
+        file_name: "neeko-dsh-status",
+        template: "",
+        // 恒 None：Neeko 不去 `~/.dsh` 写任何东西（见上方理由）。
+        dir: || None,
+        shapes: &[],
+    },
     // ── Codex（2026-10-16 spike 后定案：走 `notify`，不走 `hooks.json`）──────────
     //
     // **为什么不是 `Structured { settings_file: "hooks.json" }`**（实测表与判据见
