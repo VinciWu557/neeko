@@ -1253,3 +1253,40 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 判据修正：规划型任务的完成 = 产物齐备 且 用户已拍板；后半段 AI 不可替做
+
+
+## Session 353: UI 审计任务转向「精致化实施」：D1-D5 作废、新原型基于真实代码重做
+<!-- trellis-session: v=2 fp=f3f98f0a6d1a5ff6 -->
+
+**Date**: 2026-10-27
+**Task**: UI 审计任务转向「精致化实施」：D1-D5 作废、新原型基于真实代码重做
+**Branch**: `main`
+
+### Summary
+
+按用户三项决定重写任务：去掉 D1-D5 决策门、纳入空态与 Settings、删除旧 5 份原型并基于真实代码重做 2 份；8 个子任务压成 6 个，护栏从并行提到执行第一步
+
+### Main Changes
+
+- prd.md 重写：新目标、新 6 子任务依赖顺序、2026-10-27 实测基线、status-error 断链 bug
+- design.md：Decision Log 逐条作废（§11）、子任务清单换成真实路径（§10.1a）、依赖图护栏提前、§14 spec 大纲、§15 落点表修正已迁移路径
+- 删除旧 5 份原型；新增 prototype-shell-v2.html 与 prototype-surfaces-v2.html（143 处真实 token 引用）
+- task.json subtasks 换新 6 个 + notes 记录实测现状；implement.md 实施顺序同步
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f04c58b9` | docs(task): pivot the UI audit into UI polish implementation |
+
+### Testing
+
+- [OK] 两份新原型 HTML 结构校验无未闭合标签（void 元素除外）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 下一步：按依赖顺序实施 ui-quality-gate（先 warning 模式）→ ui-tokens-foundation（含 status-error 断链修复）
