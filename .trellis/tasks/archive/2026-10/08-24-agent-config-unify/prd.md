@@ -122,12 +122,43 @@ if (configId) setConfigOption(configId, model.id);   // 对 serve 静默跳过
 
 ## Acceptance Criteria
 
-- [ ] **AC1** `AgentAdapter::supports_session_config()` 存在，4 个 adapter 显式实现
-- [ ] **AC2** 每个 adapter 的返回值有护栏测试验证「声明 == 行为」（R4）
-- [ ] **AC3** 前端据能力位渲染，不再用 `configOptions` 是否为空推断
-- [ ] **AC4** 「不支持」与「会话未建立」在 UI 上可区分（R2 三态）
-- [ ] **AC5** 不存在「显示了控件但点选静默无操作」的路径（R3）
-- [ ] **AC6** spec 新增「新传输的会话配置检查清单」，含 5 个已知断点与对应护栏
+> 状态核验：2026-10-27（归档前逐条取证，**不抄 implement 文档的自述**）。
+> ⚠ **实现形态与本 PRD 描述不同名** —— PRD 写 `supports_session_config() -> bool`，
+> 实际落地是**枚举** `chat_capabilities() -> ChatCapabilities { config: ConfigCapability }`
+> （`SessionConfig` / `PerTurn` / `None`）。枚举比 bool 更强：
+> `PerTurn`（serve 靠 HTTP 请求参数）既不是「支持」也不是「不支持」，
+> bool 无法表达第三态。AC 按**语义**判定，不按名字。
+
+- [x] **AC1** 显式能力位存在且 4 个 adapter 全部显式实现 —— `chat_capabilities()` 覆写 4 处：
+      `adapter/acp.rs:516` / `adapter/deepseek.rs:46` / `adapter/pi_rpc/adapter.rs:49` /
+      `adapter/opencode/adapter.rs:63`。**无默认实现** —— 新增 adapter 必须表态，
+      新增能力字段时既有构造点编译失败（design §5 阶段 1 的验证点）。
+      > 命名差异：`supports_session_config()` 仍存在（`adapter.rs:252`）但已被
+      > `ConfigCapability` 取代，不再说谎。
+- [x] **AC2** 「声明 == 行为」有护栏 —— `agent/chat/capability_probe.rs::assert_capabilities_hold`
+      建**真会话**观察 `SessionStart` 到底带了什么（照搬根 AGENTS.md 红线 14 判据）。
+      4 条探针：`mock_agent_satisfies_its_own_declaration` /
+      `deepseek_declares_no_config_and_carries_none` /
+      `per_turn_shows_controls_but_does_not_use_session_config` /
+      `commands_bit_implies_list_commands_is_not_unsupported`。
+- [x] **AC3** 前端据能力位渲染，不再凭 `configOptions` 非空推断 ——
+      `shared/utils/modelTarget.ts` 的 `modelAvailabilityOf(config, phase)` 是**唯一**合成入口，
+      消费点 `ChatComposer` / `ModelPicker` / `useModelSelection` 全部走它。
+- [x] **AC4**「不支持」与「会话未建立」可区分 —— 4 态 union
+      `no-config | per-turn | pending | ready`（`modelTarget.ts`）。
+      `pending`（能力位 true 但配置项未到）≠ `no-config`（能力位 false）。
+      > PRD 原本设想 3 态（`unsupported/loading/ready`），实际收敛成 4 态 ——
+      > 因为 `PerTurn` 是第三种真实语义（见 AC1 注）。
+- [x] **AC5** 无「显示了控件但点选静默无操作」的路径 —— 「不可写」不是
+      `ModelWrite` 的变体，而是**拿不到写回目标**（`modelWriteOf` 返回 `null`），
+      于是「渲染说能点、写入拿不到目标」这个矛盾**在类型层无法表达**。
+      变异 4/4 全部变红（能力位不再优先于就绪度 / `pending` 报成 writable /
+      `pending` 也能写 / `no-config` 也显示选择器）。
+- [x] **AC6** spec 新增「新传输的会话配置检查清单」 ——
+      `.trellis/spec/backend/agent-chat-transports.md` §10，含
+      §10.2 五个已知断点与对应护栏（实际列了 6 条，第 6 条是
+      `10-23-agent-chat-registry` 新增的一类「实现散在多处」）+
+      §10.3 契约探针 + §10.4 前端三态。
 
 ## Non-Goals
 
