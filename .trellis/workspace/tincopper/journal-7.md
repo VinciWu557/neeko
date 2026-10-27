@@ -932,3 +932,131 @@ Session summary was not supplied.
 
 - dsh-tui 剩余后续清单：overlay-host.ts（showOverlay 替 replaceInputSlot）、退出乱码 9;5:3u 需终端类型定向验证、AC4/AC5 在对应 profile 复验
 - P2/P3 延后项（picker/thinking/status-bar/transcript-view 替换、diff 渲染、会话树、消息队列、图片粘贴）见 pi-parity.md §6.2，均未排期
+
+
+## Session 347: 审查 10-16-notify-dsh：三个 Block 缺陷 + 文档对齐
+<!-- trellis-session: v=2 fp=5b86e77d6d91d7ba -->
+
+**Date**: 2026-10-27
+**Task**: 审查 10-16-notify-dsh：三个 Block 缺陷 + 文档对齐
+**Branch**: `main`
+
+### Summary
+
+审查 DSH 通知接入改动：修掉 Agent/Session 混用、失败被追认成完成、两条腿护栏空转三个 Block，补齐自供源收敛跳过与跨栈 wire 契约护栏，PRD/design/implement 按实际落点重写
+
+### Main Changes
+
+## 触发
+
+`/neeko-check` 审查 `10-16-notify-dsh` 的未提交改动：从第一性原理与高内聚 / 低耦合 /
+可扩展性出发，判断是否符合应用规范。
+
+## 审查发现（3 Block + 4 Should）
+
+### Block 1 — `agent/*` 的 `Agent` 被当 `Session` 读
+
+`notify-wiring.ts` 的 `report(session, …)` 从 `session.header` 取 `cwd` 与 `origin`，
+但 `agent/status` / `agent/error` 的第二参是 `Agent`：它只有 `id`
+（`dsh-agent/lib/types/types.d.ts`），`header` 在 `agent.session` 上。
+
+类型上完全合法（上报用的 `ObservedSession` 字段全 optional，两边都有 `id`），
+运行时才暴露：`isSubagentSession` 恒 false（子代理通知泄漏）+ `cwd` 恒 null
+（Rust 归属链掉到最弱兜底 `group_label: "终端会话"`）。
+
+测试没抓住的原因是夹具造假：`session(id, origin)` 返回 `{ id, header }` 并当 `agent` 发出。
+
+修法：新增 `observedOf(agent)` 归一（`header = agent.session?.header`），
+夹具换成真实 `Agent` 形状 `{ id, session: { header } }`，并加 `observedOf` 直测。
+
+### Block 2 — `running → idle` 无条件当「完成」
+
+失败轮（`agent/error` → idle）与用户中止轮（`agent.cancel` → idle）都会被报成
+`turn_completed`，于是 `session_failed` 与 `turn_completed` 两条互斥文案同时到达。
+
+与 `.trellis/spec/backend/agent-chat-transports.md` §4.6b 记的 pi 缺陷同型：
+时机（`agent/status`）与原因（`turn/end.reason`）是两条事件，只取定机就丢掉原因。
+
+修法：`session/event` 的 `turn/end` 记 `reason.kind`，`agent/status` 落 idle 时消费并清零。
+不能塞进纯函数 `notifyEventOf` —— 它只看得见单条 `session/event`。
+
+### Block 3 — 「两条腿都装了」的护栏是空的
+
+`expect(read('index.ts')).toContain('installNotifyReporter')` 命中的是 import 行；
+删掉真调用仍全绿。而模块头把这条断言写成那次真机事故的唯一防线
+（`--tui` 时 `cordis.patch.yml` 里 `id: neeko` 是 disabled 的）。
+
+修法：改成正则匹配调用点（`installNotifyReporter\(\s*this\.ctx,` / `\(\s*ctx,`）。
+
+### Rust 侧 — 自供源在收敛路径被误报 `Failed`
+
+`apply_selection_over` 对 `dir_of(target) == None` 一律返回
+`Failed("cannot locate user config directory")`；自供源的 `dir()` 恒 `None`。
+
+代价是双向的：每次开机记一条 `dsh:Failed`（`boot::reconcile` 的 `changed` 过滤器
+**包含** `Failed`，于是日志谎报「改了什么」），且设置页在 `getCliHookStatus()` 失败那档
+谓词退化成 `|_| true` → 弹 error toast。
+
+修法：两趟遍历都 `filter(|t| !t.shapes.is_empty())`。
+
+### Should
+
+- `postToEndpoints` 丢掉 HTTP 状态码 → 返回 `DeliveryFailure[]`，让 401/白名单缺行不再与成功同形
+- 坐标发现是第 4 份实现且漏了 `NEEKO_AGENT_HOOK_ENDPOINTS_DIR`
+- `hints` 永远为 null（`fx.env` 就在手里没被用）
+- 删掉未读的 `NotifyWiringOptions.effects`、`BridgeIo.endpointsDirs/env`、`internals.reporter` 单例
+
+### 跨栈契约缺口
+
+坐标键 / token 头 / `/hook/{source}` / 四个 `event_key` 双端各写一份字面量，
+但包住在 `packages/`（不纳入根门禁）。改 Rust 常量名，包侧静默断裂、两侧测试各自全绿。
+
+修法：`packages/dsh-neeko/tests/notify-contract.spec.ts` **读 Rust 源码取常量**
+再断言包侧行为（判据与红线 5 同源）。
+
+## 变异验证（6 项，任一退化必红）
+
+| 变异 | 结果 |
+| --- | --- |
+| `observedOf` 退化成 `agent as ObservedSession` | 3 用例红 |
+| 去掉 `turn/end.reason` 门 | 3 用例红 |
+| 删 `index.ts` 的调用点 | 1 用例红 |
+| 删 `runner.ts` 的调用点 | 1 用例红 |
+| 删 `selection.rs` 的空 shapes filter | 1 用例红 |
+| 改路由段 / token 头 / event_key | 各 1 用例红 |
+
+## 文档对齐
+
+PRD / design / implement 原写的是 `InstallShape::PluginPackage` + `cordis.patch.yml`
+受管块 + 9 个不存在的文件 —— 与实现方向相反。已按实际交付（自供源 + `packages/dsh-neeko`）
+重写 R2/R3/AC3/AC4，并显式登记 R5.2「不改 `packages/dsh-neeko`」被推翻。
+
+spec 补两节：§3b（收敛必须跳过自供源，含 toast 代价面）、§4b（包侧跨栈护栏）。
+修正 `traits/tests.rs` → `targets/tests.rs` 的路径笔误。
+`check.jsonl` / `implement.jsonl` 里指向弃用方案的两个文件已替换。
+
+## 收尾
+
+| 门禁 | 结果 |
+| --- | --- |
+| `pnpm check:quick` | 19/19 护栏，全绿 |
+| `cargo test --lib agent::hooks` | 163 passed |
+| `cargo test --test unit http_gateway` | 7 passed |
+| `packages/dsh-neeko`（check / test 1067 / lint:package） | 全绿 |
+| `CliHooksSection.test.tsx` | 18 passed |
+| **真机（AC5）** | **正常**（用户确认） |
+
+AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` 变体均实测为空 diff。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 待用户提交；提交后 /trellis:finish-work 归档 10-16-notify-dsh
