@@ -1403,3 +1403,38 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 
 - 护栏盲区待定：bg-[rgba(...)] 形式的主题逃逸未拦（WSLDialog/RemoteDialog 共 6 处写死蓝）
 - Settings 里 16 处的分割线保留（分隔的是不同设置分组，有语义）—— 若也嫌重可同样去掉
+
+
+## Session 357: 修复 Switch 滑块配色：前景色要按「压在什么底上」选
+<!-- trellis-session: v=2 fp=e29b6b8008fafc7c -->
+
+**Date**: 2026-10-27
+**Task**: 修复 Switch 滑块配色：前景色要按「压在什么底上」选
+**Branch**: `main`
+
+### Summary
+
+第三次同类回归：滑块压在 accent 底上，我却给了「页面文字色」text-primary。Claude 主题下 accent=#c96442 赭红轨道 + text-primary=#2d1e14 深棕滑块 → 糊成一团。正确是 text-on-accent=#f5f0e8
+
+### Main Changes
+
+- src/ui/Switch.tsx：bg-text-primary + data-[state=checked]:bg-text-on-accent（同一元素两种底需两个颜色）
+- spec design-tokens.md 新增坑 6「前景色按底色选」，color-mix 顺延为坑 7
+- implement.md + task.json 记录第三轮返工与三次回归的共同根因
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] 对比度实测（构建产物取 5 主题真值）：修复前 dark 1.37 / one-dark-pro 1.11 → 修复后全部 ≥2.94
+- [OK] pnpm check:quick 全绿：31 护栏 0 违规 + eslint/tsc/clippy + 改动文件单测；vitest src/ui/ 26 tests 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 待定：全仓扫「压在 accent 底上的元素是否用了错的文字色」—— 同型问题可能的残留点

@@ -159,6 +159,34 @@ pnpm tauri dev
 >
 > **验证**：`tsc --noEmit` 通过；`vitest src/features/project/` 22 files / 187 tests 通过；
 > AC0 机器复核：**DOM 标签集合未变 + 新增布局类 0 处**。
+>
+> **⚠ 第三轮返工（2026-10-27，用户反馈触发）**
+>
+> 用户：「**开关样式优化之后更加丑了**」（附 Claude 主题截图：赭红轨道上深棕滑块）
+>
+> **这是同一类错误的第三次**：前两次是「替换低对比度元素时把强度改粗」，
+> 这次是「**前景色选错了语义**」。
+>
+> 首版把 Switch 滑块从 `bg-white` 改成 `bg-text-primary`，理由是「跟随主题更保险」。
+> **错在：滑块压在 accent 底上，它要的是「accent 底上的前景色」
+> = `--text-on-accent`，不是「页面文字色」= `--text-primary`。**
+>
+> Claude 主题下两者差得极远：
+> `accent-blue` = `#c96442`（赭红轨道）· `text-primary` = `#2d1e14`（深棕滑块）
+> → 糊成一团。正确是 `text-on-accent` = `#f5f0e8`（浅米白滑块）。
+>
+> **仓库本来就有正确范式，首版没查就自己发明**：
+> `ui/Checkbox.tsx` 的对勾用 `text-text-on-accent`，
+> `ui/ToggleGroup.tsx` 的选中态用 `text-text-on-accent`。
+>
+> **最终**：`bg-text-primary` + `data-[state=checked]:bg-text-on-accent`
+> —— 同一元素在两种底上（accent 底 / bg-tertiary 底）需要两个颜色。
+>
+> **验证方式：不能只看类名，要算对比度。** 实测 5 主题滑块/轨道对比：
+> 修复前 dark 1.37 / one-dark-pro 1.11（糊）→ 修复后全部 ≥2.94。
+>
+> **教训（已写入 spec 坑 6）**：
+> **选颜色前先问「它压在什么底上」，而不是「它是什么元素」。**
 
 ## 阶段 C — 原语（1–2 天）· ui-primitives
 
@@ -221,7 +249,8 @@ pnpm tauri dev
    - `border-white/[0.04]` / `[0.03]` → `border-border-subtle`（弱分割线，5 主题自适应）
    - `border-white/10` → `border-border`
    - `hover:bg-white/10` / `active:bg-white/20` → `bg-bg-hover`
-   - `bg-white`（Switch 滑块）→ `bg-text-primary`（跟随主题的文字色，两种底色上都可辨）
+   - `bg-white`（Switch 滑块）→ **见下方「第三轮返工」**：最终是
+     `bg-text-primary` + `data-[state=checked]:bg-text-on-accent`（按底色选前景色）
 2. [x] **`text-white` 叠 accent —— 32 处**（不是 6 处，首轮统计只 grep 了部分文件）→
    `text-text-on-accent`（`--text-on-accent` 随主题变）
    - 特例 `ExternallyModifiedDialog.tsx`：底色是**半透明** `bg-accent`（12% 蓝），

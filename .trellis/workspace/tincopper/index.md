@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 356
+- **Total Sessions**: 357
 - **Last Active**: 2026-10-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~1405 | Active |
+| `journal-7.md` | ~1440 | Active |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 357 | 2026-10-27 | 修复 Switch 滑块配色：前景色要按「压在什么底上」选 | - | `main` |
 | 356 | 2026-10-27 | 去掉项目间分割线：连带删除 isLast 整条数据链并纠正一处错误注释 | - | `main` |
 | 355 | 2026-10-27 | 修复 UI 精致化的视觉回归：弱分割线强度变粗 + color-mix 被降级 | - | `main` |
 | 354 | 2026-10-27 | UI 精致化实施：status-error 断链修复 + 主题逃逸清零 + 暗色假设清理 + 新护栏 | - | `main` |
