@@ -107,7 +107,6 @@ DSH agent event ──[adapter]──> TranscriptRow (纯数据, 不可变)
 | B1 | 转录内搜索（高亮 + 上下跳 + 计数） | `tui-alt-screen.js` `AltScreenSearchIndex`，`ctrl+shift+f` |
 | B2 | 消息队列 / follow-up 编辑（`alt+enter` 入队、`alt+up` 取回） | `pendingMessagesContainer` + `chat-viewport.js` |
 | B3 | diff 专用渲染（`+`/`-` 着色、hunk 头） | `components/diff.js` |
-| B4 | 外部编辑器（`ctrl+g` → `$EDITOR`） | `external-editor.js` |
 | B5 | 图片粘贴（`ctrl+v` → clipboard → attachment） | `app.clipboard.pasteImage` |
 | B6 | 会话树 / fork / clone | `tree-selector.js`（1246 行） |
 | B7 | 压缩 UI（独立进度 + summary 行） | `compaction-summary-message.js` |
@@ -241,8 +240,19 @@ interface Panel extends Component { handleKey(data: string, isKey: (n: string) =
 | B3 | diff 渲染 | P1-4 完成 |
 | B6 | 会话树 / fork | 独立一轮 |
 | B2 | 消息队列 | 独立一轮 |
-| B4/B5 | 外部编辑器 / 图片粘贴 | P3 |
+| ~~B4~~ | ~~外部编辑器（`ctrl+g`）~~ | **2026-10-27 用户定案：不做**（见 §6.3） |
+| B5 | 图片粘贴 | P3 |
 | B8 | 终端标题 / 进度条 | P3 |
+
+### 6.3 明确不做（用户定案）
+
+| # | 项 | 决定 | 理由 |
+| --- | --- | --- | --- |
+| B4 | 外部编辑器（`ctrl+g` → `$EDITOR`） | **不做** | 2026-10-27 用户决定：终端里的输入需求由 composer 本身 + `ctrl+v` 粘贴覆盖，不值得为它引入「交还终端控制权 → 等编辑器退出 → 回填」这条状态转换。留此记录是为了不再被当成遗漏重新提出。 |
+
+> 与 §6.2 的区别：§6.2 是**延后**（要做，排队）；本节是**不做**（不排期）。
+> 后续若要加，前提是 composer 真的成了瓶颈 —— 届时按 `suspend.ts` 的既有进出机制复用，
+> 不要另写一套终端接管逻辑。
 
 ## 7. 验收判据（本轮）
 

@@ -134,8 +134,9 @@
 | --- | --- | --- | --- |
 | 1 | AC4 / AC5 的真机触发 | **环境依赖**，非代码 | 在审批强制开启 / 加挂 ask-user bundle 的 profile 复验 |
 | 2 | P1-3 `overlay-host.ts`（`showOverlay` 替 `replaceInputSlot`） | 形态收尾 | `model-panel.ts` 已按 `showOverlay` 设计（注释与接口就绪），宿主未落地 |
-| 3 | `ctrl+g` 未绑定；`docs/keybindings.md` 全表尚未逐项对齐 | 增量 | 键位栈 `keymap.ts` 与 `/hotkeys` 已完成，缺的是个别键位 |
+| 3 | `ctrl+g`（外部编辑器） | **用户定案不做**（2026-10-27） | 不做，非缺口；决策记录见 `pi-parity.md` §6.3 |
 | 4 | 退出乱码 `9;5:3u` | **未复现** | 四种场景均无乱码；`drainInput()` 已按 pi-tui 文档补上，但不声称修好该现象（见 Step 39–40） |
+| 5 | `docs/keybindings.md` 全表逐项对齐 | 增量 | 键位栈 `keymap.ts` 与 `/hotkeys` 已完成；`/hotkeys` 是活绑定表的权威来源 |
 
 ## 明确不在本任务范围
 
