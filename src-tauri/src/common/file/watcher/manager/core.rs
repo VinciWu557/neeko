@@ -500,11 +500,13 @@ impl WatcherManager {
         let maintenance_tx_for_closure = maintenance_tx.clone();
         // git 元数据：判定是否并入主 watcher（规则住在 git_meta_merge 模块，
         // 本函数只负责顺序与失败策略）。
+        // 回滚开关在这里读**一次**（挂载期冻结）：`decide` 是纯判定函数，不读环境。
         let git_meta_decision = super::git_meta_merge::decide(
             &path,
             git_repo,
             &exclusions,
             watch_backend().can_exclude_subtrees(),
+            super::git_meta_merge::merge_disabled_by_env(),
             &workspace,
         );
         let merge_git_meta = git_meta_decision.merge;

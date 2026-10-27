@@ -29,7 +29,15 @@ use std::sync::{mpsc, Arc};
 /// 两者失效面不同，共用一个开关会让排查时分不清是哪个机制出了问题。
 const DISABLE_GIT_META_MERGE_ENV: &str = "NEEKO_DISABLE_GIT_META_MERGE";
 
-fn merge_disabled() -> bool {
+/// 读取回滚开关（进程级环境变量）。
+///
+/// **必须在调用方读一次、把结果作参数传下去**，不能在 [`decide`] 内部读：
+/// - `decide` 是纯判定函数，它的全部输入应该是**参数**；隐藏读取进程级全局状态
+///   会让「同样的参数得到不同结果」成为可能，也会让测试被迫用 `env::set_var`
+///   这种进程级副作用来驱动（并行用例共享环境，那是不确定性的来源）；
+/// - 环境变量在挂载期冻结（见 `watch` 注释）。
+#[must_use]
+pub(super) fn merge_disabled_by_env() -> bool {
     std::env::var_os(DISABLE_GIT_META_MERGE_ENV).is_some()
 }
 
@@ -59,12 +67,17 @@ pub(super) struct MergeDecision {
 /// 4. **`.git` 不在 exclusion 列表中** —— 否则事件被内核排除，合并即静默失效。
 ///    当前 `WatchManifest::compute` 跳过 `.git` 且不放入 `ignored_roots`，故恒成立；
 ///    此处显式求值，把「结构假设」变成「可运行期验证的谓词」；
-/// 5. **未设回滚开关** `NEEKO_DISABLE_GIT_META_MERGE`。
+/// 5. **未被回滚开关禁用**（`env_off` 由调用方从 [`merge_disabled_by_env`] 读出后传入）。
+///
+/// **纯函数**：全部输入均为参数，不读环境、不做 IO 以外的事（`resolve_git_meta_paths`
+/// 需读 `.git` 指针文件，属既定依赖）。因此不需要 `env::set_var` 就能覆盖
+/// 「开关打开/关闭」两个分支。
 pub(super) fn decide(
     root: &Path,
     git_repo: bool,
     exclusions: &[PathBuf],
     backend_can_exclude: bool,
+    env_off: bool,
     workspace: &str,
 ) -> MergeDecision {
     let paths = if git_repo {
@@ -96,7 +109,6 @@ pub(super) fn decide(
         let ex_normalized = ex.canonicalize().unwrap_or_else(|_| ex.clone());
         meta.git_dir == ex_normalized || meta.git_dir.starts_with(&ex_normalized)
     });
-    let env_off = merge_disabled();
     let merge = backend_can_exclude && within_root && !excluded && !env_off;
 
     if !merge {
@@ -230,7 +242,7 @@ mod tests {
     #[test]
     fn non_git_unit_yields_no_paths_and_no_merge() {
         let tmp = tempfile::tempdir().unwrap();
-        let d = decide(tmp.path(), false, &[], true, "ws");
+        let d = decide(tmp.path(), false, &[], true, false, "ws");
         assert!(d.paths.is_none());
         assert!(!d.merge);
     }
@@ -243,7 +255,7 @@ mod tests {
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
 
-        let d = decide(root, true, &[], false, "ws");
+        let d = decide(root, true, &[], false, false, "ws");
         assert!(d.paths.is_some(), "路径应能解析");
         assert!(!d.merge, "非递归后端必须保留独立流");
     }
@@ -256,7 +268,7 @@ mod tests {
         std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
 
         let exclusions = vec![root.join(".git")];
-        let d = decide(root, true, &exclusions, true, "ws");
+        let d = decide(root, true, &exclusions, true, false, "ws");
         assert!(!d.merge, "`.git` 被物理排除时合并会静默失效");
     }
 
@@ -282,7 +294,7 @@ mod tests {
         std::os::unix::fs::symlink(real, &link).unwrap();
 
         // 用未归一的 link 作为 root（模拟用户配了符号链接路径）
-        let d = decide(&link, true, &[], true, "ws");
+        let d = decide(&link, true, &[], true, false, "ws");
         assert!(d.paths.is_some(), "git 元数据应能从符号链接路径解析出来");
         assert!(
             d.merge,
@@ -297,8 +309,35 @@ mod tests {
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
 
-        let d = decide(root, true, &[], true, "ws");
+        let d = decide(root, true, &[], true, false, "ws");
         assert!(d.paths.is_some());
         assert!(d.merge, "普通仓库 + 递归后端 + 未排除 → 应合并");
+    }
+
+    /// 回滚开关优先于其余五个前置条件 —— 即使全部满足也不得合并。
+    ///
+    /// **为什么必须用参数而不是 `env::set_var`**：那是进程级副作用，并行跑的其它
+    /// 用例共享它 —— 一旦本用例设了而忘了删，同一进程里所有判定都会翻成
+    /// 「不合并」，失败点跑到无关用例上（实测：7 条用例同红且毫无提示）。
+    /// `decide` 把 `env_off` 作为参数后，这里可以零副作用地覆盖两个分支。
+    #[test]
+    fn env_off_blocks_merge_even_when_all_other_conditions_hold() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let on = decide(root, true, &[], true, false, "ws");
+        assert!(on.merge, "夹具前提：开关关闭时应合并（否则本用例无判别力）");
+
+        let off = decide(root, true, &[], true, true, "ws");
+        assert!(
+            !off.merge,
+            "回滚开关必须压过全部其余条件：可合并的形态 + env_off=true → 不合并"
+        );
+        assert!(
+            off.paths.is_some(),
+            "开关只影响「走哪条传输」，不得连带丢掉已解析的路径（否则独立流也建不起来）"
+        );
     }
 }
