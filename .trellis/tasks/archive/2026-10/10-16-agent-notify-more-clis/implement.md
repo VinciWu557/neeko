@@ -142,5 +142,6 @@
 - [x] 父任务 AC 逐条取证并登记偏差（见 `prd.md`，含 AC1/AC2/AC5 三处 `⚠`/`[~]`）
 - [ ] **遗留：`design.md` §2.2 落点表未随 `a86aa437` 重构追改** —— 6 个路径全部失效。
       不在归档时改（计划文档是历史留痕），映射关系已写入 `prd.md` AC5④。
-- [ ] **遗留：OMP / Claude / CodeBuddy / Qoder 四家真实登录态下的通知未逐个实测** ——
-      需各家凭据，非自动化可达。Codex / DSH 已实测。
+- [x] **实机验证已全部闭环（2026-10-27 用户确认）** —— 六个 CLI 在真实登录态下
+      均触发并落地系统通知：OMP / Claude Code / CodeBuddy / Codex / Qoder（`claude-compat` AC6）
+      + DSH（`dsh` AC5）。归档当时登记的「四家待登录态」缺口已回填关闭。

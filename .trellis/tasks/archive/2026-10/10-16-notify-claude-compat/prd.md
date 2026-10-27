@@ -145,9 +145,12 @@
   `config_key_is_mirrored_in_frontend`（双端同键镜像）；前端 `CliHooksSection` 的
   `readSourceOverrides` 归一化非法值。契约已入
   `spec/backend/agent-hooks-domain.md`「两个开关的分工」。
-- [x]⚠ **AC6 实测落地** —— e2e 通道已由 Codex 侧实测打通（`codex-trust-spike.md` 附录：
-  真 Codex → shim → ingest POST 收到 `turn_completed`）；但 **OMP / Claude / CodeBuddy / Qoder
-  四家的实机通知未逐个验证**（需各家登录态）。**未验证的遗留。**
+- [x] **AC6 实测落地** —— **五个 CLI 全部真机验证通过（2026-10-27 用户确认）**：
+  OMP / Claude Code / CodeBuddy / Codex / Qoder 在真实登录态下均触发并落地系统通知。
+  自动化侧旁证：`codex-trust-spike.md` 附录记录的 e2e 链路
+  （真 Codex → shim → ingest POST 收到 `turn_completed`）。
+  > 2026-10-27 补登：此前标 `[x]⚠` 是因为只有 Codex 侧有 e2e 记录，其余四家待登录态。
+  > 现用户确认五家真机均正常，**本项无遗留**。
 - [x] **AC7 既有行为不变** —— Pi / Opencode 既有分支零改动（`Standalone` 分支 diff 为空）；
   `pnpm check` 30/30 全绿（621 Rust 测试含 `agent::hooks` 161 条）。
 - [x]⚠ **AC8 核心域零改动** —— `notification/**` 仅 `types.rs` 一条**文档注释**改动

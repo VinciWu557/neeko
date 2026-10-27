@@ -25,6 +25,6 @@
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "归档（2026-10-27）。三个子任务全部完成并归档：claude-compat / codex（2026-10-17）、dsh（2026-10-27）。全量回归 cargo test --lib 2247 passed / 5 ignored。AC 逐条取证后带三处登记偏差：(1) AC1 字面「notification/** diff 为空」不成立——区间内有 6 文件 +363/−41，但来源是 2026-10-26 三个不属本任务树的独立提交（fe32a33b 文案英文化 / dc816d21 macOS 点击回流 / c021a954 删 in-app 通道），三个子任务自身的核心域逻辑改动为 0，护栏 check_notification_core_direction 全绿；(2) AC2 dsh 拓扑判断翻转（源 A → 源 B），证据在 dsh 子任务修订史与 research/dsh-consumption-decision.md；(3) AC5④ design.md §2.2 落点表因 a86aa437 按失败策略重构而失效（6 路径全变，platform/hook_command.rs 未新建），映射表补在 prd.md。另 AC5⑤ 记录 10-12 的 in-app 通道已被上述独立工作删除（非本任务决策）。遗留：OMP/Claude/CodeBuddy/Qoder 四家真实登录态下未逐个实测（需凭据）。children 里的 10-16-notify-review-remediation 从未被创建过（悬空引用，自 2719c4e6 起），已移除。",
+  "notes": "归档（2026-10-27）。三个子任务全部完成并归档：claude-compat / codex（2026-10-17）、dsh（2026-10-27）。全量回归 cargo test --lib 2247 passed / 5 ignored。AC 逐条取证后带三处登记偏差：(1) AC1 字面「notification/** diff 为空」不成立——区间内有 6 文件 +363/−41，但来源是 2026-10-26 三个不属本任务树的独立提交（fe32a33b 文案英文化 / dc816d21 macOS 点击回流 / c021a954 删 in-app 通道），三个子任务自身的核心域逻辑改动为 0，护栏 check_notification_core_direction 全绿；(2) AC2 dsh 拓扑判断翻转（源 A → 源 B），证据在 dsh 子任务修订史与 research/dsh-consumption-decision.md；(3) AC5④ design.md §2.2 落点表因 a86aa437 按失败策略重构而失效（6 路径全变，platform/hook_command.rs 未新建），映射表补在 prd.md。另 AC5⑤ 记录 10-12 的 in-app 通道已被上述独立工作删除（非本任务决策）。实机验证已全部闭环（2026-10-27 用户确认）：OMP/Claude/CodeBuddy/Codex/Qoder 五家真实登录态下均正常，加 DSH 共六个 CLI 全部真机通过。归档当时登记的四家待登录态缺口已回填关闭。children 里的 10-16-notify-review-remediation 从未被创建过（悬空引用，自 2719c4e6 起），已移除。",
   "meta": {}
 }

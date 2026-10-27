@@ -157,9 +157,11 @@
 2. **`10-12-agent-notify` 的 in-app 通知通道已被独立工作删除**（AC5⑤）——
    不是本任务的决策，但改变了本任务的前置事实。
 
-另有**一处实机验证缺口**（承自子任务，非本任务可解）：OMP / Claude / CodeBuddy / Qoder
-四家的**真实 CLI 登录态**下通知未逐个验证（`claude-compat` AC6 标 ⚠）；
-Codex 与 DSH 已实测（`codex-trust-spike.md` 附录 / DSH AC5 真机确认）。
+**实机验证：已全部闭环（ 2026-10-27 用户确认）。**
+六个 CLI 全部在真实登录态下验证通过：OMP / Claude Code / CodeBuddy / Codex / Qoder
+（`claude-compat` AC6）+ DSH（`dsh` AC5）。**无实机遗留。**
+> 归档当时标过一条实机缺口（四家待登录态），已于同日回填关闭 ——
+> 原 ⚠ 是因为当时只有 Codex 侧有 e2e 记录，不代表那四家有问题。
 
 ## 明确不在本任务范围
 
