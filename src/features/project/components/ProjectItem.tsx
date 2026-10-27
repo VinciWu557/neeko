@@ -21,13 +21,11 @@ import { useProjectItemMenu } from './useProjectItemMenu';
 
 interface ProjectItemViewExtras {
   /** 当前项目卡是否处于项目列表的最后一个（决定是否�?hairline�?*/
-  isLast?: boolean;
 }
 
 const ProjectItem: React.FC<ProjectItemProps & ProjectItemViewExtras> = ({
   project,
   isActive,
-  isLast,
   actions,
   viewConfig,
 }) => {
@@ -138,7 +136,6 @@ const ProjectItem: React.FC<ProjectItemProps & ProjectItemViewExtras> = ({
         sessionCount={sessionCount}
         expanded={!projectCollapsed}
         isActive={isActive}
-        isLast={isLast}
         ideIconSrc={ideIconSrc}
         forceShowActions={gitMenuOpen}
         actions={{

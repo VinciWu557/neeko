@@ -6,9 +6,6 @@ export interface GroupedProjects {
   localProjects: Project[];
   wslGroups: Array<{ distro: string; projects: Project[] }>;
   remoteGroups: Array<{ entry: RemoteEntrySession; projects: Project[] }>;
-  /** 全部区段中「最后一个项目」所属区段（DnD 排序落点用）。 */
-  lastGroup: 'local' | 'wsl' | 'remote' | null;
-  lastProjectId: string | null;
 }
 
 /**
@@ -48,25 +45,9 @@ export function groupProjects(
   }));
   const remoteGroups = Array.from(remoteMap.values());
 
-  // Determine which group has the last project across all sections
-  let lastGroup: GroupedProjects['lastGroup'] = null;
-  let lastProjectId: string | null = null;
-  if (local.length > 0) {
-    lastGroup = 'local';
-    lastProjectId = local[local.length - 1].id;
-  }
-  for (const g of wslGroups) {
-    if (g.projects.length > 0) {
-      lastGroup = 'wsl';
-      lastProjectId = g.projects[g.projects.length - 1].id;
-    }
-  }
-  for (const g of remoteGroups) {
-    if (g.projects.length > 0) {
-      lastGroup = 'remote';
-      lastProjectId = g.projects[g.projects.length - 1].id;
-    }
-  }
-
-  return { localProjects: local, wslGroups, remoteGroups, lastGroup, lastProjectId };
+  // 注：原实现还产出 lastGroup / lastProjectId（注释称「DnD 排序落点用」），
+  // 但 DnD 实际用的是 over.id（拖放目标的项目 id），与这两个字段无关 ——
+  // 它们唯一的消费者是项目之间的那条分割线（2026-10-27 用户定案去掉该线），
+  // 故一并删除。删除后不再有「最后一个项目」这个概念。
+  return { localProjects: local, wslGroups, remoteGroups };
 }

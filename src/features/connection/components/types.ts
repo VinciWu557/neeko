@@ -11,7 +11,6 @@ export interface ConnectionProjectCardProps {
   entryId: string;
   source: ConnectionSource;
   isActive: boolean;
-  isLast?: boolean;
   onSelectProject: (projectId: ProjectId) => void;
   onRemoveProject: (entryId: string, projectId: ProjectId) => void;
   onOpenIde?: (identifier: string, projectPath: string, ide: string) => void;

@@ -91,7 +91,7 @@ const ProjectsPanel: React.FC = () => {
   const isEmpty = projects.length === 0;
 
   // Derived: WSL projects grouped by distro, Remote projects grouped by host
-  const { localProjects, wslGroups, remoteGroups, lastGroup, lastProjectId } = useMemo(
+  const { localProjects, wslGroups, remoteGroups } = useMemo(
     () => groupProjects(projects, remoteEntries),
     [projects, remoteEntries],
   );
@@ -220,13 +220,11 @@ const ProjectsPanel: React.FC = () => {
                 strategy={verticalListSortingStrategy}
               >
                 {localProjects.map((project) => {
-                  const isLast = lastGroup === 'local' && lastProjectId === project.id;
                   return (
                     <ProjectItem
                       key={project.id}
                       project={project}
                       isActive={activeProjectId === project.id}
-                      isLast={isLast}
                       actions={{
                         onSelectProject,
                         onRemoveProject,
@@ -269,7 +267,6 @@ const ProjectsPanel: React.FC = () => {
                       }}
                     />
                     {wslProjs.map((project) => {
-                      const isLast = lastGroup === 'wsl' && lastProjectId === project.id;
                       return (
                         <ConnectionProjectCard
                           key={project.id}
@@ -277,7 +274,6 @@ const ProjectsPanel: React.FC = () => {
                           entryId={distro}
                           source={{ type: 'wsl', distro }}
                           isActive={activeProjectId === project.id}
-                          isLast={isLast}
                           onSelectProject={onSelectProject}
                           onRemoveProject={onRemoveWslProject}
                           onOpenIde={onOpenWslIde}
@@ -316,7 +312,6 @@ const ProjectsPanel: React.FC = () => {
                       onRemove={() => onRemoveRemoteEntry(entry.id)}
                     />
                     {remoteProjs.map((project) => {
-                      const isLast = lastGroup === 'remote' && lastProjectId === project.id;
                       return (
                         <ConnectionProjectCard
                           key={project.id}
@@ -324,7 +319,6 @@ const ProjectsPanel: React.FC = () => {
                           entryId={entry.id}
                           source={{ type: 'remote', entryId: entry.id, host: entry.host }}
                           isActive={activeProjectId === project.id}
-                          isLast={isLast}
                           onSelectProject={onSelectProject}
                           onRemoveProject={onRemoveRemoteProject}
                           onOpenIde={onOpenRemoteIde}

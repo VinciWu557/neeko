@@ -32,7 +32,6 @@ const ConnectionProjectCard: React.FC<ConnectionProjectCardProps> = React.memo(
     entryId,
     source,
     isActive,
-    isLast,
     onSelectProject,
     onRemoveProject,
     onOpenIde,
@@ -177,7 +176,6 @@ const ConnectionProjectCard: React.FC<ConnectionProjectCardProps> = React.memo(
           sessionCount={sessionCount}
           expanded={!collapsed}
           isActive={isActive}
-          isLast={isLast}
           ideIconSrc={ideIconSrc}
           actions={{
             onToggle: () => setCollapsed((v) => !v),
