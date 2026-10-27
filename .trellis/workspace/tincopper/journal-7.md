@@ -890,3 +890,45 @@ Session summary was not supplied.
 ### Next Steps
 
 - 观察实际开发循环是否真的不再逐次跑检查；若仍有重复，优先查 AGENTS.md 的可见性（子目录 AGENTS.md 是否会盖掉根文件规则）
+
+
+## Session 346: 10-18-dsh-tui 归档复核通过并归档；ctrl+g 定案不做
+<!-- trellis-session: v=2 fp=d0a95f75847b4af9 -->
+
+**Date**: 2026-10-27
+**Task**: 10-18-dsh-tui 归档复核通过并归档；ctrl+g 定案不做
+**Branch**: `main`
+
+### Summary
+
+复核 10-18-dsh-tui 是否完成：逐条对当前代码树与本机实跑重新判定 AC1–AC9，全部满足（AC4/AC5 真机触发受 DSH 策略与 bundle 限制，判为达成并降级为遗留项）。修正 PRD 中从未勾选过的 9 条 AC、纠正 implement.md 里比代码滞后的 5 项待办（keymap/hotkeys/setProgress/setTitle/ctrl+z/ctrl+v 其实早已落地），补「归档时的遗留项」表后执行 task.py archive。随后用户定案 ctrl+g（外部编辑器）不做，把 B4 从缺口表移入新的「明确不做」小节。
+
+### Main Changes
+
+- AC 复核证据：包内 998 测试全绿、prepublishOnly（check+build+publint）实跑通过；AC9 在 src/ 零 0.1.x API 命中（残留全在注释与旧事件夹具）
+- PRD 9 条 AC 逐条填写判据与结论；AC4/AC5 标注真机触发条件不在 TUI 控制面（DSH 沙箱放行 + ask-user 属 dsh-web-app bundle）
+- implement.md 待办对齐事实：P0-2 keymap+/hotkeys、setProgress/setTitle、ctrl+z、ctrl+v 均已落地，只剩 overlay-host 与 ctrl+g
+- 新增 PRD「归档时的遗留项」5 项，中间历史 6 处真机复验的 [ ] 不改写（Step 39–40 已记录用户确认）
+- task.py archive 10-18-dsh-tui → archive/2026-10/，活跃任务 7 → 6
+- ctrl+g 定案不做：pi-parity.md 删掉 B4 缺口行、拆开 B4/B5 合并行、新增 §6.3 明确不做（保留 B4 编号不重排，附将来复用 suspend.ts 的前提交代）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `500b54b2` | chore(task): archive 10-18-dsh-tui |
+| `bfdf7995` | docs(task): decide ctrl+g stays out of the TUI |
+
+### Testing
+
+- [OK] packages/dsh-neeko: prepublishOnly 全绿（check + 998 tests / 56 files + build + publint）
+- [OK] pnpm check:quick 两轮均通过（文档改动未触及任何护栏 scope）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- dsh-tui 剩余后续清单：overlay-host.ts（showOverlay 替 replaceInputSlot）、退出乱码 9;5:3u 需终端类型定向验证、AC4/AC5 在对应 profile 复验
+- P2/P3 延后项（picker/thinking/status-bar/transcript-view 替换、diff 渲染、会话树、消息队列、图片粘贴）见 pi-parity.md §6.2，均未排期
