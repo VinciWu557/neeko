@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-7.md`
-- **Total Sessions**: 344
-- **Last Active**: 2026-10-26
+- **Total Sessions**: 345
+- **Last Active**: 2026-10-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-7.md` | ~852 | Active |
+| `journal-7.md` | ~892 | Active |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
 | `journal-4.md` | ~1989 | Archived |
@@ -35,6 +35,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 345 | 2026-10-27 | 收敛验证命令频率：check:quick 只在收尾跑一次，三层指令同时改 | `4c4aa3be` | `main` |
 | 344 | 2026-10-26 | 归档三个 chat 任务：10-23 两个完成，10-21 判为被 10-24 取代 | `a4b5a841` | `main` |
 | 343 | 2026-10-26 | composer-token-editor 收口：真机四项手工验证通过（含 Win/macOS IME 矩阵），修正 task.json 元数据后归档 | `08a6b59c` | `main` |
 | 342 | 2026-10-26 | fsevent-stream-consolidation 按记录偏差收口：4 项未达成如实登记 + 修 git-domain spec 假陈述 | `a8cda585` | `main` |

@@ -850,3 +850,43 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 345: 收敛验证命令频率：check:quick 只在收尾跑一次，三层指令同时改
+<!-- trellis-session: v=2 fp=83350668cdbc0d89 -->
+
+**Date**: 2026-10-27
+**Task**: 收敛验证命令频率：check:quick 只在收尾跑一次，三层指令同时改
+**Branch**: `main`
+
+### Summary
+
+反馈：开发过程中反复执行验证命令拖慢效率。诊断为指令本身在要求重复——AGENTS.md 写着「每次改动后都是它」，workflow.md 2.1 让 implement agent「finish by running project lint and type-check」，而 check:quick 已含全部静态检查。把规则从「用哪条命令」补成「用哪条命令 + 多久跑一次」，并保留 TDD 单文件红绿例外、如实声明 Rust 侧覆盖率缺口。
+
+### Main Changes
+
+- AGENTS.md：检查频次改为硬指令（收尾一次），禁止在 check:quick 之上叠加 lint/test/type-check，补红绿反馈例外与覆盖率缺口声明
+- trellis-implement 五个平台定义 + trellis-check 五个平台定义：实现/复核不是门禁，只允许按需跑单个测试
+- workflow.md：2.1 三处 task description 加 codex-inline 第 5 步改为 Do NOT gate；2.2 两个分支加 Frequency 段
+- .trellis/agents/{implement,check}.md（channel runtime）同步同一口径
+- spec 同步：frontend/backend quality-guidelines、two type-safety、directory-structure、state-management、concurrency-guidelines、cross-layer-thinking-guide 中把「每轮跑 lint/type-check」「test:rust + test:fe 双跑」改为收尾一次 check:quick
+- 两个活跃任务 implement.md：「每轮」→ 收尾一次，并标注 cargo test 定点为 TDD 观察而非验证
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c4aa3be` | docs(agents): stop the dev loop from re-running the checks |
+
+### Testing
+
+- [OK] pnpm check:quick 全绿（27 文件，2 条护栏通过，check_agents_md_size 16,203B < 16,384B cap）
+- [OK] pre-commit 护栏档 + commitlint 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 观察实际开发循环是否真的不再逐次跑检查；若仍有重复，优先查 AGENTS.md 的可见性（子目录 AGENTS.md 是否会盖掉根文件规则）
