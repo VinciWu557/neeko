@@ -1438,3 +1438,39 @@ AC7（chat 层零改动）/ AC8（核心域零改动）/ 无新 `InstallShape` �
 ### Next Steps
 
 - 待定：全仓扫「压在 accent 底上的元素是否用了错的文字色」—— 同型问题可能的残留点
+
+
+## Session 358: 全仓扫描 accent 实底上的前景色：又找出 4 处同型问题并修掉
+<!-- trellis-session: v=2 fp=cdad96d63e396757 -->
+
+**Date**: 2026-10-27
+**Task**: 全仓扫描 accent 实底上的前景色：又找出 4 处同型问题并修掉
+**Branch**: `main`
+
+### Summary
+
+扫 599 个 tsx + 8 个 css，除 Switch 外找到 4 处「accent 实底上前景色用错」：WelcomeScreen 按钮、GitDialog 自制 switch 滑块、agent.css 的 .agent-bar-btn.selected、base.css 的 .wc-close:hover —— 全部改 text-on-accent
+
+### Main Changes
+
+- WelcomeScreen.tsx:65 text-text-primary → text-text-on-accent
+- GitDialog.tsx 滑块 bg-text-secondary → bg-text-primary + checked:bg-text-on-accent（dark 1.19→3+）
+- styles/components/agent.css:71 .agent-bar-btn.selected color: var(--text-primary) → var(--text-on-accent)
+- styles/base/base.css:51 .wc-close:hover color: #fff → var(--text-on-accent)（dark 1.40 → 2.94）
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] 对比度实测 5 主题：修复前 dark 1.37 / one-dark-pro 1.11 → 修复后全部 ≥2.94
+- [OK] pnpm check:quick 全绿：31 护栏 0 违规 + eslint/tsc/clippy + 改动文件单测
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 待定：是否加第 5 条护栏判据「实底 accent 容器内前景色必须是 on-accent 系」—— 正则扫描易误报，更适合做成 eslint 规则

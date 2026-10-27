@@ -187,6 +187,30 @@ pnpm tauri dev
 >
 > **教训（已写入 spec 坑 6）**：
 > **选颜色前先问「它压在什么底上」，而不是「它是什么元素」。**
+>
+> **全仓审计（用户要求「全部找一遍」）**：扫全部 599 个 tsx + 8 个 css，
+> 除 Switch 外又找到 **4 处同型问题**，全部已修：
+>
+> | 位置 | 元素 | 修复前 | 修复后 |
+> | --- | --- | --- | --- |
+> | `app/components/WelcomeScreen.tsx:65` | 「Add Your First Project」按钮 | `text-text-primary` | `text-text-on-accent` |
+> | `shared/components/GitDialog.tsx` | 自制 switch 滑块 | `bg-text-secondary` | `bg-text-primary` + `checked:bg-text-on-accent` |
+> | `styles/components/agent.css:71` | `.agent-bar-btn.selected` | `color: var(--text-primary)` | `color: var(--text-on-accent)` |
+> | `styles/base/base.css:51` | `.wc-close:hover` | `color: #fff` | `color: var(--text-on-accent)` |
+>
+> **扫描判据**：**实底** accent 容器（`bg-accent-*` 后面**不跟 `/数字`**）
+> —— 半透明底不算（半透明底上用普通文字色是对的）。
+>
+> **扫描时的两个陷阱**（都造成误报）：
+> ① 正则 `\b` 边界把 `bg-accent-blue/15` 也算实底 → 误报 16 处；
+> ② `text-xs`/`text-sm` 是**字号**不是颜色 → 误报 5 处。
+> 两轮误报后才收敛到真正的 5 处。
+>
+> **附带**：修 `GitDialog.tsx` 时触发 `check_component_size` ratchet
+> （332 行基线只许缩小）—— 我加的注释把它推到 336 行。
+> 处置：压缩注释 + 删一行冗余的历史注释（`// Sync homeDirPath from remoteHomeDir`，
+> 代码自明）→ 回到 332 行。
+> **教训**：组件规模护栏**连注释都算行数**。
 
 ## 阶段 C — 原语（1–2 天）· ui-primitives
 
