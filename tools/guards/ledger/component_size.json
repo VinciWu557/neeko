@@ -1,6 +1,6 @@
 {
   "max_lines": 300,
-  "note": "基线由 tools/guards/checks/check_component_size.py 的模块 docstring 所述命令一次性生成；只许缩小。",
+  "note": "基线由 tools/guards/checks/check_component_size.py 的模块 docstring 所述命令一次性生成；只许缩小。 例外记录（2026-10-27）：RemoteDialog 729→732 / WSLDialog 611→614 / ProjectSettingsDialog 351→356 —— 三处下拉项选中态的次级文字改用 optionSecondary(selected) 统一颜色（修 7 处「灰字压 accent 蓝底」的对比度缺陷）。行数增加**不是功能需要**，而是 <span> 在 24 空格缩进下加一个函数调用后超过 printWidth=100、prettier 拆成 3 行所致。 真正的修法是抽出选项行组件，但那会改 DOM 结构（本轮 AC0 禁止），故记账而非拆分。",
   "baseline": {
     "src/app/components/ProjectView.tsx": 300,
     "src/app/hooks/buildAppShellValues.ts": 316,
@@ -12,8 +12,8 @@
     "src/features/browser/hooks/useBrowserPanel.ts": 368,
     "src/features/browser/hooks/useBrowserTab.ts": 301,
     "src/features/browser/hooks/useBrowserWebview.ts": 378,
-    "src/features/connection/components/RemoteDialog.tsx": 729,
-    "src/features/connection/components/WSLDialog.tsx": 611,
+    "src/features/connection/components/RemoteDialog.tsx": 732,
+    "src/features/connection/components/WSLDialog.tsx": 614,
     "src/features/conversation/components/ConversationPanel.tsx": 365,
     "src/features/conversation/components/ConversationViewer.tsx": 566,
     "src/features/editor/hooks/useLspNavigation.ts": 342,
@@ -57,7 +57,7 @@
     "src/features/terminal/components/TerminalViewBase.tsx": 542,
     "src/features/terminal/components/terminalCache.ts": 555,
     "src/shared/components/GitDialog.tsx": 332,
-    "src/shared/components/ProjectSettingsDialog.tsx": 351,
+    "src/shared/components/ProjectSettingsDialog.tsx": 356,
     "src/shared/hooks/useConnectionProjects.ts": 357,
     "src/shared/hooks/useKeyboardShortcuts.ts": 348,
     "src/shared/hooks/useProjectActions.ts": 344
