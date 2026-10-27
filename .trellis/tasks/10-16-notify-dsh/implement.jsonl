@@ -1,8 +1,13 @@
-{"file": ".trellis/tasks/10-16-notify-dsh/design.md", "reason": "本子任务设计：为什么走源 A、分支 A/B 落点地图、归属与主题、U7 定案前是条件式设计"}
-{"file": ".trellis/tasks/10-16-notify-dsh/prd.md", "reason": "本子任务需求 R1-R4、验收 AC1-AC6、Step 0 spike（U7 消费侧归属）"}
-{"file": ".trellis/tasks/10-16-agent-notify-more-clis/design.md", "reason": "父任务 T6 推论 1：DSH 属源 A 而非源 B 的判据；AC2 拓扑分类正确性"}
-{"file": ".trellis/tasks/10-12-agent-notify/design.md", "reason": "前置设计 T1-T5：源 A 投影链路与 StreamEvent 协议，DSH 走这条腿"}
-{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "AgentSessionAdapter 契约与 all_adapters 注册流程（若 U7 定案 A 需新增/复用 adapter）"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "新域（agent/dsh/）的目录约定与 mod.rs 极薄要求（红线 9）"}
-{"file": ".trellis/spec/backend/command-execution.md", "reason": "红线 1：若 adapter 起子进程必须走 core::exec（deepseek.rs 已是范例）"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "分支 B 的 WebSocket 监听是常驻任务，需经 AppRuntime 且不阻塞启动（只读「常驻任务/旁路不反压」两节）"}
+{"file": ".trellis/tasks/10-16-notify-dsh/research/dsh-consumption-decision.md", "reason": "U7 定案（修正版）：为什么 DSH 是源 B、正确的落点地图、与首版方案的成本对比"}
+{"file": ".trellis/tasks/10-16-notify-dsh/research/step0-spike-report.md", "reason": "Step 0 实测报告：P1-P6 六个定案，含 [] 边界、软链落位、不重放、.ts 可用、204 假成功"}
+{"file": ".trellis/tasks/10-16-notify-dsh/research/dsh-notify-prior-art.md", "reason": "三个社区 DSH 通知插件源码调研：事件面、approval/asked vs approval/request 的 waterfall 短路机制、子代理 origin 判别"}
+{"file": ".trellis/tasks/10-16-notify-dsh/research/dsh-transport-decision.md", "reason": "已作废的 U7 传输定案（文件头声明了哪些结论无效）—— 用于避免重走错误推理链"}
+{"file": "src-tauri/src/agent/hooks/targets/data.rs", "reason": "自供源那一行（shapes: &[] + dir: || None）及其长注释：为什么 DSH 必须在表里但不装任何东西"}
+{"file": "src-tauri/src/agent/hooks/install/status.rs", "reason": "self_supplied 的产生点（= target.shapes.is_empty()）；既有 installed/version_current/trusted 三态判据"}
+{"file": "src-tauri/src/agent/hooks/install/selection.rs", "reason": "收敛唯一入口：自供源必须被跳过（dir() 恒 None 会误报 Failed）"}
+{"file": "src-tauri/src/agent/hooks/install/shape/standalone.rs", "reason": "Standalone 腿的实现范例：失败策略、客人边界守卫、原子写、状态三态"}
+{"file": "src-tauri/src/agent/hooks/templates/neeko-pi-status.ts", "reason": "既有上报端的投递契约来源：坐标扫描、mtime 缓存、800ms 超时、Promise.allSettled、fail-open"}
+{"file": "src-tauri/src/agent/hooks/ingest/event.rs", "reason": "HookEvent 六个字段与 fail-open 判据 —— 上报端请求体的对照物"}
+{"file": "src-tauri/src/agent/hooks/ingest/validation.rs", "reason": "source 白名单 / TOKEN_HEADER / 静默丢弃的三条判据 —— 204 假绿灯的机理"}
+{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "源 B 域的完整机制 + 本次新增的「自供源」场景（§3/3b/4/4b）"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "§18(c) 护栏判据（钉不变量而非标识符）；§13 占位值不得是真实实体"}
