@@ -27,6 +27,7 @@ import type { HookInstallStatus } from '@/shared/types/notification';
 import CliHooksSection, {
   describeHookStatus,
   enabledSourcesFor,
+  installableHookRows,
   readSourceOverrides,
 } from '../CliHooksSection';
 
@@ -38,6 +39,7 @@ const TWO_CLIS: HookInstallStatus[] = [
   {
     source: 'pi',
     path: '/x/neeko-status.ts',
+    selfSupplied: false,
     installed: false,
     versionCurrent: false,
     trusted: null,
@@ -45,6 +47,7 @@ const TWO_CLIS: HookInstallStatus[] = [
   {
     source: 'claude',
     path: '/y/neeko-status.mjs',
+    selfSupplied: false,
     installed: false,
     versionCurrent: false,
     trusted: null,
@@ -249,5 +252,51 @@ describe('CliHooksSection', () => {
     await waitFor(() => expect(latestNotification()).toMatchObject({ type: 'error' }));
     // 回滚后该开关恢复为磁盘值（true ⇒ checked）。
     await waitFor(() => expect(claudeToggle).toHaveAttribute('data-state', 'checked'));
+  });
+});
+
+/**
+ * 自供源不得出现在设置页的开关列表里。
+ *
+ * 背景：`HOOK_TARGETS` 同时驱动「接收白名单」与「Neeko 能装哪些 CLI」。
+ * DSH 只满足前者（上报由 `packages/dsh-neeko` 完成，Neeko 不该往用户 profile 写文件），
+ * 后端因此把它报成 `path: ""`。若不过滤，用户会看到一行「dsh — not installed」
+ * 加一个拨动后毫无效果的开关 —— 「看起来有、实际没有」。
+ */
+describe('installableHookRows', () => {
+  const row = (source: string, path: string, selfSupplied = false): HookInstallStatus => ({
+    source,
+    path,
+    selfSupplied,
+    installed: false,
+    versionCurrent: false,
+    trusted: null,
+  });
+
+  it('drops self-supplied sources (empty path)', () => {
+    const rows = [row('pi', '/x/neeko-status.ts'), row('dsh', '', true)];
+    expect(installableHookRows(rows).map((r) => r.source)).toEqual(['pi']);
+  });
+
+  it('keeps every installable source in order', () => {
+    const rows = [row('pi', '/a'), row('dsh', '', true), row('claude', '/b'), row('codex', '/c')];
+    expect(installableHookRows(rows).map((r) => r.source)).toEqual(['pi', 'claude', 'codex']);
+  });
+
+  it('returns an empty list when every source is self-supplied', () => {
+    expect(installableHookRows([row('dsh', '', true)])).toEqual([]);
+  });
+
+  it('does not drop a source merely because it is not installed', () => {
+    // 「未安装」是运行时事实，仍要展示（用户可能要装它）。
+    const rows = [row('pi', '/x/neeko-status.ts')];
+    expect(installableHookRows(rows)).toHaveLength(1);
+  });
+
+  it('does not drop a source whose directory could not be resolved', () => {
+    // 反证钉子：用 `path === ''` 作判据会把「本机没装这一行 CLI」误判成自供源
+    // 而从列表里抹掉 —— 用户再也装不上它。
+    const rows = [row('pi', '', false)];
+    expect(installableHookRows(rows).map((r) => r.source)).toEqual(['pi']);
   });
 });

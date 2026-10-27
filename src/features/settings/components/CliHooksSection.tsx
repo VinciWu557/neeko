@@ -22,6 +22,27 @@ import { Switch } from '@/ui';
 /** `config.json` 中承载逐 CLI hook 开关的键（镜像 `agent/hooks/settings.rs`）。 */
 const AGENT_HOOK_SOURCES_KEY = 'agentHookSources';
 
+/**
+ * 过滤掉**自供源**（不需要 Neeko 安装的 CLI，如 DSH）。
+ *
+ * 为什么必须过滤而不是渲染成「未安装」：`HOOK_TARGETS` 同时驱动「接收白名单」与
+ * 「Neeko 能装哪些 CLI」。DSH 只满足前者 —— 它的上报由自己的插件
+ * （`packages/dsh-neeko`）完成，Neeko 不该往用户 profile 写文件。
+ *
+ * 若不过滤，用户会看到一行「dsh — not installed」+ 一个拨动后毫无效果的开关
+ * （本组件的行是无条件 `map` 的）。那是本任务最想避免的「看起来有、实际没有」。
+ *
+ * 判据是后端显式字段 `selfSupplied`，**不是** `path === ""`：后者还可能是
+ * 「目录定位不到」（CLI 本机未初始化）—— 那种仍要展示，用户可能要装它。
+ * 把两种语义压进一个字段会让「未初始化的 pi」被误判成自供源而消失。
+ *
+ * @param rows - 后端 `agent_hooks_status` 的原始行。
+ * @returns 可安装的 CLIs（供渲染与「全部启用」计算）。
+ */
+export function installableHookRows(rows: readonly HookInstallStatus[]): HookInstallStatus[] {
+  return rows.filter((row) => !row.selfSupplied);
+}
+
 /** 回执呈现文案：`pi: skipped (…)` —— status 是判定源，detail 只做补充。 */
 function describeOutcome(outcome: HookApplyOutcome): string {
   return outcome.detail
@@ -115,7 +136,7 @@ const CliHooksSection: React.FC<CliHooksSectionProps> = ({
     async (nextMaster: boolean, overrides: Record<string, boolean>) => {
       const results = await applyCliHooks(
         nextMaster,
-        enabledSourcesFor(nextMaster, hookStatus, overrides),
+        enabledSourcesFor(nextMaster, installableHookRows(hookStatus), overrides),
       );
       setHookStatus(await getCliHookStatus());
       const failed = results.filter((r) => r.status === 'failed');
@@ -190,7 +211,7 @@ const CliHooksSection: React.FC<CliHooksSectionProps> = ({
         </div>
       </div>
       {master &&
-        hookStatus.map((hook) => (
+        installableHookRows(hookStatus).map((hook) => (
           <div
             key={hook.source}
             className="flex items-start justify-between gap-4 py-2 border-b border-white/[0.04]"

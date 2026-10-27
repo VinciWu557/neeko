@@ -58,6 +58,17 @@ export interface HookInstallStatus {
   installed: boolean;
   versionCurrent: boolean;
   /**
+   * **自供源**（镜像 Rust `HookInstallStatus::self_supplied`）：上报由该 CLI 自己的
+   * 插件完成，Neeko 不提供安装腿。
+   *
+   * 与 `path === ''` **不是同一件事**：`path` 空还可能是「目录定位不到」
+   * （CLI 本机未初始化）—— 那种仍要展示，用户可能要装它。
+   * 自供源根本不该出现在开关列表里（拨动它没有任何效果）。
+   *
+   * 当前唯一自供源是 `dsh`（`packages/dsh-neeko` 负责上报）。
+   */
+  selfSupplied: boolean;
+  /**
    * CLI 侧信任态（镜像 Rust `HookInstallStatus::trusted`）：
    * - `null` = 该 CLI 无信任概念（无需展示）；
    * - `true` = 需要且已确认；
