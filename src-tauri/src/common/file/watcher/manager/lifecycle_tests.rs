@@ -234,14 +234,17 @@ fn wait_for_entry(
 
 /// 投喂一条「内容变更」合成事件（等价于真实 FS 的 Modify(Data)）。
 ///
-/// `without_real_fs` 模式下 `watch()` 把回调交给测试，测试主动喂事件 ——
-/// 这样「事件到达后」的整条链路（gitignore 过滤 → debounce 合流 → sink）
+/// `without_real_fs` 模式下 `watch()` 把**合成扇出器**交给测试，测试主动喂事件 ——
+/// 这样「事件到达后」的整条链路（路径路由 → gitignore 过滤 → debounce 合流 → sink）
 /// 都是真实生产代码，只有「内核投递」被替换。
+///
+/// 参数类型是 [`TestEventSinks`] 而非单个回调：生产里 git 元数据有两条互斥传输
+/// （合并到主回调 / 独立流），扇出器就是这两条的无内核替身（见该类型的说明）。
 fn feed_content_change(
-    feed: &mut crate::common::file::watcher::manager::core::TestEventSink,
+    feed: &mut crate::common::file::watcher::manager::core::TestWatchStream,
     path: &Path,
 ) {
-    feed(Ok(notify::Event::new(notify::EventKind::Modify(
+    feed.feed(Ok(notify::Event::new(notify::EventKind::Modify(
         notify::event::ModifyKind::Data(notify::event::DataChange::Content),
     ))
     .add_path(path.to_path_buf())));
@@ -265,7 +268,7 @@ fn watch_delivers_file_changed() {
         .take_test_event_sink()
         .expect("noop 模式必须交出回调");
 
-    feed(Ok(notify::Event::new(notify::EventKind::Modify(
+    feed.feed(Ok(notify::Event::new(notify::EventKind::Modify(
         notify::event::ModifyKind::Data(notify::event::DataChange::Content),
     ))
     .add_path(root.join("a.txt"))));

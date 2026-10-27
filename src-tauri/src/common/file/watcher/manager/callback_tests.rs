@@ -357,6 +357,91 @@ fn sibling_unit_gitdir_event_is_classified_as_nothing() {
     );
 }
 
+// ── 测试模式与生产扇出同构 ──────────────────────────────────────────
+
+/// **回归钉子**：`without_real_fs()` 交出的扇出器必须与生产选中的那条传输同构。
+///
+/// 钉住的缺陷形态（CI 实测，2026-10-26）：合成模式原先只交出主回调，于是
+/// 「非 macOS → `merge=false` → 走独立流」的平台上，`.git/refs/**` 事件既不经合并
+/// 分类（没合并），也不经独立流（被 `skip_real_fs` 跳过）—— **两条传输全无**，
+/// 事件当硬噪声丢弃，用例却以为在验证生产链路。表现：macOS 绿、Linux/Windows 红。
+///
+/// 本用例断言的是**路由本身**，不依赖平台当前选哪条：refs 路径投进扇出器后，
+/// 调度信号必须恰好出现一次（合并→回调内分类；不合并→独立流出口）。
+/// 变异验证：删掉 `TestEventSinks::feed` 的 git-meta 分支（回到「只有主回调」）⇒
+/// `merge=false` 那一轮计数为 0 ⇒ 本用例红。
+#[test]
+fn synthetic_sinks_route_git_paths_to_whichever_transport_is_live() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    write_gitignore(root, "");
+    std::fs::create_dir_all(root.join(".git").join("refs").join("remotes")).unwrap();
+    std::fs::write(root.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let paths = super::super::git_meta::resolve_git_meta_paths(root)
+        .expect("tempdir-derived git repo must resolve meta paths");
+    let unit = crate::common::git::WorkspaceRef::resolve(
+        "p1",
+        &root.to_string_lossy(),
+        None,
+        &ExecTarget::Local,
+    )
+    .expect("unit path must resolve");
+
+    // 两种传输形态各跑一遍：同一断言对两者都成立，不随平台能力位漂移而失效。
+    for merge in [true, false] {
+        let sink = CollectingSink::new();
+        let (scheduler_tx, scheduler_rx) = mpsc::channel();
+        let (maintenance_tx, _maintenance_rx) = mpsc::channel();
+        let (debounce_tx, _debounce_rx) = mpsc::channel();
+        let (tree_tx, _tree_rx) = mpsc::channel();
+
+        let callbacks = super::git_meta_merge::build_callbacks(
+            &unit.key(),
+            &unit,
+            &paths,
+            sink.clone(),
+            Some(scheduler_tx.clone()),
+        );
+        // 与 `core.rs` 同一互斥分配规则：合并 → 进主回调；不合并 → 进独立流出口。
+        let (merged, standalone) = if merge {
+            (Some(callbacks), None)
+        } else {
+            (None, Some(callbacks))
+        };
+
+        let main_cb = super::callbacks::build_notify_callback(
+            unit.clone(),
+            sink.clone(),
+            None,
+            maintenance_tx,
+            debounce_tx,
+            tree_tx,
+            Some(scheduler_tx),
+            true,
+            merged,
+        );
+        let main_cb: Box<dyn FnMut(Result<notify::Event, notify::Error>) + Send> =
+            Box::new(main_cb);
+
+        let mut stream = super::core::TestWatchStream {
+            main: main_cb,
+            git_meta: standalone,
+        };
+
+        let ref_path = paths.refs_dir.join("remotes").join("origin").join("main");
+        stream.feed(Ok(notify::Event::new(EventKind::Modify(ModifyKind::Data(
+            DataChange::Content,
+        )))
+        .add_path(ref_path)));
+
+        assert!(
+            scheduler_rx.try_recv().is_ok(),
+            "merge={merge}: refs 变化必须驱动一次查询调度 —— 两条传输不得同时落空"
+        );
+    }
+}
+
 // ── overflow / 错误事件 ───────────────────────────────────────────────
 
 #[test]

@@ -177,6 +177,24 @@ pub(super) fn build_callbacks(
     }
 }
 
+/// 把已构造的回调装到**独立 git-meta 流**上（不合并时的传输路径）。
+///
+/// **为什么在一个函数里装**：`GitMetaCallbacks` 的三个字段是 `FnMut` 且**不可克隆**，
+/// 一旦拆开分散到两个调用点分发，就不可能再保证「同一次构造只接一条传输」。
+/// 这里把「消耗掉它们」收成单点，`core.rs` 只需决定调不调 —— 拆开的机会不存在。
+pub(super) fn into_standalone_stream(
+    ctx: GitMetaCallbacks,
+    workspace: &str,
+) -> Option<super::super::git_meta::GitMetaWatcherHandle> {
+    super::super::git_meta::create_git_meta_watcher(
+        workspace.to_string(),
+        &ctx.paths,
+        ctx.on_index_changed,
+        ctx.on_head_changed,
+        ctx.on_refs_changed,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

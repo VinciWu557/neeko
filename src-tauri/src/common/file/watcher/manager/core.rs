@@ -10,13 +10,16 @@
 //! 的显式空态承担（见 `snapshot` 返回 `None` 的语义与前端 `statuses[key] === undefined`）。
 
 use super::super::debounce::{DebounceSender, ThrottleScheduler, TreeChangeDebounceSender};
-use super::super::git_meta::create_git_meta_watcher;
+#[cfg(test)]
+use super::super::git_meta::dispatch_git_meta_event;
 use super::super::gitignore::GitIgnoreFilter;
 use super::super::manifest::WatchManifest;
 use super::super::registration::{spawn_maintenance_thread, WatchRegistration, MAX_WATCH_DIRS};
 use super::super::sink::{WatcherEvent, WatcherEventSink};
-use super::super::types::{GitChangedEvent, GitPerfSuggestionEvent};
+use super::super::types::GitPerfSuggestionEvent;
 use super::callbacks::build_notify_callback;
+#[cfg(test)]
+use super::callbacks::GitMetaCallbacks;
 use super::handle::WatcherHandle;
 use crate::common::git::local::is_git_repo;
 use crate::common::git::status_worker::{GitStatusSnapshot, GitStatusWorker};
@@ -46,6 +49,60 @@ use std::{
 /// 生产代码从不读它（`#[cfg(test)]` 门控）。
 #[cfg(test)]
 pub type TestEventSink = Box<dyn FnMut(Result<notify::Event, notify::Error>) + Send>;
+
+/// `without_real_fs()` 模式下替代「真实 OS 流」的**合成扇出器**。
+///
+/// # 为什么必须是扇出而不是单条回调
+///
+/// 生产结构里 git 元数据有**两条互斥的传输路径**：
+/// - 合并（macOS 递归后端）→ 事件进主回调，在 `build_notify_callback` 里被分类；
+/// - 独立流（Linux 逐目录注册 / Windows 整树过滤）→ 事件进 `git_meta` 自己的回调。
+///
+/// 哪条生效由 `git_meta_merge::decide`（平台能力位）决定，**在测试里不可选**。
+/// 早先的测试模式只交出主回调，非 macOS 上便两条路径皆无 —— 合并没发生
+/// （`merge == false`），独立流又被跳过，`.git/refs/**` 事件落进 `is_hard_noise_path`
+/// 被丢弃，而用例仍以为在验证生产链路（本地 macOS 绿、Linux/Windows 红）。
+///
+/// 现在按「事件路径该归谁」扇出：落在本单元 git 元数据范围内的归 git-meta 出口，
+/// 其余归主回调。测试因此不必知道平台走了哪条 —— 它拨的就是该平台的真实扇出点。
+#[cfg(test)]
+pub struct TestWatchStream {
+    /// 主 watcher 回调（内容 / 结构事件；合并路径下也携带 git-meta 分类）。
+    pub(super) main: TestEventSink,
+    /// 独立流路径的 git 元数据回调。`None` = 本次挂载走的是合并路径。
+    pub(super) git_meta: Option<GitMetaCallbacks>,
+}
+
+#[cfg(test)]
+impl TestWatchStream {
+    /// 投喂一条内核事件 —— 与内核**无关**，只验证「事件到达后如何处理」。
+    ///
+    /// 两条判据都复用生产的单一事实源，不重写：
+    /// - 路由/前缀：`GitMetaPaths::touches`；
+    /// - 分类与三出口：`dispatch_git_meta_event`（spec 登记的**唯一分发实现**）。
+    pub(super) fn feed(&mut self, result: Result<notify::Event, notify::Error>) {
+        let event = match result {
+            Ok(event) => event,
+            // 错误事件只能来自内核；合成模式不产生，语义上属于主流错误出口
+            // （与生产中独立流只认路径、不消费 error 的形态一致）。
+            Err(e) => return (self.main)(Err(e)),
+        };
+        if let Some(ctx) = self.git_meta.as_mut() {
+            if ctx.paths.touches(&event.paths) {
+                dispatch_git_meta_event(
+                    &event.paths,
+                    &ctx.paths,
+                    &mut ctx.on_index_changed,
+                    &mut ctx.on_head_changed,
+                    &mut ctx.on_refs_changed,
+                );
+                // 独立流不订阅工作区：git 元数据路径到此为止，不再进主回调。
+                return;
+            }
+        }
+        (self.main)(Ok(event));
+    }
+}
 
 /// 用户级 watcher 排除（`watcherExclude`）模式提供者。
 ///
@@ -98,9 +155,9 @@ pub struct WatcherManager {
     /// 需要验证「事件确实到达」的用例仍走真实路径（C 层，见 `lifecycle_tests`）。
     #[cfg(test)]
     no_real_fs: Arc<std::sync::atomic::AtomicBool>,
-    /// 测试模式下的回调投喂口（见 `no_real_fs`）。
+    /// 测试模式下的合成事件扇出器（见 `no_real_fs` 与 [`TestWatchStream`]）。
     #[cfg(test)]
-    test_event_sink: Arc<Mutex<Option<TestEventSink>>>,
+    test_event_sink: Arc<Mutex<Option<TestWatchStream>>>,
     /// 已创建的 watcher 套数（幂等契约观测口，见 `lifecycle_tests.rs`）：
     /// 已创建的 watcher 套数（幂等契约观测口，见 `lifecycle_tests.rs`）：
     /// 「重复 watch 只建一套」用创建计数断言，不用事件批次计数 —— 单次写入的
@@ -137,11 +194,11 @@ impl WatcherManager {
         }
     }
 
-    /// **测试专用**：取走该 manager 最近一次 `watch()` 生成的回调，用于主动投喂事件。
+    /// **测试专用**：取走该 manager 最近一次 `watch()` 组装的合成事件扇出器。
     ///
-    /// 只在 `without_real_fs()` 模式下有值（见 `no_real_fs` 字段）。
+    /// 只在 `without_real_fs()` 模式下有值（见 `no_real_fs` 字段与 [`TestWatchStream`]）。
     #[cfg(test)]
-    pub(super) fn take_test_event_sink(&self) -> Option<TestEventSink> {
+    pub(super) fn take_test_event_sink(&self) -> Option<TestWatchStream> {
         self.test_event_sink.lock().ok()?.take()
     }
 
@@ -451,25 +508,34 @@ impl WatcherManager {
             &workspace,
         );
         let merge_git_meta = git_meta_decision.merge;
-        let git_meta_callbacks = git_meta_decision
-            .paths
-            .as_ref()
-            .filter(|_| merge_git_meta)
-            .map(|paths| {
-                super::git_meta_merge::build_callbacks(
-                    &workspace,
-                    &repo,
-                    paths,
-                    Arc::clone(&sink),
-                    scheduler.as_ref().map(|s| s.sender()),
-                )
-            });
-        if merge_git_meta {
+        // **单一构造点**：三条出口的语义（index/refs 只发调度信号、head 才 emit 事实）
+        // 只在这里构造一次，再按 `merge` 分给**两条传输路径之一**：
+        //   合并 → 塞进主回调；不合并（Linux 逐目录注册 / Windows 整树过滤）→ 独立流。
+        // 两条传输共用同一份 `GitMetaCallbacks`，语义不可能分叉。
+        let git_meta_callbacks = git_meta_decision.paths.as_ref().map(|paths| {
+            super::git_meta_merge::build_callbacks(
+                &workspace,
+                &repo,
+                paths,
+                Arc::clone(&sink),
+                scheduler.as_ref().map(|s| s.sender()),
+            )
+        });
+        // 互斥分配：同一份回调只能给一条传输，否则同一事件会驱动两次重算、推两份快照。
+        let (merged_git_meta, standalone_git_meta) = if merge_git_meta {
             log::info!(
                 "[Watcher:{}] git meta merged into main watcher (single FSEvents stream)",
                 workspace
             );
-        }
+            (git_meta_callbacks, None)
+        } else {
+            (None, git_meta_callbacks)
+        };
+        // 测试模式要把它 `.take()` 进扇出器；生产模式只按值传给独立流。
+        // 用遮蔽（shadowing）而不是 `mut`：生产构建里这个绑定永远不会被可变借用，
+        // 无条件写 `mut` 会在 `cargo clippy --all-targets` 里报 `unused_mut`。
+        #[cfg(test)]
+        let mut standalone_git_meta = standalone_git_meta;
 
         let notify_callback = build_notify_callback(
             repo.clone(),
@@ -480,16 +546,22 @@ impl WatcherManager {
             tree_debounce_tx,
             scheduler_tx,
             git_repo,
-            git_meta_callbacks,
+            merged_git_meta,
         );
+
         // 测试开关（生产恒 false）：不建 OS 流，并把**回调本体**交给测试，
         // 由测试主动投喂合成事件 —— 这样 `watch()` 的编排与状态机（幂等检查、
         // 快照作废、票号签发、handle 登记）全部照常执行，只有「内核投递」被替换。
-        // 见 `no_real_fs` 字段与 `take_test_event_sink`。
+        // 见 `no_real_fs` 字段与 [`TestWatchStream`]。
         #[cfg(test)]
         let notify_result = if self.no_real_fs.load(Ordering::Relaxed) {
+            // 两条流的回调各就各位：`standalone_git_meta` 已被取走（`None`）说明本次挂载
+            // 走的是合并路径，git 元数据事件由主回调自己分类；否则由扇出器转给独立流出口。
             if let Ok(mut slot) = self.test_event_sink.lock() {
-                *slot = Some(Box::new(notify_callback));
+                *slot = Some(TestWatchStream {
+                    main: Box::new(notify_callback),
+                    git_meta: standalone_git_meta.take(),
+                });
             }
             Ok(PlatformWatcher::Noop)
         } else {
@@ -556,7 +628,7 @@ impl WatcherManager {
             path.display()
         );
 
-        // 4b. 创建 git 元数据 watcher -- 单独监听**该单元自己的** git 目录（HEAD / index），
+        // 4b. 创建 git 元数据 watcher -- 单独监听**该单元自己的** git 目录（HEAD / index / refs），
         // 绕过 git 忽略过滤（该过滤会丢弃 .git 内事件，导致 checkout 后 worker 无法感知
         // 分支变化、changes 列表残留旧分支数据）。
         //
@@ -565,67 +637,23 @@ impl WatcherManager {
         // 监听（`resolve_git_meta_paths` 会读 `.git` 指针文件定位）。旧实现里那套
         // `resolve_worktree_roots` + `rearm_worktrees_if_needed` 的机制，存在的唯一前提就是
         // 「worktree 没有自己的资源」—— 前提消失，机制退役。
-        // 合并成功 → 不再建独立 git_meta 流（流数 2N → N）。
-        // 测试模式（`without_real_fs`）同样不建独立 git_meta 流 —— 否则 27 个状态机
-        // 测试仍会各自建一条真实 FSEvents（实测把 fseventsd 压到 99%+）。
-        // 生产恒 false，行为不变。
-        #[cfg(test)]
-        let skip_real_fs = self.no_real_fs.load(Ordering::Relaxed);
-        #[cfg(not(test))]
-        let skip_real_fs = false;
-        let head_watcher = if git_repo && !merge_git_meta && !skip_real_fs {
-            crate::common::file::watcher::git_meta::resolve_git_meta_paths(&path).and_then(|meta| {
-                let scheduler_tx = scheduler.as_ref().map(|s| s.sender());
-                let unit_index = workspace.clone();
-                let unit_head = workspace.clone();
-                let unit_refs = workspace.clone();
-                let git_changed = GitChangedEvent::new(&repo);
-                let sink_for_head = Arc::clone(&sink);
-                let scheduler_tx_for_head = scheduler_tx.clone();
-                let scheduler_tx_for_refs = scheduler_tx.clone();
-                create_git_meta_watcher(
-                    workspace.clone(),
-                    &meta,
-                    move || {
-                        // 公理1（信号≠事实）：index 写入只作为查询调度提示，
-                        // 交由 worker 查询-比较后决定是否通知 —— 不再无条件触发
-                        // 全量刷新。此前无条件 `signal()` 会与 git 命令写 index
-                        // 形成自反馈回路（git-changed → 前端刷新命令写 index →
-                        // index 事件 → 再 git-changed）。
-                        log::debug!(
-                            "[Watcher:{}] git index changed, hinting git status check",
-                            unit_index
-                        );
-                        if let Some(tx) = &scheduler_tx {
-                            let _ = tx.send(());
-                        }
-                    },
-                    move || {
-                        log::debug!(
-                            "[Watcher:{}] HEAD changed, triggering git status",
-                            unit_head
-                        );
-                        if let Some(tx) = &scheduler_tx_for_head {
-                            let _ = tx.send(());
-                        }
-                        sink_for_head.emit(WatcherEvent::GitChanged(&git_changed));
-                    },
-                    move || {
-                        // refs 变更（外部 push / fetch / 本地 commit）只发**信号**，
-                        // 不 emit 事实、不新增事件名（红线 5）—— 事实一律由
-                        // `git-status-snapshot` 携带（与 index 回调同构）。
-                        log::debug!(
-                            "[Watcher:{}] git refs changed, hinting git status check",
-                            unit_refs
-                        );
-                        if let Some(tx) = &scheduler_tx_for_refs {
-                            let _ = tx.send(());
-                        }
-                    },
-                )
-            })
-        } else {
-            None
+        //
+        // 与合并路径**共用同一份回调**：`standalone_git_meta` 就是上面 `build_callbacks`
+        // 的产物，这里只把它接到独立流上（下方 `capture_test_stream` 在测试模式下接的是
+        // 同一条传输）—— 两条传输路径的语义不可能分叉。
+        //
+        // 测试模式（`without_real_fs`）不建真实 OS 流，改用 `TestWatchStream` 把
+        // **两条流的回调都拿下**再按路径扇出，因此「非 macOS 上的独立流」也有合成入口。
+        //
+        // 不需要单独的「跳过真实流」判断：上面的 `standalone_git_meta.take()` 已经
+        // 把它取空，本分支自然落 `_ => None`。早先写 `!skip_real_fs` 是双重判定，
+        // 而它在那时已恒为真（take 发生在更早处）—— 读起来像活判据，实际是死条件。
+        let head_watcher = match standalone_git_meta {
+            Some(ctx) => super::git_meta_merge::into_standalone_stream(ctx, &workspace),
+            // `None` 两种来源殊途同归：
+            // - 合并路径已接管（或本就不是 git 单元）；
+            // - 测试模式：回调已被扇出器取走，由它接管投递。
+            None => None,
         };
 
         // 停止信号（供心跳线程使用）

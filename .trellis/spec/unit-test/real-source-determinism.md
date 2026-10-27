@@ -77,8 +77,9 @@ feed(Ok(notify::Event::new(EventKind::Modify(ModifyKind::Data(DataChange::Conten
     .add_path(root.join("a.txt"))));
 assert_eq!(sink.count(FILE_CHANGED_EVENT), 1);   // 同步断言，零 sleep
 
-// 状态机层：WatcherManager::new().without_real_fs() 把回调交给测试
+// 状态机层：WatcherManager::new().without_real_fs() 把**合成扇出器**交给测试
 let mut feed = manager.take_test_event_sink().expect("noop 模式必须交出回调");
+feed.feed(Ok(event));   // 扇出器内部按生产同构路由（见下表最后一行）
 ```
 
 **2. `CollectingSink`（真实投递已下沉后的残余）** —— `sink.rs::test_support::CollectingSink`，
@@ -112,10 +113,19 @@ let mut feed = manager.take_test_event_sink().expect("noop 模式必须交出回
 | 位置 | 缝 | 用途 |
 | --- | --- | --- |
 | `manager/callbacks.rs::build_notify_callback` | 返回 `impl FnMut(Result<Event,_>)` | 回调层全部语义（gitignore 过滤 / hard-noise / 结构事件 / git 元数据分类） |
-| `manager/core.rs::WatcherManager::without_real_fs()` + `take_test_event_sink()` | 测试模式不建流、交出回调 | 编排与状态机测试 |
-| `manager/git_meta_merge.rs::dispatch_git_meta_event` | 纯函数 | 「一批路径 → 分类 → 三出口」 |
+| `manager/core.rs::WatcherManager::without_real_fs()` + `take_test_event_sink()` | 测试模式不建流、交出**扇出器** `TestWatchStream` | 编排与状态机测试 |
+| `manager/git_meta_merge.rs::dispatch_git_meta_event` | 纯函数 | 「一批路径 → 分类 → 三出口」**唯一**分发实现（含合并路径与独立流，不得各写一份 match） |
+| `git_meta/paths.rs::GitMetaPaths::touches` | 纯方法 | 「该批路径是否属于本单元 git 元数据」的**唯一**前缀判据 |
+| `manager/git_meta_merge.rs::decide(root, git_repo, exclusions, backend_can_exclude, env_off, ws)` | 纯函数（`env_off` 是**参数**） | 合并可行性判定；不得在函数内读 `std::env` |
 | `platform/macos_fsevent.rs::should_handle_event` / `translate_flags` | 纯函数 | 路径过滤与 flags→EventKind 映射 |
 | `git_meta/watcher.rs::create_git_meta_watcher_with(watch_fn)` | 注入 `watch_fn` | 失败分支 |
+
+> **两条传输必须同构**（2026-10-26 事故）：git 元数据走「合并进主回调」（macOS 递归后端）
+> 或「独立流」（Linux 逐目录注册 / Windows 整树过滤），由 `decide` 的平台能力位决定。
+> 因此测试替身不能只交出一条回调 —— 那在非 macOS 上两条传输都不存在，
+> `.git/refs/**` 事件落进 `is_hard_noise_path` 被丢弃，而用例仍以为在验证生产链路
+> （macOS 绿、Linux/Windows 红）。`TestWatchStream` 按事件路径扇出，拨的就是
+> 该平台真实的扇出点。回归钉子：`synthetic_sinks_route_git_paths_to_whichever_transport_is_live`。
 
 ### 若确需真实流（平台后端契约）
 
