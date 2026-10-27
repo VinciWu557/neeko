@@ -3,7 +3,7 @@
 //! 闭包体从 `WatcherManager::watch` 抽离为独立构建函数，使组装编排保持精简；
 //! 全部依赖经参数显式注入（move 捕获语义与原实现一致）。
 
-use super::super::git_meta::{classify_git_meta_event, GitMetaChange, GitMetaPaths};
+use super::super::git_meta::{dispatch_git_meta_event, GitMetaPaths};
 use super::super::gitignore::GitIgnoreFilter;
 use super::super::registration::WatchMaintenance;
 use super::super::sink::{WatcherEvent, WatcherEventSink};
@@ -97,30 +97,20 @@ pub(super) fn build_notify_callback(
         // 也放进分类，且无法表达 linked worktree 的真实布局。前缀判定同时是
         // 合并可行性的运行期自检 —— 若事件根本不在 git_dir 下，分类必然 Nothing。
         if let Some(ctx) = git_meta.as_mut() {
-            let touches_git_dir = event
-                .paths
-                .iter()
-                .any(|p| p == &ctx.paths.head || p.starts_with(&ctx.paths.git_dir));
-            if touches_git_dir {
-                match classify_git_meta_event(
+            if ctx.paths.touches(&event.paths) {
+                // 分类 + 三出口复用 `dispatch_git_meta_event`（spec 登记的**唯一**
+                // 分发实现）—— 合并路径与独立流不得各写一份 match，那是两条会
+                // 漂移的语义。此处仅额外要求：**不 return**，`.git` 路径仍需
+                // 落到下面被 hard-noise 过滤丢弃（I2：不得漏进前端事件）。
+                dispatch_git_meta_event(
                     &event.paths,
-                    &ctx.paths.head,
-                    &ctx.paths.index,
-                    &ctx.paths.refs_dir,
-                    &ctx.paths.packed_refs,
-                ) {
-                    // index / refs 只发**查询调度信号**，不 emit 事实（公理 1：
-                    // 信号≠事实，事实由 git-status-snapshot 携带）。
-                    GitMetaChange::IndexChanged => (ctx.on_index_changed)(),
-                    GitMetaChange::RefsChanged => (ctx.on_refs_changed)(),
-                    // HEAD 变化是「分支已切换」这一事实本身，需 emit 驱动前端刷新。
-                    GitMetaChange::HeadChanged => (ctx.on_head_changed)(),
-                    // 无关的 .git 路径（objects / config / 别的单元）→ 落到下面被丢弃
-                    GitMetaChange::Nothing => {}
-                }
+                    &ctx.paths,
+                    &mut ctx.on_index_changed,
+                    &mut ctx.on_head_changed,
+                    &mut ctx.on_refs_changed,
+                );
             }
-            // 注意：**不 return** —— `.git` 路径仍需被后续 hard-noise 过滤丢弃，
-            // 不得漏进前端事件（I2）。
+            // 注意：**不 return** —— 见上。
         }
 
         // .gitignore / .git/info/exclude 自身变更时重载规则

@@ -57,6 +57,27 @@ pub(in crate::common::file::watcher) struct GitMetaPaths {
     pub(in crate::common::file::watcher) packed_refs: PathBuf,
 }
 
+impl GitMetaPaths {
+    /// 这批路径中是否有**任一条落在本单元的 git 元数据范围内**。
+    ///
+    /// 作为廉价前置过滤（主 watcher 事件量远大于 git 元数据流，先做前缀判定可避开
+    /// 对每个事件的多次 `Path` 比较）。
+    ///
+    /// **单一事实源**：合并路径的回调与测试替身的路由都必须用本方法 —— 各自手写
+    /// `p == &head || p.starts_with(&git_dir)` 就是两份会漂移的判据，而漂移的后果是
+    /// 事件静默丢失（落进 `is_hard_noise_path` 被丢弃），不是编译错误。
+    ///
+    /// 判据用 `git_dir` 前缀而**不是**「路径含 `.git` 组件」：后者会把别的单元
+    /// （如 `<root>/.git/worktrees/other/`）的元数据也算进来，且无法表达 linked
+    /// worktree 的真实布局。
+    #[must_use]
+    pub(in crate::common::file::watcher) fn touches(&self, paths: &[PathBuf]) -> bool {
+        paths
+            .iter()
+            .any(|p| p == &self.head || p.starts_with(&self.git_dir))
+    }
+}
+
 /// 解析 refs 所在的**公共 gitdir**：linked worktree 的私有 gitdir 里有 `commondir`
 /// 指针文件（内容相对私有 gitdir，如 `../..`），refs / packed-refs 都在那里。
 /// 普通仓库没有 `commondir`，返回 `git_dir` 自身。

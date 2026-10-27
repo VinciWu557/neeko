@@ -10,6 +10,9 @@ mod watcher;
 #[cfg(test)]
 mod tests;
 
+// `classify_git_meta_event` / `GitMetaChange` 的外部消费点是测试（`manager/tests.rs`
+// 直接断言分类结果）；生产路径一律经 `dispatch_git_meta_event`，不自行 match。
+#[cfg(test)]
 pub(super) use classify::{classify_git_meta_event, GitMetaChange};
 pub(super) use paths::{resolve_git_meta_paths, GitMetaPaths};
-pub(super) use watcher::{create_git_meta_watcher, GitMetaWatcherHandle};
+pub(super) use watcher::{create_git_meta_watcher, dispatch_git_meta_event, GitMetaWatcherHandle};
