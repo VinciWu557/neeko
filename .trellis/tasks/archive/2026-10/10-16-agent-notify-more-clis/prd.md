@@ -85,18 +85,58 @@
 
 ## Acceptance Criteria（跨子任务 / 父任务持有）
 
-- [ ] AC1（父）**核心域零改动自证**：本任务全部实施完成后，
-  `src-tauri/src/notification/**` 的 diff 为空；护栏 `check_notification_core_direction` 全绿。
-- [ ] AC2（父）**拓扑分类正确性**：三个子任务各自证明了所属拓扑判断
-  （claude-compat = 独立 shim + 结构化合并；codex = TOML + 信任门；dsh = 源 A 投影）。
-- [ ] AC3（父）**无重复实现**：Claude/CodeBuddy/Qoder 三源共享**同一份** shim 模板与
-  **同一张** `HookEntry` 表（测试钉死：新增第四个 Claude 兼容 fork 只需加一行 `HookTarget`）。
-- [ ] AC4（父）**跨子任务回归**：全部子任务落地后，Pi/Opencode（既有）通知**行为不变** ——
-  `pnpm test:rust` 中 agent-hooks 与 notification 全部测试通过。
-- [ ] AC5（父）**最终集成评审**：三个子任务归档后，确认
-  ① 用户配置面在开关开/关两种状态下均无他人条目丢失；
-  ② 设置页能正确呈现每个 CLI 的安装状态与版本新鲜度；
-  ③ 交付物清单与 design.md 的落点表一致（无未登记文件）。
+> 状态核验：2026-10-27（归档前逐条取证，**不抄子任务自述**）。
+> 分级口径 —— `[x]` = 判据成立且可复现；`[x]⚠` = 字面判据未成立但意图达成，
+> 偏差已登记；`[~]` = 部分达成，缺口在下方明列。**归档 ≠ 全绿。**
+
+- [x]⚠ **AC1（父）核心域零改动自证** —— **字面判据不成立，须按真实情况理解。**
+  - 意图（「hook 接入不得改动通知核心域逻辑」）**成立**：三个子任务自身实施提交里
+    `notification/**` 的逻辑改动为 **0**。唯一一条是 `a86aa437` 改 `types.rs` 的一行
+    **文档注释**（失效指针改指 spec），子任务 AC8 已按 ⚠ 登记。
+  - 字面（「diff 为空」）**不成立**：区间 `2719c4e6..HEAD` 下 `notification/**` 实际有
+    **6 文件 / +363 −41**。来源是 2026-10-26 的三个提交 `fe32a33b`（文案英文化）、
+    `dc816d21`（macOS 点击回流）、`c021a954`（agent 通知只走系统通知，删 in-app 通道）。
+    **这三个提交不属于本父任务的任何子任务** —— `git show --name-only` 实测各自
+    触碰 `.trellis/tasks/` 的次数为 **0**，是并行的独立工作。
+  - 护栏 `check_notification_core_direction`：**全绿**（scan 7 个 `.rs` / 违规 0）。
+    分层方向未被破坏 —— 这才是 AC1 真正要防的东西。
+- [x]⚠ **AC2（父）拓扑分类正确性** —— 两正确、一**翻转**。
+  - claude-compat ✅ `research/cli-hook-spike.md`：独立 shim + 结构化合并，成立。
+  - codex ✅ `research/codex-trust-spike.md`：TOML 文本级改写 + 信任门，成立。
+  - dsh ❌→✅ **原判断错误**：本 prd 原文写「dsh = 源 A 投影」，实际交付是**源 B 上报**
+    （`shapes: &[]` 自供源，上报端在 `packages/dsh-neeko`）。修正有完整证据链：
+    子任务 `prd.md`「修订史」+ `research/dsh-consumption-decision.md`。
+    归纳成一句：**「DSH 没有 hook 配置面」≠「DSH 不能上报」** —— cordis 插件是任意
+    Node 代码，`fetch()` 天然可用。父任务当初把这两件事混为一谈。
+- [x] **AC3（父）无重复实现** —— 成立，且比要求更强：
+  `claude_compat_sources_share_one_entries_table` + `claude_compat_sources_share_one_shim_template`
+  用 `std::ptr::eq` 断言**同一常量指针**（比「文本相等」强 —— 文本相等仍可能是两份拷贝）。
+  共享方实际是 **4 个** `HookTarget`（claude / codebuddy / qoder / codex），不是 3 个。
+- [x] **AC4（父）跨子任务回归** —— 成立：`cargo test --manifest-path src-tauri/Cargo.toml --lib`
+  **2247 passed / 5 ignored**（含 `notification` 42 条 + `agent::hooks` 163 条）。
+  Pi / Opencode 既有分支零改动（`Standalone` 分支 diff 为空）。
+- [~] **AC5（父）最终集成评审** —— 5 小项中 3 项成立、2 项有缺口：
+  - [x] ① 开状态下他人条目逐字保留 —— `insert_preserves_foreign_entries_verbatim`
+  - [x] ② 关状态下自家移除、他人原样 —— `remove_only_ours_and_prunes_empty_event`
+  - [x] ③ 设置页安装状态与版本新鲜度 —— `versionCurrent` 双端镜像（`types/notification.ts`
+        + `CliHooksSection.tsx` 的 `(outdated)` 渲染）
+  - [ ] ④ **交付物清单与 `design.md` §2.2 落点表一致 —— 不成立（落点漂移）**。
+        `a86aa437` 把 hooks 域按「失败策略」重构后，§2.2 列的 6 个路径全部失效：
+        `targets.rs`→`targets/`、`merger.rs`→`install/config/json.rs`、
+        `notify.rs`→`ingest/report.rs`、`server.rs`→`ingest/server.rs`、
+        `toml_merger.rs`→`install/config/toml.rs`、`platform/hook_command.rs` **未新建**
+        （shim 命令渲染并入 `install/shim/`）。**计划文档未随重构更新，属登记缺口。**
+        映射关系以本节为准；`design.md` §2.2 保持原样（历史留痕），不追改。
+  - [ ] ⑤ **`10-12-agent-notify` 既有验收未被破坏 —— 部分不成立**。
+        系统通知链路仍工作（2247 测试全绿），**但** `c021a954` 删掉了 10-12 交付的
+        **in-app 通知通道**（status-bar 列表 / toast / `inApp` 设置键）。该变更属
+        2026-10-26 的独立工作，不在本父任务范围；登记在此是因为它改变了 10-12 的
+        已交付行为面。铃铛本身保留（仍承载应用自身操作反馈）。
+- [x] **AC6（父，补登）父任务 `children` 数组卫生** —— `10-16-notify-review-remediation`
+  自首个提交 `2719c4e6` 起就在 `children` 里，但**从未被创建过**（`git log --all`
+  查找其目录创建记录为空）。`10-16-notify-dsh/design.md` §7 还引用它「需同步审查清单」。
+  归档时已从 `children` 移除，理由记在此处 —— 悬空引用会让 `task.py` 反复解析
+  不存在的目录。
 
 ### 子任务 AC 索引（详版在各子任务 prd.md）
 
@@ -106,8 +146,20 @@
 - `10-16-notify-codex`：AC1 通道正确性（走 `notify` 而非 `hooks.json`，不写信任哈希）；
   AC2 Codex 「任务完成」通知实际触发（**能力边界内**：`notify` 无审批事件，故仅此一类）；
   AC3 无 node 时降级不破坏；AC4 用户 TOML 逐字不变（`notify` 之外）。
-- `10-16-notify-dsh`：AC1 消费侧归属定案；AC2 DSH 事件 → 通知信号投影；
-  AC3 与 hook 线零耦合（不引入第四样契约面）。
+- `10-16-notify-dsh`：AC1 消费侧归属定案（**结论：源 B，非原设想的源 A**）；
+  AC2 DSH 事件 → 通知信号投影；AC3 与 hook 线零耦合（不引入第四样契约面）。
+
+## 归档结论（2026-10-27）
+
+三个子任务 + 父任务归档。**带两处未完结遗留，均已在上方 AC 登记**：
+
+1. **`design.md` §2.2 落点表与实现不一致**（AC5④）—— 重构后路径全变，文档未追改。
+2. **`10-12-agent-notify` 的 in-app 通知通道已被独立工作删除**（AC5⑤）——
+   不是本任务的决策，但改变了本任务的前置事实。
+
+另有**一处实机验证缺口**（承自子任务，非本任务可解）：OMP / Claude / CodeBuddy / Qoder
+四家的**真实 CLI 登录态**下通知未逐个验证（`claude-compat` AC6 标 ⚠）；
+Codex 与 DSH 已实测（`codex-trust-spike.md` 附录 / DSH AC5 真机确认）。
 
 ## 明确不在本任务范围
 

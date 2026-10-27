@@ -46,7 +46,7 @@
 ## 2. 实施顺序（父任务视角）
 
 ```
-1. [ ] 子任务 10-16-notify-claude-compat
+1. [x] 子任务 10-16-notify-claude-compat
        ├─ Step 0: 3 个 spike（U1 OMP 事件面 / U2 node 前提 / U3 Qoder 配置面 / U4 Notification matcher）
        ├─ Step 1: InstallShape + HookEntry 数据表扩展（含 hook_targets_are_unique 修正）
        ├─ Step 2: merger.rs 纯函数 TDD（4 条不变量 Red → Green）
@@ -56,17 +56,21 @@
        ├─ Step 6: notify.rs 补 SESSION_FAILED arm
        ├─ Step 7: 前端逐 CLI opt-in 开关
        └─ Step 8: 三平台实测（macOS 必须；Win/Linux 按 `10-12` 既有覆盖）
-2. [ ] 子任务 10-16-notify-codex（复用 Step 2/3/4 的骨架）
+2. [x] 子任务 10-16-notify-codex（复用 Step 2/3/4 的骨架）
        ├─ Step 0: U5/U6 spike（信任哈希格式 / Interrupt 语义）
        ├─ Step 1: toml_merger.rs 纯函数 TDD
        ├─ Step 2: 信任状态写入或 UX 引导（取决于 U5）
        └─ Step 3: Codex 实测
-3. [ ] 子任务 10-16-notify-dsh（正交，可与上面并行）
+3. [x] 子任务 10-16-notify-dsh（正交，可与上面并行）
        ├─ Step 0: U7 定案（消费侧归属）
        ├─ Step 1: DSH 事件 → NotificationSignal 投影
        └─ Step 2: 实测
-4. [ ] 父任务最终集成评审（见 §4）
+4. [x] 父任务最终集成评审（见 §4）
 ```
+
+> 上述步骤名保留规划时的写法（`merger.rs` / `writers.rs` / `platform/hook_command.rs`）。
+> `a86aa437` 重构后的**实际**落点见 `prd.md` AC5④ 的映射表 ——
+> 「Step 4 的 `platform/hook_command.rs`」最终**未新建**，shim 命令渲染并入 `install/shim/`。
 
 **关键路径**：`claude-compat` → `codex`（codex 复用骨架）。
 `dsh` 不在关键路径上。
@@ -128,11 +132,15 @@
 
 ## 6. 收尾（父任务）
 
-- [ ] 三个子任务全部归档（`task.py archive`）
-- [ ] 跑一次全量 `pnpm check`
-- [ ] 同步 spec：`.trellis/spec/backend/` 中与 hook 接入 / 通知域相关的文档
-      （新增 `InstallShape` 契约与客人义务升级必须入 spec —— 这是本任务最有复用价值的产出）
-- [ ] 更新 `10-12-agent-notify/design.md` 的 E7（「除 Pi/Opencode 外的其他 CLI hook 源」）
-      指向本任务，避免两处登记漂移
-- [ ] `add_session.py` 记录会话
-- [ ] **不主动提交代码**（等用户指示）
+- [x] 三个子任务全部归档（`task.py archive`）—— `10-16-notify-claude-compat`（2026-10-17）/
+      `10-16-notify-codex`（2026-10-17）/ `10-16-notify-dsh`（2026-10-27）
+- [x] 跑一次全量回归 —— `cargo test --lib` **2247 passed / 5 ignored**（含 `notification` 42
+      + `agent::hooks` 163）。按仓库分工未跑全量 `pnpm check`（pre-push / CI 兜底）。
+- [x] 同步 spec —— 契约入 `.trellis/spec/backend/agent-hooks-domain.md`：
+      `InstallShape` 契约与客人义务升级、自供源场景（§3b/§4b）、「两个开关的分工」
+- [x] 更新 `10-12-agent-notify` 的 E7 指向本任务（已指向，无漂移）
+- [x] 父任务 AC 逐条取证并登记偏差（见 `prd.md`，含 AC1/AC2/AC5 三处 `⚠`/`[~]`）
+- [ ] **遗留：`design.md` §2.2 落点表未随 `a86aa437` 重构追改** —— 6 个路径全部失效。
+      不在归档时改（计划文档是历史留痕），映射关系已写入 `prd.md` AC5④。
+- [ ] **遗留：OMP / Claude / CodeBuddy / Qoder 四家真实登录态下的通知未逐个实测** ——
+      需各家凭据，非自动化可达。Codex / DSH 已实测。
