@@ -1,7 +1,0 @@
-{
-  "name": "eslint-plugin-neeko",
-  "version": "0.0.0",
-  "private": true,
-  "main": "index.cjs",
-  "description": "Neeko 仓内 ESLint 插件：与 token 体系同仓演进的架构 / 样式约束"
-}

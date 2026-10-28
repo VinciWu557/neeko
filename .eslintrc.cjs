@@ -65,10 +65,7 @@ module.exports = {
     'src-tauri/*',
   ],
   extends: ['eslint:recommended'],
-  // `neeko` 是仓内插件（tools/eslint-rules/），通过 devDependencies 的
-  // `"eslint-plugin-neeko": "file:tools/eslint-rules"` 装进 node_modules。
-  // 这样 legacy config 的字符串插件名照常生效，无需任何 wrapper。
-  plugins: ['check-file', 'neeko'],
+  plugins: ['check-file'],
   overrides: [
     // ── .tsx files (React components) ──────────────────────────────────────
     {
@@ -186,9 +183,6 @@ module.exports = {
         '@typescript-eslint/no-empty-function': ['off'],
         '@typescript-eslint/no-explicit-any': ['off'],
         'prettier/prettier': ['error', {}, { usePrettierrc: true }],
-        // 实底 accent 上的前景色必须是 accent 底上的前景色（--text-on-accent 系）。
-        // 判据与三个边界见 tools/eslint-rules/accent-foreground.cjs 头部。
-        'neeko/ui/accent-foreground': 'error',
       },
     },
     // ── .ts files (hooks, utils, types, stores) ────────────────────────────

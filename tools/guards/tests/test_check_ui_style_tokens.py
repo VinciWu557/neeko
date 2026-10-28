@@ -149,7 +149,7 @@ class UiStyleTokensGuardTest(unittest.TestCase):
         """
         result = self.run_guard(
             {
-                "src/styles/tokens/theme.css": (
+                "src/styles/themes/dark.css": (
                     "/* 业务层过去写死 border-white/[0.04] */\n"
                     "/* text-[#3fb950] 与 text-white 也要清零 */\n"
                 ),
@@ -174,6 +174,116 @@ class UiStyleTokensGuardTest(unittest.TestCase):
     def test_empty_scan_set_is_reported_as_nothing_checked(self):
         result = subject.check(context(self.root))
         self.assertEqual(result.scanned, 0)
+
+    # ── 判据 5：CSS 里 accent 实底 + 错前景色 ────────────────────────
+    #
+    # 夹具取自**真实历史 bug**（2026-10-27 修复的 7 处里有 2 处在 CSS）：
+    #   agent.css  .agent-bar-btn.selected
+    #   base.css   .wc-close:hover
+
+    def test_css_accent_background_with_wrong_color_is_a_violation(self):
+        """历史 bug 正身：`.agent-bar-btn.selected` 用了 --text-primary。"""
+        result = self.run_guard(
+            {
+                "src/styles/components/agent.css": (
+                    ".agent-bar-btn.selected { background: var(--accent-blue);"
+                    " color: var(--text-primary); }\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertIn("--text-on-accent", result.findings[0].message)
+        self.assertIn("--text-primary", result.findings[0].message)
+
+    def test_css_accent_background_with_hardcoded_white_is_a_violation(self):
+        """第二个历史 bug：`.wc-close:hover` 用了 #fff。"""
+        result = self.run_guard(
+            {
+                "src/styles/components/window-chrome.css": (
+                    ".wc-close:hover { background-color: var(--accent-red) !important;"
+                    " color: #fff !important; }\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, VIOLATION)
+
+    def test_css_text_on_accent_is_allowed(self):
+        """反证：正确写法不得误报（含 `!important`）。"""
+        for correct in (
+            ".x { background: var(--accent-blue); color: var(--text-on-accent); }",
+            ".x { background-color: var(--accent-red) !important;"
+            " color: var(--text-on-accent) !important; }",
+        ):
+            with self.subTest(correct=correct):
+                result = self.run_guard({"src/styles/components/a.css": correct + "\n"})
+                self.assertEqual(result.verdict, PASS)
+
+    def test_css_semitransparent_accent_is_allowed(self):
+        """反证：半透明 accent 底 + 普通文字色是**对的**，不得误报。
+
+        `editor.css` 有 5 处这种写法。判据只认「值就是 var(--accent-*)」的实底。
+        """
+        for semitransparent in (
+            ".x { background: color-mix(in srgb, var(--accent-blue) 32%, transparent);"
+            " color: var(--text-primary); }",
+            ".x { background-color: rgba(var(--accent-blue-rgb), 0.28);"
+            " color: var(--text-primary); }",
+            ".x { background: color-mix(in srgb, var(--accent-red) 12%, transparent);"
+            " color: var(--accent-red); }",
+        ):
+            with self.subTest(case=semitransparent):
+                result = self.run_guard({"src/styles/components/a.css": semitransparent + "\n"})
+                self.assertEqual(result.verdict, PASS)
+
+    def test_css_background_color_declaration_is_not_read_as_foreground(self):
+        """反证：`background-color:` 里的 `color` 不是前景色声明。
+
+        `RE_FG_DECL` 用 `(?<!background-)` 排除它 —— 否则每个实底都会被自己误判。
+        """
+        result = self.run_guard(
+            {
+                "src/styles/components/a.css": (
+                    ".x { background-color: var(--accent-blue); color: var(--text-on-accent); }\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, PASS)
+
+    def test_css_rule_without_accent_background_is_ignored(self):
+        """反证：没有 accent 实底的规则块不受判据 5 约束。"""
+        result = self.run_guard(
+            {"src/styles/components/a.css": ".x { background: var(--bg-tertiary); color: #fff; }\n"}
+        )
+        self.assertEqual(result.verdict, PASS)
+
+    def test_css_rule_block_nested_in_layer_is_still_checked(self):
+        """回归：规则块包在 `@layer` 里也要被检查（真实文件都是这个形状）。"""
+        result = self.run_guard(
+            {
+                "src/styles/components/a.css": (
+                    "@layer components {\n"
+                    "  .x { background: var(--accent-blue); color: var(--text-primary); }\n"
+                    "}\n"
+                )
+            }
+        )
+        self.assertEqual(result.verdict, VIOLATION)
+
+    def test_mutation_removing_css_accent_judge_lets_bug_pass(self):
+        original = subject.RE_SOLID_ACCENT_BG
+        try:
+            subject.RE_SOLID_ACCENT_BG = re.compile(r"(?!)")  # 永不匹配
+            result = self.run_guard(
+                {
+                    "src/styles/components/a.css": (
+                        ".x { background: var(--accent-blue);"
+                        " color: var(--text-primary); }\n"
+                    )
+                }
+            )
+            self.assertEqual(result.verdict, PASS)
+        finally:
+            subject.RE_SOLID_ACCENT_BG = original
 
     # ── 变异验证：删掉判据必须变绿 ──────────────────────────────────
     def test_mutation_removing_color_judge_lets_hex_traffic_pass(self):
