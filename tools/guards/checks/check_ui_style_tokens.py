@@ -67,6 +67,11 @@ import re
 from guards.core.contract import Context, Finding, Guard, GuardResult
 
 TSX_SCOPES = ("src/**/*.tsx",)
+#: 判据 6 额外扫 .ts —— **事故源头就在 .ts**：
+#: 2026-10-28 的 `text-accent` 来自 `src/shared/utils/gitFileDecoration.ts` 的
+#: `return 'text-accent'`，只扫 .tsx 等于「装了护栏但没护住出事的位置」。
+#: 只对判据 6 生效：判据 1~4 若扩到 .ts，会在 `terminal.ts` 之类的兜底色值上误报一片。
+TS_SCOPES = ("src/**/*.ts",)
 CSS_SCOPES = ("src/styles/**/*.css",)
 
 # ── 判据 1：任意「绕过 token 的色值」─────────────────────────────────
@@ -135,6 +140,17 @@ RE_ON_ACCENT_FG = re.compile(r"var\(\s*--text-on-accent\s*\)(?:\s*!important)?")
 # 任意前景色声明。负向断言排除 `background-color:`（`(?<!background-)`）。
 RE_FG_DECL = re.compile(r"(?<!background-)(?<!-)\bcolor\s*:\s*([^;]+);")
 
+# ── 判据 6：禁用 `text-accent` 当文字色 ───────────────────────────────────
+# `text-accent` 不是「强调文字色」，它是 shadcn 的 **accent 底色 token**：
+#   --color-accent → --accent → rgba(var(--accent-blue-rgb), 0.12)
+# 实测产物：`dist/assets/*.css` 里 `.text-accent{color:var(--accent)}`。
+# 拿它写文字 = 12% 透明的字，压在选中底上对比度只有 1.10~1.21（2026-10-28 用户报
+# 「选中后字体都看不清楚」，文件树全部文件名发水印）。
+# 文字强调一律 `text-accent-blue` / `text-accent-<色名>`；半透明 accent 底上的文字用
+# `text-accent-foreground`（= --accent-blue）。
+# 负向断言：`text-accent-*` 不匹配（`-` 是 `\w` 外字符，必须显式排除）。
+RE_TEXT_ACCENT_COLLISION = re.compile(r"\btext-accent(?![\w-])")
+
 #: 一条 CSS 规则块（body 不含嵌套 `{}`，所以 `@layer X { .y { … } }` 只会匹配到 `.y`）
 RE_CSS_RULE_BLOCK = re.compile(r"([^{}]+)\{([^{}]*)\}")
 
@@ -163,8 +179,11 @@ def strip_noise(source: str) -> str:
 
 GUARD = Guard(
     id="check_ui_style_tokens",
-    title="UI 样式层禁止硬编码色 / 暗色假设 / 写死白字 / 无焦点环 / accent 底错前景",
-    scopes=TSX_SCOPES + CSS_SCOPES,
+    title=(
+        "UI 样式层禁止硬编码色 / 暗色假设 / 写死白字 / 无焦点环 / "
+        "accent 底错前景 / text-accent 当文字色"
+    ),
+    scopes=TSX_SCOPES + CSS_SCOPES + TS_SCOPES,
     red_lines=(),
     docs=".trellis/spec/frontend/quality-guidelines.md",
     fix_hint=(
@@ -172,16 +191,38 @@ GUARD = Guard(
         "暗色假设 → border-border-subtle / bg-bg-hover；"
         "accent 底上的白字 → text-text-on-accent（浅色底用 text-accent-foreground）；"
         "焦点环 → focus-visible:ring-2 focus-visible:ring-accent-blue；"
-        "CSS 里 accent 实底的前景色 → color: var(--text-on-accent)"
+        "CSS 里 accent 实底的前景色 → color: var(--text-on-accent)；"
+        "text-accent 是 12% 透明底色 token，文字强调用 text-accent-blue"
     ),
 )
+
+
+def collect_text_accent_findings(rel: str, code: str) -> list[Finding]:
+    """判据 6（`text-accent` 当文字色）的**唯一实现**，.tsx 与 .ts 共用。
+
+    抽成函数而不是两处循环：两边各写一遍时，“补了一个 scope 却忘了改另一处的
+    匹配逻辑”是这类护栏最常见的失效方式（且失效时不报错，只是恒绿）。
+    """
+    out: list[Finding] = []
+    for idx, line in enumerate(code.splitlines(), start=1):
+        for _match in RE_TEXT_ACCENT_COLLISION.finditer(line):
+            out.append(
+                Finding(
+                    "text-accent 是 12% 透明的 accent 底色 token，不能当文字色"
+                    "（用 text-accent-blue / text-accent-<色名>）",
+                    rel,
+                    idx,
+                )
+            )
+    return out
 
 
 def check(ctx: Context) -> GuardResult:
     findings: list[Finding] = []
     tsx_files = ctx.glob(TSX_SCOPES[0])
+    ts_files = ctx.glob(TS_SCOPES[0])
     css_files = ctx.glob(CSS_SCOPES[0])
-    files = list(tsx_files) + list(css_files)
+    files = list(tsx_files) + list(ts_files) + list(css_files)
 
     for path in tsx_files:
         rel = ctx.rel(path)
@@ -207,6 +248,7 @@ def check(ctx: Context) -> GuardResult:
                         idx,
                     )
                 )
+        findings.extend(collect_text_accent_findings(rel, code))
 
         # 判据 4：文件级
         if RE_FOCUS_NONE.search(code) and not RE_FOCUS_VISIBLE.search(code):
@@ -222,6 +264,13 @@ def check(ctx: Context) -> GuardResult:
                     idx,
                 )
             )
+
+    # ── 判据 6 · .ts 侧：同样是文字色，同样不能撞 accent 底色 token ──────────
+    # 只跑判据 6（理由见 TS_SCOPES 注释）：.ts 里的兜底色值是合法语义，
+    # 用判据 1（禁硬编码色）扫 .ts 会误报一片。
+    for path in ts_files:
+        rel = ctx.rel(path)
+        findings.extend(collect_text_accent_findings(rel, strip_noise(ctx.read_tolerant(rel))))
 
     # ── 判据 5：CSS 里 accent 实底 + 错前景色 ──────────────────────────
     for path in css_files:
@@ -245,7 +294,8 @@ def check(ctx: Context) -> GuardResult:
                 )
 
     metrics = (
-        f"{len(tsx_files)} 个 tsx + {len(css_files)} 个 css / {len(findings)} 处违规"
+        f"{len(tsx_files)} 个 tsx + {len(ts_files)} 个 ts（仅判据 6）"
+        f" + {len(css_files)} 个 css / {len(findings)} 处违规"
     )
     if findings:
         return GuardResult.violated(len(files), findings, metrics=metrics)

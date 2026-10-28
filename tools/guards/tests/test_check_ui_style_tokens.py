@@ -141,6 +141,68 @@ class UiStyleTokensGuardTest(unittest.TestCase):
         )
         self.assertEqual(result.verdict, PASS)
 
+    # ── 判据 6：text-accent 不能当文字色 ─────────────────────────────
+    def test_text_accent_as_text_color_is_a_violation(self):
+        """`text-accent` 是 shadcn 的 12% 透明 accent **底色** token。
+
+        2026-10-28 事故：文件树高亮行的文件名用了它，选中后文字变成 12% 透明的字
+        （五主题实测对比度 1.10~1.21）。
+        """
+        for snippet in (
+            'const c = "text-accent";\n',
+            'const c = "hover:text-accent";\n',
+            'const c = "bg-bg-selected text-accent truncate";\n',
+        ):
+            with self.subTest(snippet=snippet):
+                result = self.run_guard({"src/a/Bad.tsx": snippet})
+                self.assertEqual(result.verdict, VIOLATION, snippet)
+                self.assertIn("text-accent", result.findings[0].message)
+
+    def test_longer_accent_tokens_are_allowed(self):
+        """`text-accent-*` 系不得误报（负向断言必须真的排除 `-` 后缀）。"""
+        result = self.run_guard(
+            {
+                "src/a/Ok.tsx": (
+                    'const a = "text-accent-blue";\n'
+                    'const b = "text-accent-foreground";\n'
+                    'const c = "hover:text-accent-red/20";\n'
+                    'const d = "bg-accent";\n'
+                )
+            }
+        )
+        self.assertEqual(result.verdict, PASS)
+
+    def test_text_accent_in_ts_file_is_a_violation(self):
+        """事故源头在 `.ts`：只扫 .tsx 等于装了护栏却没护住出事的位置。
+
+        `gitFileDecoration.ts` 曾 `return 'text-accent'` —— 纯展示派生函数在 .ts 里。
+        """
+        result = self.run_guard(
+            {
+                "src/shared/utils/decoration.ts": (
+                    'export function nameClass(): string {\n  return "text-accent";\n}\n'
+                )
+            }
+        )
+        self.assertEqual(result.verdict, VIOLATION)
+        self.assertIn("text-accent", result.findings[0].message)
+
+    def test_ts_file_is_not_scanned_for_hardcoded_colors(self):
+        """反证：.ts 里的兜底色值是**合法语义**，不得被判据 1 误报。
+
+        否则把 scope 扩到 .ts 就变成了「噪声护栏」：`terminal.ts` 有一整套
+        ANSI 兜底色值，误报一片 → 保不住就关掉护栏（比没有更糟）。
+        """
+        result = self.run_guard(
+            {
+                "src/shared/utils/terminal.ts": (
+                    'export const FALLBACK = "#abb2bf";\n'
+                    'export const cls = "border-white/[0.04]";\n'
+                )
+            }
+        )
+        self.assertEqual(result.verdict, PASS)
+
     # ── 反证：不得误报 ──────────────────────────────────────────────
     def test_comment_mentioning_old_pattern_is_not_a_violation(self):
         """注释里解释「以前写死 border-white/[0.04]」不得被当成违规。
@@ -308,6 +370,21 @@ class UiStyleTokensGuardTest(unittest.TestCase):
             self.assertEqual(result.verdict, PASS)
         finally:
             subject.RE_FOCUS_NONE = re.compile(original)
+
+    def test_mutation_removing_text_accent_judge_lets_collision_pass(self):
+        """删掉判据 6 → `text-accent` 不再被抓（证明它真的在起作用）。"""
+        original = subject.RE_TEXT_ACCENT_COLLISION.pattern
+        try:
+            subject.RE_TEXT_ACCENT_COLLISION = re.compile(r"(?!)  ")  # 永不匹配
+            for files in (
+                {"src/a/Bad.tsx": 'const c = "text-accent";\n'},
+                {"src/a/bad.ts": 'export const c = "text-accent";\n'},
+            ):
+                with self.subTest(files=list(files)):
+                    result = self.run_guard(files)
+                    self.assertEqual(result.verdict, PASS)
+        finally:
+            subject.RE_TEXT_ACCENT_COLLISION = re.compile(original)
 
 
 if __name__ == "__main__":
