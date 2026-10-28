@@ -16,121 +16,122 @@
 
 ### Summary
 
-用户指出：**「验证脚本本身写错，那这个脚本本身就不应该存在」**。
+用户问「这个防护能防得住吗」。实测答案是**防不住**，于是删掉了整套 ESLint 规则，
+判据回到护栏 —— 并补上真正的盲区（CSS 侧），此前零覆盖。
 
-这是对验证纪律的根本批评。我把判据从「测试内 inline 逻辑 + 对话里临时脚本」
-改成了「纯函数 + 永久坏数据用例」。
+### 实测：规则只能看到 JSX 字面量
 
-### 问题：三重不牢靠
+把 7 种规避写法写成测试（`it.fails` 记录）：
 
-**① 判据写在测试里，无法被坏数据驱动**
-
-```ts
-// 测试内 inline
-const missing = themes.flatMap(({ file, vars }) =>
-  THEME_VARIABLES.filter((token) => !vars.has(token)).map(...));
-expect(missing).toEqual([]);
+```
+Tests  22 passed | 7 expected fail (29)
 ```
 
-**② 配套的「反证」是假测试**
+| 规避写法 | 结果 |
+| --- | --- |
+| 模板字符串 `` className={`text-text-muted`} `` | ❌ 漏 |
+| 模板串拼接 | ❌ 漏 |
+| 变量引用 | ❌ 漏 |
+| 常量对象 `STY.m` | ❌ 漏 |
+| **共享函数返回 `optionSecondary()`** | ❌ 漏 |
+| 内联 `style={{ color }}` | ❌ 漏 |
+| **CSS 文件** | ❌ 漏 |
 
-```ts
-it('新增一个不完整的主题文件会被抓到', () => {
-  const stub = { vars: new Set(['--bg-primary']) };
-  const missing = THEME_VARIABLES.filter((t) => !stub.vars.has(t));  // ← 自己重算一遍
-  expect(missing.length).toBe(THEME_VARIABLES.length - 1);
-});
-```
+### 决定性的一条：规则与正确写法互斥
 
-它没走判据代码路径 —— 判据改成任何样子它都绿。
+`optionSecondary()` 有 10 处调用，它返回的 class 串**规则完全看不到**。
 
-**③ 验证靠对话里的临时脚本**
+而那 7 处 bug 修完后**全部改用 `optionSecondary()`** —— 规则恰好对它们失明。
+7 处里有 **2 处在 CSS**（`agent.css` / `base.css`），规则只扫 `.tsx?`，从来就看不到。
 
-8 种坏主题形态是在 bash heredoc 里 inline 写 python 注入的。不进仓库、
-无法 review、无法复用。其中一次：
+> **规则最该防的地方它防不住，能看到的地方又已经没人那样写。**
+
+上一轮我判断「规则有价值，建议保留」——**那个判断是错的**，
+因为当时没意识到它与本轮引入的共享函数互斥。
+
+### 顺带修掉两个「测试自己的假绿」
+
+1. `lintSource` 直接数 `messages.length` —— 解析失败会产生一条 `ruleId: null` 的
+   parse error，被当成「规则抓到了」。拿 CSS 内容喂 ts parser 得到 1 条 parse error，
+   误判成「规则能扫 CSS」。**改成按 `ruleId` 过滤。**
+2. 规则注册名是 `r`，与真实规则名不一致，让上面的过滤无从写起。改用 `RULE_ID` 常量。
+
+这与用户上一轮的批评同源：**辅助代码不严谨 → 结论错误**。
+
+### 执行：删规则 + 补真盲区
+
+**删除**：
+- `tools/eslint-rules/`（3 个文件：规则 313 行 + 插件 22 行 + package.json）
+- `src/ui/__tests__/accentForegroundRule.test.ts`（175 行 / 29 用例）
+- `.eslintrc.cjs` 的 `plugins: ['neeko']` 与规则条目
+- `package.json` 的 `"eslint-plugin-neeko": "file:tools/eslint-rules"`
+- `pnpm-lock.yaml` 的 2 处 entries
+- `lint:fe` 恢复为 `eslint src/ --cache --cache-strategy content && pnpm type-check`
+
+**补上**：护栏第 5 条判据（`check_ui_style_tokens`）。
+
+### 判据 5 的设计
 
 ```python
-pathlib.Path('bad.css').write_text(s[:-2])   # 想删闭合括号，实际删的是尾部空行
+RE_SOLID_ACCENT_BG = re.compile(
+    r"background(?:-color)?\s*:\s*var\(\s*--(?:accent-(?:blue|green|yellow|red|orange|brick)|destructive)\s*\)"
+)
+RE_ON_ACCENT_FG = re.compile(r"var\(\s*--text-on-accent\s*\)(?:\s*!important)?")
+RE_FG_DECL = re.compile(r"(?<!background-)(?<!-)\bcolor\s*:\s*([^;]+);")
+RE_CSS_RULE_BLOCK = re.compile(r"([^{}]+)\{([^{}]*)\}")
 ```
 
-于是得出「语法错误也能被容忍」的**错误结论**，下一轮靠重做才发现是脚本错。
+**只认「值就是 `var(--accent-*)`」的实底**。以下都不算，不得误报：
 
-### 修复：判据抽成纯函数 + 永久坏数据用例
-
-`themeCss.ts` 新增：
-
-```ts
-export interface ThemeFileDefects {
-  missingVars: string[];
-  unknownVars: string[];
-  lacksColorScheme: boolean;
-}
-
-export function inspectThemeFile(file: ThemeFile, contract: readonly string[]): ThemeFileDefects;
-export function describeDefects(file: ThemeFile, defects: ThemeFileDefects): string[];
-export function themeFileFromSource(source: string, name?: string): ThemeFile;
+```css
+background: color-mix(in srgb, var(--accent-blue) 32%, transparent)   /* 半透明 */
+background-color: rgba(var(--accent-blue-rgb), 0.28)                  /* 半透明 */
 ```
 
-`themeTokens.test.ts` 的「判据对坏主题的识别」新增 **10 条永久用例**，
-每条都走 `inspectThemeFile()`（与真实文件断言同一个函数）：
+`editor.css` 有 5 处这种写法 —— 半透明底 + 普通文字色是**对的**。
+（第一版把 `color: var(--text-on-accent);` 整串拿去匹配值正则，误报 3 处，已修。）
 
-| 坏形态 | 断言 |
+`(?<!background-)` 排除 `background-color:` 里的 `color` —— 否则每个实底都会被自己误判。
+
+### 测试（8 条新增，含 1 变异）
+
+| 用例 | 内容 |
 | --- | --- |
-| 完整主题（基线） | 无缺陷 —— 证明下面的用例只差在坏点上 |
-| 空文件 | 缺全部变量 + 缺 color-scheme |
-| 只有 color-scheme | 缺全部变量，但不缺 color-scheme |
-| 只写 1 个变量 | 缺 N-1 个，且不含 `--bg-primary` |
-| 缺一个变量 | 精确指出 `--switch-track` |
-| 变量名拼错 | 同时报「缺正确名」+「多错名」 |
-| 多出未登记变量 | 报进 `unknownVars` |
-| 缺 color-scheme | 只报缺 color-scheme，变量不受影响 |
-| 选择器写错（漏 `:root`） | 等价空文件 |
-| **缺闭合括号** | 等价空文件 ← **那次假绿的正身** |
+| 历史 bug 正身 ×2 | `agent.css` 的 `--text-primary`、`base.css` 的 `#fff` |
+| 反证 ×4 | 正确写法（含 `!important`）/ 半透明 ×3 / `background-color` 不误读 / 无 accent 底的块 |
+| 回归 | 规则块包在 `@layer` 里也要检查 |
+| 变异 | `RE_SOLID_ACCENT_BG` 恒不匹配 → 必绿 |
 
-### 写这些用例时又踩到两次同类陷阱（都被显式断言抓到）
+### 真实仓库验证
 
-**陷阱 1**：`validSource` 构造用 `.replace('data-theme="dark"', ...)` —— 只换第一个，
-而 `dark.css` 里该选择器出现两次（color-scheme 块 + 变量块）。导致「选择器写错」
-用例的 replaceAll 漏掉第二处、该块继续被解析 → 用例假绿。
-**修**：改 `replaceAll`，并加断言 `expect(validSource).not.toContain('data-theme="dark"')`。
+注入 2026-10-27 的历史 bug 原形到 `agent.css`：
 
-**陷阱 2**：`broken` 构造用 `.replace(...)` 同样只换第一个。
-**修**：改 `replaceAll` + 显式断言 `expect(broken).not.toContain(':root[')`。
+```
+- src/styles/components/agent.css:68: accent 实底上的前景色应为 var(--text-on-accent)，
+  实际是 `var(--text-primary)`（.agent-bar-btn.selected）
+```
 
-这两次都是**自己加的显式断言抓到的**，不是靠跑测试碰巧发现 ——
-这正是「断言替换真的生效」这条纪律的价值。
-
-### 变异验证（改生产代码，看测试反应）
-
-| 变异 | 结果 |
-| --- | --- |
-| `inspectThemeFile` 恒返回无缺陷 | **9 failed** |
-| 只检查契约前 10 个变量 | **7 failed** |
-| `lacksColorScheme` 恒 false | **2 failed** |
-
-还原后 20/20 绿。变异点是显式 assert 找到的（防止「改了但没改到」）。
-
-### 文档
-
-`src/styles/README.md` 新增一段硬指令：
-
-> **不要用临时脚本验证判据。** 任何判据的坏数据用例都写进测试文件 ——
-> 可复现、可 review、改了判据会立刻知道。
+恢复后 0 违规。
 
 ### 产出
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/styles/__tests__/themeCss.ts` | +判据纯函数 `inspectThemeFile` / `describeDefects` / `themeFileFromSource` |
-| `src/styles/__tests__/themeTokens.test.ts` | 判据改为调纯函数；+10 条坏数据用例；删假反证 |
-| `src/styles/README.md` | +「不要用临时脚本验证判据」 |
-| `design-tokens.md` | 指向永久用例 |
+| `tools/eslint-rules/**` | **删除**（357 行 + file: 依赖） |
+| `src/ui/__tests__/accentForegroundRule.test.ts` | **删除**（175 行 / 29 用例） |
+| `tools/guards/checks/check_ui_style_tokens.py` | +判据 5（CSS 侧）；`SCOPES` 拆 `TSX_SCOPES` / `CSS_SCOPES` |
+| `tools/guards/tests/test_check_ui_style_tokens.py` | 18 → **26** 用例 |
+| `.eslintrc.cjs` · `package.json` · `pnpm-lock.yaml` | 移除插件与 `file:` 依赖 |
+| `design-tokens.md` · `implement.md` · `styles/README.md` | 同步「规则已删、判据回落护栏」 |
 
 ### Testing
 
-- [OK] `themeTokens.test.ts` 20/20、`themeContract.test.ts` 7/7
-- [OK] **变异验证 ×3**（9 / 7 / 2 failed）
+- [OK] 护栏单测 26/26（含变异）
+- [OK] 护栏全部 702 用例通过
+- [OK] 真实仓库注入历史 bug → 精准命中；恢复 → 0 违规
+- [OK] `check_ui_style_tokens`：602 tsx + 22 css / 0 违规
 - [OK] `pnpm check:quick` 全绿：32 条护栏
+- [OK] lockfile 已无 `eslint-plugin-neeko`
 
 ### Status
 

@@ -685,7 +685,7 @@ pnpm check:quick    # 开发循环的默认检查（纯业务改动 ~12s，见�
 
 ## 字体角色约定（Typography SSOT）
 
-> 统一终端/编辑器/UI 字体栈，消除 4 处 mono 分裂 + 3 处 sans 硬编码。详见 `src/shared/utils/typography.ts` 与 `src/styles/tokens/theme.css`。
+> 统一终端/编辑器/UI 字体栈，消除 4 处 mono 分裂 + 3 处 sans 硬编码。详见 `src/shared/utils/typography.ts` 与 `src/styles/base/variables.css`。
 
 ### Token 角色
 

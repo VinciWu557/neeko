@@ -374,7 +374,7 @@ async 作用域且永不收敛 ⇒ 后续渲染全部丢失（表现为「明明
 
 ### Tailwind CSS v4 + CSS 自定义属性
 
-样式使用 **Tailwind CSS v4**，入口为 `src/styles/index.css`（只聚合：`tokens/` → `base/` → `components/`）。CSS 自定义属性在 `src/styles/tokens/tailwind.css` / `theme.css` 的 `@theme` 块里映射到 Tailwind 主题色：
+样式使用 **Tailwind CSS v4**，入口为 `src/styles/index.css`（只聚合：`base/` → `themes/` → `motion/` → `components/`）。CSS 自定义属性在 `src/styles/base/variables.css` + `src/styles/themes/*.css` 定义，由 `src/styles/base/tailwind.css` 的 `@theme` 块映射到 Tailwind 主题色：
 
 ```css
 @theme {

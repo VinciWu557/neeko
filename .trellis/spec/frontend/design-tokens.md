@@ -13,16 +13,112 @@
 ## 分层
 
 ```
-theme.css   语义令牌定义（--bg-primary / --accent-blue / --status-* …）
-   │          按主题分块：dark / classic-dark / one-dark-pro / claude / light
-   │          :root 块放「与主题无关的骨架」（density / 字体阶梯 / z-index）
+base/variables.css    不随主题变的全局值：
+   │                  density / 字体阶梯 / z-index / 字体角色 /
+   │                  CodeMirror 与 git-status 的**兜底值**
    ↓
-tailwind.css  桥接为 Tailwind v4 utility 类（--color-* / --text-*）
-   │          @theme    → 键名与被引用变量不同名（--color-bg-primary → var(--bg-primary)）
-   │          @theme inline → 键名与被引用变量同名时必须用它（否则自引用失效）
+themes/<theme>.css    一主题一文件（dark / light / one-dark-pro / claude / classic-dark）
+   │                  **自包含**：59 个变量值 + 自己的 color-scheme
    ↓
-业务代码      只用 utility 类；禁止写裸色值
+base/tailwind.css     桥接为 Tailwind v4 utility 类（--color-* / --text-*）
+   │                  @theme    → 键名与被引用变量不同名（--color-bg-primary → var(--bg-primary)）
+   │                  @theme inline → 键名与被引用变量同名时必须用它（否则自引用失效）
+   ↓
+业务代码              只用 utility 类；禁止写裸色值
 ```
+
+### 划分判据：这个值换主题时会变吗？
+
+| 目录 | 内容 | 换主题时会变？ |
+| --- | --- | --- |
+| `base/variables.css` | 字阶、密度、z-index、字体角色、兜底色板 | ❌ |
+| `base/reset.css` | `*` / `body` / `#root` / 滚动条 | ❌ |
+| `base/tailwind.css` · `base/shadcn.css` | 桥接与别名（值是 `var()`） | ❌ |
+| `themes/*.css` | 59 个颜色值 + `color-scheme` | ✅ 就是主题差异本身 |
+
+`base/` 里同时有「变量定义」与「选择器规则」—— 它们性质不同（前者不匹配元素），
+但对维护者是同一件事：**改主题时不需要看这些文件**。这条心智比「变量 vs 规则」
+的区分更有用。
+
+> **本仓没有 "design tokens"**。业界该词指平台中立的 JSON 源 + 编译管线
+> （Style Dictionary → 多平台产物）。本仓 CSS 就是源、无编译步骤，用的是
+> **CSS 自定义属性**（= theme variables）。曾有一个 `styles/tokens/` 目录，
+> 因名不副实（混了定义/桥接/别名三种角色）已删除，**不要重新引入**。
+
+### 为什么一主题一文件
+
+原先 5 个主题块挤在 598 行的 `theme.css` 里：
+
+| 问题 | 后果 |
+| --- | --- |
+| 改 light 主题要翻到第 513 行 | 定位慢 |
+| 一次改动散落在单文件 diff 里 | 看不出「这次动了几个主题」 |
+| 新增主题要在正确位置插入 90 行 | 容易插错位置 |
+| `color-scheme` 单独一组声明 | 新增主题时容易漏配 |
+
+拆开后的契约：
+
+- **`root.css` 必须最先 import** —— 它提供兜底值。自定义主题只覆盖部分变量时，
+  未覆盖的必须有值，否则 `var(--x)` 回退为继承色（颜色静默失效）。
+- **每个主题文件自带 `color-scheme`** —— 一个文件 = 该主题的完整定义。
+  新增主题 = 复制一个文件改值，不会漏配。
+- **变量清单必须与契约一致** —— `themeContract.test.ts` 扫目录逐个校验，
+  新增主题文件自动纳入，无需改测试。
+
+> **拆文件后不能用「并排看」来对比主题**。想确认 5 个主题的
+> `--bg-primary` 层级关系是否都合理，现在要开 5 个文件 ——
+> 这个需求改由单测承担（`themeTokens.test.ts` 断言每个主题**文件**定义全部契约变量、
+> `--switch-track` 对比度 ≥1.5）。**机器校验比人眼并排更可靠。**
+
+**校验必须按「文件身份」而不是「内容特征」**：`themes/` 下的每个 `.css` 都是主题。
+
+不要用 `vars.size > 10` / `accentCount >= 3` / `has('--bg-tertiary')` 这类启发式
+来识别主题块 —— 2026-10-28 那样写时，往 `themes/` 放一个只写了 1 个变量
+（或只有 `color-scheme`）的新主题文件，**18 个测试全绿、护栏 0 违规**。
+判据现为 `themeCss.ts::inspectThemeFile()` 纯函数，`themeTokens.test.ts` 的
+「判据对坏主题的识别」有 10 条坏数据用例直接驱动它（含缺闭合括号那条 ——
+它是上一次「假绿」的正身）。
+而「新主题还没填完就提交」恰恰是最可能发生的错误，后果是 `var(--x)` 回退为
+继承色（颜色静默失效，正是这套测试要防的那个事故）。
+
+同理：**不要为某个具体变量另写「它必须在哪些块里」的特判用例**。契约本身就是
+那份清单，一条「每个主题文件定义全部契约变量」即覆盖。
+
+### 样式层目录：`src/styles/README.md` 是唯一权威
+
+目录与命名的完整规范（含 `components/` 的「域」判据、各层准入条件、禁止写法）
+写在 **`src/styles/README.md`**，由护栏 `check_styles_layout` 强制 4 条判据。
+本文件只记与 token 直接相关的部分。
+
+`fonts/` 与 `motion/` 是并列的独立层：前者由 `app/main.tsx` 单独 import
+（字体加载时机独立于样式层序），后者装跨域横切的 `@keyframes`。
+
+### 变量名契约：唯一来源不是 CSS
+
+```
+src/shared/utils/themeVariables.ts        ← 契约（59 个变量名，按语义分组）
+        │
+        ├──► styles/themes/*.css                  校验：每个主题块必须定义全部变量
+        ├──► features/settings/customThemeVars.ts  自定义主题可覆盖清单
+        └──► src/shared/utils/__tests__/themeContract.test.ts   一致性断言
+```
+
+**为什么需要它**：同一组变量名曾有三份独立清单，且已漂移 ——
+
+| 位置 | 数量 |
+| --- | --- |
+| `theme.css` 的 5 个主题块 | 59 |
+| `customThemeVars.ts` 的 `CUSTOM_CSS_VARS` | **31** |
+| `themeTokens.test.ts` 的校验清单 | 若干 |
+
+实际后果：用户做自定义主题后 **28 个变量无法覆盖** —— 包括全部 **19 个 `--cm-*`
+语法色**、`--mono-fg`、`--switch-track`、`--border-subtle` 与 3 个 `-rgb` 变体。
+编辑器语法高亮、终端前景色、Switch 轨道、弱分割线全部仍是内置主题的值，
+且界面没有任何提示。
+
+现在新增主题变量**必须**改契约，否则 `themeContract.test.ts` 报
+「CSS 里多出未登记变量」。这条反向断言是关键 —— 只校验「契约里的 CSS 都有」会漏掉
+「CSS 有但契约没登记」，而那正是上面那 28 个变量的成因。
 
 ### 为什么分两个文件
 
@@ -251,62 +347,68 @@ Claude 主题下这两个值差得极远：
 > 压在 accent 底 → `--text-on-accent`；压在 `--bg-tertiary` 等普通底 → `--text-primary`。
 > 同一个元素在两种底上（如 Switch 滑块）**需要两个颜色**，靠 `data-[state=...]` 切换。
 
-#### 已护栏化：`neeko/ui/accent-foreground`（ESLint 规则）
+#### 机器判据：护栏判据 5（CSS 侧）+ `optionSecondary()`（TSX 侧）
 
-上面那套「扫描方法」在 2026-10-27 已经变成机器判据，不再需要人工扫：
+这一节记录 2026-10-28 的一次**大幅简化**：原本有一条 488 行的本地 ESLint 规则
+（AST 判定 JSX 里的 accent 实底 + 错前景色），已删除。删除理由不是「不需要」，
+而是**它的防护面与正确写法互斥**：
 
-| 位置 | 作用 |
+| 写法 | ESLint 规则能否看到 |
 | --- | --- |
-| `tools/eslint-rules/accent-foreground.cjs` | 规则本体（AST，非正则） |
-| `tools/eslint-rules/index.cjs` + `package.json` | 声明为 `eslint-plugin-neeko` |
-| `package.json` 的 `devDependencies` | `"eslint-plugin-neeko": "file:tools/eslint-rules"` |
-| `src/ui/__tests__/accentForegroundRule.test.ts` | 21 个用例（含 3 个变异验证） |
+| `className="text-text-muted"` 字面量 | ✅ |
+| `className={optionSecondary(selected)}` | ❌ 函数返回值不在 AST 静态范围 |
+| 模板字符串 / 变量 / 常量对象 | ❌ |
+| **CSS 文件里的 `color:`** | ❌ 规则只扫 `.tsx?` |
 
-> **仓内 ESLint 插件的接入方式（唯一正确做法）**：把插件目录声明成一个 npm 包
-> （`package.json` 里 `"name": "eslint-plugin-neeko"`），再用 `file:` 协议装进
-> `devDependencies`。`.eslintrc.cjs` 里 `plugins: ['neeko']` 照常生效，
-> **`eslint` CLI 直接用，不需要任何 wrapper**。
->
-> 不要走 `ESLint` API 包一层那条路（首版就是这么做的，已删）：自己解析 CLI 参数会
-> 带进两类缺陷 —— ① `--max-warnings` 只属于 CLI、不属于 API 构造器，传进去
-> `Invalid Options` **直接崩**，CI 一旦用它门禁就炸；② wrapper 自身不在 lint 范围内。
+那 7 处真实 bug 修完后**全部改用 `optionSecondary()`** —— 规则恰好对它们失明。
+而 7 处里有 2 处在 CSS（`agent.css` / `base.css`），规则从来就看不到。
+**它最该防的地方它防不住，能看到的地方又已经没人那样写。**
 
-**为什么是 ESLint 而不是护栏正则**：正则版实测误报 22 处（`bg-accent-blue/15` 16 处、
-`text-xs` 5 处、`hover:border-accent-blue`、`data-[state=on]:` 变体、三元互斥分支 10 处）。
-AST 能区分「实底 vs 半透明底」「底色 vs 边框色」「字号 vs 颜色」「同一状态 vs 互斥分支」。
+现在的分工：
 
-规则放行的五种写法（**都是本仓在用的正确写法**，改动规则前先看这张表）：
+| 位置 | 机制 | 说明 |
+| --- | --- | --- |
+| **TSX** | `shared/utils` 的 `optionSecondary(selected)` | 唯一入口；用对了就天然正确，无需判据 |
+| **CSS** | 护栏判据 5（`check_ui_style_tokens`） | 此前**零覆盖**，是真盲区 |
 
-| 写法 | 为什么放行 |
-| --- | --- |
-| `bg-accent-blue/15 text-text-primary` | 半透明底 = 海面 + 淡 accent，普通文字色才对 |
-| `bg-accent-blue text-xs` | `text-xs` 是字号不是颜色 |
-| `hover:border-accent-blue` / `border-l-accent-green` | 是 border 不是 bg |
-| `text-accent-red bg-accent-red/10` | 淡底 + 同色字（错误提示框的既定写法） |
-| `data-[state=on]:bg-accent-blue data-[state=on]:text-text-on-accent` | 状态变体互斥，不是「底 + 前景」 |
-| `ok ? 'bg-accent-blue text-text-on-accent' : 'bg-bg-tertiary text-text-muted'` | 三元分支互斥，合并判定会造出不存在的组合 |
+**判据 5 的边界**（决定误报率，改动前必读）：
 
-> **⚠ 改规则前必读**：`classTokenGroups()` 把三元 / `&&` 的各分支**独立成组**。
-> 第一版把所有 token 合并成一个集合，立刻误报 10 处 —— 它算出「`bg-accent-blue` 上压着
-> `text-text-muted`」，而这个组合在任何一次渲染里都不存在。
->
-> **子元素判据取「存在性」而非「全分支」**：选中项里的次级文字常写成
-> `sel ? 'text-text-on-accent/80' : 'text-text-muted'`，而父元素的 accent 底是**另一个**
-> 条件分支 —— 父子分支条件在 AST 里是两棵独立子树，无法机械对齐。要求「每个分支都合法」
-> 会把这条正确写法判违规（实测 8 处）。
+- 只认「**值就是** `var(--accent-*)`」的实底。
+  `background: color-mix(in srgb, var(--accent-blue) 32%, transparent)` 与
+  `rgba(var(--accent-blue-rgb), .28)` 都是**半透明底**，上面用普通文字色是**对的**
+  （`editor.css` 有 5 处这种写法）。
+- `background-color:` 里的 `color` 不是前景色声明，用 `(?<!background-)` 排除。
+- 规则块包在 `@layer` 里也要检查（真实文件都是这个形状）。
 
-**本轮规则抓到的真问题**（6 个文件 7 处，全是下拉项选中态）：
+**判据 5 抓到的两个历史 bug 正身**：
+
+```css
+/* agent.css —— 曾用 --text-primary 压在 --accent-blue 上 */
+.agent-bar-btn.selected { background: var(--accent-blue); color: var(--text-on-accent); }
+
+/* base.css —— 曾用 #fff（在 light 主题下没问题，但 dark 只有 1.40 对比） */
+.wc-close:hover { background-color: var(--accent-red) !important; color: var(--text-on-accent) !important; }
+```
+
+**7 处真实 bug 的形态**（6 个文件，全是下拉项选中态）：
 
 父元素 `selectedAgentId === agent.id && 'bg-accent-blue text-text-on-accent'` 变蓝底后，
 子元素的 `<span className="text-text-muted">{agent.command}</span>` 自带颜色类**覆盖了继承**的
-on-accent，暗色主题下灰字压蓝底几乎不可见。修法是子元素同步三元切换：
+on-accent，暗色主题下灰字压蓝底几乎不可见。修法是收敛到共享函数：
 
 ```tsx
-<span className={cn('ml-auto text-xs',
-  selected ? 'text-text-on-accent/80' : 'text-text-muted')}>
+<span className={optionSecondary(selected)}>{agent.command}</span>
 ```
 
 位置：`RemoteDialog.tsx` ×2、`WSLDialog.tsx` ×2、`ProjectSettingsDialog.tsx` ×3。
+
+> **为什么当初用 AST 而不用正则**：正则版实测误报 22 处
+> （`bg-accent-blue/15` 16 处、`text-xs` 5 处、`hover:border-accent-blue`、
+> `data-[state=on]:` 变体、三元互斥分支 10 处）。AST 能区分「实底 vs 半透明底」
+> 「底色 vs 边框色」「字号 vs 颜色」「同一状态 vs 互斥分支」。
+>
+> 这个结论**对 CSS 判据 5 不适用** —— CSS 里的 `background: var(--x)` 是字面量，
+> 正则足够，不存在 JSX 那种「三元分支合并」的问题。
 
 **验证方式**：不能只看类名，要算**对比度**。实测 5 主题的滑块/轨道对比：
 
@@ -434,7 +536,7 @@ Switch 是唯一**只靠填充色**表达轮廓的控件。修法是双管：
 | --- | --- |
 | `src/ui/Switch.tsx` | `SWITCH_TRACK_CLASS` / `SWITCH_THUMB_CLASS` 导出（class 契约常量化） |
 | `src/ui/__tests__/Switch.test.tsx` | 13 用例（含 2 变异验证：改回 `bg-bg-tertiary` / 删描边） |
-| `src/styles/tokens/__tests__/themeTokens.test.ts` | **真算对比度**：每个主题的 `switch-track` vs `bg-primary` 必须 ≥1.5 |
+| `src/styles/__tests__/themeTokens.test.ts` | **真算对比度**：每个主题的 `switch-track` vs `bg-primary` 必须 ≥1.5 |
 
 > 对比度测试是这组里最值钱的一条 —— 它会在**任何人调主题底色时自动把关**：
 > 改了 `--bg-primary` 就必须重算 `--switch-track`，否则测试红。
