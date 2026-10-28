@@ -4,41 +4,18 @@
  * 自定义主题以「CSS 变量集合」形式下发；应用新主题前必须清理上一次应用的变量，
  * 否则主题切换会残留旧变量（尤其新主题未覆盖的键）。模块级 `_previousCustomVars`
  * 记录上一次实际写入的键集合。
+ *
+ * ## 可覆盖清单来自契约，不在此处维护
+ *
+ * 早先这里有一份 31 项的硬编码白名单，而主题块有 59 个变量 —— 缺口是
+ * **28 个**：全部 19 个 `--cm-*` 语法色、`--mono-fg`、`--switch-track`、
+ * `--border-subtle`、3 个 `-rgb` 变体。用户做自定义主题后，编辑器语法高亮、
+ * 终端前景色、Switch 轨道、弱分割线全部无法调整，且没有任何提示。
+ *
+ * 现在清单唯一来源是 `shared/utils/themeVariables.ts`，与主题块由单测强制对齐。
  */
 
-const CUSTOM_CSS_VARS = [
-  'bg-primary',
-  'bg-secondary',
-  'bg-tertiary',
-  'bg-hover',
-  'bg-selected',
-  'bg-gradient-start',
-  'bg-gradient-end',
-  'text-primary',
-  'text-secondary',
-  'text-muted',
-  'border-color',
-  'terminal-selection',
-  'titlebar-gradient-start',
-  'accent-blue',
-  'accent-blue-rgb',
-  'accent-green',
-  'accent-yellow',
-  'accent-red',
-  'text-on-accent',
-  'git-status-added',
-  'git-status-modified',
-  'git-status-deleted',
-  'git-status-untracked',
-  'git-status-conflict',
-  'status-idle',
-  'status-running',
-  'status-failed',
-  'diff-added',
-  'diff-removed',
-  'diff-added-text',
-  'diff-removed-text',
-];
+import { CUSTOM_THEME_OVERRIDABLE } from '@/shared/utils/themeVariables';
 
 let _previousCustomVars: string[] | null = null;
 
@@ -50,11 +27,14 @@ export function applyCustomCssVars(variables: Record<string, string>) {
     }
   }
   const applied: string[] = [];
-  for (const name of CUSTOM_CSS_VARS) {
-    const val = variables[name];
+  for (const token of CUSTOM_THEME_OVERRIDABLE) {
+    // 契约里的每一项都带 `--` 前缀（`themeVariables.test.ts` 强制），
+    // 而自定义主题下发的键名不带前缀，故此处必然去掉 2 个字符。
+    const bare = token.slice(2);
+    const val = variables[bare];
     if (val !== undefined) {
-      document.documentElement.style.setProperty(`--${name}`, val);
-      applied.push(name);
+      document.documentElement.style.setProperty(`--${bare}`, val);
+      applied.push(bare);
     }
   }
   _previousCustomVars = applied;

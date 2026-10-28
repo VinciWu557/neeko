@@ -83,7 +83,7 @@ type DominantStatus = FileTreeGitStatus;
  *
  * 所有颜色类一律走 `--git-status-*` 专用令牌（不借用 UI 的 `--accent-*`）：
  * git 状态色与主题主色是两套语义，混用会导致「改状态色 = 改全主题」。
- * 映射见 `src/styles/tokens/theme.css` 的 `--git-status-*` 段。
+ * 映射见 `src/styles/themes/*.css` 的 `--git-status-*` 段（兜底在 `styles/base/variables.css`）。
  * 文件树名字色 / dot / diff 徽标 chip / commit log 图标 均从本表派生，
  * 禁止任何消费方私持 `text-accent-*` 或徽标对照表。
  */

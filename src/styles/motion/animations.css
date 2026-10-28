@@ -1,5 +1,22 @@
-/* -- Animations / keyframes -- 
- * 高内聚：全部 @keyframes 与动画工具类集中于此。
+/* -- Motion / keyframes --
+ * 高内聚：全部 `@keyframes` 与动画工具类集中于此。
+ *
+ * 2026-10-27 从 `components/` 迁出，独立为 `motion/` 层。
+ *
+ * 理由：动效是**跨域横切关注点**，不属于任何单一组件域 —— 本文件的
+ * keyframes 服务 5 个域：
+ *
+ * | 前缀 | 消费域 |
+ * | --- | --- |
+ * | `wt-` | worktree（Projects 面板） |
+ * | `lsp-` | LSP 状态点 |
+ * | `toast-` / `slide-up` | 全局 Toast |
+ * | `agents-expand` | Settings agent 列表行内展开 |
+ * | `cm-nav` | CodeMirror 跳转行闪烁 |
+ *
+ * 放进 `components/` 会让「一个文件 = 一个功能域」这条判据失效
+ * （见 `src/styles/README.md`）。`motion/` 与 `base/` / `components/` 平级，
+ * 表示它是独立的一层，而不是某个组件的附属。
  */
 
 @layer components {

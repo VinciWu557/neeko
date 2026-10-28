@@ -6,8 +6,8 @@ import App from './App';
 import { bootstrap } from './bootstrap';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import '../styles/index.css';
-import '../styles/nerd-font.css';
-import '../styles/jetbrains-mono.css';
+import '../styles/fonts/nerd-font.css';
+import '../styles/fonts/jetbrains-mono.css';
 
 bootstrap();
 

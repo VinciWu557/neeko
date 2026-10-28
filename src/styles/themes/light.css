@@ -1,0 +1,99 @@
+/* -- Theme: Light --
+ *
+ * 本文件**自包含**：变量值 + `color-scheme` 都在这里。新增主题时复制一份
+ * 改值即可，不会漏配 color-scheme。
+ *
+ * 变量清单必须与 `src/shared/utils/themeVariables.ts` 的契约一致（单测强制）。
+ */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="light"] {
+  /* Titlebar gradient */
+  --titlebar-gradient-start: #c8dff5;
+
+  /* Background layers */
+  --bg-primary:   #ebecf0;
+  --bg-gradient-start: #e5e8ef;
+  --bg-gradient-end:   #ebecf0;
+  --bg-secondary: #ffffff;
+  --bg-tertiary:  #f4f5f7;
+  --bg-hover:     #dcdee3;
+  --bg-selected:  #d2d4d9;
+
+  /* Text */
+  --text-primary:   #1e1e1e;
+  /* 弱分割线：light —— 亮底，深色 9% */
+  --border-subtle: rgb(0 0 0 / 0.09);
+  --text-secondary: #6e6e6e;
+  --text-muted:     #a0a0a0;
+
+  /* Mono 前景角色 */
+  --mono-fg: #383a42;
+  --mono-fg-dim: #696c77;
+
+  /* Border */
+  --border-color: #dadbdd;  /* Switch 轨道底色（判据见上方主题块的长注释） */
+
+  --switch-track: #bebfc3;
+
+  /* Terminal selection */
+  --terminal-selection: rgba(47, 124, 211, 0.2);
+
+  /* Accent colors */
+  --accent-blue:       #2f7cd3;
+  --accent-blue-rgb:   47, 124, 211;
+  --accent-green:  #4a9e3f;
+  --accent-green-rgb: 74, 158, 63;
+  --accent-yellow: #c49000;
+  --accent-red:    #d32f2f;
+  --accent-red-rgb: 211, 47, 47;
+  --accent-orange: #d9730d;
+  --accent-brick:  #a85248;
+  --accent-brick-rgb: 168, 82, 72;
+
+  /* Git 文件状态色板（独立于 accent） */
+  --git-status-added:     #4a9e3f;
+  --git-status-modified:  #2f7cd3;
+  --git-status-deleted:   #d9730d;
+  --git-status-untracked: #a85248;
+  --git-status-conflict:  #d32f2f;
+
+  /* Text on accent backgrounds */
+  --text-on-accent: #ffffff;
+
+  /* Status */
+  --status-idle:    #4a9e3f;
+  --status-running: #c49000;
+  --status-failed:  #d32f2f;
+
+  /* Diff */
+  --diff-added:        #4a9e3f25;
+  --diff-removed:      #d32f2f25;
+  --diff-added-text:   #4a9e3f;
+  --diff-removed-text: #d32f2f;
+
+  /* CodeMirror 语法高亮 (Light) */
+  --cm-keyword: #a626a4;
+  --cm-comment: #a0a1a7;
+  --cm-string: #50a14f;
+  --cm-number: #986801;
+  --cm-operator: #4078f2;
+  --cm-variableName: #e45649;
+  --cm-typeName: #986801;
+  --cm-propertyName: #e45649;
+  --cm-function: #4078f2;
+  --cm-className: #986801;
+  --cm-definition: #4078f2;
+  --cm-string2: #50a14f;
+  --cm-meta: #4078f2;
+  --cm-attribute: #986801;
+  --cm-tag: #e45649;
+  --cm-atom: #986801;
+  --cm-bool: #986801;
+  --cm-punctuation: #383a42;
+  --cm-bracket: #383a42;
+}
+

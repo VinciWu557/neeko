@@ -1,0 +1,113 @@
+/* -- Theme: Classic Dark（JetBrains 基调） --
+ *
+ * 本文件**自包含**：变量值 + `color-scheme` 都在这里。新增主题时复制一份
+ * 改值即可，不会漏配 color-scheme。
+ *
+ * 变量清单必须与 `src/shared/utils/themeVariables.ts` 的契约一致（单测强制）。
+ */
+
+:root[data-theme="classic-dark"] {
+  color-scheme: dark;
+}
+
+:root[data-theme="classic-dark"] {
+  /* Titlebar gradient */
+  --titlebar-gradient-start: #000000;
+
+  /* Background layers */
+  --bg-primary:   #26292F;
+  --bg-gradient-start: #26292F;
+  --bg-gradient-end:   #26292F;
+  --bg-secondary: #181A1C;
+  --bg-tertiary:  #333337;
+  --bg-hover:     #3b3b40;
+  --bg-selected:  #44444a;
+
+  /* Text */
+  --text-primary:   #ffffff;
+  /* 弱分割线：classic-dark —— 等效原值 border-white/[0.04]（4% 白几乎不可见） */
+  --border-subtle: rgb(255 255 255 / 0.04);
+  --text-secondary: #cccccc;
+  --text-muted:     #999999;
+
+  /* Mono 前景角色 */
+  --mono-fg: #abb2bf;
+  --mono-fg-dim: #5c6370;
+
+  /* Border */
+  --border-color: #3b3b40;
+  /* ── Switch 轨道底色 ─────────────────────────────────────────────────
+   * 为什么不复用 `--bg-tertiary`：那是**表面层级**色，与海面的对比只有
+   * 1.08（light）/ 1.11（claude）—— 开关的轨道几乎看不见，视觉上只剩
+   * 一颗深色圆球漂在背景上。用户反馈「特别在 claude、light 主题下面
+   * 特别明显的不协调」就是这个。
+   *
+   * 控件的对比需求与表面层级不同：轨道要**成形**（≥1.5），但不该抢眼
+   * （≤2.0），且必须与海面同色相（保持主题气质）。所以是独立 token，
+   * 不是某个 surface 的别名。
+   *
+   * 取值方式：以 bg-primary 的 oklch 明度为基准，暗底 +0.15 / 亮底 −0.15，
+   * 彩度压到 0.008（几乎无彩，不抢 accent 的戏），色相跟随各主题。
+   */
+
+  --switch-track: #43464d;
+
+  /* Terminal selection */
+  --terminal-selection: rgba(41, 151, 255, 0.3);
+
+  /* Accent colors */
+  --accent-blue:       #2997ff;
+  --accent-blue-rgb:   41, 151, 255;
+  --accent-green:  #30d158;
+  --accent-green-rgb: 48, 209, 88;
+  --accent-yellow: #ffd60a;
+  --accent-red:    #ff453a;
+  --accent-red-rgb: 255, 69, 58;
+  --accent-orange: #ff9f0a;
+  /* 砖红（JetBrains Unversioned）：与 accent-red 区分冲突态 */
+  --accent-brick:  #d1675a;
+  --accent-brick-rgb: 209, 103, 90;
+
+  /* Git 文件状态色板（独立于 accent） */
+  --git-status-added:     #30d158;
+  --git-status-modified:  #2997ff;
+  --git-status-deleted:   #ff9f0a;
+  --git-status-untracked: #d1675a;
+  --git-status-conflict:  #ff453a;
+
+  /* Text on accent backgrounds */
+  --text-on-accent: #ffffff;
+
+  /* Status */
+  --status-idle:    #30d158;
+  --status-running: #ffd60a;
+  --status-failed:  #ff453a;
+
+  /* Diff */
+  --diff-added:        #30d15830;
+  --diff-removed:      #ff453a30;
+  --diff-added-text:   #30d158;
+  --diff-removed-text: #ff453a;
+
+  /* CodeMirror 语法高亮 (Dark/One Dark Pro) */
+  --cm-keyword: #c678dd;
+  --cm-comment: #5c6370;
+  --cm-string: #98c379;
+  --cm-number: #d19a66;
+  --cm-operator: #56b6c2;
+  --cm-variableName: #e06c75;
+  --cm-typeName: #e5c07b;
+  --cm-propertyName: #e06c75;
+  --cm-function: #61afef;
+  --cm-className: #e5c07b;
+  --cm-definition: #61afef;
+  --cm-string2: #98c379;
+  --cm-meta: #61afef;
+  --cm-attribute: #d19a66;
+  --cm-tag: #e06c75;
+  --cm-atom: #d19a66;
+  --cm-bool: #d19a66;
+  --cm-punctuation: #abb2bf;
+  --cm-bracket: #abb2bf;
+}
+

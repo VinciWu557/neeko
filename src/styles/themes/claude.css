@@ -1,0 +1,103 @@
+/* -- Theme: Claude（暖褐 / 赭红） --
+ * 浅色主题，但暖调与 light 明显不同。
+ *
+ * 本文件**自包含**：变量值 + `color-scheme` 都在这里。新增主题时复制一份
+ * 改值即可，不会漏配 color-scheme。
+ *
+ * 变量清单必须与 `src/shared/utils/themeVariables.ts` 的契约一致（单测强制）。
+ */
+
+:root[data-theme="claude"] {
+  color-scheme: light;
+}
+
+:root[data-theme="claude"] {
+  /* Titlebar gradient */
+  --titlebar-gradient-start: #e8e0d4;
+
+  /* Background layers */
+  --bg-primary:   #f0ebe2;
+  --bg-gradient-start: #f1ece4;
+  --bg-gradient-end:   #f0ebe2;
+  --bg-secondary: #faf7f2;
+  --bg-tertiary:  #e6dfd6;
+  --bg-hover:     #dcd4c8;
+  --bg-selected:  #d5ccbe;
+
+  /* Text */
+  --text-primary:   #2d1e14;
+  /* 弱分割线：claude —— 亮底，深色 8%（原值 4% 白在亮底上完全不可见） */
+  --border-subtle: rgb(0 0 0 / 0.08);
+  --text-secondary: #7a6555;
+  --text-muted:     #a89282;
+
+  /* Mono 前景角色（claude 暖调，取偏冷灰避免过黄） */
+  --mono-fg: #4a3326;
+  --mono-fg-dim: #a89282;
+
+  /* Border */
+  --border-color: #d8cdc0;  /* Switch 轨道底色（判据见上方主题块的长注释） */
+
+  --switch-track: #c3bfb7;
+
+  /* Terminal selection */
+  --terminal-selection: rgba(201, 100, 66, 0.2);
+
+  /* Accent colors — Claude 暖色调（品牌主色，与文件状态色解耦） */
+  --accent-blue:       #c96442;
+  --accent-blue-rgb:   201, 100, 66;
+  --accent-green:  #5a8a5e;
+  --accent-green-rgb: 90, 138, 94;
+  --accent-yellow: #b8860b;
+  --accent-red:    #c0392b;
+  --accent-red-rgb: 192, 57, 43;
+  --accent-orange: #c96442;
+  /* 砖红（JetBrains Unversioned） */
+  --accent-brick:  #a85248;
+  --accent-brick-rgb: 168, 82, 72;
+
+  /* Git 文件状态色板（独立于 accent）：modified 取钢青蓝，
+     与 untracked(#a85248) / deleted(#c96442 赭红) 可区分；
+     品牌主色 accent-blue 仍是赭红，二者不再相互牵动。 */
+  --git-status-added:     #5a8a5e;
+  --git-status-modified:  #2f6f9f;
+  --git-status-deleted:   #c96442;
+  --git-status-untracked: #a85248;
+  --git-status-conflict:  #c0392b;
+
+  /* Text on accent backgrounds */
+  --text-on-accent: #f5f0e8;
+
+  /* Status */
+  --status-idle:    #5a8a5e;
+  --status-running: #b8860b;
+  --status-failed:  #c0392b;
+
+  /* Diff */
+  --diff-added:        #5a8a5e28;
+  --diff-removed:      #c0392b28;
+  --diff-added-text:   #5a8a5e;
+  --diff-removed-text: #c0392b;
+
+  /* CodeMirror 语法高亮 (Claude) */
+  --cm-keyword: #8b5cf6;
+  --cm-comment: #a89282;
+  --cm-string: #5a8a5e;
+  --cm-number: #b8860b;
+  --cm-operator: #c96442;
+  --cm-variableName: #c0392b;
+  --cm-typeName: #b8860b;
+  --cm-propertyName: #c0392b;
+  --cm-function: #c96442;
+  --cm-className: #b8860b;
+  --cm-definition: #c96442;
+  --cm-string2: #5a8a5e;
+  --cm-meta: #c96442;
+  --cm-attribute: #b8860b;
+  --cm-tag: #c0392b;
+  --cm-atom: #b8860b;
+  --cm-bool: #b8860b;
+  --cm-punctuation: #2d1e14;
+  --cm-bracket: #2d1e14;
+}
+

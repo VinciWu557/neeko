@@ -64,7 +64,7 @@ const REAL_CHANGED: FileChange[] = [
     additions: 0,
     deletions: 0,
   },
-  { path: 'src/styles/tokens/theme.css', status: 'Modified', additions: 6, deletions: 0 },
+  { path: 'src/styles/themes/dark.css', status: 'Modified', additions: 6, deletions: 0 },
 ];
 
 const TARGET = 'src/features/file/components/__tests__/FileTreeNodeRenderCount.test.tsx';

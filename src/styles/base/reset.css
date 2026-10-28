@@ -1,0 +1,53 @@
+/* -- Element reset --
+ * 高内聚：**元素级**规则 —— reset、`body`、`#root`、滚动条行为。
+ * 低耦合：只引用 base/variables.css 与 themes/ 的语义变量。
+ *
+ * 准入判据：本文件只允许**元素选择器**（`*` / `body` / `#root`）与
+ * 由全局机制驱动的状态类（`.is-scrolling`，由 `shared/utils/scrollAutoHide.ts`
+ * 在 documentElement 上切换）。
+ *
+ * **组件类名不属于这里** —— `.titlebar` / `.wc-btn` 等已迁到
+ * `components/window-chrome.css`；`.custom-radio` 已改为 `ui/Radio.tsx` 内的
+ * Tailwind 表达（原 `components/form.css` 随之删除）。
+ */
+
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    /* Default border color for bare `border` utilities (shadcn/Radix surfaces) */
+    border-color: var(--border-color);
+  }
+
+  body {
+    font-family: var(--font-ui);
+    font-size: var(--font-size);
+    line-height: 1.4;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    overflow: hidden;
+  }
+
+  #root {
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* Scrollbars — 滚动时显示，停止 3s 后隐藏（.is-scrolling 由
+     shared/utils/scrollAutoHide.ts 全局管理）。
+     用标准属性 scrollbar-color 切换显隐，而非 ::-webkit-scrollbar 伪元素：
+     WebKit 对伪元素样式的动态 class 切换不重绘滚动条（Chromium 会），
+     标准属性走普通样式重算、两端都可靠；且设置标准属性后两端都会禁用
+     伪元素样式，宽度由 scrollbar-width: thin 决定（UA 值，无法精确 px）。
+     引擎版本下限：scrollbar-width/scrollbar-color 需 Safari 18.2+（Tauri
+     macOS 用系统 WKWebView）/ WebKitGTK 2.46+；旧内核降级为系统默认
+     滚动条常显，功能不受影响。 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .is-scrolling {
+    scrollbar-color: var(--bg-hover) transparent;
+  }
+}

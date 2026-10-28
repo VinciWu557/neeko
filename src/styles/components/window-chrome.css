@@ -1,0 +1,55 @@
+/* -- Window chrome（TitleBar + WindowControls）--
+ * 高内聚：标题栏拖拽区与窗口控制按钮的视觉/交互。
+ * 低耦合：颜色走 tokens 语义令牌。
+ *
+ * 2026-10-27 从 `base/base.css` 迁出：这两组是**组件样式**（`.titlebar` 由
+ * `layout/TitleBar.tsx` 使用、`.wc-btn` 由 `layout/WindowControls.tsx` 使用），
+ * 不属于「全局基底」。放在 base 里会让「base 只含元素级规则」这条分层失效。
+ */
+
+@layer components {
+  /* Tauri 拖拽区（WebKit 下 `-webkit-app-region` 与 Tauri 的
+     `data-tauri-drag-region` 属性并存，前者是兜底）。 */
+  .titlebar {
+    -webkit-app-region: drag;
+  }
+
+  /* 拖拽区内需要可点击的元素必须排除。
+   *
+   * 2026-10-27 清理：原列表有 8 个选择器，其中 7 个（`.titlebar-left` /
+   * `.titlebar-right` / `.titlebar-appname` / `.titlebar-divider` /
+   * `.titlebar-project-name` / `.titlebar-branch` / `.titlebar-placeholder`）
+   * 的类名在生产代码里**零引用** —— `TitleBar.tsx` 现在用 Tailwind utility
+   * 直接排版，不再使用这些类。已删除。
+   *
+   * 保留的 `.tb-icon-btn` 是 tab bar 的图标按钮（`EditorHeader.tsx`），
+   * 它不在拖拽区内，本规则对它是 no-op；保留是为了不改动现有行为。 */
+  .tb-icon-btn {
+    -webkit-app-region: no-drag;
+  }
+
+  /* Window control buttons（最小化 / 最大化 / 关闭） */
+  .wc-btn {
+    width: 28px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      background-color 0.1s,
+      color 0.1s;
+  }
+  .wc-btn:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+  }
+  /* #fff 在 dark 主题只有 1.40 对比 → 用随主题的 --text-on-accent */
+  .wc-close:hover {
+    background-color: var(--accent-red) !important;
+    color: var(--text-on-accent) !important;
+  }
+}

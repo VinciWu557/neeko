@@ -1,5 +1,7 @@
-/* -- Tailwind Theme -- 
- * 高内聚：只负责把语义令牌桥接为 Tailwind v4 utility 类（--color-* / 动画 / 间距）。
+/* -- Tailwind bridge --
+ * 高内聚：把 base/variables.css 与 themes/ 定义的语义变量桥接为
+ *         Tailwind v4 utility 类（--color-* / 动画 / 间距）。
+ * 不是变量**定义**：这里的每个值都是 `var(--xxx)` 指向别处。
  */
 
 @theme {

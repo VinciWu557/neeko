@@ -21,7 +21,7 @@ export const SANS_DEFAULT =
 
 /**
  * mono 栈唯一默认。首位为应用打包的 JetBrains Mono（@font-face，见
- * styles/jetbrains-mono.css）——不依赖系统安装，杜绝 fallback 链漂移导致
+ * styles/fonts/jetbrains-mono.css）——不依赖系统安装，杜绝 fallback 链漂移导致
  * 的同屏双字体。Menlo 为 macOS 确定存在的兜底；Consolas 保留作 Windows 兜底。
  */
 export const MONO_DEFAULT = IS_LINUX
@@ -48,7 +48,7 @@ export const MONO_LINE_HEIGHT = 1.5;
 /**
  * 终端默认字重：300（Light），对齐 orca 的观感基准。
  *
- * 依赖打包的 JetBrains Mono Light @font-face（styles/jetbrains-mono.css）——
+ * 依赖打包的 JetBrains Mono Light @font-face（styles/fonts/jetbrains-mono.css）——
  * 仅设 option 不补字体面时浏览器会静默回退 400，字重不会有任何变化。
  * 用户自定义字体无 Light 面时同样回退最近可用字重，无害。
  */

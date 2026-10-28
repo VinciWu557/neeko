@@ -1,0 +1,137 @@
+/* -- Global tokens（与主题无关的全局基础值）--
+ * 这些值**不随主题变化**：
+ *   - 尺寸/排版轴：--sidebar-width / --font-size / --terminal-font-size
+ *   - 字体阶梯（--text-micro … --text-section）、密度 token、z-index 阶梯
+ *   - 字体角色（--font-ui / --font-mono / --line-height-*）
+ *   - `color-scheme` 默认值（dark；各主题文件会覆盖自己的）
+ *
+ * 另含 **CodeMirror 语法色与 Git 状态色的兜底值**：用户自定义主题只覆盖
+ * 部分变量时，未覆盖的必须有值，否则 `var(--x)` 回退为继承色 → 颜色静默失效。
+ *
+ * 各主题的实际颜色值在 `src/styles/themes/<theme>.css`；
+ * 变量名契约见 `src/shared/utils/themeVariables.ts`。
+ */
+:root {
+  --sidebar-width: 280px;
+  --font-size: 12px;           /* UI 整体字体，由 appearanceFontSize 驱动 */
+  --terminal-font-size: 14px;  /* 终端字体，由 terminalFontSize 驱动 */
+
+  /* ── 弱分割线（层级比 --border-color 更淡的一档）──────────────────────
+   * 业务层过去写死 `border-white/[0.04]` / `border-white/[0.03]` ——
+   * 那是**暗色海面**的假设：Light / Claude 主题下这条线会直接消失。
+   *
+   * ⚠ **两个坑（2026-10-27 实测）**：
+   *
+   * ① **强度不能因为「token 化」就顺手改粗**。首次实现用
+   *    `color-mix(in srgb, var(--text-primary) 8%, transparent)`，
+   *    暗色主题下 8% 近白（text-primary≈#fff）叠在深底上**明显可见**，
+   *    而原来的 4% 白几乎看不见 —— 用户反馈「每个项目之间多了一条横杠，很丑」。
+   *
+   * ② **不能用 color-mix**：lightningcss 会为它生成
+   *    `@supports (color:color-mix(...))` 降级，回退值取 color-mix 的**第一个分量**
+   *    → `--border-subtle: var(--text-primary)`。在不支持 color-mix 的浏览器里，
+   *    分割线变成**近白实色**（比原来粗得多）。
+   *
+   * 所以：**每个主题块显式给一个 rgba 值**，不用 color-mix —— 值显式、行为可预测、
+   * 降级路径不存在。
+   */
+  --border-subtle: rgb(255 255 255 / 0.04);
+
+  /* ── 字体阶梯（绑定 --font-size，随用户字号设置联动）────────────────────
+   * 业务层过去散落 `text-[10px]` / `text-[0.86em]` 等硬编码，
+   * 调 Appearance 字号时大量标签不跟随。这五档是唯一权威。
+   * 例外白名单：xterm / CodeMirror 宿主、第三方 diff 渲染。
+   */
+  --text-micro:   max(10px, calc(var(--font-size) - 2px)); /* 时间戳、快捷键 hint */
+  --text-meta:    max(11px, calc(var(--font-size) - 1px)); /* 次级元数据 */
+  --text-ui:      var(--font-size);                       /* 默认 UI */
+  --text-ui-md:   calc(var(--font-size) + 1px);           /* 列表主标题 */
+  --text-ui-lg:   calc(var(--font-size) + 2px);           /* 面板标题 */
+  --text-section: calc(var(--font-size) + 4px);           /* Settings section */
+
+  /* ── z-index 阶梯（≤6 层）─────────────────────────────────────────────
+   * 业务层过去散落 z-[50] … z-[10000] 共 9 档魔法数，菜单/对话框/toast 互相打架。
+   * 本轮只**定义**不改实际层级（改层级 = 改行为）。
+   */
+  --z-base:      0;
+  --z-dropdown:  100;
+  --z-sticky:    200;
+  --z-modal:     1000;
+  --z-toast:     1100;
+  --z-devtools:  9999;
+
+  /* ── 密度 token（compact IDE 密度）────────────────────────────────────
+   * 本轮只**定义**不套用 —— 套用即改变容器几何，违反本任务「不动布局」约束。
+   */
+  --chrome-titlebar-h:    32px;
+  --chrome-statusbar-h:   22px; /* 现状 16px */
+  --chrome-dockbar-w:      44px;
+  --chrome-panel-header-h: 32px;
+  --chrome-tab-h:          28px;
+  --chrome-toolbar-h:      32px;
+  --row-h-sm:              24px;
+  --row-h-md:              28px;
+  --row-h-lg:              32px;
+  --icon-sm:               14px;
+  --icon-md:               16px;
+  --icon-lg:               20px;
+  --radius-panel:          8px;
+  --radius-control:        6px;
+  --radius-chip:           9999px;
+  --gap-island:            6px;
+
+  /* 字体角色 token（SSOT）：
+   * --font-ui / --font-mono 是与 shared/utils/typography.ts 同步维护的静态默认；
+   * --font-mono 运行时由 syncTypographyTokens 覆盖为「用户覆盖 + 默认 + Nerd 图标」。
+   * --font-code 为 Tailwind @theme inline 桥接别名（避开 @theme 键同名自引用）。 */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace, 'NerdFontSymbols';
+  --font-code: var(--font-mono);
+
+  /* 行高轴 token：终端紧凑、编辑器宽松，保持与应用字体区隔 */
+  --line-height-ui: 1.4;
+  --line-height-mono: 1.5;       /* 编辑器 / markdown 代码块 */
+  --line-height-terminal: 1;     /* 终端 xterm：flat 1.0 对齐 orca（resolveTerminalLineHeight 同步） */
+
+  /* Mono 前景角色（终端 + 编辑器共用，buildTerminalTheme / createCmTheme 读取） */
+  --mono-fg: #abb2bf;
+  --mono-fg-dim: #5c6370;
+
+  /* Soft terminal glyphs (synced by buildTerminalTheme; fallbacks for pre-terminal UI) */
+  --terminal-bg: var(--bg-secondary);
+  --terminal-fg: var(--mono-fg);
+  --terminal-fg-dim: var(--mono-fg-dim);
+
+  /* CodeMirror 默认语法高亮（各主题块覆盖；此处兜底未知 data-theme 值） */
+  --cm-keyword: #c678dd;
+  --cm-comment: #5c6370;
+  --cm-string: #98c379;
+  --cm-number: #d19a66;
+  --cm-operator: #56b6c2;
+  --cm-variableName: #e06c75;
+  --cm-typeName: #e5c07b;
+  --cm-propertyName: #e06c75;
+  --cm-function: #61afef;
+  --cm-className: #e5c07b;
+  --cm-definition: #61afef;
+  --cm-string2: #98c379;
+  --cm-meta: #61afef;
+  --cm-attribute: #d19a66;
+  --cm-tag: #e06c75;
+  --cm-atom: #d19a66;
+  --cm-bool: #d19a66;
+  --cm-punctuation: #abb2bf;
+  --cm-bracket: #abb2bf;
+
+  /* Git 文件状态色板（独立于 UI accent：改状态色不再牵动主题主色，反之亦然）。
+     renamed 与 modified 同色，STATUS_PRESENTATION 中二者复用同一令牌。
+     此处为未知 data-theme 的兜底（= dark 值），内置主题各自显式覆盖。 */
+  --git-status-added:     #30d158;
+  --git-status-modified:  #2997ff;
+  --git-status-deleted:   #ff9f0a;
+  --git-status-untracked: #d1675a;
+  --git-status-conflict:  #ff453a;
+
+  /* Default: dark UI chrome (native scrollbars, form controls) */
+  color-scheme: dark;
+}

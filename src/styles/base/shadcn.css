@@ -1,5 +1,6 @@
-/* -- shadcn/ui CSS Variables (mapped to Neeko theme) --
- * 高内聚：只做 shadcn 变量 ↔ Neeko 语义令牌的桥接，不写业务选择器。
+/* -- shadcn/ui alias --
+ * 高内聚：只做 shadcn 变量 → Neeko 语义变量的别名，不写业务选择器。
+ * 不是变量**定义**：每个值都是 `var(--xxx)` 指向 themes/ 或 variables.css。
  */
 
 :root {

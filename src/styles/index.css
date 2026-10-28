@@ -1,24 +1,45 @@
-/* -- Neeko 样式入口 -- 
- * 单一职责：仅聚合各层样式（tokens → base → components），不写业务规则。
- * 分层依赖顺序：tokens（变量）→ base（全局基底）→ components（组件域）。
+/* -- Neeko 样式入口 --
+ * 单一职责：仅聚合各层样式，不写业务规则。
+ *
+ * 依赖方向只能向下：
+ *   base → themes → motion → components
  * 层内通过 @layer 交由 Tailwind v4 层序控制优先级。
+ *
+ * 目录与命名规范见 ./README.md，由护栏 `check_styles_layout` 强制。
+ * 注意：fonts/ 不在此处聚合 —— @font-face 由 app/main.tsx 单独 import，
+ * 因为字体加载时机独立于样式层序。
  */
 
 @import "tailwindcss";
 @import "@xterm/xterm/css/xterm.css";
 
-/* Design tokens（只定义变量） */
-@import "./tokens/tailwind.css";
-@import "./tokens/theme.css";
-@import "./tokens/shadcn.css";
+/* ── base：不随主题变的「基础」───────────────────────────────────────
+ * variables 必须在 themes 之前（提供未覆盖变量的兜底值）。 */
 
-/* Global base */
-@import "./base/base.css";
+/* 全局变量：尺寸轴 / 字阶 / 密度 / z-index / 字体角色 / 兜底色板 */
+@import "./base/variables.css";
 
-/* Components（每文件一个组件域） */
-@import "./components/animations.css";
+/* 主题（一主题一文件，自包含 color-scheme）。
+ * 变量名契约见 shared/utils/themeVariables.ts。
+ * 主题之间无选择器重叠，顺序无关。 */
+@import "./themes/dark.css";
+@import "./themes/light.css";
+@import "./themes/one-dark-pro.css";
+@import "./themes/claude.css";
+@import "./themes/classic-dark.css";
+
+/* 框架桥接：变量 → Tailwind utility / shadcn 别名 */
+@import "./base/tailwind.css";
+@import "./base/shadcn.css";
+
+/* 元素级重置：* / body / #root / 滚动条 */
+@import "./base/reset.css";
+
+/* ── motion：跨域横切的 keyframes（不属任何单一组件域）────────────── */
+@import "./motion/animations.css";
+
+/* ── components：每文件一个功能域 ──────────────────────────────────── */
 @import "./components/xterm.css";
-@import "./components/form.css";
 @import "./components/agent.css";
 @import "./components/onboarding.css";
 @import "./components/markdown.css";
@@ -26,3 +47,4 @@
 @import "./components/editor.css";
 @import "./components/agent-chat.css";
 @import "./components/lsp.css";
+@import "./components/window-chrome.css";

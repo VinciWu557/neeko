@@ -23,7 +23,7 @@
  *
  * 修法：独立 token `--switch-track`（逐主题取值）+ `border-border` 描边
  * （与 Checkbox / ToggleGroup 同一手法 —— 它们本来就有描边，所以从没这个问题）。
- * 对比度的数值把关在 `src/styles/tokens/__tests__/themeTokens.test.ts`，
+ * 对比度的数值把关在 `src/styles/__tests__/themeTokens.test.ts`，
  * 这里只钉住「组件用了哪个 class」。
  *
  * ## 这条测试能防什么

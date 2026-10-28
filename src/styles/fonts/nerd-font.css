@@ -11,7 +11,7 @@
  */
 @font-face {
   font-family: "NerdFontSymbols";
-  src: url("../assets/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
+  src: url("../../assets/fonts/SymbolsNerdFontMono-Regular.ttf") format("truetype");
   font-weight: normal;
   font-style: normal;
   unicode-range: U+E000-U+F8FF, U+F0000-U+FFFFD, U+100000-U+10FFFD;
