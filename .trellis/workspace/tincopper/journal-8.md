@@ -221,3 +221,42 @@ Session summary was not supplied.
 
 - 打开 pnpm tauri dev 实机确认浮岛/区块层级与悬停观感（静态截图已确认，未在真机看）
 - 若实机觉得岛内区块太靠色，可再抬一档 --bg-tertiary
+
+
+## Session 363: 修复文件树选中行文件名不可读（text-accent token 撞名）
+<!-- trellis-session: v=2 fp=6f6027694fcf44e3 -->
+
+**Date**: 2026-10-28
+**Task**: 修复文件树选中行文件名不可读（text-accent token 撞名）
+**Branch**: `main`
+
+### Summary
+
+用户报「选中后字体都看不清楚」，5 主题全中招。根因不是配色：text-accent 解析到 shadcn 的 accent **底色** token（rgba(accent-blue,.12)），文件树把高亮行文件名画成了 12% 透明的字，对比度 1.10~1.21。按方案 2 修：高亮行名字回中性色 + git 状态由行尾徽标表达（对齐 VS Code）。
+
+### Main Changes
+
+- gitFileDecoration.ts：statusToNameColorClass / summaryToLabelClass / resolveDecoration 的 highlight 分支统一回 HIGHLIGHTED_NAME_CLASS（text-text-primary）；新增 statusToBadgePresentation（summaryToBadge 改为委托它）
+- FileTreeRow.tsx：isHighlighted = is_active || is_selected 统一驱动底色与名字色；补行尾 git 状态徽标（此前只有名字色一条状态通道）
+- ChangeFileTree.tsx：resolveDecoration 的 active 参数改传 isSelected；FileTreeList.tsx 的 Retry 链接 text-accent → text-accent-blue
+- 护栏 check_ui_style_tokens 新增判据 6：禁止 text-accent 当文字色（附正例/反例/变异验证 3 条单测，护栏自测 26→29 用例）
+- 新增 themeTokens 对比度断言：每主题 --text-primary vs --bg-selected ≥ 3.0；gitFileDecoration 单测穷举 6 状态 × ignored × highlighted
+- design-tokens.md 新增坑 9（含 5 主题实测表与机器判据清单）、禁止写法表增第 5 条、标题 八个坑→九个坑
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] pnpm vitest run src/features/file src/features/git src/shared/components/__tests__/ChangeFileTree.test.tsx src/app/dock/wrappers/__tests__/FilesPanelWrapper.wiring.test.tsx —— 755 passed
+- [OK] python3 -m unittest guards.tests.test_check_ui_style_tokens —— 29 passed
+- [OK] pnpm check:quick —— 32 条护栏全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实机确认：文件树选中行 + 行尾徽标在 5 个主题下的观感（静态对比图已确认 one-dark-pro / claude）
