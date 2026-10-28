@@ -185,3 +185,39 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 362: 校准 one-dark-pro 主题的 chrome 表面色
+<!-- trellis-session: v=2 fp=b212369f6ed35cb5 -->
+
+**Date**: 2026-10-28
+**Task**: 校准 one-dark-pro 主题的 chrome 表面色
+**Branch**: `main`
+
+### Summary
+
+语法色本就准确，问题在 chrome：主海面用了 VS Code 的 sidebar 色、自造渐变、hover 用了选区色、次级/元数据文字过暗。按 One Dark Pro workbench 键重映射整条表面阶梯，渲染对比图定稿后复算全部对比度。
+
+### Main Changes
+
+- themes/one-dark-pro.css：bg-primary #21252b→#282c34（editor.background），浮岛 #2c313a→#333842（岛/海从 1.07 恢复到 1.19），区块 #333842→#383e4a，hover #3e4451→#434852，selected #464d5b→#4d5666，border #363b46→#3e4451，text-secondary #828997→#9da5b4，text-muted #5c6370→#7f848e；bg-gradient start/end 统一为 #282c34（去掉自造 #23272e）
+- themes/one-dark-pro.css：switch-track #3f4349→#4d5666（海面提亮后对比会跌到 1.41 < 1.5），terminal-selection 改用光标蓝 #528bff
+- 同步实测数字：design-tokens.md（坑 8 表 + switch-track 推导表 + 滑块表）、Switch.test.tsx、Radio.tsx 的注释表格
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] pnpm vitest run themeTokens / Switch / Radio —— 42 passed
+- [OK] pnpm check:quick —— 13 条护栏 + 改动文件单测全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 打开 pnpm tauri dev 实机确认浮岛/区块层级与悬停观感（静态截图已确认，未在真机看）
+- 若实机觉得岛内区块太靠色，可再抬一档 --bg-tertiary

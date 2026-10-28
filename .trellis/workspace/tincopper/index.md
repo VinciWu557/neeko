@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-8.md`
-- **Total Sessions**: 361
+- **Total Sessions**: 362
 - **Last Active**: 2026-10-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-8.md` | ~186 | Active |
+| `journal-8.md` | ~223 | Active |
 | `journal-7.md` | ~2009 | Archived |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
@@ -36,6 +36,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 362 | 2026-10-28 | 校准 one-dark-pro 主题的 chrome 表面色 | - | `main` |
 | 361 | 2026-10-28 | 删除 ESLint 规则，判据回归护栏（判据 5：CSS 侧真盲区） | - | `main` |
 | 360 | 2026-10-28 | 修复审核发现的 1 Block + 3 Warning + 2 Nit（主题校验后门） | - | `main` |
 | 359 | 2026-10-28 | styles 目录规范化：motion 层 + form.css 转 Tailwind + 死代码清理 | - | `main` |
