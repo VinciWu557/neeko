@@ -51,6 +51,7 @@ export {
 } from './Card';
 export { Separator } from './Separator';
 export { Switch } from './Switch';
+export { Radio } from './Radio';
 export { optionSecondary } from './selection';
 export { ToggleGroup, ToggleGroupItem } from './ToggleGroup';
 export { ResizablePanelGroup, ResizablePanel, ResizableHandle } from './Resizable';

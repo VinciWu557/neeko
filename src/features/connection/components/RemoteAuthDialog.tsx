@@ -5,6 +5,7 @@ import { Button } from '@/ui/Button';
 import { Checkbox } from '@/ui/Checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/ui/Dialog';
 import { Input } from '@/ui/Input';
+import { Radio } from '@/ui/Radio';
 
 import { testRemoteConnection } from '../api/connectionApi';
 
@@ -84,20 +85,12 @@ export function RemoteAuthDialog({
           Auth Type
         </span>
         <div className="flex gap-5 mb-4">
-          <label className="custom-radio">
-            <input
-              type="radio"
-              checked={authType === 'password'}
-              onChange={() => setAuthType('password')}
-            />
-            <span className="radio-mark" />
+          <Radio checked={authType === 'password'} onChange={() => setAuthType('password')}>
             Password
-          </label>
-          <label className="custom-radio">
-            <input type="radio" checked={authType === 'key'} onChange={() => setAuthType('key')} />
-            <span className="radio-mark" />
+          </Radio>
+          <Radio checked={authType === 'key'} onChange={() => setAuthType('key')}>
             Key File
-          </label>
+          </Radio>
         </div>
 
         {authType === 'password' ? (
