@@ -260,3 +260,44 @@ Session summary was not supplied.
 ### Next Steps
 
 - 实机确认：文件树选中行 + 行尾徽标在 5 个主题下的观感（静态对比图已确认 one-dark-pro / claude）
+
+
+## Session 364: 按 neeko-check 清单修复：徽标单一渲染口径 + 护栏补齐 .ts + 解析器剥注释
+<!-- trellis-session: v=2 fp=5246c7aa83bd86b3 -->
+
+**Date**: 2026-10-28
+**Task**: 按 neeko-check 清单修复：徽标单一渲染口径 + 护栏补齐 .ts + 解析器剥注释
+**Branch**: `main`
+
+### Summary
+
+复盘 12 项问题后按第一性原理修复：新增 GitStatusBadge 收敛三处徽标渲染；护栏判据 6 补扫 .ts（事故源头就在 .ts）；主题解析器剥离注释（注释里的变量赋值曾被当成真实定义）；把「class 当契约」改成 data-*；修正 one-dark-pro 注释里两处事实错误。
+
+### Main Changes
+
+- 新增 shared/components/GitStatusBadge.tsx + 单测：三处渲染点（FileTreeRow / ChangeFileTree / FileDiffSection）收敛为一套 DOM；不包 ui/Badge（通用 chip 的固定字阶与行装饰的字号跟随语义冲突），尺寸改用 calc(var(--font-size)-3px)，稳定契约走 data-git-status
+- check_ui_style_tokens：新增 TS_SCOPES，判据 6 抽成 collect_text_accent_findings 同时扫 .tsx 与 .ts（只扫判据 6，避免 .ts 里的兜底色值被误报）；metrics 如实报出 ts 数量；护栏自测 26→31 用例（含 .ts 正例、.ts 不被判据 1 误报的反证、跨 scope 变异验证）
+- styles/__tests__/themeCss.ts：stripComments —— 注释不是源码。此前注释里的 --x: var(--y) 会被 \"[^;]+\" 跨行吃掉下一个分号，把不存在的变量报成「多出未登记变量」；同型还有注释里的 :root 块与 color-scheme 字样
+- themeTokens.test.ts：对比度断言的 token 名从 HIGHLIGHTED_NAME_CLASS 反推，不再硬编码 --text-primary（避免常量/测试/文档三份清单）
+- FileTreeRow：data-active / data-selected 暴露状态（测试不再断言 class）；目录行也渲染徽标（目录带聚合状态，此前高亮后状态无出口）
+- gitFileDecoration：resolveDecoration 参数 isActive → highlighted（与另外两个派生函数统一，调用方传的本就是 isSelected）；dimmed 改为由 color 派生（此前出现 {color: text-primary, dimmed: true} 的自相矛盾组合）
+- one-dark-pro.css：注释改为两条可检验的不变量（锚点色 verbatim / 中间档插值约束），修掉「每个色都对得上真实颜色键」与「其余 4 个主题无渐变」两处事实错误；补 --bg-secondary ↔ --terminal-bg 耦合说明
+- design-tokens.md 坑 9：补 GitStatusBadge 单一渲染口径、.ts 扫描、测试从常量反推 token
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] pnpm check:quick —— 32 条护栏全绿（含护栏自测 31 用例）
+- [OK] vitest src/features/file src/features/git src/shared src/styles src/app/dock —— 1954 passed
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 实机确认：文件树/PR 树/diff 头的徽标外观统一后是否符合预期（静态对比图已确认 one-dark-pro / light）
+- 可选（未做，需你拍板）：终端底色跟随 --bg-secondary 提亮一档是否可接受；是否给 --terminal-bg 独立主题变量
