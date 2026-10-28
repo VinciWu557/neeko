@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { HIGHLIGHTED_NAME_CLASS } from '@/shared/utils/gitFileDecoration';
 import { THEME_VARIABLES, THEME_VARIABLE_GROUPS } from '@/shared/utils/themeVariables';
 
 import {
@@ -262,7 +263,62 @@ describe('Switch 轨道对比度', () => {
   });
 });
 
+describe('选中行文件名对比度', () => {
+  // 2026-10-28 用户报「选中后字体都看不清楚了」（附文件树截图，one-dark-pro 与 light 都中招）。
+  // 根因：高亮行的名字色曾是 `text-accent` —— 而 `text-accent` 是 shadcn 的
+  // **accent 底色 token**（`--accent = rgba(var(--accent-blue-rgb), 0.12)`），
+  // 产物里就是 `.text-accent{color:var(--accent)}`，等于拿 12% 透明的字写在
+  // 高亮底上（实测 5 主题全部 1.10~1.21）。
+  //
+  // 修法的结构性结论：高亮行名字恒为 `--text-primary`，git 状态交给行尾徽标。
+  // 本断言锁住这个修法能成立的前提 —— 中性前景色在上亮底上真的看得清。
+  //
+  // 阀值 3.0（WCAG 1.4.11 非文本 / UI 组件级）而不是 4.5：条目标签不是正文段落，
+  // 且 one-dark-pro 的选中底（#4d5666）本身就是原主题的 scrollbarSlider 亮档，
+  // 实测 3.47 是五主题的下限。要提到 4.5 得重调该主题的选中档位。
+  it('每个主题的 --text-primary vs --bg-selected 对比度 ≥ 3.0', () => {
+    // token 名不写死 —— 从 `HIGHLIGHTED_NAME_CLASS` 反推。
+    // 写死时同一个事实会变成三份清单（常量 / 本测试 / design-tokens.md），
+    // 改常量而测试照旧测旧 token，会得到「绿但没用」的假保证。
+    // `text-text-primary` → `--text-primary`。
+    const headingToken = HIGHLIGHTED_NAME_CLASS.replace(/^text-/, '--');
+    const failures: string[] = [];
+    for (const theme of themeFiles) {
+      const bg = colorOf(theme, '--bg-selected');
+      const fg = colorOf(theme, headingToken);
+      if (!bg || !fg) {
+        failures.push(`${theme.file} 颜色无法解析（${headingToken} / --bg-selected）`);
+        continue;
+      }
+      const ratio = contrastRatio(fg, bg);
+      if (ratio < 3.0) {
+        failures.push(`${theme.file} 选中行名字对比 ${ratio.toFixed(2)} < 3.0（名字看不清）`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+});
+
 describe('CSS 解析器自检', () => {
+  it('注释不是源码：注释里的变量赋值 / :root 块 / color-scheme 都不得被当真', () => {
+    // 2026-10-28：主题注释里写了一句 `--terminal-bg: var(--bg-secondary)`，
+    // 正则的 `[^;]+` 跨行吃到下一行的 `;`，把一个**根本不存在于该主题的变量**
+    // 报成「多出未登记变量」；同一个格式下注释举例的 `:root {}`
+    // 与提到 `color-scheme:` 的一句话也会分别造成假块与假通过。
+    const css = [
+      '/* 这里只是解释：`--ghost-token: var(--bg-secondary)` 是耦合说明 */',
+      '/* :root[data-theme="fake"] { --also-ghost: #fff; } */',
+      '/* 本主题会不会漏配 color-scheme: 看下一块 */',
+      ':root[data-theme="real"] { --bg-primary: #000; }',
+    ].join('\n');
+    const blocks = splitBlocks(css);
+    expect(blocks).toHaveLength(1);
+    expect(new Set(blocks.flatMap((b) => b.vars))).toEqual(new Set(['--bg-primary']));
+    expect(inspectThemeFile(themeFileFromSource(css), ['--bg-primary']).lacksColorScheme).toBe(
+      true,
+    );
+  });
+
   it('能处理跨行选择器与同文件多块', () => {
     const css = [
       ':root[data-theme="a"],',

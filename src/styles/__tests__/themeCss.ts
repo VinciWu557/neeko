@@ -26,13 +26,34 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+/**
+ * 剥掉 CSS 注释。
+ *
+ * ## 为什么必须剥（2026-10-28 踩到）
+ *
+ * 判据只能在**源码**上跑，注释不是源码。不剥时实测过的三种假阳性：
+ *
+ * 1. 文档注释里写一句 `--terminal-bg: var(--bg-secondary)` → `[^;]+` 吃到下一个
+ *    `;`（跨行），把一个**从不存在于该主题的变量**登记进变量清单，报「多出未登记变量」；
+ * 2. 注释里举例一个 `:root { }` 块 → `BLOCK_RE` 当真块解析；
+ * 3. 注释里提一句 `color-scheme:` → `lacksColorScheme` 假通过。
+ *
+ * 失效方向都是「注释的内容被当成声明」，即**误导维护者去改正确的东西**。
+ *
+ * 只剥块注释（斜杠星号开头到星号斜杠），不碰 `//`：CSS 没有行注释，
+ * 而 `url(https://…)` 里的双斜杠会被误剥。
+ */
+export function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+}
+
 /** 一个主题文件的解析结果 */
 export interface ThemeFile {
   /** 文件名（如 `dark.css`），用于报错定位 */
   file: string;
   /** 该文件内**全部** `:root` 块的变量并集 */
   vars: Set<string>;
-  /** 原始文本，供需要精确取值（颜色对比度）的用例使用 */
+  /** 原始文本（含注释），供需要逐字保留的用例使用 */
   raw: string;
 }
 
@@ -41,9 +62,9 @@ const THEMES_DIR = resolve(__dirname, '../themes');
 /** 匹配 `:root ... { ... }` 块（选择器可跨行），捕获选择器与块体 */
 const BLOCK_RE = /(^:root[^{]*)\{([^}]*)\}/gm;
 
-/** 从一段 CSS 里取出「选择器 → 该块的变量名列表」 */
+/** 从一段 CSS 里取出「选择器 → 该块的变量名列表」（注释已剥离） */
 export function splitBlocks(css: string): { selector: string; vars: string[] }[] {
-  return [...css.matchAll(BLOCK_RE)].map((m) => ({
+  return [...stripComments(css).matchAll(BLOCK_RE)].map((m) => ({
     selector: (m[1] ?? '').replace(/\s+/g, ' ').trim(),
     vars: [...(m[2] ?? '').matchAll(/--[\w-]+(?=\s*:)/g)].map((v) => v[0]),
   }));
@@ -83,7 +104,7 @@ export type Rgb = [number, number, number];
  */
 export function colorOf(theme: ThemeFile, token: string): Rgb | null {
   const valueRe = new RegExp(`${token}\\s*:\\s*([^;]+);`);
-  for (const m of theme.raw.matchAll(BLOCK_RE)) {
+  for (const m of stripComments(theme.raw).matchAll(BLOCK_RE)) {
     const value = (m[2] ?? '').match(valueRe)?.[1]?.trim();
     if (value) return parseColor(value);
   }
@@ -177,7 +198,7 @@ export function inspectThemeFile(file: ThemeFile, contract: readonly string[]): 
   return {
     missingVars: contract.filter((token) => !file.vars.has(token)),
     unknownVars: [...file.vars].filter((token) => !contractSet.has(token)),
-    lacksColorScheme: !file.raw.includes('color-scheme:'),
+    lacksColorScheme: !stripComments(file.raw).includes('color-scheme:'),
   };
 }
 
