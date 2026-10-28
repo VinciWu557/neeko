@@ -1852,3 +1852,158 @@ prettier 拆 3 行。基线仍比 HEAD 高 3/3/5 行。
 ### Next Steps
 
 - 待用户指示是否提交
+
+---
+
+## Session 362 — 主题变量契约 + styles 目录规范
+
+**日期**: 2026-10-27
+**任务**: `07-26-ui-design-audit`（in_progress）
+
+### 用户的两次追问改变了结论
+
+**追问 1**：「为什么要放 tokens 目录下面，这个 tokens 表达的什么意思，业界也是这样做的吗」
+
+查证结果：本仓 `tokens/` **不是业界标准的 design tokens**。
+
+```
+find . -name "*.tokens.json" -o -name "style-dictionary*"  → 无
+```
+
+业界 design tokens 指**平台中立的 JSON 源 + 编译管线**（Style Dictionary）。
+本仓 CSS 本身就是源，实际含义是「CSS 自定义属性定义」= theme variables。
+
+对照：shadcn/ui、Radix Themes 都用 `styles/themes/` 或根级 `theme.css`，**不叫 tokens**。
+真正的 `tokens/` 目录通常配套 JSON 源。
+
+**结论修正**：`tokens/` 是术语挪用。但**决定保留** —— 改名成本是
+`index.css` + 测试路径 + 全文同步，收益只是术语准确；真正值得改名是引入编译管线时。
+改为在 `styles/README.md` 里**纠正理解**，避免有人按业界含义去改它。
+
+**追问 2**：「同时 styles 下面的目录名字的规范化也需要放到里面进行」
+
+于是本轮范围从「抽契约」扩为「抽契约 + 目录规范 + 护栏」。
+
+### 真正的根因：三份清单各自维护
+
+原本我建议「先抽契约、再拆文件」。追问后重新审视：
+
+| 问题 | 拆文件能解决？ |
+| --- | --- |
+| 改 light 主题要翻 598 行 | ✅ |
+| 新增主题要插入 90 行 | ✅ |
+| **自定义主题缺 28 个变量** | ❌ |
+| **三份清单各自维护** | ❌ |
+
+**拆文件是锦上添花，清单漂移才是根因。** 于是本轮只做后者。
+
+### 实测的漂移规模
+
+`customThemeVars.ts` 的白名单是 31 项，主题块有 59 个变量 —— **缺口 28 个**：
+
+| 缺口 | 数量 | 后果 |
+| --- | --- | --- |
+| `--cm-*` 语法色 | **19（全部）** | 自定义主题后编辑器语法高亮调不动 |
+| `--mono-fg` / `--mono-fg-dim` | 2 | 终端/编辑器前景色调不动 |
+| `--switch-track` | 1 | Switch 轨道调不动 |
+| `--border-subtle` | 1 | 弱分割线调不动 |
+| `-rgb` 变体（green/red/brick） | 3 | 半透明场景调不动 |
+| `--accent-orange` / `--accent-brick` | 2 | 调不动 |
+
+用户做自定义主题后，这些全部**静默**用内置值，界面无任何提示。
+
+### 实现
+
+**契约模块** `src/shared/utils/themeVariables.ts`：
+- `THEME_VARIABLE_GROUPS` —— 59 个变量按 10 个语义组（surface / text / accent / gitStatus / status / diff / codeMirror …）
+- `THEME_VARIABLES` —— 展平后的唯一清单
+- `CUSTOM_THEME_OVERRIDABLE` —— 可覆盖清单（当前 = 全部，但保留为独立常量，因为将来某变量出现外部耦合时需要一个「在这里排除并写理由」的位置）
+
+**消费方**：
+- `customThemeVars.ts` 删掉 31 项硬编码白名单，改从契约派生
+- `themeTokens.test.ts` 的 `GIT_STATUS_TOKENS` 改从契约派生（否则会变成第四份清单）
+
+**关键测试设计**：`themeContract.test.ts` 的 7 条用例里，**反向断言**最重要 ——
+「CSS 里定义了但契约没登记 → 报错」。只校验「契约里的 CSS 都有」会漏掉
+「CSS 有但契约没登记」，而那正是那 28 个变量的成因。
+
+### 目录规范化
+
+新增 `src/styles/README.md`，四条规则：
+
+| 规则 | 判据 |
+| --- | --- |
+| 只允许四个目录 | `tokens/` `base/` `components/` `fonts/` |
+| 根级只允许 `index.css` + `README.md` | 新根级文件无法判断归属层 |
+| 文件名 kebab-case | `agent-chat.css` 不是 `agentChat.css` |
+| 依赖方向只能向下 | `components/` 可引用 `tokens/`，反之不行 |
+
+**执行的动作**：`jetbrains-mono.css` / `nerd-font.css` → `fonts/`。
+
+### 一个差点漏掉的真实回归
+
+字体文件里的 `url("../assets/fonts/X.ttf")` 是**相对路径**。文件从 `styles/`
+移到 `styles/fonts/` 后，相对深度变了 —— 指向 `styles/assets/`（不存在）。
+
+```
+解析结果: src/styles/assets/fonts/JetBrainsMono-Light.ttf   ← 不存在
+正确应为: src/assets/fonts/JetBrainsMono-Light.ttf          ← 存在
+```
+
+改成 `../../assets/fonts/` 后逐个验证 5 个路径，并跑 `vite build` 确认字体真的
+被打进产物（`dist/assets/*.ttf` 5 个 + CSS 里路径已重写为 `/assets/...`）。
+
+> **教训**：移动 CSS 文件时必须检查 `url()` 相对路径。这类断裂**构建不会报错**
+> （Vite 只是解析失败后保留原样或静默跳过），只有运行时字体不生效。
+
+### 新护栏 `check_styles_layout`
+
+三条机器判据 + 13 个单测（含 3 个变异验证）。真实仓库验证：
+
+```
+src/styles/components/badName.css:1: 文件名不是 kebab-case：badName.css
+src/styles/random/x.css:1: 未声明的样式子目录 `random/`（允许：base / components / fonts / tokens）
+src/styles/stray.css:1: 根级不允许放 CSS（stray.css）—— 归入 tokens/ base/ components/ fonts/
+```
+
+**刻意不写进护栏的**：「components/ 一个文件只服务一个域」——
+那是语义判断，写成正则只会产生误报。review 的职责不该机器化。
+
+### 产出
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/shared/utils/themeVariables.ts` | **新增**：59 变量契约（10 组） |
+| `src/shared/utils/__tests__/themeContract.test.ts` | **新增**：7 用例（含反向断言） |
+| `src/styles/README.md` | **新增**：目录与命名规范 + tokens 术语纠正 |
+| `tools/guards/checks/check_styles_layout.py` | **新增**：3 判据 |
+| `tools/guards/tests/test_check_styles_layout.py` | **新增**：13 用例（含 3 变异） |
+| `src/features/settings/customThemeVars.ts` | 删 31 项白名单，改从契约派生（**修掉 28 变量缺口**） |
+| `src/styles/tokens/__tests__/themeTokens.test.ts` | `GIT_STATUS_TOKENS` 改从契约派生 |
+| `src/styles/fonts/{jetbrains-mono,nerd-font}.css` | 从根级移入（`git mv`） |
+| `src/app/main.tsx` | 字体 import 路径 |
+| `src/styles/index.css` | 聚合注释 + fonts 不在此处聚合的说明 |
+| `src/shared/utils/typography.ts` | 注释路径 |
+| `tools/guards/tests/test_gates.py` | 护栏计数 29 → 30 |
+| `.trellis/spec/frontend/design-tokens.md` | 分层小节 + 变量契约小节 + tokens 术语纠正 |
+
+### Testing
+
+- [OK] `themeContract.test.ts` 7/7
+- [OK] `test_check_styles_layout.py` 13/13
+- [OK] `themeTokens.test.ts` 10/10
+- [OK] **变异验证 ×5**：删契约里一个 cm 变量 → 2 红；可覆盖清单退回 31 项 →
+      「custom theme can override every CodeMirror syntax color」红；
+      删目录判据 / 删 kebab 判据 / 删根级判据 → 各自变绿（证明判据在起作用）
+- [OK] **真实仓库验证**：种 3 个违规全部命中，清理后全绿
+- [OK] **`vite build` 通过**，5 个字体正确打包，CSS 路径已重写
+- [OK] `pnpm check:quick` 全绿：**32 条护栏全过**
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 拆文件（`tokens/themes/*.css`）本轮未做 —— 收益低于契约抽取，且需同步改测试
+- 待用户指示是否提交
