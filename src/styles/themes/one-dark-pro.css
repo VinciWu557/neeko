@@ -4,6 +4,69 @@
  * 改值即可，不会漏配 color-scheme。
  *
  * 变量清单必须与 `src/shared/utils/themeVariables.ts` 的契约一致（单测强制）。
+ *
+ * ## 取色原则（两条可检验的不变量）
+ *
+ * 比「每个色都出自原主题的某个键」更诚实、也更可维护：中间档**必然是插值**，
+ * 原主题不可能为每个应用层高都提供一个键。真正要守的是下面两条。
+ *
+ * ### ① 锚点色与原主题 verbatim 对齐（有明确对应键的，不自行改动）
+ *
+ *   --bg-primary          editor.background                #282c34
+ *   --text-primary        editor.foreground                #abb2bf
+ *   --bg-selected         scrollbarSlider.background       #4d5666
+ *   --border-color        editor.selectionBackground       #3e4451
+ *   --text-secondary      titleBar / statusBar.foreground  #9da5b4
+ *   --terminal-selection  terminal.selectionBackground      #528bff
+ *   --cm-comment / --mono-fg-dim  注释灰                  #5c6370
+ *
+ * ### ② 阶梯中间档在原主题的**色系**内插值（不是逐个对应某个键）
+ *
+ *   表面阶梯（由上到下逐档变亮）：
+ *     #2c313a  tab.activeBackground（原主题锚点，本应用不当表面用）
+ *     #333842  --bg-secondary   浮岛
+ *     #383e4a  --bg-tertiary    区块（= indentGuide 原值）
+ *     #434852  --bg-hover       悬停（两档之间的插值）
+ *     #4d5666  --bg-selected    选中（= scrollbarSlider 原值）
+ *
+ *   要求：相邻档对比 1.10~1.30（单调、不跳档）、色相留在 One Dark 的蓝灰域
+ *   （oklch H≈262°、C≤0.03）。实测对比度见文末。
+ *
+ * 早前这里写的是「每个表面色都**对得上原主题的一个真实颜色键**」—— 那是错的，
+ * 同一段清单里就有两个反例（`#333842` 既不是 tab 也不是 list.focus，
+ * `#434852` 是两档之间取的值）。**先立一个做不到的强断言再自己打脸，比不写更糟**。
+ *
+ * `--cm-comment` / `--mono-fg-dim` 保持原主题的注释灰 `#5c6370`，**不跟随
+ * `--text-muted`** —— 语法高亮比 UI 元数据更靠色（注释就该弱）。
+ *
+ * ## 校准记录（2026-10-28）
+ *
+ * 语法高亮（`--cm-*`）与 accent 色板本来就是准确的 One Dark Pro 值，**一个没动**。
+ * 问题全在 chrome 层：颜色取自原主题，但用错了位置。
+ *
+ * | 变量 | 旧值 | 新值 | 旧值为什么错 |
+ * | --- | --- | --- | --- |
+ * | `--bg-primary` | `#21252b` | `#282c34` | 那是 `sideBar.background`，拿侧边栏色当编辑器底 → 全应用比 VS Code 暗一档；`AppearancePanel` 的 swatch 写的就是 `#282c34`，预览与渲染对不上 |
+ * | `--bg-gradient-start` | `#23272e` | `#282c34` | 自造渐变起点（不在 One Dark 色系内）。此处**“其余主题都是平色”是错的** —— 实测只有 `dark` / `classic-dark` 的 start==end，`light`（`#e5e8ef→#ebecf0`）与 `claude`（`#f1ece4→#f0ebe2`）保留了轻微渐变。本主题改平色的理由是：`AppShell.tsx` 用 `linear-gradient` 铺满整窗，不在色板上的起点会让大面积底色变成**插值色**，而非 One Dark 的平色。 |
+ * | `--bg-secondary` | `#2c313a` | `#333842` | 海面提亮到 `#282c34` 后，`#2c313a` 浮岛与海面只剩 1.07 对比 → 岛/海层级消失（渲染对比图里卡片边界只剩圆角）。抬一档后 1.19，与原来的 1.15 等价 |
+ * | `--bg-tertiary` | `#333842` | `#383e4a` | 跟着浮岛抬一档（岛内区块 1.10） |
+ * | `--bg-hover` | `#3e4451` | `#434852` | `#3e4451` 是**文本选区**色，当 hover 用；抬海面后需同步上移，现在与浮岛 1.28（原为 1.34） |
+ * | `--bg-selected` | `#464d5b` | `#4d5666` | 比选区色还高两档且不属原主题；取 scrollbarSlider 色，与浮岛 1.59，与 hover 1.24 |
+ * | `--text-secondary` | `#828997` | `#9da5b4` | 与 `--text-primary`（`#abb2bf`）差得太近（1.39:1），主/次文层被压扁，次级文字发脏 |
+ * | `--text-muted` | `#5c6370` | `#7f848e` | 浮岛提亮后 `#5c6370` 在卡片上只剩 1.95、区块上 1.78 —— 元数据不可读 |
+ * | `--switch-track` | `#3f4349` | `#4d5666` | 跟着海面提亮后与海面对比只剩 1.41，跌破 `themeTokens.test.ts` 的 1.5 下限 |
+ * | `--terminal-selection` | `rgba(97,175,239,.3)` | `rgba(82,139,255,.3)` | 用语法函数蓝代替了光标/选区蓝 |
+ *
+ * 校准后实测对比度（vs 海面 / 浮岛 / 区块）：
+ * `--bg-secondary` 1.19 / — / 1.10，`--bg-tertiary` 1.30 / 1.10 / —，
+ * `--bg-hover` 1.52 / 1.28 / 1.17，`--bg-selected` 1.89 / 1.59 / 1.45，
+ * `--text-primary` 6.57 / 5.52，`--text-secondary` 4.75，`--text-muted` 3.13，
+ * `--switch-track` vs 海面 1.89。
+ *
+ * ⚠ 这些数字不是推导出来的，是**渲染对比图定稿后再复算**的：
+ * 先用三种候选阶梯（浮岛 `#2c313a` / `#333842` / 壳=`#21252b`+岛=`#282c34`）
+ * 做静态对比图截图看过，才选的 `#333842` 阶梯 —— 浮岛 `#2c313a` 那版
+ * 卡片边界几乎消失（就是当时“提亮一下海面”最直觉的做法，也是错的）。
  */
 
 :root[data-theme="one-dark-pro"] {
@@ -12,35 +75,44 @@
 
 :root[data-theme="one-dark-pro"] {
   /* Titlebar gradient */
-  --titlebar-gradient-start: #21252b;
+  --titlebar-gradient-start: #282c34;
 
   /* Background layers */
-  --bg-primary:   #21252b;
-  --bg-gradient-start: #23272e;
-  --bg-gradient-end:   #21252b;
-  --bg-secondary: #2c313a;
-  --bg-tertiary:  #333842;
-  --bg-hover:     #3e4451;
-  --bg-selected:  #464d5b;
+  --bg-primary:   #282c34;
+  --bg-gradient-start: #282c34;
+  --bg-gradient-end:   #282c34;
+  /* 终端底色**刻意复用**本变量（base/variables.css 的 `--terminal-bg: var(--bg-secondary)`，
+   * 运行时由 buildTerminalTheme 直读）。因此：把浮岛提一档 = 终端跟着提一档
+   * （本次 #2c313a → #333842）。这不是遗漏，是决定 —— 理由与边界见
+   * `base/variables.css` 的 `--terminal-bg` 注释。**不要为它单独立主题变量**：
+   * 那时每个主题都要多维护一个“看着像同一套”的值。 */
+  --bg-secondary: #333842;
+  --bg-tertiary:  #383e4a;
+  --bg-hover:     #434852;
+  --bg-selected:  #4d5666;
 
   /* Text */
   --text-primary:   #abb2bf;
   /* 弱分割线：one-dark-pro —— 等效原值 */
   --border-subtle: rgb(255 255 255 / 0.04);
-  --text-secondary: #828997;
-  --text-muted:     #5c6370;
+  --text-secondary: #9da5b4;
+  --text-muted:     #7f848e;
 
   /* Mono 前景角色 */
   --mono-fg: #abb2bf;
   --mono-fg-dim: #5c6370;
 
-  /* Border */
-  --border-color: #363b46;  /* Switch 轨道底色（判据见上方主题块的长注释） */
+  /* Border（= editor.selectionBackground 一档，在卡片/区块上都看得见） */
+  --border-color: #3e4451;
 
-  --switch-track: #3f4349;
+  /* Switch 轨道：必须与 --bg-primary 同步校准。
+   * 原来 #3f4349 对旧海面 #21252b 是 1.55；海面提亮到 #282c34 后只剩 1.41，
+   * 会踩 `themeTokens.test.ts` 的「≥1.5 轨道必须成形」断言 → 提到 #4d5666（1.89）。
+   * 上限 2.0 的理由见 classic-dark.css 的长注释（不抢眼）。 */
+  --switch-track: #4d5666;
 
-  /* Terminal selection */
-  --terminal-selection: rgba(97, 175, 239, 0.3);
+  /* Terminal selection —— 用光标蓝 #528bff，不是语法函数蓝 #61afef */
+  --terminal-selection: rgba(82, 139, 255, 0.3);
 
   /* Accent colors */
   --accent-blue:       #61afef;

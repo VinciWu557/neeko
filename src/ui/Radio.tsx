@@ -50,7 +50,7 @@ interface RadioProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, '
  * | classic-dark | 4.17 |
  * | dark | 5.69 |
  * | light | 3.89 |
- * | one-dark-pro | 4.98 |
+ * | one-dark-pro | 4.54 |
  * | **claude** | **2.95** ← 略低于 WCAG 非文本对比度 3.0 |
  *
  * 这是**从原 CSS 继承的既有状态**（原 `.custom-radio .radio-mark::after`
