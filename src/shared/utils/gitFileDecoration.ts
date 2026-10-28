@@ -45,7 +45,7 @@ export interface GitStatusSummary {
 export type BadgeLetter = 'M' | 'A' | 'D' | 'R' | 'U' | '!';
 
 export interface Decoration {
-  /** 文件名文字颜色 class（text-git-status-* / text-text-* / text-accent 激活态） */
+  /** 文件名文字颜色 class（text-git-status-* / text-text-*，"高亮行"为 text-text-primary） */
   color?: string;
   /** 行尾徽标字母 */
   badge?: BadgeLetter;
@@ -55,7 +55,12 @@ export interface Decoration {
   dot?: string;
   /** tooltip 说明（预留，当前未使用） */
   tooltip?: string;
-  /** 是否灰化（被忽略且无 git 状态） */
+  /**
+   * 是否灰化。**由 `color` 派生，不得独立赋值** —— 两者曾各自赋值，出现
+   * `{ color: text-text-primary, dimmed: true }` 这种自相矛盾的组合（被忽略的
+   * 高亮行）。该字段当下无消费方；将来谁要渲染它（如 `opacity-60`），必须先看
+   * 颜色是不是已经就是 muted 档。
+   */
   dimmed?: boolean;
 }
 
@@ -183,6 +188,22 @@ export function addSummary(a: GitStatusSummary, b: GitStatusSummary): GitStatusS
 }
 
 // ─── 内部工具 ─────────────────────────────────────────────────────────────────
+
+/**
+ * 高亮行（选中/激活）统一的文件名色。单一来源：派生函数与本常量共用，
+ * 不允许消费方各自写 `text-text-primary` 字面量后慢慢漂移。
+ *
+ * ## 为什么放在这里（而不是 `ui/`）
+ *
+ * 它属于本模块的**优先级链**（`highlighted > status > ignored > 默认`），
+ * 离开链就没有意义。目前也无第二个非 git 列表需用它 —— 为单个消费方建
+ * 抽象层违反 YAGNI。
+ *
+ * **迁移判据**：出现第二个非 git 列表要表达“高亮行文字色”时，把它（连同这条链的
+ * 高亮规则）搬到 `src/ui/` 或 `rowPresentation` 类模块 —— 那时它才是通用约定，
+ * 也不应该让非 git 调用方反向依赖 git 装饰模块。
+ */
+export const HIGHLIGHTED_NAME_CLASS = 'text-text-primary';
 
 /** 路径归一化：反斜杠 → 正斜杠（Windows 下 git 可能输出反斜杠） */
 function normalizePath(path: string): string {
@@ -419,22 +440,37 @@ function stripDeletedPropagation(s: GitStatusSummary): GitStatusSummary {
 
 /** summary → 行尾徽标（badge 字母 + chip 类）；无状态返回 null */
 export function summaryToBadge(s: GitStatusSummary): { badge: BadgeLetter; chip: string } | null {
-  const d = dominantStatus(s);
-  if (d === null) return null;
-  const p = STATUS_PRESENTATION[d];
+  return statusToBadgePresentation(dominantStatus(s));
+}
+
+/**
+ * 单一状态 → 行尾徽标（badge 字母 + chip 类）；无状态返回 null。
+ *
+ * 文件树（FileTreeRow）只有节点上的 `git_status`（无 summary），不能走
+ * `summaryToBadge`；两者共用本函数，避免各持一份字母/色板对照表。
+ */
+export function statusToBadgePresentation(
+  status: FileTreeGitStatus | null | undefined,
+): { badge: BadgeLetter; chip: string } | null {
+  if (!status) return null;
+  const p = STATUS_PRESENTATION[status];
   return { badge: p.badge, chip: p.chipClass };
 }
 
 /**
  * 文件名着色 class。优先级：
- * `active(accent) > conflict > deleted > modified > untracked > added > ignored(dimmed) > 默认`
+ * `highlighted(text-primary) > conflict > deleted > modified > untracked > added > ignored(dimmed) > 默认`
+ *
+ * `highlighted` = 行处于选中/激活态（`is_active || is_selected`，即有背景高亮）。
+ * 高亮行**一徥用 `text-text-primary`**，不保留状态色/强调色 —— 理由见
+ * `statusToNameColorClass` 的注释（高亮底吃对比度）。状态由行尾徽标表达。
  */
 export function summaryToLabelClass(
   s: GitStatusSummary,
   ignored: boolean,
-  active: boolean,
+  highlighted: boolean,
 ): string {
-  if (active) return 'text-accent';
+  if (highlighted) return HIGHLIGHTED_NAME_CLASS;
   const d = dominantStatus(s);
   if (d !== null) return STATUS_PRESENTATION[d].textClass;
   if (ignored) return 'text-text-muted';
@@ -504,15 +540,30 @@ export function resolveNodeStatus(
 
 /**
  * 文件树叶子级名字色（呈现派生）。优先级链单处收敛（词表封闭约定不变）：
- * `active(accent) > conflict > deleted > modified > renamed > untracked > added >
- * ignored(dimmed) > 默认`
+ * `highlighted(text-primary) > conflict > deleted > modified > renamed > untracked >
+ * added > ignored(dimmed) > 默认`
+ *
+ * ## 为什么高亮行不保留状态色/强调色（2026-10-28 修正）
+ *
+ * 名字色画在 `--bg-selected` 上，而那是**不透明的浅一档表面**：
+ * 中等亮度的彩色文字一选中就被吃掉一截（实测 light added 2.26、claude deleted 2.45、
+ * one-dark-pro untracked 2.05 —— 都低于 WCAG 1.4.11 的 3.0）。
+ *
+ * 曾经这里返回 `text-accent`，而 `text-accent` 是 shadcn 的** accent 底色 token**
+ * （`--accent = rgba(var(--accent-blue-rgb), 0.12)`），于是选中行的文件名被画成
+ * 12% 透明的字 —— 对比度 1.10~1.21，等于水印。
+ *
+ * 所以高亮行统一回中性前景色（对比度 3.47~11.24），状态交给行尾徽标。
+ * 回归由两条断言锁住：`gitFileDecoration.test.ts`「高亮行颜色与状态无关」+
+ * `themeTokens.test.ts`「text-primary vs bg-selected ≥ 3.0」。
+ * `text-accent` 已被 `check_ui_style_tokens` 禁止当文字色使用。
  */
 export function statusToNameColorClass(
   status: FileTreeGitStatus | null | undefined,
   ignored: boolean,
-  isActive: boolean,
+  highlighted: boolean,
 ): string {
-  if (isActive) return 'text-accent';
+  if (highlighted) return HIGHLIGHTED_NAME_CLASS;
   if (status) return STATUS_PRESENTATION[status].textClass;
   if (ignored) return 'text-text-muted';
   return 'text-text-primary';
@@ -523,6 +574,10 @@ export function statusToNameColorClass(
  * 语义判定委托 resolveNodeStatus，本函数只做 Decoration 形状投影。
  * - 文件取自身摘要、目录取文件夹摘要；
  * - ignored 与变更共存时 git 状态优先（不灰化）。
+ *
+ * `highlighted` = 调用方这一行是否处于选中/激活态（有背景高亮）。
+ * 命名与 `statusToNameColorClass` / `summaryToLabelClass` 保持一致 ——
+ * 同一概念不得出现第二个名字（曾叫 `isActive`，但调用方传的是 `isSelected`）。
  */
 export function resolveDecoration(
   path: string,
@@ -530,7 +585,7 @@ export function resolveDecoration(
   fileSummaries: ReadonlyMap<string, GitStatusSummary>,
   folderSummaries: ReadonlyMap<string, GitStatusSummary>,
   ignoredSet: ReadonlySet<string> | undefined,
-  isActive: boolean,
+  highlighted: boolean,
   /** 折叠 untracked 目录条目（collectCollapsedDirs 产物）；后代节点继承目录态色 */
   collapsedDirs?: ReadonlyArray<string>,
 ): Decoration | null {
@@ -544,7 +599,7 @@ export function resolveDecoration(
   if (status) {
     const p = STATUS_PRESENTATION[status];
     return {
-      color: statusToNameColorClass(status, ignored, isActive),
+      color: statusToNameColorClass(status, ignored, highlighted),
       badge: p.badge,
       chip: p.chipClass,
       dot: p.dotClass,
@@ -553,11 +608,12 @@ export function resolveDecoration(
   }
 
   if (ignored) {
-    // 被忽略的激活文件仍保持 accent 高亮（对齐激活优先的既有行为）
-    return { color: isActive ? 'text-accent' : 'text-text-muted', dimmed: true };
+    // 被忽略的高亮行同样回中性色（高亮行不画灰字，理由同 statusToNameColorClass）
+    const color = highlighted ? HIGHLIGHTED_NAME_CLASS : 'text-text-muted';
+    return { color, dimmed: color === 'text-text-muted' };
   }
-  if (isActive) {
-    return { color: 'text-accent', dimmed: false };
+  if (highlighted) {
+    return { color: HIGHLIGHTED_NAME_CLASS, dimmed: false };
   }
   return null;
 }

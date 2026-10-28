@@ -111,7 +111,7 @@ function FileTreeList({
         <button
           type="button"
           onClick={onRefresh}
-          className="text-[var(--font-size)] text-accent hover:underline"
+          className="text-[var(--font-size)] text-accent-blue hover:underline"
         >
           Retry
         </button>

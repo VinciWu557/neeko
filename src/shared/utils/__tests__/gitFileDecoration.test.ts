@@ -7,10 +7,12 @@ import {
   buildFileSummaryMap,
   buildFolderSummaryMap,
   collectCollapsedDirs,
+  HIGHLIGHTED_NAME_CLASS,
   resolveDecoration,
   resolveNodeStatus,
   statusLetterToChipClass,
   statusLetterToTextClass,
+  statusToBadgePresentation,
   statusToNameColorClass,
   summaryToBadge,
   summaryToDotClass,
@@ -327,9 +329,34 @@ describe('resolveDecoration — 折叠 untracked 目录的后代继承', () => {
   });
 });
 
+describe('statusToBadgePresentation — 单状态 → 行尾徽标', () => {
+  it('无状态返回 null（文件树不渲染徽标）', () => {
+    expect(statusToBadgePresentation(undefined)).toBeNull();
+    expect(statusToBadgePresentation(null)).toBeNull();
+  });
+
+  it('每个状态给对应字母 + chip（与 summaryToBadge 同一色板）', () => {
+    expect(statusToBadgePresentation('conflict')).toEqual({
+      badge: '!',
+      chip: 'text-git-status-conflict bg-git-status-conflict/15',
+    });
+    expect(statusToBadgePresentation('deleted')).toMatchObject({ badge: 'D' });
+    expect(statusToBadgePresentation('modified')).toMatchObject({ badge: 'M' });
+    expect(statusToBadgePresentation('renamed')).toMatchObject({ badge: 'R' });
+    expect(statusToBadgePresentation('untracked')).toMatchObject({ badge: 'U' });
+    expect(statusToBadgePresentation('added')).toMatchObject({ badge: 'A' });
+  });
+
+  it('与 summaryToBadge 同源：单状态摘要的徽标一致（禁止两份对照表）', () => {
+    for (const key of ['conflict', 'deleted', 'modified', 'untracked', 'added'] as const) {
+      expect(summaryToBadge(summary({ [key]: 1 }))).toEqual(statusToBadgePresentation(key));
+    }
+  });
+});
+
 describe('summaryToLabelClass', () => {
-  it('active 最高优先（accent）', () => {
-    expect(summaryToLabelClass(summary({ conflict: 1 }), false, true)).toBe('text-accent');
+  it('高亮行最高优先：回中性前景色，不是 accent（accent 是 12% 透明底色 token）', () => {
+    expect(summaryToLabelClass(summary({ conflict: 1 }), false, true)).toBe('text-text-primary');
   });
 
   it('优先级 conflict > deleted > modified > untracked > added', () => {
@@ -489,12 +516,12 @@ describe('resolveDecoration', () => {
     expect(deco).toMatchObject({ color: 'text-git-status-added', badge: 'A', dimmed: false });
   });
 
-  it('active 文件返回 accent 色', () => {
+  it('active 文件的名字回中性色（高亮底不吃彩色文字），状态仍在 badge/chip', () => {
     const { fileSummaries, folderSummaries } = buildMaps([fc('src/a.ts', 'Modified')]);
     expect(
       resolveDecoration('src/a.ts', false, fileSummaries, folderSummaries, undefined, true),
     ).toEqual({
-      color: 'text-accent',
+      color: 'text-text-primary',
       badge: 'M',
       chip: 'text-git-status-modified bg-git-status-modified/15',
       dot: 'bg-git-status-modified',
@@ -502,12 +529,16 @@ describe('resolveDecoration', () => {
     });
   });
 
-  it('被忽略的激活文件保持 accent 高亮（激活优先）', () => {
+  it('被忽略的高亮文件同样回中性色，且 dimmed 跟随颜色（不降为灰）', () => {
     const { fileSummaries, folderSummaries } = buildMaps([]);
     const ignored = new Set(['.env']);
+    // dimmed 由 color 派生：颜色是中性前景色，就不是「灰化」
     expect(resolveDecoration('.env', false, fileSummaries, folderSummaries, ignored, true)).toEqual(
-      { color: 'text-accent', dimmed: true },
+      { color: 'text-text-primary', dimmed: false },
     );
+    expect(
+      resolveDecoration('.env', false, fileSummaries, folderSummaries, ignored, false),
+    ).toEqual({ color: 'text-text-muted', dimmed: true });
   });
 });
 
@@ -611,9 +642,24 @@ describe('resolveNodeStatus — 语义状态判定（S3 状态入模的组装期
 });
 
 describe('statusToNameColorClass — 叶子级名字色（优先级链单处收敛）', () => {
-  it('active 最高优先（accent），即使有状态或 ignored', () => {
-    expect(statusToNameColorClass('conflict', true, true)).toBe('text-accent');
-    expect(statusToNameColorClass(undefined, true, true)).toBe('text-accent');
+  it('高亮行恒回中性色：与状态、ignored 均无关（回归 2026-10-28 水印事故）', () => {
+    // 曾经的实现返回 'text-accent'，而那是 shadcn 的 12% 透明 accent **底色**
+    // token —— 选中行的文件名被画成 12% 透明的字，对比度 1.10~1.21。
+    // 此断言锁死「高亮行只允许中性前景色」，任何状态都不得改变它。
+    for (const status of [
+      'conflict',
+      'deleted',
+      'modified',
+      'renamed',
+      'untracked',
+      'added',
+      undefined,
+      null,
+    ] as const) {
+      expect(statusToNameColorClass(status, false, true)).toBe('text-text-primary');
+      expect(statusToNameColorClass(status, true, true)).toBe('text-text-primary');
+    }
+    expect(HIGHLIGHTED_NAME_CLASS).toBe('text-text-primary');
   });
 
   it('状态优先于 ignored（共存不灰化）', () => {

@@ -34,7 +34,7 @@ vi.mock('@/features/file/components/FileTreeRow', async () => {
     const color = statusToNameColorClass(
       node.git_status,
       node.is_ignored === true,
-      node.is_active === true,
+      node.is_active === true || node.is_selected === true,
     );
     if (row.kind === 'creating') {
       return (
@@ -63,6 +63,11 @@ vi.mock('@/features/file/components/FileTreeRow', async () => {
         role="button"
         tabIndex={0}
         className={color}
+        // 与真实 FileTreeRow 的契约一致：激活/选中态以 data-* 暴露。
+        // 断言这个名字色会**恒绿** —— 无状态的普通文件也是 text-text-primary，
+        // 区分不了「is_active 真的盖上了」与「根本没盖上」（假测试）。
+        data-active={node.is_active || undefined}
+        data-selected={node.is_selected || undefined}
         onClick={handleClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') handleClick(e);
@@ -252,7 +257,7 @@ describe('未受影响行不重渲染（S4 扁平行 render count 兜底）', ()
     expect(harness.counts.get('src')).toBe(1);
     expect(harness.counts.get('b.ts') ?? 0).toBe(0);
     // 树行（fake 的 role=button）而非头部激活文件名 span
-    expect(screen.getByRole('button', { name: 'a.ts' })).toHaveClass('text-accent');
+    expect(screen.getByRole('button', { name: 'a.ts' })).toHaveAttribute('data-active', 'true');
   });
 
   it('窗口化：大目录仅挂载可见窗口行（O(可见行数)，S4 核心）', () => {

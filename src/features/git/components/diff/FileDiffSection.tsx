@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { cn } from '@/lib/utils';
+import { GitStatusBadge } from '@/shared/components/GitStatusBadge';
 import { ChevronRight } from '@/shared/components/icons';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
 import type { ProjectId } from '@/shared/utils/workspaceRef';
@@ -82,14 +83,7 @@ export const DiffFileCard: React.FC<DiffFileCardProps> = React.memo(
           {dir}
         </span>
         {letter ? (
-          <span
-            className={cn(
-              'shrink-0 text-[calc(var(--font-size)-3px)] font-semibold px-1.5 py-px rounded-full leading-none',
-              statusBadgeClass(letter),
-            )}
-          >
-            {letter}
-          </span>
+          <GitStatusBadge badge={letter} chip={statusBadgeClass(letter)} />
         ) : (
           <span className="shrink-0 w-0 overflow-hidden" />
         )}

@@ -5,7 +5,8 @@ import type { FileChange } from '@/shared/types';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
 import { buildFileSummaryMap, resolveDecoration } from '@/shared/utils/gitFileDecoration';
 import type { Decoration, GitStatusSummary } from '@/shared/utils/gitFileDecoration';
-import { Badge } from '@/ui/Badge';
+
+import { GitStatusBadge } from './GitStatusBadge';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -230,15 +231,16 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = React.memo(
       );
     }
 
+    const isSelected = selectedPath === node.path;
     const decoration: Decoration | null = resolveDecoration(
       node.path,
       false,
       summaries,
       EMPTY_FOLDER_SUMMARIES,
       undefined,
-      false,
+      // 高亮行（本树用 selectedPath 表达选中）名字回中性色，状态交给 dot/badge
+      isSelected,
     );
-    const isSelected = selectedPath === node.path;
 
     return (
       <div
@@ -276,9 +278,7 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = React.memo(
           />
         )}
         {showBadge && decoration?.badge && (
-          <Badge variant="plain" className={decoration.chip}>
-            {decoration.badge}
-          </Badge>
+          <GitStatusBadge badge={decoration.badge} chip={decoration.chip} />
         )}
       </div>
     );

@@ -179,10 +179,13 @@ describe('FilesPanel 生产接线：激活文件来自 tab 空间（Block-1 护�
     );
 
     const row = findRow('a.ts');
-    // aria-selected 反映激活态（可访问性契约）
+    // aria-selected 反映高亮态（可访问性契约）
     expect(row).toHaveAttribute('aria-selected', 'true');
-    // is_active 盖章命中 → 文件名标签获得 accent 色（旧实现此处恒为普通色）
-    expect(rowLabel(row)).toHaveClass('text-accent');
+    // is_active 盖章命中 → 行携带 data-active（**稳定契约**）
+    expect(row).toHaveAttribute('data-active', 'true');
+    // 名字色与激活态无关：高亮行一徥回中性前景色（详 gitFileDecoration 的
+    // statusToNameColorClass 注释 —— 曾经此处是 text-accent，而那是 12% 透明底色）
+    expect(rowLabel(row)).toHaveClass('text-text-primary');
   });
 
   it('打开 file tab 后：头部显示激活文件路径（activeFileName 不再恒为空）', async () => {
@@ -213,13 +216,13 @@ describe('FilesPanel 生产接线：激活文件来自 tab 空间（Block-1 护�
     expect(useFileStore.getState().expandedDirs.has('src/deep')).toBe(true);
   });
 
-  it('切走 tab（无 file tab）后：激活色消失（aria-selected 还含选中态，不作判据）', async () => {
+  it('切走 tab（无 file tab）后：data-active 退场（aria-selected 还含选中态，不作判据）', async () => {
     renderWrapper();
     expect(await screen.findByText('src')).toBeInTheDocument();
 
     const tab = makeFileTab();
     useEditorStore.getState().addTab(tab);
-    await waitFor(() => expect(rowLabel(findRow('a.ts'))).toHaveClass('text-accent'));
+    await waitFor(() => expect(findRow('a.ts')).toHaveAttribute('data-active', 'true'));
 
     // 关闭该 tab → 无 file tab → locateTargetPath 为 null
     useEditorStore.getState().closeTab(TAB_KEY, tab.id);
@@ -228,9 +231,10 @@ describe('FilesPanel 生产接线：激活文件来自 tab 空间（Block-1 护�
       const rows = screen.queryAllByRole('treeitem');
       const row = rows.find((r) => r.textContent?.replace(/\s+/g, ' ').trim() === 'a.ts');
       if (!row) return; // 行可能因祖先折叠而不渲染
-      // aria-selected = isActive || isSelected：选择态由独立路径维护，可能仍为 true，
-      // 因此只断言「激活色」退场（is_active 关掉）——那是本次接线的作用面。
-      expect(rowLabel(row)).not.toHaveClass('text-accent');
+      // aria-selected = isActive || isSelected，选择态可能仍为 true；
+      // 名字色在高亮行恒为中性色（不随激活变）。所以只看激活态本身的契约：
+      // data-active 退场 = is_active 真的关掉了 —— 那才是本次接线的作用面。
+      expect(row).not.toHaveAttribute('data-active');
     });
   });
 });

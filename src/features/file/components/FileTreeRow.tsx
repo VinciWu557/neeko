@@ -1,9 +1,13 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 
+import { GitStatusBadge } from '@/shared/components/GitStatusBadge';
 import { ChevronRight } from '@/shared/components/icons';
 import type { FileTreeViewNode } from '@/shared/types';
 import { fileIconSrc } from '@/shared/utils/fileIcons';
-import { statusToNameColorClass } from '@/shared/utils/gitFileDecoration';
+import {
+  statusToBadgePresentation,
+  statusToNameColorClass,
+} from '@/shared/utils/gitFileDecoration';
 
 import { setDragFile } from '../hooks/useFileDrop';
 import { disposeDragGhost, setDragGhost } from '../utils/dragGhost';
@@ -24,6 +28,18 @@ function nodeIconSrc(node: FileTreeViewNode): string {
  * flattenFileTreeView 摊平后交给 VirtualList 窗口化渲染，本组件只渲染一行
  * （node / renaming / creating 三种行）。git 状态与视图状态由组装期盖章在
  * node 上（S3），名字色经 statusToNameColorClass 派生。
+ *
+ * ## 状态表达：名字色（未高亮）+ 行尾徽标（恒显）
+ *
+ * 名字色承载 git 状态（JetBrains 习惯），但**高亮行（选中/激活）不保留状态色** ——
+ * `--bg-selected` 是不透明浅表面，会把中等亮度彩色文字吃掉一截（判据与数据见
+ * `statusToNameColorClass` 注释）。高亮时状态改由行尾徽标承担（VS Code 做法）。
+ * 徽标恒显而非仅高亮时显 —— 后者会让“选中才能看到状态”成为一个隐性交互。
+ *
+ * **目录行同样带徽标**：目录也携带聚合状态（`buildFolderSummaryMap`），
+ * 若只在文件行渲染，选中目录时状态就彻底没有出口了。
+ *
+ * 徽标渲染统一走 `GitStatusBadge`（与 PR 变更树 / diff 文件头共用同一个口径）。
  *
  * 渲染隔离由 areFileTreeRowPropsEqual（子树指纹）承担，见 fileTreeRowProps.ts。
  */
@@ -46,6 +62,8 @@ function FileTreeRow({
   const isExpanded = node.is_expanded === true;
   const isActive = node.is_active === true;
   const isSelected = node.is_selected === true;
+  /** 行是否有背景高亮（选中或激活）——名字色与底色共用这一个判据 */
+  const isHighlighted = isActive || isSelected;
   const isLoadingChildren = node.dir_state === 'loading';
   const isLoadError = node.dir_state === 'error';
   const indent = 4 + depth * 12;
@@ -120,21 +138,24 @@ function FileTreeRow({
     );
   }
 
-  // 装饰色：优先级链（激活 > 状态 > 忽略 > 默认）单处收敛在 gitFileDecoration
+  // 装饰色：优先级链（高亮 > 状态 > 忽略 > 默认）单处收敛在 gitFileDecoration
   const nameColorClass = statusToNameColorClass(
     node.git_status,
     node.is_ignored === true,
-    isActive,
+    isHighlighted,
   );
+  const statusBadge = statusToBadgePresentation(node.git_status);
 
   return (
     <div
       ref={nodeRef}
       role="treeitem"
       tabIndex={-1}
-      aria-selected={isActive || isSelected}
+      aria-selected={isHighlighted}
+      data-active={isActive || undefined}
+      data-selected={isSelected || undefined}
       className={`flex items-center gap-1 py-0.5 pr-2 text-[var(--font-size)] cursor-pointer rounded select-none min-w-0 ${
-        isActive || isSelected ? 'bg-bg-selected' : 'hover:bg-bg-hover'
+        isHighlighted ? 'bg-bg-selected' : 'hover:bg-bg-hover'
       }`}
       style={{ paddingLeft: indent }}
       draggable={!!projectId}
@@ -169,6 +190,7 @@ function FileTreeRow({
             height={16}
           />
           <span className={`flex-1 font-medium truncate ${nameColorClass}`}>{node.name}</span>
+          {statusBadge && <GitStatusBadge badge={statusBadge.badge} chip={statusBadge.chip} />}
           {node.is_truncated && (
             <span
               className="shrink-0 text-text-muted ml-1"
@@ -207,6 +229,7 @@ function FileTreeRow({
           <span className={`flex-1 truncate ${isActive ? 'font-medium ' : ''}${nameColorClass}`}>
             {node.name}
           </span>
+          {statusBadge && <GitStatusBadge badge={statusBadge.badge} chip={statusBadge.chip} />}
         </>
       )}
     </div>
