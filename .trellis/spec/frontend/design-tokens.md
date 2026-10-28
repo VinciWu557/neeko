@@ -183,9 +183,25 @@ src/shared/utils/themeVariables.ts        ← 契约（59 个变量名，按语�
 | `--diff-added` / `--diff-added-text` | `bg-diff-added` / `text-diff-added-text` | diff 新增（底 / 字） |
 | `--diff-removed` / `--diff-removed-text` | `bg-diff-removed` / `text-diff-removed-text` | diff 删除（底 / 字） |
 
+### 终端底色：**不复用专属 token，刻意跟随表面层**
+
+`--terminal-bg: var(--bg-secondary)`（`base/variables.css`，运行时由 `buildTerminalTheme` 直读）。
+
+本应用里终端是**浮岛里的面板**，不是独立编辑器组：
+
+| 理由 | 说明 |
+| --- | --- |
+| 视觉归属 | 它必须与所在面板是同一个「面」；一块颜色不同的矩形会被看成渲染错误 |
+| 单一杠杆 | 表面阶梯已全局校过，终端跟随即自动在同一条阶梯上；独立 token = 每个主题多一个必须手工对齐的值 |
+| 无独立语义 | VS Code 的 `terminal.background` 独立是因为支持独立编辑器组 / 图片背景，本仓无此场景 |
+
+**代价（需知晓）**：改一次 `--bg-secondary`，终端会静默跟着变。
+
+**什么时候才该拆**：出现「终端必须与所在面板刻意不同」的真实需求（浮窗式终端、图片背景）。判据是**存在独立渲染需求**，而不是「希望它再暗一点」—— 后者调的是表面阶梯，不是终端。
+
 ---
 
-## 八个必须知道的坑
+## 九个必须知道的坑
 
 ### 坑 1：`--status-error` 是别名，不是新颜色
 
@@ -542,6 +558,77 @@ Switch 是唯一**只靠填充色**表达轮廓的控件。修法是双管：
 > 改了 `--bg-primary` 就必须重算 `--switch-track`，否则测试红。
 > 这比「记住有个坑」可靠。
 
+### 坑 9：**`text-accent` 不是强调文字色，它是 12% 透明的底色 token**
+
+2026-10-28 用户报「文件选择时的显示需要优化…选中后字体都看不清楚了」（附截图：
+one-dark-pro 与 claude 两个主题下，选中行的文件名像水印）。
+
+**根因不在主题配色，在 token 撞名**：
+
+```
+src/styles/base/shadcn.css
+  --accent: rgba(var(--accent-blue-rgb), 0.12);   ← shadcn 的“accent 悬停底色”
+  @theme inline { --color-accent: var(--accent); } ← Tailwind 的 text-accent 就取这个
+
+dist/assets/*.css  实测产物
+  .text-accent{color:var(--accent)}                ← 12% 透明的字
+```
+
+于是 `statusToNameColorClass` 返回的「激活态色」把文件名画成了
+`rgba(蓝, 0.12)`：5 个主题下对比度 **1.10 ~ 1.21**（就是“看不见”）。
+
+实测数字（文件名色 vs `--bg-selected`）：
+
+| 主题 | `text-accent`（12%） | 换成 `--accent-blue` | `--text-primary` |
+| --- | --- | --- | --- |
+| dark | **1.21** | 4.28 | 10.90 |
+| classic-dark | **1.14** | 3.21 | 9.67 |
+| one-dark-pro | **1.16** | 3.13 | 3.47 |
+| light | **1.13** | 2.86 | 11.24 |
+| claude | **1.10** | 2.45 | 10.10 |
+
+**两层结论，缺一不可**：
+
+1. **`text-accent` 禁止当文字色** —— 文字强调用 `text-accent-blue` /
+   `text-accent-<色名>`；半透明 accent 底上的文字用 `text-accent-foreground`。
+   已收进 `check_ui_style_tokens`（判据 6）。
+2. 就算换成真 accent 色，light / claude 仍然只有 2.86 / 2.45 —— 因为
+   **`--bg-selected` 是不透明的浅一档表面**，会把中等亮度的彩色文字吃掉一截。
+   同样的账在 git 状态色上也成立（light added 2.26、claude deleted 2.45、
+   one-dark-pro untracked 2.05）。所以：
+
+> **高亮行（选中/激活）的文件名一徥用 `--text-primary`，状态交给行尾徽标。**
+
+这就是 VS Code 的做法：它的文件名永远是中性色，状态由行尾 `M` / `U` 字母表达；
+JetBrains 式的「名字着色」只在**未高亮**时生效。
+（`FileTreeRow` 因此补上了行尾徽标 —— 之前它只有名字色一条通道，一旦中性化
+就等于状态消失。目录行同样带徽标：目录也携带聚合状态，否则选中目录后状态无出口。）
+
+#### 徽标只有一个渲染口径：`shared/components/GitStatusBadge`
+
+修这个 bug 时顺手暴露了另一个问题：同一个语义元素曾有**三套 DOM、三种长相**
+（`ChangeFileTree` 的 `<Badge>` 药丸带描边、`FileTreeRow` 的 `text-[10px]` 方块、
+`FileDiffSection` 的 `calc(var(--font-size)-3px)` 圆角）。现状全部收敛到
+`GitStatusBadge`，它**不包 `ui/Badge`**：`Badge` 是通用 chip（`text-xs` 固定字阶），
+而 git 徽标是行装饰，必须跟随「外观字号」缩放 —— 套在一起必有一方是错的。
+
+稳定性靠 `data-git-status` 属性，**不靠 class**（拿样式 class 当契约正是 `text-accent`
+事故的同型错误）。
+
+#### 机器判据
+
+| 文件 | 锁住什么 |
+| --- | --- |
+| `shared/utils/gitFileDecoration.ts` | `HIGHLIGHTED_NAME_CLASS` 单一来源；三个派生函数的 `highlighted` 分支 |
+| `shared/components/GitStatusBadge.tsx` | 徽标唯一渲染口径（字母 / 色板 / 字号跟随 / `data-git-status`） |
+| `shared/utils/__tests__/gitFileDecoration.test.ts` | 「高亮行颜色与状态/ignored 均无关」—— 6 状态 × ignored 的穷举 |
+| `styles/__tests__/themeTokens.test.ts` | 每主题 `HIGHLIGHTED_NAME_CLASS` 对应的 token vs `--bg-selected` ≥ 3.0（token 名从常量反推，不写死） |
+| `tools/guards/checks/check_ui_style_tokens.py` | 禁止 `text-accent` 当文字色（判据 6，**`.tsx` 与 `.ts` 都扫** —— 事故源头就在 `.ts`） |
+
+> 阀值用 3.0（WCAG 1.4.11 非文本级）而不是 4.5：条目标签不是正文段落，
+> 且 one-dark-pro 的选中底（`#4d5666`，原主题的 scrollbarSlider 亮档）实测 3.47
+> 是五主题下限。要提高到 4.5 得重调该主题的选中档位 —— 那是另一个决定。
+
 ---
 
 ## 字体阶梯
@@ -592,7 +679,7 @@ xterm 终端、CodeMirror、第三方 diff 渲染器。
 
 ## 禁止写法
 
-护栏 `check_ui_style_tokens` 强制以下四条：
+护栏 `check_ui_style_tokens` 强制以下五条：
 
 | # | 禁止 | 替代 | 后果 |
 |---|---|---|---|
@@ -600,6 +687,7 @@ xterm 终端、CodeMirror、第三方 diff 渲染器。
 | 2 | `border-white/[0.04]` / `bg-white` | `border-border-subtle` / `bg-bg-hover` | 亮色主题下**直接消失** |
 | 3 | `bg-accent-blue text-white` | `bg-accent-blue text-text-on-accent` | 某些主题下对比失效 |
 | 4 | `focus:outline-none`（无 `focus-visible:` 替代） | `focus-visible:ring-2 focus-visible:ring-accent-blue` | 键盘用户看不到焦点 |
+| 5 | `text-accent`（= `rgba(accent-blue, .12)`） | `text-accent-blue` / `text-accent-<色名>` | 12% 透明的字，对比度 1.1（见坑 9） |
 
 ### 判据 3 的两个变体
 

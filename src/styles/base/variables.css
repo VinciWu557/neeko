@@ -98,6 +98,25 @@
   --mono-fg-dim: #5c6370;
 
   /* Soft terminal glyphs (synced by buildTerminalTheme; fallbacks for pre-terminal UI) */
+  /* ── 终端底色为何复用表面层（刻意决定，不是待偿的耦合）────────────────
+   *
+   * 本应用里终端是**浮岛里的面板**，不是 VS Code 那种独立编辑器组。因此：
+   *
+   * ① 它必须与所在面板是同一个「面」—— 一块颜色不同的矩形会被看成渲染错误，
+   *    而不是设计；
+   * ② 表面阶梯已经全局校过（相邻档 1.10~1.30，见 themes/one-dark-pro.css），
+   *    终端跟着它就自动在同一条阶梯上；给终端独立 token = 每个主题多一个
+   *    必须手工保持「看着像同一套」的值，5 个内置主题 + 自定义主题全是漂移源；
+   * ③ 没有独立语义。VS Code 的 `terminal.background` 独立是因为它支持独立
+   *    编辑器组 / 图片背景等；本仓无此场景。为不存在的差异建 60 号变量违反 YAGNI。
+   *
+   * 代价（需知晓）：改一次 `--bg-secondary`，终端会静默跟着变。
+   *
+   * 什么时候**才**需要独立 token：出现「终端必须与所在面板刻意不同」的
+   * 真实需求（浮窗式终端、壁纸/图片背景等）。判据是**存在独立渲染需求**，
+   * 不是「希望它再暗一点」。那时它该进 `themeVariables.ts` 契约，
+   * 而不是在这外层加一个 override。
+   */
   --terminal-bg: var(--bg-secondary);
   --terminal-fg: var(--mono-fg);
   --terminal-fg-dim: var(--mono-fg-dim);
