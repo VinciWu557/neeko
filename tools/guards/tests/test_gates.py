@@ -359,7 +359,8 @@ class ContextCommandSetTest(unittest.TestCase):
         # + check_unit_tests_spawn_real_binaries（单测不得 spawn 本机真实 agent 二进制：
         #   会留孤儿进程 + 判据失效；真实往返归 #[ignore] 集成用例）
         # + check_ui_style_tokens（UI 样式层禁硬编码色 / 暗色假设 / 写死白字 / 无焦点环）
-        self.assertEqual(self.in_process_count("local"), 29)
+        # + check_styles_layout（src/styles 目录与文件名规范，见 src/styles/README.md）
+        self.assertEqual(self.in_process_count("local"), 30)
 
     def test_coverage_entry_is_the_manual_stage(self):
         self.assertEqual(
@@ -385,7 +386,7 @@ class ContextCommandSetTest(unittest.TestCase):
         self.assertEqual(self.command_ids("ci", suite="lint", source="python"), [])
         # 与 local 档同源（同一批进程内判据）：新增一条就要同时改这里 ——
         # 这两个数字互不相等时，意味着某条护栏只在本地跑、对 PR 零约束力（历史事故）。
-        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 29)
+        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 30)
 
 
 if __name__ == "__main__":
