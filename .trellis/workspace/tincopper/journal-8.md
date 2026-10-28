@@ -301,3 +301,33 @@ Session summary was not supplied.
 
 - 实机确认：文件树/PR 树/diff 头的徽标外观统一后是否符合预期（静态对比图已确认 one-dark-pro / light）
 - 可选（未做，需你拍板）：终端底色跟随 --bg-secondary 提亮一档是否可接受；是否给 --terminal-bg 独立主题变量
+
+
+## Session 365: 决策：终端底色沿用表面层（不拆独立 token）
+<!-- trellis-session: v=2 fp=fdecb4dd1365491f -->
+
+**Date**: 2026-10-28
+**Task**: 决策：终端底色沿用表面层（不拆独立 token）
+**Branch**: `main`
+
+### Summary
+
+上一轮把 --terminal-bg 复用 --bg-secondary 写成「⚠ 耦合 / 待偿技术债」。确认这是刻意设计：终端在本应用是浮岛里的面板，独立 token 只会给 5 个内置主题 + 自定义主题增加必须手工对齐的漂移源。改写注释口径，把决定与拆解判据落到落点文件。
+
+### Main Changes
+
+- base/variables.css：--terminal-bg 注释改写为「刻意复用表面层」+ 三条理由 + 代价（改 --bg-secondary 终端静默跟随）+ 拆分判据（存在独立渲染需求，而非「想更暗一点」）
+- themes/one-dark-pro.css：--bg-secondary 处的「⚠ 耦合」改为「刻意复用，见 variables.css」，保留事实（提一档终端也提一档）
+- design-tokens.md：新增「终端底色：不复用专属 token，刻意跟随表面层」小节（理由表 + 代价 + 何时才该拆），避免以后被当成 bug 重提
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- [OK] pnpm check:quick —— 32 条护栏全绿
+
+### Status
+
+[OK] **Completed**
