@@ -67,51 +67,41 @@ pnpm tauri dev
 **目标：** 先把「不复发」的地基打好 —— 没有护栏，后面 4 项会被新代码反向覆盖。
 
 1. [x] eslint 规则 —— **2026-10-27 改为「护栏 + eslint 分工」，不再是二选一**
-       （原判断是「改由护栏承担」，实操后发现两类判据本质不同）：
-
-       | 判据 | 载体 | 为什么不能互换 |
-       | --- | --- | --- |
-       | 硬编码色值 / 未定义 token / 裸 `bg-white` | 护栏正则 | 按文件扫即可，还能同时管 CSS |
-       | **「压在实底 accent 上的前景色」** | **eslint AST** | 要判断「实底 vs 半透明底」「底色 vs 边框色」「同状态 vs 互斥三元分支」 |
-
-       正则版实测误报 22 处（`bg-accent-blue/15` 16 处、`text-xs` 5 处、
-       `hover:border-accent-blue`、`data-[state=on]:` 变体、三元互斥分支 10 处），
-       全部来自「看不见 AST」。**误报会让人直接关掉规则，比没有规则更糟。**
-
-       - 规则本体：`tools/eslint-rules/accent-foreground.cjs`
-       - 插件聚合：`tools/eslint-rules/index.cjs` + 同目录 `package.json`（声明为
-         `eslint-plugin-neeko`）
-       - 单测：`src/ui/__tests__/accentForegroundRule.test.ts`（21 用例 + 3 变异验证）
-
-       > **插件如何被加载（2026-10-27 修正）**：用 `devDependencies` 的
-       > `"eslint-plugin-neeko": "file:tools/eslint-rules"` 把它装进 node_modules，
-       > `.eslintrc.cjs` 里 `plugins: ['check-file', 'neeko']` 照常生效。
-       > **`lint:fe` / `lint:fix` 就是标准 `eslint` CLI**，没有任何 wrapper。
+       > **2026-10-28 最终收敛：本地 ESLint 规则已删除，判据回到护栏。**
        >
-       > 首版曾写一个 `run-eslint.cjs`（用 `ESLint` API 注入插件对象），理由
-       > 「legacy `plugins` 只接受 node_modules 里的包名」。**那个理由只说明
-       > 插件必须是个包，不说明必须包一层 API** —— 把目录声明成 `file:` 依赖即可，
-       > 代价小得多。wrapper 带进了两个真实缺陷：
-       > ① 自己解析参数，`--max-warnings` 传给 ESLint 构造器会 `Invalid Options`
-       >    **直接崩**（该选项只属于 CLI，不属于 API）——CI 一旦用它，门禁炸而不是报错；
-       > ② 113 行代码不在 `lint:fe` 扫描范围内，`no-unused-vars` 无人发现。
-       > 删掉 wrapper 后两个问题同时消失，且 `--max-warnings` 恢复标准语义。
+       > 曾用 488 行本地 ESLint 规则（AST）承担「accent 实底 + 错前景色」，
+       > 结论是**它的防护面与正确写法互斥**：
        >
-       > 规则文件必须是 `.cjs` —— 仓根 `package.json` 是 `"type": "module"`，
-       > `.js` 会被当 ESM，`require` 未定义 → 模块静默导出空对象。
+       > | 写法 | 规则能否看到 |
+       > | --- | --- |
+       > | `className="text-text-muted"` 字面量 | ✅ |
+       > | `className={optionSecondary(sel)}` | ❌ 函数返回值不在 AST 静态范围 |
+       > | 模板字符串 / 变量 / 常量对象 | ❌ |
+       > | CSS 文件里的 `color:` | ❌ 只扫 `.tsx?` |
+       >
+       > 那 7 处 bug 修完后**全部改用 `optionSecondary()`** —— 规则恰好对它们失明；
+       > 而 7 处里有 2 处在 CSS，规则从来就看不到。**最该防的地方防不住。**
+       >
+       > 现在的分工：
+       > - **TSX**：`optionSecondary(selected)` 是唯一入口，用对了天然正确，不需要判据
+       > - **CSS**：护栏**判据 5** —— 此前零覆盖的真盲区
+       >
+       > 判据 5 的边界：只认「值就是 `var(--accent-*)`」的实底；
+       > `color-mix(...)` 与 `rgba(var(--accent-*-rgb), α)` 都是半透明底，不判。
 
-2. [x] **规则首跑抓到 7 处真 bug**（6 个文件，全是下拉项选中态）：
+2. [x] **那 7 处真 bug 仍要记录**（6 个文件，全是下拉项选中态）：
        父元素 `selected && 'bg-accent-blue text-text-on-accent'` 变蓝底后，
        子元素 `<span className="text-text-muted">{agent.command}</span>` 自带颜色类
        **覆盖了继承**的 on-accent → 暗色主题下灰字压蓝底几乎不可见。
        位置：`RemoteDialog.tsx` ×2、`WSLDialog.tsx` ×2、`ProjectSettingsDialog.tsx` ×3。
        修法：抽 `src/ui/selection.ts` 的 `optionSecondary(selected)`（返回完整 class，
-       含右对齐 + 小字号），子元素直接用它。
-2. [x] 护栏 `tools/guards/checks/check_ui_style_tokens.py`（**已实现，四条判据**）
-3. [x] 护栏单测 `tools/guards/tests/test_check_ui_style_tokens.py` —— **13 用例全绿**
+       含右对齐 + 小字号），子元素直接用它。**这个共享函数才是真正防住复发的东西。**
+
+3. [x] 护栏 `tools/guards/checks/check_ui_style_tokens.py`（**五条判据**）
+4. [x] 护栏单测 `tools/guards/tests/test_check_ui_style_tokens.py` —— **26 用例全绿**
        含两条**变异验证**（删掉判据 1 / 判据 4 → 必绿）与两条**反证**
        （注释提到旧写法不得误报 / 已合规写法不得误报）
-4. [x] 护栏在真实仓库首跑即抓出一处漏网：`src/ui/Switch.tsx:24` 的裸 `bg-white`
+5. [x] 护栏在真实仓库首跑即抓出一处漏网：`src/ui/Switch.tsx:24` 的裸 `bg-white`
        （手写 grep `bg-white/` 会漏掉裸写法）→ 判据 2 的正则已补 `(?![-\w])`
 
 **主改文件：** `tools/guards/checks/check_ui_style_tokens.py`（新增）、
