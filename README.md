@@ -8,21 +8,14 @@ One dockable window for terminals, AI agents, an editor, Git and pull requests �
 
 ![Neeko — every project, every agent, one window](docs/.img/promo-hero.webp)
 
-![Release](https://img.shields.io/github/v/release/tincopper/neeko?style=flat-square)
-
-![CI](https://github.com/tincopper/neeko/actions/workflows/ci.yml/badge.svg)
-
-![Build](https://github.com/tincopper/neeko/actions/workflows/build.yml/badge.svg)
-
-![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)
-
-![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)
-
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square\&logo=tauri\&logoColor=white)
-
-![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square\&logo=react\&logoColor=white)
-
-![Rust](https://img.shields.io/badge/Rust-toolchain%20pinned-DEA584?style=flat-square\&logo=rust\&logoColor=white)
+<a href="https://github.com/tincopper/neeko/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/tincopper/neeko?style=flat-square"></a>
+<a href="https://github.com/tincopper/neeko/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tincopper/neeko/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/tincopper/neeko/actions/workflows/build.yml"><img alt="Build" src="https://github.com/tincopper/neeko/actions/workflows/build.yml/badge.svg"></a>
+<a href="https://github.com/tincopper/neeko/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square"></a>
+<img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square">
+<img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white">
+<img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=white">
+<img alt="Rust" src="https://img.shields.io/badge/Rust-toolchain%20pinned-DEA584?style=flat-square&logo=rust&logoColor=white">
 
 |                                                                              |                          |
 | ---------------------------------------------------------------------------- | ------------------------ |
@@ -129,7 +122,7 @@ Left: the project sidebar — each project, branch and worktree is a first-class
 Every team already has a terminal and an editor. The difference is whether they stay in sync while an agent works.
 
 |                                                     |       **Neeko**      | Editor + terminal windows |  Shell-only CLI agents  |
-| --------------------------------------------------- | :------------------: | :-----------------------: | :---------------------: |
+| --------------------------------------------------- | :------------------- | :------------------------ | :---------------------- |
 | One PTY per project / branch / worktree, kept alive |           ✅          |             ❌             |        ⚠️ manual        |
 | Agent run state visible outside the terminal        | ✅ status bar + hooks |             ❌             | ⚠️ terminal output only |
 | Streaming agent chat with tool cards and approvals  |      ✅ built in      |    ❌ needs an extension   |        ⚠️ per-CLI       |
