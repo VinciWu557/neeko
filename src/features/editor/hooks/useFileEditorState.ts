@@ -15,6 +15,7 @@ import {
 } from '@/shared/utils/codemirror';
 import { canonicalFsPath, relativeToRoot } from '@/shared/utils/fileRef';
 import { isHtmlFile, isJsonFile, isSvgFile } from '@/shared/utils/fileTree';
+import { workspaceRootOf } from '@/shared/utils/workspaceRef';
 
 import {
   registerAiActionHandler,
@@ -25,6 +26,26 @@ import { editorIdentityOfTab } from '../api/editorViews';
 import type { PreviewMode } from '../types';
 
 import { useEditorAgentActions } from './useEditorAgentActions';
+
+/**
+ * Markdown / HTML 预览的 `basePath`（文件所在目录）。
+ *
+ * 基准是**该 tab 工作树的根**（`workspaceRootOf` 是相对路径归一的唯一派生点，红线 12 场景）：
+ * worktree 单元里同一相对路径指向工作树内的文件，拼主仓根会解析到另一个文件。
+ *
+ * `canonicalFsPath` 同时处理相对与绝对 filePath（绝对路径不与根二次拼接，
+ * 即历史上的 "E:/ws/C:/project" 双根 bug），并归一多斜杠/尾斜杠形态。
+ */
+export function editorBasePathOf(
+  workspaceKey: string,
+  projectPath: string,
+  filePath: string,
+): string {
+  const root = workspaceRootOf(workspaceKey, projectPath);
+  const absFilePath = canonicalFsPath(root, filePath);
+  const lastSlash = absFilePath.lastIndexOf('/');
+  return lastSlash >= 0 ? absFilePath.substring(0, lastSlash) : root.replace(/\\/g, '/');
+}
 
 interface UseFileEditorStateParams {
   tab: FileTab;
@@ -56,14 +77,11 @@ export function useFileEditorState({ tab, projectPath }: UseFileEditorStateParam
   // SVG 是文本格式：content 可直接进 srcDoc 预览，WSL/SSH 项目同样可用
   const isSvg = isSvgFile(tab.filePath);
   const currentContent = tab.content.content;
-  const basePath = useMemo(() => {
-    if (!projectPath) return undefined;
-    // canonicalFsPath 同时处理相对与绝对 filePath（绝对路径不与 projectPath 二次拼接，
-    // 即历史上的 "E:/ws/C:/project" 双根 bug），并归一多斜杠/尾斜杠形态。
-    const absFilePath = canonicalFsPath(projectPath, tab.filePath);
-    const lastSlash = absFilePath.lastIndexOf('/');
-    return lastSlash >= 0 ? absFilePath.substring(0, lastSlash) : projectPath.replace(/\\/g, '/');
-  }, [projectPath, tab.filePath]);
+  const basePath = useMemo(
+    () =>
+      projectPath ? editorBasePathOf(tab.workspace.key, projectPath, tab.filePath) : undefined,
+    [projectPath, tab.filePath, tab.workspace],
+  );
 
   // Load language extension (async + cached fallback)
   useEffect(() => {

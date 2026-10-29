@@ -3,24 +3,34 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import ImageFileView from '@/features/editor/components/ImageFileView';
 
-// 与真实 convertFileSrc 一致：path 保持原样，不额外加斜杠
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: vi.fn((p: string) => `asset://localhost/${p.replace(/^\//, '')}`),
-}));
+// setup.ts 全局 mock：convertFileSrc → `asset://localhost/${path}`（path 原样）
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
 describe('ImageFileView', () => {
-  it('用 convertFileSrc 的 asset URL 渲染 <img>', () => {
-    render(<ImageFileView absPath="/tmp/project/a.png" fileName="a.png" />);
-    const img = screen.getByAltText('a.png');
-    expect(img).toHaveAttribute('src', 'asset://localhost/tmp/project/a.png');
+  it('Workspace 相对路径按 basePath 解析成 asset URL', () => {
+    render(<ImageFileView filePath="img/a.png" basePath="/tmp/project" fileName="a.png" />);
+    expect(screen.getByAltText('a.png')).toHaveAttribute(
+      'src',
+      'asset://localhost//tmp/project/img/a.png',
+    );
+  });
+
+  it('worktree 根作为基准（不是主仓根）：同一相对路径解析到工作树内', () => {
+    // 回归锁定：历史实现接「由 project.path 派生的绝对路径」⇒ worktree 下指向主仓。
+    render(
+      <ImageFileView filePath="img/a.png" basePath="/repo/.worktrees/feat-x" fileName="a.png" />,
+    );
+    expect(screen.getByAltText('a.png')).toHaveAttribute(
+      'src',
+      'asset://localhost//repo/.worktrees/feat-x/img/a.png',
+    );
   });
 
   it('点击图片打开全屏遮罩，点击遮罩关闭', () => {
-    render(<ImageFileView absPath="/tmp/project/a.png" fileName="a.png" />);
+    render(<ImageFileView filePath="a.png" basePath="/tmp/project" fileName="a.png" />);
     expect(screen.queryByRole('button', { name: /close image preview/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByAltText('a.png'));
@@ -31,7 +41,7 @@ describe('ImageFileView', () => {
   });
 
   it('加载失败时显示占位提示而非破图', () => {
-    render(<ImageFileView absPath="/nonexistent/a.png" fileName="a.png" />);
+    render(<ImageFileView filePath="a.png" basePath="/nonexistent" fileName="a.png" />);
     fireEvent.error(screen.getByAltText('a.png'));
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     expect(screen.getByText(/failed to load/i)).toBeInTheDocument();

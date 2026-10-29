@@ -229,14 +229,7 @@ function FileEditor({
   // 二进制（含本地图片预览）/ 超大文件 → 只读兜底视图（分支判定见 fileEditorFallbackKind）。
   const fallbackKind = fileEditorFallbackKind(tab, isBinaryImage);
   if (fallbackKind) {
-    return (
-      <FileEditorFallback
-        kind={fallbackKind}
-        tab={tab}
-        projectPath={projectPath}
-        absFilePath={absFilePath}
-      />
-    );
+    return <FileEditorFallback kind={fallbackKind} tab={tab} projectPath={projectPath} />;
   }
 
   return (

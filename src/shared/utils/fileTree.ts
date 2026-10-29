@@ -243,3 +243,15 @@ export function isImageFile(filePath: string): boolean {
   const ext = filePath.split('.').pop()?.toLowerCase();
   return ext !== undefined && BINARY_IMAGE_EXTENSIONS.has(ext);
 }
+
+/**
+ * 检查文件是否为 PDF（二进制文档，走 pdf.js 预览）。
+ *
+ * 只看扩展名，**不**看 `is_binary` —— 二进制检测扫前 8KB 找 NUL，而结构简单的 PDF
+ * （内容流未压缩）可以在前 8KB 内不出现 NUL，靠内容判定会把部分合法 PDF 漏掉。
+ */
+export function isPdfFile(filePath: string): boolean {
+  const dot = filePath.lastIndexOf('.');
+  if (dot < 0) return false;
+  return filePath.slice(dot + 1).toLowerCase() === 'pdf';
+}

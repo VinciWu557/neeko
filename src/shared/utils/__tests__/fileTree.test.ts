@@ -8,6 +8,7 @@ import {
   isDirtyFileTab,
   isImageFile,
   isJsonFile,
+  isPdfFile,
   isSvgFile,
 } from '@/shared/utils/fileTree';
 import { WorkspaceSession } from '@/shared/utils/workspaceRef';
@@ -266,6 +267,16 @@ describe('isSvgFile / isImageFile', () => {
     expect(isImageFile('i.txt')).toBe(false);
     expect(isImageFile('j.svg')).toBe(false);
     expect(isImageFile('k.ts')).toBe(false);
+  });
+});
+
+describe('isPdfFile', () => {
+  it('.pdf 大小写不敏感，其他扩展名不误判', () => {
+    expect(isPdfFile('docs/spec.pdf')).toBe(true);
+    expect(isPdfFile('DOCS/SPEC.PDF')).toBe(true);
+    expect(isPdfFile('a.pdfx')).toBe(false);
+    expect(isPdfFile('a.txt')).toBe(false);
+    expect(isPdfFile('pdf')).toBe(false);
   });
 });
 

@@ -1,19 +1,16 @@
-import { useProjectStore } from '@/shared/store/projectStore';
 import type { FileTab } from '@/shared/types';
 import { isImageFile } from '@/shared/utils/fileTree';
 
 /**
- * 该 tab 是否可按**本地图片**预览。
+ * 该 tab 是否可按**图片**预览。
  *
- * 物理约束：图片预览走 Tauri `asset` 协议，只对 Local 项目成立 —— SSH/WSL 远程
- * 文件取不到 asset URL，因此远程项目即便扩展名匹配、内容为二进制，也只能退化
- * 到只读兜底视图（见 `fileEditorFallbackKind`）。
+ * 环境不再参与判定：本地项目走 asset 协议直连，SSH/WSL 项目经 `read_file_bytes`
+ * 二进制流 → blob URL（通道选择收在 `useAssetUrl`）。历史版本在这里按
+ * `environment.type === 'Local'` 排除远程项目，代价是远程图片只能看
+ * 「Binary file — cannot be displayed」。
  *
- * 把「项目环境查询」收在这里：组件不该为此直接订阅 `projectStore`。
+ * 判定只看两件事实：内容是二进制、扩展名是图片。
  */
 export function useBinaryImagePreview(tab: FileTab): boolean {
-  const environmentType = useProjectStore(
-    (s) => s.projects.find((p) => p.id === tab.workspace.projectId)?.environment.type,
-  );
-  return tab.content.is_binary && isImageFile(tab.filePath) && environmentType === 'Local';
+  return tab.content.is_binary && isImageFile(tab.filePath);
 }
