@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.9] - 2026-10-28
+## [1.0.9] - 2026-10-29
 
 ### 🚀 Features
 
@@ -175,6 +175,11 @@ All notable changes to this project will be documented in this file.
 - **tokens**: Add status-error alias, switch track token and design ladders
 - **guards**: Enforce the src/styles layout rules
 - **guards**: Flag text-accent usage in .ts files too
+- **guards**: Add check_readme_claims to stop README drift
+- **file**: Add range-readable binary byte channel
+- **asset**: Add shared byte channel and single asset resolver
+- **markdown**: Resolve images through the single asset entry
+- **editor**: Preview images and PDFs in the file editor
 
 ### 🐛 Bug Fixes
 
@@ -305,6 +310,7 @@ All notable changes to this project will be documented in this file.
 - **a11y**: Add focus-visible rings and align settings selected state
 - **theme**: Recalibrate one-dark-pro surfaces to source palette
 - **file-tree**: Keep selected row names readable in every theme
+- **security**: Allow dot-prefixed segments in asset scope
 
 ### 🚜 Refactor
 
@@ -543,6 +549,9 @@ All notable changes to this project will be documented in this file.
 - **spec**: Add design tokens guide with eight pitfalls
 - **spec**: Record the styles layout rules and the dropped ESLint rule
 - **spec**: Record the text-accent trap and terminal reuse
+- **readme**: Rewrite README as an AI-native workspace story
+- **trellis**: Record byte channel and asset preview contracts
+- **file**: Point the feature file API at the shared byte channel
 
 ### ⚡ Performance
 
@@ -908,6 +917,12 @@ All notable changes to this project will be documented in this file.
 - Record journal
 - Record journal
 - Record journal
+- Record journal
+- Record journal
+- **capabilities**: Grant notification permission query commands
+- **task**: Archive 10-28-readme-rework
+- Record journal
+- Point journal entries at the reworded commit hashes
 - Record journal
 - Record journal
 
