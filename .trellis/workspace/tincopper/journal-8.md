@@ -331,3 +331,46 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 366: README 重写与文档防漂移护栏
+<!-- trellis-session: v=2 fp=c1078a4566997abc -->
+
+**Date**: 2026-10-29
+**Task**: README 重写与文档防漂移护栏
+**Branch**: `main`
+
+### Summary
+
+README(EN+CN) 重写为 AI-native 工作台叙事，CHANGELOG 重生成到 1.0.9，新增 check_readme_claims 护栏钉住 5 类可机器判定事实；任务 10-28-readme-rework 归档。
+
+### Main Changes
+
+- README/README_CN 全量重写：定位、下载安装、平台矩阵、能力分区、对比、用例、开发者段
+- 图片换新（主壳截图 + promo EN/CN + 能力地图 SVG），删除 3 张 5 月旧 UI 截图
+- CHANGELOG 用 git-cliff 重生成至 1.0.9（原停在 1.0.6）
+- 新增 docs/features.md 作为能力清单单一事实源
+- 新增 tools/guards/checks/check_readme_claims.py（C1 版本 / C2 agent 清单 / C3 主题数 / C4 禁抄快捷键表 / C5 图片存在）+ 测试
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5447adcb` | docs(readme): rewrite README as an AI-native workspace story |
+| `595bc14c` | feat(guards): add check_readme_claims to stop README drift |
+| `53475ec6` | chore(capabilities): allow notification permission queries from the webview |
+| `00c49857` | chore(task): archive 10-28-readme-rework |
+
+### Testing
+
+- [OK] pnpm check:quick：33 条护栏全通过（31 条进程内判据 / 新增 check_readme_claims 绿）
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- AGENTS.md 仍写「28 条护栏」，与实际 33 条漂移，可改为不写数字
+- docs/.img/project-struct.png 已无文档引用，待确认是否删除
+- check_readme_claims 是否也校验 docs/features.md 与 README 的能力段一致
