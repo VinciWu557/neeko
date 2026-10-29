@@ -40,6 +40,7 @@ export {
 export { Checkbox } from './Checkbox';
 export { Badge } from './Badge';
 export { MarkdownPreview } from './MarkdownPreview';
+export { MarkdownImage } from './MarkdownImage';
 export {
   Card,
   CardHeader,

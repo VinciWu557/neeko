@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { cn } from '@/lib/utils';
+import { MarkdownImage } from '@/ui/MarkdownImage';
 
 import type { SourceBlock } from '../../translation/blocks';
 
@@ -17,6 +18,8 @@ const Inline: React.FC<{ text: string }> = ({ text }) => (
           {children}
         </span>
       ),
+      // 图片同样经唯一解析入口（否则译文块里的相对图片把 src 原样输出，webview 里恒 404）
+      img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} />,
     }}
   >
     {text}

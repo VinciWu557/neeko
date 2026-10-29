@@ -3,6 +3,8 @@ import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import remarkGfm from 'remark-gfm';
 
+import { MarkdownImage } from '@/ui/MarkdownImage';
+
 interface MessageContentProps {
   /** 消息文本（完整 markdown：标题/链接/表格/引用/列表/围栏代码块/行内 code/加粗）。 */
   text: string;
@@ -65,6 +67,8 @@ function nodeToText(node: ReactNode): string {
  * - 代码块与工具输出（CommandCard 等已展示）重复时跳过，避免同一份
  *   输出在消息流里出现两次。
  * - 不启用 rehype-raw：agent 文本按纯 markdown 解析，规避 raw HTML 注入。
+ * - `img` 交给 `MarkdownImage`：未接管时 react-markdown 会把 src 原样输出，
+ *   相对/绝对路径在 webview 里恒 404（本组件历史上的实际表现）。
  */
 function MessageContent({ text, toolOutputs }: MessageContentProps) {
   if (!text) return null;
@@ -75,6 +79,10 @@ function MessageContent({ text, toolOutputs }: MessageContentProps) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
         components={{
+          // 图片：统一解析入口（基准回落到当前Workspace根，见 useAssetBasePath）
+          img({ src, alt }) {
+            return <MarkdownImage src={src} alt={alt} />;
+          },
           // 代码块：去重 + codeblock 结构（cb-head 语言标签 / pre / code），保留语法高亮节点
           pre({ children }) {
             // react-markdown 恒产出单个 code 子节点；防御性取首个，避免 Children.only 抛异常

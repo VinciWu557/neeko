@@ -1,8 +1,6 @@
-// eslint-disable-next-line no-restricted-imports -- convertFileSrc is needed for resolving local image paths in markdown
-import { convertFileSrc } from '@tauri-apps/api/core';
 import { Check, Copy } from 'lucide-react';
 import plantumlEncoder from 'plantuml-encoder';
-import React, { useState, useEffect, useRef, useMemo, useCallback, useId } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useId, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeRaw from 'rehype-raw';
@@ -17,17 +15,7 @@ import { resolveInternalHref } from '@/shared/utils/markdownLinks';
 import { isDarkTheme } from '@/shared/utils/theme';
 
 import { InlineDiffBlock } from './InlineDiffBlock';
-
-function resolveImageSrc(src: string, basePath?: string): string {
-  if (/^(https?:|data:|blob:|asset:)\/?\//i.test(src)) return src;
-  if (!basePath) return src;
-  if (/^([a-zA-Z]:[/\\]|\/)/.test(src)) {
-    return convertFileSrc(src.replace(/\\/g, '/'));
-  }
-  const normalized = src.replace(/^\.\//, '').replace(/\\/g, '/');
-  const base = basePath.replace(/\\/g, '/').replace(/\/$/, '');
-  return convertFileSrc(`${base}/${normalized}`);
-}
+import { MarkdownImage } from './MarkdownImage';
 
 // -- Sub-components --
 
@@ -137,77 +125,6 @@ function PlantUMLBlock({ code }: PlantUMLBlockProps) {
         onError={() => setHasError(true)}
       />
     </div>
-  );
-}
-
-interface ImageBlockProps {
-  src?: string;
-  alt?: string;
-  basePath?: string;
-}
-
-function ImageBlock({ src, alt, basePath }: ImageBlockProps) {
-  const [overlay, setOverlay] = useState(false);
-  const [loadError, setLoadError] = useState(false);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') setOverlay(false);
-  }, []);
-
-  const resolvedSrc = useMemo(() => {
-    if (!src) return '';
-    return resolveImageSrc(src, basePath);
-  }, [src, basePath]);
-
-  const isSvg = useMemo(() => {
-    if (!src) return false;
-    return src.endsWith('.svg') || src.startsWith('data:image/svg');
-  }, [src]);
-
-  if (!resolvedSrc) return null;
-
-  if (loadError) {
-    return (
-      <span className="inline-block text-text-muted text-sm italic">
-        {alt || 'Image failed to load'}
-      </span>
-    );
-  }
-
-  return (
-    <>
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
-      <img
-        src={resolvedSrc}
-        alt={alt || ''}
-        className="max-w-full rounded cursor-pointer transition-opacity hover:opacity-80"
-        style={isSvg ? { width: '100%' } : undefined}
-        onClick={() => setOverlay(true)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            setOverlay(true);
-          }
-        }}
-        onError={() => setLoadError(true)}
-      />
-      {overlay && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
-          onClick={() => setOverlay(false)}
-          onKeyDown={handleKeyDown}
-          role="button"
-          tabIndex={0}
-          aria-label="Close image preview"
-        >
-          <img
-            src={resolvedSrc}
-            alt={alt || ''}
-            className="max-w-[90vw] max-h-[90vh] object-contain rounded"
-          />
-        </div>
-      )}
-    </>
   );
 }
 
@@ -336,7 +253,7 @@ function MarkdownPreviewImpl({
             );
           },
           img({ src, alt }) {
-            return <ImageBlock src={src} alt={alt} basePath={basePath} />;
+            return <MarkdownImage src={src} alt={alt} basePath={basePath} />;
           },
           a({ href, children, ...props }) {
             // 保持浏览器默认行为的链接：外链（http/https/协议相对）、邮件/电话协议、同页锚点。

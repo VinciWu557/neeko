@@ -118,6 +118,12 @@ describe('MessageContent', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('markdown 图片走 MarkdownImage，不再把 src 原样输出（相对路径 404 的根因）', () => {
+    render(<MessageContent text={'![shot](img/shot.png)'} />);
+    // 无项目语境时保持原样交由调用方兜底，但必须经过 img 组件映射（而非被丢弃）
+    expect(screen.getByAltText('shot')).toBeInTheDocument();
+  });
+
   it('props 不变时 React.memo 跳过重渲染（text 变化才触发 markdown 解析）', () => {
     const { rerender } = render(<MessageContent text="hello world" />);
     const parseCountAfterFirst = markdownParseCount;
