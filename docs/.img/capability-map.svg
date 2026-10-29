@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" width="1200" height="620" role="img" aria-labelledby="cmTitle cmDesc">
+  <title id="cmTitle">Neeko capability map</title>
+  <desc id="cmDesc">Six capability areas around the Neeko workspace core: projects and connections, terminal and agents, coding with LSP and debug, agent chat, version control including pull requests, and the library with embedded browser and session history.</desc>
+
+  <defs>
+    <style>
+      .card-title { font: 600 15px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif; fill: #2b2620; }
+      .line { font: 13px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; fill: #6b6156; }
+      .tag { font: 500 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; fill: #8a7d6b; letter-spacing: 0.02em; }
+      .hub-title { font: 700 26px/1 system-ui, -apple-system, "Segoe UI", sans-serif; fill: #7a3a1d; }
+      .hub-sub { font: 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif; fill: #6b6156; }
+      .channel { stroke-width: 1.5; fill: none; stroke-linecap: round; }
+    </style>
+  </defs>
+
+  <!-- canvas -->
+  <rect x="0" y="0" width="1200" height="620" rx="18" fill="#fffdf9"/>
+  <rect x="0.75" y="0.75" width="1198.5" height="618.5" rx="17.25" fill="none" stroke="#e6ddcf" stroke-width="1.5"/>
+
+  <text class="tag" x="1152" y="34" text-anchor="end">v1.0.9 · 2026-10</text>
+
+  <!-- ── core spine ────────────────────────────────────────────────── -->
+  <rect x="470" y="150" width="260" height="330" rx="16" fill="#fdf1e7" stroke="#e0b795" stroke-width="1.5"/>
+  <text class="hub-title" x="600" y="308" text-anchor="middle">Neeko</text>
+  <text class="hub-sub" x="600" y="334" text-anchor="middle">one dockable workspace</text>
+
+  <!-- ── connectors ────────────────────────────────────────────────── -->
+  <g>
+    <path class="channel" stroke="#a9764a" d="M370 170 H470"/>
+    <path class="channel" stroke="#6f8f5c" d="M370 316 H470"/>
+    <path class="channel" stroke="#8f6a9c" d="M370 462 H470"/>
+
+    <path class="channel" stroke="#cf8442" d="M730 170 H830"/>
+    <path class="channel" stroke="#7d8fa8" d="M730 316 H830"/>
+    <path class="channel" stroke="#4f8d84" d="M730 462 H830"/>
+
+    <text class="tag" x="378" y="164">projects</text>
+    <text class="tag" x="378" y="310">PTY</text>
+    <text class="tag" x="378" y="456">LSP · DAP</text>
+    <text class="tag" x="822" y="164" text-anchor="end">chat stream</text>
+    <text class="tag" x="822" y="310" text-anchor="end">git2 · gh</text>
+    <text class="tag" x="822" y="456" text-anchor="end">SQLite</text>
+  </g>
+
+  <!-- ── left column ───────────────────────────────────────────────── -->
+  <g>
+    <rect x="40" y="104" width="330" height="132" rx="12" fill="#f8f3ea" stroke="#e8dfd1"/>
+    <text class="card-title" x="64" y="134">Projects &amp; Connections</text>
+    <text class="line" x="64" y="162">Local · WSL · SSH in one sidebar</text>
+    <text class="line" x="64" y="182">Worktree terminals and directories</text>
+    <text class="line" x="64" y="202">Session, tab and layout restore</text>
+    <text class="line" x="64" y="222">Per-project settings and IDE launch</text>
+
+    <rect x="40" y="250" width="330" height="132" rx="12" fill="#f8f3ea" stroke="#e8dfd1"/>
+    <text class="card-title" x="64" y="280">Terminal &amp; Agents</text>
+    <text class="line" x="64" y="308">One live PTY per project</text>
+    <text class="line" x="64" y="328">10 built-in CLI agents, or your own</text>
+    <text class="line" x="64" y="348">Split panes and side terminal</text>
+    <text class="line" x="64" y="368">CLI hooks feed notifications</text>
+
+    <rect x="40" y="396" width="330" height="132" rx="12" fill="#f8f3ea" stroke="#e8dfd1"/>
+    <text class="card-title" x="64" y="426">Coding</text>
+    <text class="line" x="64" y="454">Editor with LSP in 17 languages</text>
+    <text class="line" x="64" y="474">Diagnostics, quick fixes, auto-import</text>
+    <text class="line" x="64" y="494">Debug: Go · Java · Rust</text>
+    <text class="line" x="64" y="514">Run and test: Go · Java · Rust · TS</text>
+  </g>
+
+  <!-- ── right column ──────────────────────────────────────────────── -->
+  <g>
+    <rect x="830" y="104" width="330" height="132" rx="12" fill="#f8f3ea" stroke="#e8dfd1"/>
+    <text class="card-title" x="854" y="134">Agent Chat</text>
+    <text class="line" x="854" y="162">4 transports: serve · RPC · ACP · jsonl</text>
+    <text class="line" x="854" y="182">Streaming output and tool cards</text>
+    <text class="line" x="854" y="202">Approvals and follow-up questions</text>
+    <text class="line" x="854" y="222">Model picker and context usage</text>
+
+    <rect x="830" y="250" width="330" height="132" rx="12" fill="#f8f3ea" stroke="#e8dfd1"/>
+    <text class="card-title" x="854" y="280">Version Control &amp; PR</text>
+    <text class="line" x="854" y="308">Change tree, diff, commit, stash</text>
+    <text class="line" x="854" y="328">Branches, worktrees, history graph</text>
+    <text class="line" x="854" y="348">Conflicts, pull and push</text>
+    <text class="line" x="854" y="368">Pull requests: review and merge (gh)</text>
+
+    <rect x="830" y="396" width="330" height="132" rx="12" fill="#f8f3ea" stroke="#e8dfd1"/>
+    <text class="card-title" x="854" y="426">Library · Browser · History</text>
+    <text class="line" x="854" y="454">Skills · prompts · MCP servers</text>
+    <text class="line" x="854" y="474">skills.sh and MCP Registry</text>
+    <text class="line" x="854" y="494">Browser panel with element picker</text>
+    <text class="line" x="854" y="514">Session history: search, resume, export</text>
+  </g>
+
+  <!-- ── footer ────────────────────────────────────────────────────── -->
+  <text class="tag" x="600" y="562" text-anchor="middle">Panels · Projects · Files · Git Control · Pull Requests · Browser · History · Search</text>
+  <text class="tag" x="600" y="584" text-anchor="middle">Bottom panel · Tasks · Debug · Problems</text>
+</svg>

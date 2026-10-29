@@ -2,6 +2,924 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-10-28
+
+### 🚀 Features
+
+- **settings**: Add app version info viewer (About panel)
+- **diff**: Add full-mode toggle and drag-select
+- **app**: Confirm exit before closing the app
+- **diff**: Add inline AI review bar with custom instructions
+- **diff**: Adapt line-number column width to digit count
+- **git**: Add stash panel and refs classification
+- **clipboard**: Unify clipboard copy into a shared hook
+- **git**: Add stash content viewing and apply/pop operations
+- **editor**: Add in-page find/replace panel and VS Code-style breadcrumb
+- **browser**: Support multi-select in element picker
+- **file**: Support dragging directories to input fields
+- **editor**: Confirm closing unsaved file tabs
+- **watcher**: Add git meta change detection and module split
+- **editor**: Cycle tabs via Ctrl+Tab MRU order
+- **browser**: Add browser editor tabs with per-tab webviews
+- **agent-chat**: Add multi-agent chat surface with resume support
+- **agent-chat**: Polish chat UI with v4 borderless style and full markdown
+- **agent-chat**: Reuse agent CLI icon across model pickers with broken-image fallback
+- **task**: Enable interactive running task console input
+- **browser**: Add close-page action and Cmd+W fix
+- **terminal**: Bounded pump + credit-pull drain + binary IPC memory governance (08-25)
+- **agent-chat,task**: Bound caches and output buffers to prevent unbounded growth
+- **agent-chat**: Coalesce sequenced events into batches to cut WebKit eval cost
+- **file**: File-tree git decoration completion + audit Warning/Nit fixes
+- **editor**: Drag-based pin/unpin and pane-scoped tab creation
+- **lsp**: Smoother go-to-definition with hover-aware jump affordance
+- **git**: Strikethrough deleted files and Open File shortcuts
+- **editor**: Add SVG and image preview, fix mermaid render id
+- **editor**: Add read-only formatted JSON preview
+- **scrollbar**: Implement auto-hide scrollbar with 3s delay
+- **quality**: Add platform import guard and pre-dev checklist
+- **project**: Add Clone from Git dialog with streaming progress
+- **editor**: Overflow tab collection with dropdown for editor tab bar
+- **editor**: Add AI document translation view with batch pipeline
+- **terminal**: Webgl renderer self-heal with clearTextureAtlas and context-loss recovery
+- **terminal**: Add long-poll drain transport
+- **status-bar**: Add prompts shortcut inserting into terminal
+- **editor**: Inline test run/debug actions with unified gutter
+- **watcher**: Layer nested .gitignore rules
+- **git**: Versioned status snapshot pipeline
+- **file**: Stamp git status and virtualize tree
+- **file**: Native ignored annotation, read-layer fallback and module restructure
+- **file**: Deselect tree on blank or outside click
+- **status-bar**: Move prompts ahead of console
+- **editor**: Unified inline test run/debug pipeline with CodeLLDB
+- **debug**: Lazy-expandable variables tree with full value inspection
+- **editor**: Go unit test run/debug via unified pipeline
+- **editor**: Inline test run/debug buttons
+- **lsp**: Declare runnables client capability
+- **editor**: Runnable detection and Go subtests
+- **dap**: Follow the real stop location into library and JDK sources
+- **dap**: Switchable Java debug backends (JDTLS / host)
+- **git**: Simplify changes panel and block conflict commits
+- **identity**: Close the identity grammar over virtual sources
+- **dap**: Support breakpoint disable, mute-all and rerun
+- **lsp**: Visualize diagnostics with rebuildable editor projection
+- **lsp**: Surface session health with crash retry
+- **lsp**: Add codeAction quickfix and diagnostic AI actions
+- **lsp**: Add auto-import strategy auto/ask/never
+- **editor**: Add context-aware Ctrl+Click references peek
+- **editor**: Add line-level git change highlight (IDEA style)
+- **editor**: Filter uninstalled agents from new-tab menu
+- **keymap**: Default tab cycle to Alt+Left/Right like IDEA
+- **git**: Unify discard entry and ensure post-write status freshness
+- **guards**: Replace hand-copied guard lists with a self-registering scaffold
+- **git**: Key git status by repository unit
+- **git**: Cancel long git ops, stream to Console
+- **guards**: Enforce invariants with a mechanism
+- **exec**: Add a unified script-spawn path to the executor layer
+- **git**: Drive changed files and ahead/behind from a refs-aware snapshot
+- **guards**: Supervise external-command gates from a single declaration
+- **watcher**: Stop watching ignored subtrees
+- **guards**: Ban fragment-level platform gates in test code
+- **watcher**: Gate push writes with revocable mount tickets
+- **git**: Make pending a first-class activation outcome
+- **scroll-memory**: Add identity-keyed scroll position memory
+- **scroll-memory**: Wire panel scroll restore across the shell
+- **guards**: Add WorkspaceSession addressing guard for git commands
+- **terminal,agent-chat**: Wire agent input delivery and unify arbitration
+- **guards**: Enforce arbitration single-source and terminal key mint
+- **platform**: Add system-notify and private-file adapters
+- **notification**: Add business-agnostic notification core domain
+- **notification**: Project agent chat sessions into notifications
+- **notification**: Add in-app notification UI and settings panel
+- **agent-hooks**: Ingest external CLI agent sessions over loopback
+- **guards**: Pin the notification dependency direction
+- **agent-hooks**: Add OpenCode 2.x status reporter template
+- **git**: Read conflict stages from index unmerged entries
+- **git**: Render conflicted files in a three-side read-only view
+- **guards**: Enforce the conflict read contract (A1-A6)
+- **sidebar**: Show ahead count on worktree rows
+- **agent-hooks**: Support multi-instance coordinates and content-addressed markers
+- **git**: Resolve conflicts by writing whole sides or per-region splices
+- **guards**: Add pnpm check:quick for the dev loop
+- **editor**: Add a Copy action to the selection AI toolbar
+- **platform**: Render hook shim commands and write user files atomically
+- **server**: Add in-process HTTP gateway engine for C/S architecture
+- **shared**: Add a generic persistent key-value cache
+- **comment**: Extract, classify and translate source-code comments
+- **comment**: Render translations as CodeMirror overlays
+- **editor**: Wire comment translation into the editor
+- **settings**: Add comment translation display mode and warm-up toggle
+- **cache**: Add a generic key-value cache over neeko.db
+- **cache**: Add a SQLite port for the generic cache store
+- **comment**: Back the translation cache with SQLite
+- **comment**: Split translation failures by cause
+- **agents**: Single out one translatability rule for translation agents
+- **settings**: Let translation pick an agent, a model and a display mode
+- **agent**: Let the agent form configure ACP launch args
+- **agent-chat**: Render ACP session config options
+- **agent**: Let the form declare a model list command
+- **agent**: Let Pi join Agent Chat over its private rpc protocol
+- **agent**: Surface Pi tool calls and approvals in agent chat
+- **agent**: Expose Pi's native session id so chat resume works
+- **agent**: Let a chat transport override the executable and its args
+- **agent**: Declare each transport's session-config capability once
+- **agent-chat**: Render config controls from the capability bit
+- **agent**: Let a chat session open without sending a prompt
+- **agent-chat**: Keep the model picker and the session in sync
+- **agent-chat**: Derive every model judgement from one availability union
+- **agent-chat**: Show brand logos for DeepSeek and GLM models
+- **agent-chat**: Expose picker selection to screen readers
+- **agent-chat**: Show the model's provider next to its name
+- **core**: Spawn a long-lived process with injected environment
+- **agent**: Let the caller choose the model-discovery CLI args
+- **agent**: Support both opencode 1.x and 2.x serve protocols
+- **agent-form**: Edit chat launch as an argv list, not a single line
+- **agent**: Report override state from the backend registry
+- **agent**: Add agentStore as the single frontend read path
+- **agent**: Rebuild chat transport plumbing around a registry
+- **agent**: Lock builtin chat protocol to the factory definition
+- **agent-chat**: Derive the chat agent list from the shared store
+- **agent-form**: Split builtin and custom chat editing
+- **settings**: Anchor agent edit forms inline and add row enable switches
+- **agent-form**: Replace the chat enable checkbox with a three-state selector
+- **agent-chat**: Report context usage from pi and acp
+- **agent-chat**: Rework context meter with usage popover
+- **agent-chat**: Add a dedicated brand icon
+- **agent-chat**: Expose agent slash commands via list_agent_commands
+- **agent-chat**: Add slash command and @ mention completion palette
+- **agent-chat**: Highlight composer tokens via mirror layer
+- **agent-chat**: Expose opencode slash commands via list_commands
+- **agent-chat**: Replace mirror highlight with tiptap token editor
+- **agent-chat**: Wire token composer and group the completion palette
+- **dsh-neeko**: Add the interactive TUI runner on pi-tui
+- **dsh-neeko**: Add a pi-compatible theme system with a windowed picker
+- **dsh-neeko**: Add a pi-shaped status bar and session timing
+- **dsh-neeko**: Wire slash commands to the live host registry
+- **dsh-neeko**: Present tool calls as variant cards
+- **dsh-neeko**: Highlight code blocks from theme tokens
+- **dsh-neeko**: Open /model as a panel in the input slot
+- **dsh-neeko**: Add a fullscreen mode where cards are clickable
+- **dsh-neeko**: Add fold, failure and thinking support to the TUI
+- **dsh-neeko**: Resume any session from a paged, titled list
+- **dsh-neeko**: Render tool calls the way pi does
+- **dsh-neeko**: Render the transcript the way pi's own components do
+- **dsh-neeko**: Scroll the terminal's own scrollback, and route keys through a scope stack
+- **dsh-neeko**: Give the TUI pi's terminal channels, keys, and startup screen
+- **watcher**: Merge git-meta watching into the main stream
+- **watcher**: Log applied exclusions and reload truncation
+- **notification**: Deliver exact notification click-through on macOS
+- **notification**: Wire the frontend click-through entry for macOS
+- **agent-hooks**: Accept DSH reports without an install leg
+- **settings**: Hide self-supplied sources from the CLI hooks list
+- **dsh-neeko**: Report host events to Neeko over the hook ingest
+- **guards**: Add UI style token guard and accent foreground eslint rule
+- **tokens**: Add status-error alias, switch track token and design ladders
+- **guards**: Enforce the src/styles layout rules
+- **guards**: Flag text-accent usage in .ts files too
+
+### 🐛 Bug Fixes
+
+- **markdown**: Stop internal link navigation crash and add global error guard
+- **error-handling**: Route swallowed catches to log reporting
+- **error-reporting**: Suppress toast for benign warnings
+- **browser**: Make close and hide webview operations idempotent
+- **heartbeat**: Remove auto-reload chain
+- **events**: Guard unlisten against async listen race
+- **app**: Restore native macOS edit shortcuts via predefined menu items
+- **browser**: Make Esc reliably exit the element picker
+- **editor**: Make Cmd+W reliably close the active tab
+- **git**: Treat empty worktree path as project root
+- **platform/menu**: Mark non-macOS stub as const fn
+- **git**: Fix stale diff content not refreshing on file edits
+- **git**: Pin line endings in git test repos
+- **git**: Stop index-write self-feedback loop
+- **lsp**: Decouple jump from probe single-flight, snapshot RSS
+- **editor**: Bind cmd+click jump as CodeMirror extension
+- **task**: Damp ResizeObserver feedback loop, mount only active console
+- **app**: Mute benign ResizeObserver loop errors in global handler
+- **terminal**: Eliminate race causing linkifier undefined error
+- **terminal**: Drop redundant mut on reader flush closure
+- **dock**: Restore persisted active panel id on rehydrate
+- **lsp**: Resolve posAtCoords crash and promise leak
+- **session**: Exit splash when bootstrap fails or times out
+- **editor**: Restore editor scrolling broken by dnd shell wrapper
+- **fonts**: Gate BTreeSet and Path imports to macOS for cross-platform build
+- **git**: Close discard confirmation dialog on confirm
+- **terminal**: Repair xterm scrollbar theme selectors on beta
+- **lsp**: Send plain text fileContent from go-to-definition
+- **library**: Show All instead of raw id in prompts toolbar
+- **lsp**: Share install-progress event name via constant
+- **editor**: Confirm unsaved changes on all tab-close paths
+- **events**: Wrap all tauri unlisten calls with safeUnlisten
+- **terminal**: Abort renderer when terminal disposed mid-load
+- **diff**: Register highlight by language name, not file path
+- **file**: Locate file in tree across lazy-loaded dirs
+- **watcher**: Apply gitignore to linked worktree tree reads
+- **ui**: Disable WebKit autocapitalize and add shared no-autocorrect props
+- **editor**: Upgrade @codemirror/view to 6.43.11 to stop click scroll jumping
+- **editor**: Fix caret misplacement after scrollbar drag and click
+- **dap**: Resolve breakpoints after launch
+- **editor**: Normalize module lookup paths
+- **editor**: English logs and notifications
+- **lsp**: Dispatch hover jdt links per view instead of per client
+- **runner**: Scope debug session to the active project
+- **debug**: Follow the stop location via generation guard and derived reveal
+- **editor**: Warn once per out-of-range stop
+- **identity**: Route same-file checks through the FileRef owner
+- **guard**: Make the byte-assertion guard actually scan
+- **task**: Resolve console link tab keyspace via resolveTabKey
+- **project**: Clear editor tab spaces when removing a project
+- **file**: Locate rescrolls when target is already selected
+- **lsp**: Apply additionalTextEdits for snippet completions
+- **lsp**: Drop jdtls capabilities we never implement
+- **lsp**: Fetch deferred auto-import edits via completionItem/resolve
+- **lsp**: Stop preselecting first quickfix menu row
+- **lsp**: Stop surfacing machine-only diagnostic codes
+- **lsp**: Normalize duplicate didOpen at the session boundary
+- **lsp**: Stabilize diagnostic squiggles and quickfix delivery
+- **file**: Strip directory chevron from drag ghost
+- **editor**: Remove AI assistant toolbar button
+- **git**: Keep collapsed untracked dir expansion in sync
+- **git**: Decode C-quoted paths from git text output
+- **git**: Keep read paths free of optional index locks
+- **terminal**: Cite red line 5 instead of retired 支柱 12
+- **git**: Split the mount predicate from the retry predicate in repo-unit sync
+- **watcher**: Make mount_only idempotent for an already-mounted unit
+- **lsp**: Reuse fileRef for the completion module path
+- **lsp**: Build file uris with the drive-form third slash
+- **test**: Cancel per-file pending timers instead of racing the teardown
+- **dialogs**: Host store-driven dialogs globally
+- **action-menu**: Open prompt dialogs in place
+- **git**: Split path identity from its host form
+- **git**: Reap git child trees on exit via shared kill action
+- **clippy**: Unblock the Rust 1.99 must-use gate
+- **git**: Run git through the executor instead of a hand-built shell
+- **test**: Replace cross-callback zero asserts with reachability probes
+- **dap**: Anchor Run/Debug path facts to the execution unit root
+- **git**: Harden file diff state, cache and IPC
+- **platform**: Gate watcher exclusion setter by target OS
+- **lsp**: Host failure evidence on the session key
+- **guards**: Judge platform cfg consumers per platform
+- **test**: Tie temp fixtures to their owning tempdir
+- Tighten the ticket guard, the A4 parser, and pending staleness
+- **theme**: Keep claude modified status color distinct from untracked/deleted
+- **terminal**: Address run root by workspace session
+- **agent-chat**: Route question replies to the serve question endpoint
+- **dev**: Wrap the macOS dev binary in a signed .app bundle
+- **theme**: Decouple git file status colors from theme accent
+- **agent-hooks**: Flatten single-element loop in template contract test
+- **system-notify**: Document non-macOS try_deliver stub
+- **search**: Resolve the search root from the active workspace
+- **settings**: Serialise every config.json write through one queue
+- **terminal**: Stop terminal layout garbling after tab switch
+- **file**: Co-locate expansion state with the directory cache
+- **cache**: Filter reads by version and enumerate keys from the backend
+- **cache**: Write only changed keys and read the backend on load
+- **comment**: Show the failure reason in every display mode
+- **translation**: Keep the agent and its model in sync as one selection
+- **test**: Serialize tests that mutate process env
+- **pi-rpc**: Derive turn end reason from the settle payload
+- **agent**: Route the out-of-session model catalog through the adapter
+- **agent-chat**: Stop truncating model names and restore the selection highlight
+- **agent-chat**: Gate config controls on option presence, not transport
+- **agent-form**: Stop hiding a model-list conflict and dropping detection kind
+- **input**: Block WKWebView ghost-text inserts from arrow keys
+- **agent**: Strip ghost characters from config on save
+- **dsh-neeko**: Migrate the bridge to dsh 0.2.x contracts
+- **dsh-neeko**: Pin cordis to ~4.0.4 for the 0.2.x type surface
+- **dsh-neeko**: Drop the stray nested workspace root causing duplicate types
+- **dsh-neeko**: Make the model switch actually take effect
+- **dsh-neeko**: List the model catalogue instead of caching a boot-time miss
+- **dsh-neeko**: Fix the editor, spinner and exit paths
+- **dsh-neeko**: Scroll the whole screen and keep panels where they are mounted
+- **dsh-neeko**: Give the dock one stack entry so the transcript can grow
+- **dsh-neeko**: Name the third screen state so the main screen is reachable
+- **dsh-neeko**: Resolve a pi theme's omitted tokens through its fallback chain
+- **dsh-neeko**: Declare dsh compatibility with engines.dsh, not a peer range
+- **watcher**: Rank exclusion roots by cost before truncating
+- **executor**: Register kill_tree spawns for exit convergence automatically
+- **agent-chat**: Reap ACP and DeepSeek harness children
+- **executor**: Align kill_action gate with its unix-only consumer
+- **watcher**: Make the synthetic stream mirror both transports
+- **ui**: Make switch track visible across themes and extract selection style
+- **theme**: Replace hardcoded colors with semantic tokens
+- **a11y**: Add focus-visible rings and align settings selected state
+- **theme**: Recalibrate one-dark-pro surfaces to source palette
+- **file-tree**: Keep selected row names readable in every theme
+
+### 🚜 Refactor
+
+- **error-reporting**: Sink frontend error reporting to shared
+- **diff**: Extract combined nav and review hooks
+- **app**: Split dock wrappers and unify center view routing
+- **app**: Split useAppShell/ProjectWorkspace and standardize deep imports
+- **platform**: Extract macOS edit menu into platform adapter
+- **agent**: Unify AgentConfig model and remove provider/plugin stack
+- **agent,exec**: Hermetic opencode discovery and command existence checks
+- **terminal**: Replace drain wake events with shared polling
+- **dock**: Persist panel sizes via Group onLayoutChanged
+- **git**: Unify git operations and harden path validation
+- **git**: Split operations.rs God File by services pattern
+- **git**: Split local.rs and parsers.rs per services pattern
+- **git**: Split transport, cache and status_worker per services pattern
+- **git**: Split git commands and commit service per services pattern
+- **app**: Auto-retry ErrorBoundary with degraded placeholder
+- **app**: Converge fixed panels and titlebar actions into registry
+- **dock**: Extract useZoneExpandCollapse hook
+- **ui**: Rename ResizablePanel to OverlayPanel
+- **app**: Introduce AppShell window skeleton
+- **layout**: Drop Phase-3 sidebar legacy code
+- **file**: Unify file reading behind AccessScope-strategy read_file
+- **git**: Extract ToolbarControls from DiffToolbar
+- **editor,git**: Split oversized components under the 300-line limit
+- **typography**: Unify font system SSOT (Phase 0-4)
+- **library**: Fold Skills panel into Library view
+- **terminal**: Unify poisoned-lock handling
+- **status-bar**: Extract static registry for items
+- **dap**: Extract headless build service
+- **editor**: AST-based runnable discovery
+- **runner**: Give the stop location a single home
+- **runner**: Read the stop input from a single subscription
+- **debug**: Drop the bypasses the identity grammar made unnecessary
+- **runner**: Root-aware tab reuse and a shared frame factory
+- **dap**: Split DapManager into layered use-case modules
+- **editor**: Replace navigate slot with goal state model
+- **lsp**: Move per-language knowledge into plugin data
+- **lsp**: Drop dead settings snapshot and getter
+- **lsp**: Move java-only frontend branches to plugin data
+- **lsp**: Fix neeko-check review violations
+- **watcher**: Route events through one sink and release watchers on unwatch
+- **paths**: Route browser-domain path forms through fileRef
+- **paths**: State the absolute-path contract and delegate the url form
+- **scripts**: Make lint mean all static checks and test mean one run
+- **scripts**: Make test mean all three suites, like lint means all static
+- **git**: Isolate blocking path resolution
+- **git**: Isolate blocking repo open and validation
+- **watcher**: 事件名映射单一源化并补无 GUI 契约测试
+- **git**: Single-source read-only git semantics
+- **dap**: Spawn build and debuggee scripts via the executor
+- **theme**: Sync WSL theme files through the unified executor
+- **file**: Migrate file services to argv/script execution
+- **connection**: Use argv/script execution for home and dirs
+- **fonts**: Move font enumeration into platform adapters
+- **naming**: Unify domain terms on Workspace and checkout
+- **file**: Address file IO by a WorkspaceSession value object
+- **identity**: Model tabs by WorkspaceSession identity
+- **app**: Split the composition root into a directory module
+- **lint**: Clear clippy --all-targets across the test code
+- **test**: Gate platform-specific tests at item level
+- **skill**: Split SkillsPanel and share rail pieces
+- **shared**: Unify rail rows, tag-group CRUD and delete confirm
+- **library**: Split oversized panels and adopt shared rails
+- **diff**: Split view utils by invariant
+- **git**: Derive the filter vocabulary from the domain type
+- **git**: Route git commands via WorkspaceSession object
+- **terminal**: Address terminals by workspace session
+- **agent-chat**: Extract cache sync and output clipping
+- **git**: Route status badges and icons through the git-status palette
+- **shared**: Consolidate cross-feature components and confirms
+- **git**: Extract the shared branch display rules
+- **editor**: Single-source tab foreground/order
+- **guards**: Extract a shared external-command primitive
+- **editor**: Narrow mouseClickGuard blast radius to unfocused only
+- **shared**: Extract useTransientFlag for one-shot UI feedback
+- **ui**: Adopt useTransientFlag in existing copy-feedback buttons
+- **agent-hooks**: Split the hooks domain by failure strategy
+- **hooks**: Migrate agent-hooks ingest to the HTTP gateway engine
+- **terminal**: Extract ResizeObserver self-excitation guard
+- **terminal**: Add shared xterm options factory
+- **task**: Adopt shared terminal helpers
+- **file**: Split panel state into focused sub-hooks
+- **file**: Give the tree a single addressing surface
+- **runner**: Expose the line index as the single construction point
+- **db**: Split common/db into a module and add a connection pool
+- **db**: Move the migration chain to common/db
+- **library**: Back LibraryStore with the shared pool
+- **comment**: Move comment translation into a header button
+- **agent**: Share one hook for loading an agent's model list
+- **settings**: Present the translation agent and model as one control
+- **agent**: Move ACP model selection onto the protocol layer
+- **agent**: Fold model discovery into one adapter method
+- **agent**: Drop the dead Pi table parser
+- **agent**: Split serve.rs into a module directory
+- **agent**: Rename the serve adapter directory to opencode
+- **agent**: Replace ChatStart enum with ChatLaunch argv struct
+- **agent**: Read agent config from agentStore everywhere
+- **agent**: Drop the two frontend config copies
+- **commit**: Drop the redundant agent command override
+- **dsh-neeko**: Split TuiApp into owned subsystems and fix the interaction glue
+- **dsh-neeko**: Split row rendering out of the event merge
+- **dsh-neeko**: Extract the /resume state machine out of TuiApp
+- **dsh-neeko**: Move the notice log and the row cache out of TuiApp
+- **dsh-neeko**: Give the dock one occupant instead of three sets of flags
+- **watcher**: Expose pure seams for event-driven tests
+- **settings**: Translate notification event labels to English
+- **notification**: Translate notification copy to English
+- **notification**: Make agent alerts system-notification only
+- **watcher**: Give git-meta path matching a single source
+- **watcher**: Make the merge decision a pure function
+- **project**: Drop unused isLast data chain from project grouping
+- **styles**: Split themes into files and extract the variable contract
+- **ui**: Turn the custom radio into a Radio primitive
+- **guards**: Drop the local ESLint rule, move the criterion into the guard
+
+### 📚 Documentation
+
+- Add best-practices docs and update neeko-check review spec
+- Add AI review prototypes and agent session research
+- **diff**: Add line-number layout prototype
+- Add git domain spec
+- **git**: Document stash operations and error classification
+- **trellis**: Triage complexity, confirm docs before code
+- **backend**: Codify single-platform adapter rule in spec
+- **spec**: Require const fn for platform default stubs
+- **task**: Record dock layout and fixed panel follow-ups
+- **layout**: Sync specs, task PRD and architecture diagram
+- **task**: Record drag-pin task scope extensions in PRD
+- **task**: Close out drag-tab-to-pin checklist and notes
+- **task**: Record lsp navigation ux task with root causes and scope
+- **task**: Close out lsp navigation ux notes
+- **task**: Close out file-reader-unification notes
+- **spec**: Add status-bar development guidelines
+- **spec**: Add tab-close and unlisten race conventions
+- **trellis**: Editor test-run-buttons design and research
+- **trellis**: Runnable detection design
+- **spec**: Derivation-rule duplication drift
+- **trellis**: Record AST discovery design and probes
+- **trellis**: Record the java debug source-navigation session
+- **trellis**: Record the java debug backends session
+- **trellis**: Plan debug stop reveal via generation and derived state
+- **trellis**: Record the stop-reveal task, slice 3 plan and two conventions
+- **trellis**: Record the out-of-range dedup and composition test
+- **tasks**: Add debug bp disable/rerun task docs
+- **tasks**: Record source-identity check pass and doc corrections
+- **spec**: Capture navigation goal contract and fill follow-up task docs
+- **lsp**: Add lsp-domain spec with applyEdit contract and refactor ledger
+- **spec**: Add diagnostic code display policy to lsp-domain
+- **spec**: Capture watcher lifecycle and read-only git contracts
+- **agents**: Split AGENTS.md by code boundary
+- **contributing**: Replace rule mirrors with a location index
+- **spec**: Record the repository-unit git status contract
+- **spec**: Split the mount and retry predicates in the repo-unit contract
+- **gate**: Cite the script names instead of spelling out commands
+- **gate**: Record why packages/dsh-neeko sits outside the gate
+- **spec**: Record the file-level timer boundary and how to extend it
+- **spec**: Require a global host for store-driven dialogs
+- **review**: Align neeko-check skill with the 15 red lines
+- **spec**: Turn the Problems panel's lingering notes into decision records
+- **spec**: Define the unified command-execution standard
+- **spec**: Define git derived-value freshness and ahead/behind single source
+- **guards**: Document the gate declaration and the false-green trap
+- **spec**: Define the real-source test determinism contract
+- Cite red line ids instead of retired pillars
+- **rules**: Scope red line 10 to test-domain platform gates
+- **git**: Record WorkspaceSession addressing contract
+- **task**: Check off LSP diagnostics ownership acceptance criteria
+- **domain-model**: Document terminal address derivation
+- **spec**: Define the workspace-scoped run root contract
+- **terminal**: Record 10-13 insert arbitration and delivery contracts
+- **spec**: Record the notification platform findings
+- **trellis**: Record the agent notification task
+- **git**: Record the conflict read path contract and its known edge
+- **trellis**: Record the conflict diff view task and its Layer 2 split
+- **spec**: Sync the specs with the shared-component refactors
+- **trellis**: Record git-conflict-resolve Layer 2 sessions and task state
+- **trellis**: Record editor-tab-single-source task and session
+- **trellis**: Record the guard concurrency and node-environment migration
+- **trellis**: Record guard-local-wall-clock task and session
+- **trellis**: Steer the dev-loop check to check:quick
+- **spec**: Document the lightweight check:quick tier
+- **task**: Record the guard wall-clock reductions and review fixes
+- **task**: Record the macOS notification identity contract
+- **trellis**: Record the conflict-resolve verification session
+- **trellis**: Record the opencode-2x verification session
+- **trellis**: Record the multi-CLI notify tasks and hooks domain spec
+- **spec**: Record the macOS notification identity contract and core-domain layering
+- **task**: Backfill 10-12-agent-notify AC/Phase C state and fix dangling pointers
+- **hooks**: Repoint task-dir evidence pointers at the agent-hooks spec
+- **task**: Backfill 10-16-notify AC state and archive-proof the hooks spec
+- **spec**: Record the HTTP gateway topology and its test pitfalls
+- **spec**: Record the two terminal resize dedup invariants
+- **spec**: Record the file tree expansion and addressing invariants
+- **task**: Record the ACP model selection task
+- **spec**: Compare the four agent chat transports side by side
+- Make check:quick the default check and keep check at push time
+- **tools**: Point the rust test gap at pre-push, not at pnpm check
+- **spec**: Record what Pi's second phase actually needed
+- **spec**: Record the session-config checklist for new transports
+- **spec**: Record the settle semantics and the model catalog contract
+- **task**: Backfill the Pi rpc adapter execution checklist
+- **spec**: Record the opencode serve dual-stack protocol facts
+- **spec**: Record the argv carrier rule and the chat launch contract
+- **spec**: Record the agent config single-source contract
+- **spec**: Record the chat transport registry and wire format contracts
+- **spec**: Document usage telemetry contracts per transport
+- **spec**: Document composer palette contracts and commands capability
+- **spec**: Document token composer and opencode command discovery
+- **spec**: Record the stale-contract false-green lesson and backfill U7
+- **spec**: Add the clean-install re-verification rule
+- **spec**: Correct the duplicate-type lesson to the nested workspace root
+- Record the dsh-neeko TUI lessons in the spec ledger
+- **spec**: Record the TUI renderer, fold and repaint lessons
+- **dsh-neeko**: Document the TUI rounds and the bridge surface
+- **task**: Record the resume round, including the wrong turns
+- **task**: Record the pi-parity, layout and review rounds
+- **dsh-neeko**: Add the package guide and record the screen-mode round
+- **dsh-neeko**: Record the pi alignment round and what it cost to get wrong
+- **dsh-neeko**: Carry pi's copyright notice, which MIT requires
+- **dsh-neeko**: Make the pi notice name its sources, not just the packages
+- **dsh-neeko**: Point npm at the repository, issues, and package directory
+- **task**: Record the fsevents exclusion findings
+- **spec**: Record the cost of real-source tests
+- **spec**: Quote the English notification labels in the transports spec
+- **task**: Close the stream-consolidation task by recording what it did not do
+- **task**: Close the composer token editor with its manual verification recorded
+- **task**: Close three chat tasks, two as done and one as superseded
+- **agents**: Stop the dev loop from re-running the checks
+- **task**: Decide ctrl+g stays out of the TUI
+- **spec**: Document self-supplied hook sources and their two traps
+- **task**: Close the DSH notify task with what actually shipped
+- **task**: Close the real-CLI verification gap across six agents
+- **task**: Pivot the UI audit into UI polish implementation
+- **spec**: Add design tokens guide with eight pitfalls
+- **spec**: Record the styles layout rules and the dropped ESLint rule
+- **spec**: Record the text-accent trap and terminal reuse
+
+### ⚡ Performance
+
+- **git**: Make full_diff_context_lines a const fn
+- **terminal**: Load Canvas renderer to curb DOM-renderer memory growth
+- **file-watcher**: Implement targeted tree refresh with dual-window debounce
+- **file**: Prune ignored directories before descending into them
+- **git**: Collapse untracked dirs and cap status payload size
+- **agent-chat**: Eliminate deep clone on message cache read/write
+- **font**: Accelerate picker and unify typography SSOT
+- **test**: Split node/jsdom environments and raise worker concurrency
+- **lsp**: Coalesce diagnostics burst and lazy-render Problems rows
+- **lsp**: Render Problems groups incrementally and give rows unique keys
+- **guards**: Run command gates concurrently in the local stage
+- **lint**: Keep eslint and tsc caches valid across mtime changes
+- **guards**: Gate the selftest on the framework being touched
+
+### 🧪 Testing
+
+- **diff**: Add renderHook tests for nav and review hooks
+- **editor**: Cover the file editor composition layer
+- Make CI tests deterministic and platform-hermetic
+- Fix dap external-source test path portability
+- **watcher**: Make idempotency tests load-independent
+- **guards**: Pin repository-unit identity and the write-command closure
+- **paths**: Cover openHtmlInBrowserPanel's url and docking side effects
+- **gate**: Enforce the frontend coverage floors in CI
+- **gate**: Gate Rust line coverage at 60 in CI
+- **prompts**: Cover dialog close paths and overlay coupling
+- **guards**: Enforce single source for read-only git semantics
+- **guards**: Enforce unified command execution
+- **guards**: Ban absolute-zero event-observer asserts in the nondeterministic domain
+- **dap**: Cover Java plan on a worktree root outside the project
+- **watcher**: Avoid FSEvents streams in mount switch test
+- **guards**: Enforce single terminal key mint
+- **guards**: Enforce the terminal run root and its teardown route
+- **agent-hooks**: Pin v2 template contract and freeze v1 template
+- **frontend**: Move DOM-free suites to the node vitest environment
+- **testing**: Centralize file tree node fixtures
+- **file**: Guard the panel wiring and the expand path
+- **agent**: Prove model selection end to end through mockAgent
+- **agent**: Guard the transport strings across both sides of the wire
+- **guards**: Pin agent config single-source with a machine guard
+- **guards**: Require chat capability checks to honor chat_enabled
+- **dsh-neeko**: Pin the repaint, spinner and submit contracts
+- **dsh-neeko**: Share one ANSI stripper across the suite
+- **dsh-neeko**: Fail when a spec shadows a module-level helper
+- **agent-chat**: Stop spawning the real opencode binary in unit tests
+- **watcher**: Drive handler tests with synthetic events
+- **notification**: Align delivered-event fixtures with English copy
+- **watcher**: Prove the assertions can fail, not just pass
+- **styles**: Strip CSS comments before parsing theme files
+
+### ⚙️ Miscellaneous Tasks
+
+- **task**: Archive 08-12-fix-markdown-link-crash-global-error-guard
+- Record journal
+- **task**: Archive 08-12-cleanup-silent-error-swallowing
+- Record journal
+- Record journal
+- **workspace**: Update tincopper journal
+- **workspace**: Record session 132 stash panel work
+- **task**: Add git history log scope plan
+- **task**: Archive 08-14-git-history-log-scope
+- Record journal
+- **task**: Archive 08-14-08-15-architecture-debt-cleanup
+- Record journal
+- **gitignore**: Ignore .dsh directory
+- **task**: Archive 08-15-browser-picker-multiselect
+- Record journal
+- **task**: Archive 08-15-browser-picker-edit-shortcuts
+- Record journal
+- **task**: Archive 08-15-08-15-worktree-list-empty-path
+- Record journal
+- Record session journal and archive diff cache task
+- Record journal
+- Record journal
+- Record journal
+- **task**: Archive 08-17-browser-as-editor-tab
+- Record journal
+- Standardize Node.js version to 24
+- Record journal
+- Record journal
+- **task**: Archive 08-25-terminal-memory-governance
+- Record journal
+- Ignore local .codebuddy directory
+- **action-menu**: Clarify new-agent-chat description
+- **task**: Archive 08-27-file-tree-git-decoration
+- Record journal
+- **task**: Archive 08-28-git-large-files
+- Record journal
+- **task**: Archive 08-28-layout-architecture
+- **task**: Archive 08-14-08-15-app-center-routing
+- **task**: Archive 08-14-08-15-dock-wrapper-refactor
+- Record journal
+- Record journal
+- **task**: Archive 08-07-drag-tab-to-pin
+- Record journal
+- **app**: Expose dev-only store debug bridge
+- **task**: Archive 08-30-lsp-navigation-ux
+- Record journal
+- Record journal
+- **task**: Archive 08-30-file-reader-unification
+- Record journal
+- Record journal
+- **task**: Archive 08-31-editor-git-component-split
+- Record journal
+- **task**: Archive 08-31-09-01-typography-font-unify
+- Record journal
+- **task**: Archive 08-31-font-picker-optimization
+- Record journal
+- **task**: Archive 09-01-scrollbar-auto-hide
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- **trellis**: Archive terminal-webgl-renderer-selfheal (AC1-AC5 verified)
+- Record journal
+- **task**: Archive 09-03-terminal-drain-long-poll
+- Record journal
+- Record journal
+- Record journal
+- **task**: Archive 09-04-terminal-lock-unify
+- **task**: Archive 09-04-statusbar-prompts-shortcut
+- **task**: Archive 09-04-statusbar-registry
+- Record journal
+- **task**: Record cmdw-unsaved-confirm task and journal
+- **task**: Record editor-test-run-buttons task and journal
+- **vitest**: Cap maxWorkers at 2 to fix jsdom worker timeouts
+- **task**: Archive 09-06-g6-xy-status-contract
+- **trellis**: Record s3/s4 tasks and journal
+- **trellis**: Record file tree ignored-state task and journal
+- **trellis**: Archive file-tree security task
+- Record journal
+- **trellis**: Archive cmdw-unsaved-confirm task
+- Record journal
+- Record journal
+- **task**: Archive 09-09-editor-codemirror-singleton
+- Record journal
+- **ci**: Gate the java debug host with its self-check
+- **task**: Archive 09-04-editor-test-run-buttons
+- **task**: Archive 09-16-debug-stop-reveal
+- Record journal
+- **guard**: Make the path-identity scope executable
+- Record journal
+- **task**: Archive 09-16-debug-bp-disable-rerun
+- Record journal
+- **task**: Archive 09-16-debug-source-identity
+- Record journal
+- Record journal
+- **task**: Archive 09-17-console-links-tabkey-worktree
+- Record journal
+- Record journal
+- **lsp**: Extend auto-import probe with import-candidate sampling
+- Record journal
+- Record journal
+- Record journal
+- **task**: Archive 09-20-problems-perf
+- **task**: Log quickfix no-preselect round and refactor ledger
+- **task**: Fill lsp task context ledgers
+- **task**: Record R5 language-branch scan result
+- **task**: Mark AC3 verified and record java branch removal
+- **task**: Log round 12 diagnostic code display policy
+- **task**: Mark AC4 verified and AC6 gated, add AC5 rust checklist
+- **task**: Archive lsp-auto-import-diagnostics (AC5 verified, gates green)
+- Record journal
+- **task**: Archive 09-12-java-debug-backends (JDTLS/host dual backend, WSL marked known-limit)
+- Record journal
+- **task**: Archive 09-21-ctrl-hover-references
+- Record journal
+- **task**: Archive 09-24-editor-change-highlight
+- Record journal
+- **task**: Archive 09-24-git-unversioned-expansion-cache
+- Record journal
+- Ignore .qoder directory
+- **task**: Archive 09-24-watcher-lifecycle-and-git-lock
+- Record journal
+- **agents**: Guard AGENTS.md size and red-line routing
+- **guard**: Fix AGENTS.md size budget and enforce red-line ledger
+- Record journal
+- Record journal
+- **task**: Record the 09-26-worktree-repo-identity task
+- **tools**: Add the worktree manual hand-test script
+- Record journal
+- **gate**: Split the static gate from the test gate across commit and push
+- **scripts**: Name each gate once and give lint a write-back entry
+- **gate**: Call every gate by script name and widen what triggers it
+- **guards**: Pin the script references that hooks, CI and docs cite
+- Record journal
+- **docs**: Delete the stale state-management copy at the repo root
+- Record journal
+- **gate**: Gate the production bundle and name the host build
+- **task**: Record the 10-01-library-prompt-dialog-host task
+- **task**: Record the 10-01-path-identity-alphabet task
+- Record journal
+- **task**: Record the 10-01-async-path-resolution task
+- Record journal
+- **guards**: Forbid blocking fs primitives outside the pool
+- **task**: Record the 10-02-blocking-fs-sweep task
+- Record journal
+- **task**: Archive 10-01-library-prompt-dialog-host
+- Record journal
+- **task**: Record 10-04 git-sync-cancel-console
+- **task**: Archive 10-04-git-sync-cancel-console
+- Record journal
+- **task**: Archive 10-02-blocking-fs-sweep
+- **task**: Archive 10-01-async-path-resolution
+- **task**: Archive 10-01-path-identity-alphabet
+- **task**: Record 10-05 wsl-ssh-remote-changes-parity
+- **task**: Archive 09-26-worktree-repo-identity
+- Record journal
+- **task**: Record 10-05 app-exit-git-child-cleanup
+- **task**: Archive 10-05-app-exit-git-child-cleanup
+- Record journal
+- **task**: Expand 10-05 to cover WSL/SSH exit-kill parity
+- **task**: Drop 10-05 wsl-ssh-remote-changes-parity
+- **task**: Archive invariant-enforcement work and record journal
+- **toolchain**: Pin the Rust toolchain version
+- **guards**: Register the two Problems-rendering invariants
+- **workspace**: Record session 256 and backfill the commit hashes
+- **task**: Record the unify-command-execution artifacts
+- **ci**: Clarify what the release build workflow covers
+- **task**: Add git-status-realtime planning artifacts
+- **task**: Archive 10-07-git-status-realtime
+- Record journal
+- **task**: Add gate-orchestration planning artifacts
+- **task**: Archive 10-08-gate-orchestration
+- Record journal
+- Fill gate-orchestration session details
+- **task**: Add real-source-test-determinism planning artifacts
+- **task**: Archive 10-08-real-source-test-determinism
+- Record journal
+- **task**: Add file IO workspace scope and git command session plans
+- Record journal
+- **task**: Archive 10-09-file-io-workspace-scope
+- **task**: Archive 10-08-worktree-run-debug
+- **task**: Archive 10-09-watcher-boundary-cost-model
+- Record journal
+- **task**: Archive 10-10-tab-identity-workspace-session
+- Record journal
+- **toolchain**: Install rust-analyzer with the pinned toolchain
+- **guards**: Gate the all-target Rust lint at local/push/CI and drop the duplicate
+- **trellis**: Record the L2 ban task and journals
+- Keep check and evidence jobs independent, pinned by guard rule A4
+- **trellis**: Record the ticket, pending, and governance sessions
+- **library**: Remove the dead MCP tag-group dialog
+- **task**: Archive 10-07-unify-command-execution
+- Record journal
+- **task**: Archive 10-08-workspace-naming
+- Record journal
+- **task**: Archive 10-09-git-command-workspace-session
+- **task**: Archive 10-10-lsp-failure-diagnostics-ownership
+- **task**: Archive 10-11-test-platform-cfg-item-scope
+- **task**: Record 10-12 terminal addressing migration
+- **task**: Record run root addressing plan
+- **task**: Archive 10-12-terminal-run-root-workspace-scope
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- **pi**: Switch to scoped pi-subagents and add pi-timing
+- **guards**: Widen the workspace-session addressing guard
+- **task**: Archive 10-12-terminal-insert-workspace-scope
+- **task**: Archive 10-13-agent-insert-addressing-arbitration
+- **task**: Archive 10-14-git-conflict-diff-view
+- **trellis**: Update to v0.6.17
+- **task**: Archive 10-14-git-conflict-resolve
+- **task**: Archive 10-14-opencode-2x-support
+- **task**: Archive 10-15-editor-tab-single-source
+- Record journal
+- **task**: Archive 10-16-guard-local-wall-clock
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- **guards**: Fix frontend test selection and shrink size baselines
+- **task**: Archive 10-12-agent-notify
+- Record journal
+- Record journal
+- **task**: Archive 10-16-notify-claude-compat
+- **task**: Archive 10-16-notify-codex
+- **task**: Record cs-http-gateway planning and implementation artifacts
+- **task**: Archive 10-17-cs-http-gateway
+- Record journal
+- Record journal
+- **task**: Archive 10-19-code-comment-translation
+- **guards**: Raise the lint_fe budget to match its cold-cache cost
+- **task**: Archive 10-19-generic-sqlite-cache
+- Record journal
+- Record journal
+- **task**: Archive 10-20-unify-acp-model-selection
+- Record journal
+- **task**: Record the capability-unify and two planned tasks
+- **task**: Record the four-state availability decision
+- **task**: Archive 10-21-pi-rpc-adapter
+- Record journal
+- **task**: Archive 10-20-opencode-2x-serve-dual-stack
+- **task**: Record the chat launch unify task artifacts
+- **task**: Archive 10-23-chat-launch-unify
+- **trellis**: Add 10-23-agent-chat-registry task artifacts
+- **trellis**: Add 10-24-agent-chat-context-usage artifacts
+- **task**: Archive 10-24-agent-chat-context-usage
+- Record journal
+- Record journal
+- Record journal
+- **task**: Record mention-slash-palette design addenda
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- **task**: Archive 10-17-dsh-neeko-bridge-fix
+- Record journal
+- Record journal
+- Give the workspace root the same repository pointers
+- Merge the dsh-neeko TUI package into main
+- Record journal
+- Record journal
+- Reuse the lint caches and record the check:quick cost model
+- **skills**: Record the BeautifulRust skill pair in the project lock
+- Record journal
+- **task**: Archive 10-25-watcher-test-decoupling
+- Record journal
+- **task**: Archive 10-25-fsevent-stream-consolidation
+- Record journal
+- **task**: Archive 10-24-composer-token-editor
+- **task**: Archive 10-23-agent-config-single-source
+- **task**: Archive 10-23-agent-chat-registry
+- **task**: Archive 10-21-mention-slash-palette
+- Record journal
+- Record journal
+- **task**: Archive 10-18-dsh-tui
+- Record journal
+- Record journal
+- **task**: Archive 10-16-notify-dsh
+- Record journal
+- **task**: Archive 10-16-agent-notify-more-clis
+- Record journal
+- Record journal
+- **task**: Archive 08-17-web-agent-page-design
+- **task**: Archive 08-24-agent-config-unify
+- **task**: Archive 07-26-ui-design-audit
+- **task**: Archive 07-26-unified-task-hub
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- **guards**: Record component size baseline for three dialog files
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+- Record journal
+
+### ◀️ Revert
+
+- **task**: Un-archive the two planning-only tasks
+
+### build
+
+- **deps**: Add notification plugin and pin the Tauri toolchain
+- **dsh-neeko**: Ship the whole lib dir and disable chunk splitting
+
 ## [1.0.6] - 2026-08-11
 
 ### 🚀 Features
@@ -41,6 +959,7 @@ All notable changes to this project will be documented in this file.
 - Record journal
 - **task**: Archive 08-11-exec-target-consolidation
 - Record journal
+- Release v1.0.6
 
 ## [1.0.5] - 2026-08-10
 

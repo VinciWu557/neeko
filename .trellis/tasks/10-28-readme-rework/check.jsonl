@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/10-28-readme-rework/design.md", "reason": "对照 §2 事实锚点、§7.1 五条判据、§7.3 六场景正反例逐项验收"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "核对护栏是否按仓库约定接入（scopes/stages/失败文案/不空转）"}
+{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "核对每条判据所处强制层是否正确（该 guard 的不该落到 prose，反之亦然）"}
