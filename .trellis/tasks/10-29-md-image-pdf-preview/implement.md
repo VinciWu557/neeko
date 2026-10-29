@@ -74,3 +74,33 @@ pnpm check:quick                                   # 静态检查 + 改动文件
 cargo test --manifest-path src-tauri/Cargo.toml     # Rust 单测（改 .rs 后必须补跑）
 pnpm test:fe                                        # 全量前端单测（push/CI 兜底，不主动跑）
 ```
+
+## 追加修复（用户验收反馈）：worktree 路径基准
+
+- [x] `FileEditorFallback`：图片预览改用「`tab.filePath`（Workspace 相对）+ `workspaceRootOf(tab.workspace.key, projectPath)`」，
+      移除 `absFilePath` prop（它由 `sourceIdentityOf(projectPath, …)` 派生 ⇒ 指向主仓根）。
+- [x] `ImageFileView`：props 从 `absPath` 改为 `filePath` + `basePath`，通道选择仍由 `useAssetUrl` 决定。
+- [x] `useFileEditorState`：抽出 `editorBasePathOf(workspaceKey, projectPath, filePath)` 纯函数，
+      md/html 预览基准改为工作树根（同类缺陷：worktree 里 md 相对图片会被拼到主仓根）。
+- [x] 回归锁定：`FileEditorFallback.image.test.tsx`（worktree 断言指向工作树根）、
+      `editorBasePath.test.ts`（5 用例含双根 bug 与反斜杠归一）、
+      `ImageFileView.test.tsx`（worktree 基准 + 遮罩 + 失败兜底）。
+- [x] `pnpm check:quick` 33/33 通过。
+
+## 追加修复（第二次验收反馈）：图片仍加载失败 —— asset 协议 dotfile 403
+
+- [x] **根因**（读 Tauri 源码定位，非前端路径问题）：`tauri.conf.json` 的
+      `assetProtocol.scope` 用的是**简写数组**形态 `["**"]`。`FsScope` 简写形态没有
+      `require_literal_leading_dot` 字段，Tauri 在 **Unix 上默认取 `true`**
+      （`tauri/src/scope/fs.rs`：`// dotfiles are not supposed to be exposed by default on unix`）。
+      `glob` 的 `**` 匹配到点开头路径段时立即判不匹配
+      （`glob/src/lib.rs`：`follows_separator && require_literal_leading_dot && c == '.'`）。
+      ⇒ `docs/.img/project-struct.png` 被 scope 拒绝 = asset 协议 **403** ⇒ `<img onError>`
+      ⇒ “Image failed to load”（与 worktree / 相对路径无关，旧实现同样必然失败）。
+- [x] 修复：`scope` 改为对象形态 `{ allow: ["**"], requireLiteralLeadingDot: false }`。
+      **不**收紧为白名单（PRD 仍标为单独立项的加固项）。
+- [x] 新护栏 `check_asset_protocol_dotfiles`（+ 9 条单测，已 Red 验证：改回简写数组即变红），
+      防止回归到「碰运气」的简写形态。
+- [x] 失败可见性：`ImageFileView` 失败态显示具体原因 + `console.warn`(filePath/basePath/src)，
+      `MarkdownImage` 失败态加 `title`（此前只有文件名，排查只能靠猜）。
+- [x] `pnpm check:quick` 34/34 通过。

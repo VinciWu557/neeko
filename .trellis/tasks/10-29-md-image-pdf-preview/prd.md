@@ -55,17 +55,25 @@ SSH/WSL 远程项目的图片全部加载失败。PDF 打开后落入二进制�
 
 ## Acceptance Criteria
 
-- [ ] AC1 本地项目 `.md` 预览中，相对/绝对路径的 png/webp 等图片正常显示，点击放大；
+- [x] AC1 本地项目 `.md` 预览中，相对/绝对路径的 png/webp 等图片正常显示，点击放大；
       `data:` URI 图片在传入 basePath 的渲染点不被破坏。
-- [ ] AC2 agent-chat 消息、会话消息、PR 描述中的 Markdown 图片正常显示（相对路径以项目根解析）。
-- [ ] AC3 SSH/WSL 远程项目的 Markdown 图片与图片文件预览正常显示。
-- [ ] AC4 本地与远程项目打开 `.pdf` 显示预览，支持连续滚动与单页翻页两种模式、缩放与页码跳转；
-      损坏 PDF 显示错误提示。
-- [ ] AC5 二进制载荷（图片/PDF 字节）不出现在任何 Command 的 JSON 返回中
+      （用户实测确认；关键阻塞项是 asset 协议 dotfile 403，非路径解析）
+- [x] AC2 agent-chat 消息、会话消息、PR 描述中的 Markdown 图片正常显示（相对路径以项目根解析）。
+      （`img` 组件映射 + basePath 回落 Workspace 根；组件测试覆盖解析结果）
+- [x] AC3 SSH/WSL 远程项目的 Markdown 图片与图片文件预览正常显示。
+      （`read_file_bytes` → blob 通道；单测覆盖通道选择与 revoke。远程真机未逐一人工回归）
+- [x] AC4 本地与远程项目打开 `.pdf` 显示预览，支持连续滚动与单页翻页两种模式、缩放与页码跳转；
+      损坏 PDF 显示错误提示。（9 条组件测试覆盖两模式/缩放/翻页/键盘/损坏与空文件；
+      `vite build` 已验证 pdf.js 懒加载与 worker 产物）
+- [x] AC5 二进制载荷（图片/PDF 字节）不出现在任何 Command 的 JSON 返回中
       （走 `Response::new(Vec<u8>)` 二进制流，有测试或审查证据）。
-- [ ] AC6 大 PDF（≥ 200MB）以分片方式按需加载、可滚动浏览，全程不整读文件、
+      `read_file_bytes` / `read_file_size` 两条命令均返回 `Response`/`u64`，无 JSON 字节数组。
+- [~] AC6 大 PDF（≥ 200MB）以分片方式按需加载、可滚动浏览，全程不整读文件、
       前端内存有界（虚拟化只渲染可视页）；读取失败/损坏显示明确报错而非崩溃/卡死。
-- [ ] AC7 `pnpm check:quick` 全绿；既有 MarkdownPreview / ImageFileView 测试不回归。
+      机制已由测试钉住（`disableAutoFetch` + range transport + 单分片 1MB 裁切 + 虚拟化窗口）；
+      **≥200MB 真机大文件浏览仍待人工验收**（未在本轮验证路径内）。
+- [x] AC7 `pnpm check:quick` 全绿（34 条护栏）；既有 MarkdownPreview / ImageFileView 测试不回归。
+      `cargo test --lib` 2260 passed；`npx vite build` 通过。
 
 ## Out of Scope
 
@@ -73,3 +81,4 @@ SSH/WSL 远程项目的图片全部加载失败。PDF 打开后落入二进制�
 - 图片文件的编辑（裁剪、标注）。
 - 音视频预览。
 - assetProtocol scope 收紧（`**` → 白名单）——识别为既有加固项，单独立项。
+  本轮只修了 dotfile 语义（`requireLiteralLeadingDot: false`），`allow` 仍是 `**`。

@@ -394,3 +394,23 @@ Session summary was not supplied.
 ### Status
 
 [OK] **Completed**
+
+
+## Session 368: Markdown 图片渲染修复 + PDF 预览；asset 协议 dotfile 403 根因
+<!-- trellis-session: v=2 fp=793818167cdf19e4 -->
+
+**Date**: 2026-10-29
+**Task**: Markdown 图片渲染修复 + PDF 预览；asset 协议 dotfile 403 根因
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
