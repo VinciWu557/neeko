@@ -356,10 +356,10 @@ README(EN+CN) 重写为 AI-native 工作台叙事，CHANGELOG 重生成到 1.0.9
 
 | Hash | Message |
 |------|---------|
-| `5447adcb` | docs(readme): rewrite README as an AI-native workspace story |
-| `595bc14c` | feat(guards): add check_readme_claims to stop README drift |
-| `53475ec6` | chore(capabilities): allow notification permission queries from the webview |
-| `00c49857` | chore(task): archive 10-28-readme-rework |
+| `f4bbf46a` | docs(readme): rewrite README as an AI-native workspace story |
+| `66088710` | feat(guards): add check_readme_claims to stop README drift |
+| `3a1adbc9` | chore(capabilities): grant notification permission query commands |
+| `6e21cb9a` | chore(task): archive 10-28-readme-rework |
 
 ### Testing
 
