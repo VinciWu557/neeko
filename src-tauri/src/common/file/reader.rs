@@ -33,16 +33,47 @@ pub enum FileAccessScope {
     Trusted,
 }
 
-/// 读取请求。`base`/`path` 拼接规则与既有 services 逐字一致：
-/// Local 为 `Path::join`（绝对 path 自动替换 base），shell 为 `{base}/{path}`。
+/// 文件地址：**目标环境 + 基准目录 + 路径**。
+///
+/// 「去哪台机器、以哪个目录为基准、读哪个条目」是所有文件读取形态（文本 / 字节 /
+/// 大小探测）共同需要的三个事实，因此只在这里定义一次 —— 文本请求与字节请求都内嵌它，
+/// 命令层也就不必各自拼装同一组字段。
+///
+/// `base`/`path` 的拼接规则按目标环境语义解析（见 [`join_remote_path`]）：
+/// Local 为宿主 `Path::join`（绝对 path 自动替换 base），WSL/SSH 为 POSIX 串拼接。
 #[derive(Clone)]
-pub struct FileReadRequest {
+pub struct FileAddress {
     /// 目标执行环境（决定 fs / shell 通道）。
     pub target: ExecTarget,
     /// 基准目录（相对 path 的拼接基准；空字符串 = path 为完整路径）。
     pub base: String,
     /// 相对 base 的文件路径，或完整路径。
     pub path: String,
+}
+
+impl FileAddress {
+    /// 相对地址：`path` 相对 `base` 解析。
+    #[must_use]
+    pub fn new(target: ExecTarget, base: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            target,
+            base: base.into(),
+            path: path.into(),
+        }
+    }
+
+    /// 绝对地址（`base` 为空）：受信通道（LSP / DAP）与已归一路径用这一形态。
+    #[must_use]
+    pub fn absolute(target: ExecTarget, path: impl Into<String>) -> Self {
+        Self::new(target, String::new(), path)
+    }
+}
+
+/// 文本读取请求。
+#[derive(Clone)]
+pub struct FileReadRequest {
+    /// 去哪儿读（环境 + 基准 + 路径）。
+    pub address: FileAddress,
     /// 大小上限（字节）；超限报 `AppError::File`。None = 不限。
     pub max_bytes: Option<u64>,
     /// 二进制检测：命中 NUL 字节时返回空 content（不向调用方泄二进制乱码）。
@@ -55,17 +86,22 @@ pub async fn read_file(
     scope: FileAccessScope,
     req: FileReadRequest,
 ) -> Result<FileContent, AppError> {
-    match req.target {
+    match req.address.target {
         ExecTarget::Local => {
             let FileReadRequest {
-                base,
-                path,
+                address,
                 max_bytes,
                 detect_binary,
                 ..
             } = req;
             tokio::task::spawn_blocking(move || {
-                read_file_local_blocking(&scope, &base, &path, max_bytes, detect_binary)
+                read_file_local_blocking(
+                    &scope,
+                    &address.base,
+                    &address.path,
+                    max_bytes,
+                    detect_binary,
+                )
             })
             .await
             .map_err(|e| AppError::File(format!("file read join error: {e}")))?
@@ -82,10 +118,7 @@ fn read_file_local_blocking(
     max_bytes: Option<u64>,
     detect_binary: bool,
 ) -> Result<FileContent, AppError> {
-    let full = join_path(base, path);
-    let canonical =
-        std::fs::canonicalize(&full).map_err(|e| AppError::File(format!("Invalid path: {}", e)))?;
-    apply_scope(&canonical, scope)?;
+    let canonical = canonical_in_scope(scope, base, path)?;
 
     let size = std::fs::metadata(&canonical)
         .map_err(|e| AppError::File(format!("Failed to read metadata: {}", e)))?
@@ -119,15 +152,14 @@ async fn read_file_shell(
     scope: FileAccessScope,
     req: FileReadRequest,
 ) -> Result<FileContent, AppError> {
-    let full = join_path(&req.base, &req.path);
-    let full_str = full.to_string_lossy().into_owned();
+    let full_str = join_remote_path(&req.address.base, &req.address.path);
 
     // scope 校验：Trusted 信任调用方；InProject 的远程 root 校验为已知欠账
     //（现状 read_file_content_shell 同样没有），补齐需远程 realpath，单独立项。
     let _ = scope;
 
     // argv 形态：`stat` / `head` / `cat` 均为独立可执行文件，不经 shell。
-    let size: u64 = run(&req.target, "stat", &["-c", "%s", &full_str])
+    let size: u64 = run(&req.address.target, "stat", &["-c", "%s", &full_str])
         .await
         .ok()
         .and_then(|s| s.trim().parse().ok())
@@ -142,10 +174,15 @@ async fn read_file_shell(
 
     let is_binary = if req.detect_binary {
         // 二进制判定在字节层完成：不再用 `head | grep '\\x00'` 管道。
-        collect(&req.target, "head", &["-c", "8192", &full_str], None)
-            .await
-            .map(|out| out.stdout.contains(&0))
-            .unwrap_or(false)
+        collect(
+            &req.address.target,
+            "head",
+            &["-c", "8192", &full_str],
+            None,
+        )
+        .await
+        .map(|out| out.stdout.contains(&0))
+        .unwrap_or(false)
     } else {
         false
     };
@@ -153,21 +190,21 @@ async fn read_file_shell(
     let content = if is_binary {
         String::new()
     } else {
-        run(&req.target, "cat", &[&full_str])
+        run(&req.address.target, "cat", &[&full_str])
             .await
             .map_err(|e| AppError::File(format!("Failed to read file content: {}", e)))?
     };
 
     Ok(FileContent {
-        path: req.path.clone(),
+        path: req.address.path.clone(),
         content,
         size,
         is_binary,
     })
 }
 
-/// 与既有 services 逐字一致的路径拼接（Local join / shell 字符串拼接）。
-fn join_path(base: &str, path: &str) -> PathBuf {
+/// Local 路径拼接：宿主 `Path::join` 语义（绝对 `path` 自动替换 `base`）。
+pub(super) fn local_join(base: &str, path: &str) -> PathBuf {
     if base.is_empty() {
         PathBuf::from(path)
     } else {
@@ -175,7 +212,46 @@ fn join_path(base: &str, path: &str) -> PathBuf {
     }
 }
 
-fn apply_scope(canonical: &Path, scope: &FileAccessScope) -> Result<(), AppError> {
+/// WSL / SSH 路径拼接：**POSIX 串拼接**，返回值直接作为远端 argv 里的路径。
+///
+/// 必须与 [`local_join`] 分开：远端目标（WSL / SSH）的路径语义永远是 POSIX，而宿主
+/// `Path` 语义属于**执行命令的那台机器**。在 Windows 宿主上用 `Path::join` 拼远端路径会
+/// 产出 `\` 分隔形态（且 `/home/u/x` 在 Windows 上**不是** absolute，`base` 不会被替换），
+/// 远端 shell 拿到的是坏路径 —— 远程文件读取/预览在 Windows 上失效的根因正在这里。
+///
+/// 规则（顺序即契约）：
+/// 1. `path` 以 `/` 开头 ⇒ 已是远端绝对路径，原样返回（`base` 不参与）；
+/// 2. `base` 为空 ⇒ `path` 原样返回（调用方已给出完整路径的退化形态）；
+/// 3. 否则 `{base 去尾分隔符}/{path 去前导 `./`}`。
+pub(super) fn join_remote_path(base: &str, path: &str) -> String {
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+    if base.is_empty() {
+        return path.to_string();
+    }
+    let base = base.trim_end_matches('/');
+    let path = path.strip_prefix("./").unwrap_or(path);
+    format!("{base}/{path}")
+}
+
+/// 本地通道的路径解析：拼接 + `canonicalize` + scope 校验（红线 8）。
+///
+/// 文本读取、字节读取、大小探测三个形态共用本函数 —— `canonicalize` 与 scope 判定
+/// 只允许存在一份实现（红线 8 的判据不能有第二套）。
+pub(super) fn canonical_in_scope(
+    scope: &FileAccessScope,
+    base: &str,
+    path: &str,
+) -> Result<PathBuf, AppError> {
+    let full = local_join(base, path);
+    let canonical =
+        std::fs::canonicalize(&full).map_err(|e| AppError::File(format!("Invalid path: {e}")))?;
+    apply_scope(&canonical, scope)?;
+    Ok(canonical)
+}
+
+pub(super) fn apply_scope(canonical: &Path, scope: &FileAccessScope) -> Result<(), AppError> {
     match scope {
         FileAccessScope::InProject { root } => {
             let canonical_root = root
@@ -202,6 +278,47 @@ fn is_binary_file(path: &Path) -> Result<bool, AppError> {
 }
 
 #[cfg(test)]
+mod join_tests {
+    use super::{join_remote_path, local_join};
+
+    /// 远端拼接必须是 POSIX 语义：不论宿主是什么平台，产出里不得出现 `\`。
+    ///
+    /// 回归锁定：宿主 `Path::join` 在 Windows 上拼出 `/home/u/proj\src/main.rs`，
+    /// 且 `/home/u/x` 不算 absolute ⇒ `base` 不被替换 ⇒ 远端拿到坏路径。
+    #[test]
+    fn remote_join_is_posix_regardless_of_host() {
+        assert_eq!(
+            join_remote_path("/home/u/proj", "src/main.rs"),
+            "/home/u/proj/src/main.rs"
+        );
+        assert!(!join_remote_path("/home/u/proj", "src/main.rs").contains('\\'));
+    }
+
+    #[test]
+    fn remote_join_keeps_absolute_path_and_avoids_double_separator() {
+        // 绝对 path 不参与 base（与 local_join 的绝对路径替换语义对齐）
+        assert_eq!(join_remote_path("/home/u/proj", "/etc/hosts"), "/etc/hosts");
+        // base 尾部斜杠 / path 前导 ./ 都归一
+        assert_eq!(
+            join_remote_path("/home/u/proj/", "./img/a.png"),
+            "/home/u/proj/img/a.png"
+        );
+        // base 缺省 ⇒ path 原样（调用方已给完整路径）
+        assert_eq!(join_remote_path("", "/abs/a.png"), "/abs/a.png");
+        assert_eq!(join_remote_path("", "rel/a.png"), "rel/a.png");
+    }
+
+    #[test]
+    fn local_join_keeps_host_semantics() {
+        // 宿主语义：绝对 path 替换 base（Windows/macOS 都由 std 保证）
+        let joined = local_join("/repo/docs", "/abs/a.png");
+        assert_eq!(joined, std::path::PathBuf::from("/abs/a.png"));
+        let joined = local_join("/repo/docs", "img/a.png");
+        assert_eq!(joined, std::path::Path::new("/repo/docs").join("img/a.png"));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
@@ -213,9 +330,7 @@ mod tests {
 
     fn req(path: &Path, max_bytes: Option<u64>, detect_binary: bool) -> FileReadRequest {
         FileReadRequest {
-            target: local_target(),
-            base: String::new(),
-            path: path.to_string_lossy().to_string(),
+            address: FileAddress::absolute(local_target(), path.to_string_lossy()),
             max_bytes,
             detect_binary,
         }
@@ -356,9 +471,7 @@ mod tests {
                 root: fx.root.clone(),
             },
             FileReadRequest {
-                target: local_target(),
-                base: fx.root.to_string_lossy().to_string(),
-                path: "inner.rs".to_string(),
+                address: FileAddress::new(local_target(), fx.root.to_string_lossy(), "inner.rs"),
                 max_bytes: None,
                 detect_binary: false,
             },

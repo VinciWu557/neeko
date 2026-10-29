@@ -637,12 +637,10 @@ pub async fn lsp_go_to_definition(
             crate::common::file::reader::read_file(
                 crate::common::file::reader::FileAccessScope::Trusted,
                 crate::common::file::reader::FileReadRequest {
-                    target: crate::common::executor::factory::ExecTarget::Local,
-                    base: String::new(),
-                    path: target_uri
-                        .strip_prefix("file://")
-                        .unwrap_or(&target_uri)
-                        .to_string(),
+                    address: crate::common::file::reader::FileAddress::absolute(
+                        crate::common::executor::factory::ExecTarget::Local,
+                        target_uri.strip_prefix("file://").unwrap_or(&target_uri),
+                    ),
                     // 预读内容随响应返回，512KB 对齐前端只读查看上限
                     max_bytes: Some(512 * 1024),
                     detect_binary: false,
@@ -717,9 +715,7 @@ pub async fn lsp_read_preauthorized_file(
     crate::common::file::reader::read_file(
         crate::common::file::reader::FileAccessScope::Trusted,
         crate::common::file::reader::FileReadRequest {
-            target,
-            base: String::new(),
-            path: raw_path,
+            address: crate::common::file::reader::FileAddress::absolute(target, raw_path),
             max_bytes: Some(super::preauth::MAX_PREAUTH_READ_BYTES),
             detect_binary: false,
         },

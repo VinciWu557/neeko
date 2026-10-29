@@ -305,6 +305,8 @@ macro_rules! neeko_invoke_handler {
             $crate::file::commands::file_exists,
             $crate::file::commands::read_dir_tree,
             $crate::file::commands::read_file_content,
+            $crate::file::commands::read_file_bytes,
+            $crate::file::commands::read_file_size,
             $crate::file::commands::write_file_content,
             $crate::file::commands::create_new_file,
             $crate::file::commands::save_new_file,

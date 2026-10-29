@@ -20,7 +20,7 @@
 
 use std::path::Path;
 
-use crate::common::file::reader::{read_file, FileAccessScope, FileReadRequest};
+use crate::common::file::reader::{read_file, FileAccessScope, FileAddress, FileReadRequest};
 use crate::common::types::FileContent;
 use crate::dap::types::MAX_SOURCE_BYTES;
 use crate::AppError;
@@ -95,9 +95,7 @@ pub async fn read_external_source(
     read_file(
         FileAccessScope::Trusted,
         FileReadRequest {
-            target,
-            base: String::new(),
-            path: path.to_string(),
+            address: FileAddress::absolute(target, path.to_string()),
             max_bytes: Some(MAX_SOURCE_BYTES),
             detect_binary: true,
         },

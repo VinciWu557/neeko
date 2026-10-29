@@ -11,7 +11,7 @@
 //! `LspManager::send_did_open`（转发侧），版本号一律由登记表推进。
 
 use crate::common::executor::factory::ExecTarget;
-use crate::common::file::reader::{read_file, FileAccessScope, FileReadRequest};
+use crate::common::file::reader::{read_file, FileAccessScope, FileAddress, FileReadRequest};
 
 /// 下一次打开该文档应使用的 LSP 版本号：登记表推进（首开为 0）。
 ///
@@ -81,9 +81,7 @@ pub async fn ensure_document_open(
     let Ok(text) = read_file(
         FileAccessScope::Trusted,
         FileReadRequest {
-            target: ExecTarget::Local,
-            base: String::new(),
-            path: file_path.to_string(),
+            address: FileAddress::absolute(ExecTarget::Local, file_path.to_string()),
             // didOpen 全文发送给 server，不设大小上限（与既有行为一致）
             max_bytes: None,
             detect_binary: false,

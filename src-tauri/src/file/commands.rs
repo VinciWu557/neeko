@@ -1,3 +1,5 @@
+use crate::common::file::reader::{FileAccessScope, FileAddress, FileReadRequest};
+use crate::common::file::reader_bytes::{self, FileBytesRequest};
 use crate::common::git::WorkspaceSession;
 use crate::platform::reveal::{build_reveal_command, normalize_path};
 use crate::project::types::FileContent;
@@ -95,6 +97,34 @@ pub async fn read_dir_tree(
     .await
 }
 
+/// 文件读取命令的**唯一寻址入口**：Workspace 地址 + 可选基准 ⇒ (文件地址, 访问作用域)。
+///
+/// 三个读取形态（文本 / 字节 / 大小）此前各自摆一遍「resolve target + 拼 scope + 取根」的
+/// 样板，现在只在这里做一次 —— 新增读取形态时不需再抄，改寻址规则也不用同步三处。
+///
+/// `base` 缺省（或空串）= Workspace 根；渲染点给的是「md 文件目录 / skill 目录」这类
+/// 更细的基准（Markdown 相对图片），它与 `src` 一起由后端按目标环境语义拼接
+/// （Local 宿主语义 / WSL·SSH POSIX 语义），前端不再自己拼绝对路径。
+async fn resolve_file_target(
+    state: &State<'_, AppStateWrapper>,
+    workspace: &WorkspaceSession,
+    file_path: String,
+    base: Option<String>,
+) -> Result<(FileAddress, FileAccessScope), AppError> {
+    let (target, ws) = state.resolve_workspace_target(workspace).await?;
+    let root = ws.root().to_string();
+    let base = base
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| root.clone());
+    Ok((
+        FileAddress::new(target, base, file_path),
+        FileAccessScope::InProject {
+            root: std::path::PathBuf::from(root),
+        },
+    ))
+}
+
 /// Read file content.
 #[tauri::command]
 pub async fn read_file_content(
@@ -102,22 +132,61 @@ pub async fn read_file_content(
     file_path: String,
     state: State<'_, AppStateWrapper>,
 ) -> Result<FileContent, AppError> {
-    let (target, ws) = state.resolve_workspace_target(&workspace).await?;
-    let base = ws.root();
+    let (address, scope) = resolve_file_target(&state, &workspace, file_path, None).await?;
     crate::common::file::reader::read_file(
-        crate::common::file::reader::FileAccessScope::InProject {
-            root: std::path::PathBuf::from(base),
-        },
-        crate::common::file::reader::FileReadRequest {
-            target,
-            base: base.to_string(),
-            path: file_path,
+        scope,
+        FileReadRequest {
+            address,
             // 行为保持：项目内读取无大小上限，二进制检测与既有实现一致
             max_bytes: None,
             detect_binary: true,
         },
     )
     .await
+}
+
+/// Read raw file bytes as a **binary stream** (never JSON).
+///
+/// `offset`/`length` 是 range 语义：全缺 = 从文件头读起；传两者 = 分片（PDF
+/// `PDFDataRangeTransport`）。**返回长度可能短于请求**（单次载荷受
+/// [`DEFAULT_MAX_CHUNK`] 约束，红线 4）—— 调用方按返回长度推进 `offset` 直到覆盖所需区间，
+/// 不要把这当作错误，也不要自己复制上界常量。
+///
+/// `base` 是相对 `file_path` 的基准目录（缺省 = Workspace 根）。
+#[tauri::command]
+pub async fn read_file_bytes(
+    workspace: WorkspaceSession,
+    file_path: String,
+    base: Option<String>,
+    offset: Option<u64>,
+    length: Option<u64>,
+    state: State<'_, AppStateWrapper>,
+) -> Result<tauri::ipc::Response, AppError> {
+    let (address, scope) = resolve_file_target(&state, &workspace, file_path, base).await?;
+    let bytes = reader_bytes::read_file_bytes(
+        scope,
+        FileBytesRequest {
+            offset,
+            len: length,
+            ..FileBytesRequest::head(address)
+        },
+    )
+    .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// File size in bytes (stat only, no content): PDF 预览打开前先探长度。
+///
+/// 与 `read_file_bytes` 同一寻址（含 `base`），同一份地址事实只描述一次。
+#[tauri::command]
+pub async fn read_file_size(
+    workspace: WorkspaceSession,
+    file_path: String,
+    base: Option<String>,
+    state: State<'_, AppStateWrapper>,
+) -> Result<u64, AppError> {
+    let (address, scope) = resolve_file_target(&state, &workspace, file_path, base).await?;
+    reader_bytes::read_file_size(scope, address).await
 }
 
 /// Write file content.
