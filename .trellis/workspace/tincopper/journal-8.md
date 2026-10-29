@@ -374,3 +374,23 @@ README(EN+CN) 重写为 AI-native 工作台叙事，CHANGELOG 重生成到 1.0.9
 - AGENTS.md 仍写「28 条护栏」，与实际 33 条漂移，可改为不写数字
 - docs/.img/project-struct.png 已无文档引用，待确认是否删除
 - check_readme_claims 是否也校验 docs/features.md 与 README 的能力段一致
+
+
+## Session 367: Markdown 图片渲染修复 + PDF 预览（range 通道）
+<!-- trellis-session: v=2 fp=252a3492c4136dd5 -->
+
+**Date**: 2026-10-29
+**Task**: Markdown 图片渲染修复 + PDF 预览（range 通道）
+**Branch**: `main`
+
+### Summary
+
+Session summary was not supplied.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**

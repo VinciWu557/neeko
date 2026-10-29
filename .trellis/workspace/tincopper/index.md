@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-8.md`
-- **Total Sessions**: 366
+- **Total Sessions**: 367
 - **Last Active**: 2026-10-29
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-8.md` | ~376 | Active |
+| `journal-8.md` | ~396 | Active |
 | `journal-7.md` | ~2009 | Archived |
 | `journal-6.md` | ~2069 | Archived |
 | `journal-5.md` | ~1958 | Archived |
@@ -36,6 +36,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 367 | 2026-10-29 | Markdown 图片渲染修复 + PDF 预览（range 通道） | - | `main` |
 | 366 | 2026-10-29 | README 重写与文档防漂移护栏 | `f4bbf46a`, `66088710`, `3a1adbc9`, `6e21cb9a` | `main` |
 | 365 | 2026-10-28 | 决策：终端底色沿用表面层（不拆独立 token） | - | `main` |
 | 364 | 2026-10-28 | 按 neeko-check 清单修复：徽标单一渲染口径 + 护栏补齐 .ts + 解析器剥注释 | - | `main` |
