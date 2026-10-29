@@ -17,6 +17,9 @@ export function fileExists(path: string): Promise<boolean> {
 // `worktreePath === null` = 主 checkout。后端由 `resolve_workspace_target` 唯一解析出工作树根，
 // 调用方不传「任意 root 路径」—— 那把同一份身份变成了散参，且在 worktree 场景下默认值恒错。
 
+// 二进制字节（图片 / PDF）不在本模块：那是跨域基础通道，唯一入口在
+// `@/shared/api/fileBytes`（shared 不得反向依赖 features）。本模块只保留文本与目录命令。
+
 export function readFileContent(
   workspace: WorkspaceSession,
   filePath: string,
