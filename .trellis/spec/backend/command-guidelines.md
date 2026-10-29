@@ -548,3 +548,126 @@ pub fn save_session(
 - `SessionStore` 默认反序列化不再包含 `side_terminal_width`
 - `create_session_from_projects` 签名与调用点已同步为 4 个业务参数
 - `save_session` 命令参数与前端调用参数名保持一致
+
+---
+
+## 场景：二进制字节读取的 range 契约 2026-10-29
+
+### 1. Scope / Trigger
+
+- Trigger：图片预览与 PDF 预览需要「文件字节」而非文本；红线 4 要求二进制不走 JSON，
+  且 PDF 的 xref 在文件尾部 ⇒ 打开即随机访问，整读大文件既不可能也不必要。
+- Scope：`src-tauri/src/common/file/reader.rs`（`FileAddress` / `local_join` / `join_remote_path` /
+  `canonical_in_scope`）、`common/file/reader_bytes.rs`（`read_file_bytes` / `read_file_size`）、
+  `src-tauri/src/file/commands.rs`（`resolve_file_target` + 三个薄命令）。
+
+### 2. Signatures
+
+```rust
+// 寻址：所有文件读取形态共用同一份「环境 + 基准 + 路径」
+pub struct FileAddress { pub target: ExecTarget, pub base: String, pub path: String }
+impl FileAddress { fn new(target, base, path) -> Self; fn absolute(target, path) -> Self }
+
+pub const DEFAULT_MAX_CHUNK: u64 = 1024 * 1024;   // **至多返回**这么多字节
+
+pub struct FileBytesRequest {
+    pub address: FileAddress,
+    pub offset: Option<u64>,      // None = 从文件头
+    pub len: Option<u64>,         // None = 读到文件尾（仍受 max_chunk 收敛）
+    pub max_chunk: u64,           // 单次载荷上界
+}
+impl FileBytesRequest { fn head(address) -> Self }   // 整读的首段形态
+
+pub async fn read_file_bytes(scope: FileAccessScope, req: FileBytesRequest) -> Result<Vec<u8>, AppError>
+pub async fn read_file_size(scope: FileAccessScope, address: FileAddress) -> Result<u64, AppError>
+
+// 命令层（唯一寻址助手 → 三个薄命令）
+async fn resolve_file_target(state, workspace, file_path, base: Option<String>)
+    -> Result<(FileAddress, FileAccessScope), AppError>
+
+#[tauri::command] pub async fn read_file_bytes(workspace, file_path, base: Option<String>,
+    offset: Option<u64>, length: Option<u64>, state) -> Result<tauri::ipc::Response, AppError>
+#[tauri::command] pub async fn read_file_size(workspace, file_path, base: Option<String>, state) -> Result<u64, AppError>
+```
+
+### 3. Contracts
+
+1. **返回形态**：命令返回 `tauri::ipc::Response::new(Vec<u8>)`（前端 `invoke<ArrayBuffer>`），
+   永不 JSON 序列化字节（红线 4）。
+2. **range 是主形态，整读是特例**（不传 offset/len）—— 小文件与大文件共用同一入口，
+   禁止再造「整读命令 + 分片命令」两条路径。
+3. **载荷上界 = 单次「至多返回」`max_chunk` 字节，不是「超限拒绝」**。
+   请求超过上界一律**短读**（收敛），调用方按返回长度推进 `offset` 续读。
+   把上界实现成报错会把分片循环推给每个调用方、并逼两端复制同一个常量：
+   实测后果是「远程图片 > 1MB 直接失败」与「pdf.js range 静默截断后永久挂起」。
+   禁止新增「文件太大不支持」这类上限，也禁止消费侧复制 `DEFAULT_MAX_CHUNK`。
+4. **越界语义分明**：`offset > size` → 显式报错（唯一保留的错误分支）；
+   尾部区间越过文件尾 → 裁到剩余量。
+5. **寻址只有一份定义**：`FileAddress` 由 `reader.rs` 定义，文本请求与字节请求都内嵌它；
+   命令层的解析（`resolve_file_target`）是**唯一**入口，禁止各命令自拼
+   「resolve target + 拼 scope + 取根」。`base` 缺省 = Workspace 根，
+   显式传入时是「md 文件目录 / skill 目录」这类更细的基准。
+6. **拼接按目标环境语义分流**（`local_join` / `join_remote_path`）：
+   Local 用宿主 `Path::join`；WSL/SSH 用 **POSIX 串拼接**（`/` 绝对路径不参与 base，
+   base 去尾分隔符）。**远端路径禁止用宿主 `Path` 拼** —— Windows 宿主上
+   `/home/u/x` 不是 absolute 且会拼出 `\`，远端 shell 拿到坏路径（远程读写/预览全挂的根因）。
+7. **scope 与 canonicalize 复用** `reader.rs` 的 `canonical_in_scope` / `apply_scope`
+   （`pub(super)`）—— Local 的文本读取、字节读取、大小探测共用一份实现（红线 8）。
+8. **短读处理**：Local 用 `take(want).read_to_end` 而非 `read_exact` —— 文件在读取中途被
+   截断时返回实际字节，而不是让整个预览失败。
+9. **通道**：Local `std::fs` seek+read 包 `spawn_blocking`（红线 3）；WSL/SSH
+   `dd if=… iflag=skip_bytes,count_bytes skip=… count=…`（argv 形态经 `core::exec`，红线 1/2）。
+   `iflag` / `stat -c` 依赖 GNU coreutils：WSL 与主流 Linux 满足，**BSD/macOS 远端不支持**
+   （以 stderr 原文报错，不静默返回短数据）；移植性改造单独立项。
+
+### 4. Validation & Error Matrix
+
+| 场景 | 期望 | 错误 / 风险 |
+|---|---|---|
+| 整读小文件 | 返回全部字节 | — |
+| `offset`+`len` 区间 | 精确窗口 | — |
+| `len` 越过文件尾 | 裁到剩余量 | 报错会让尾页永远失败 |
+| `offset > size` | `AppError::File("beyond file size")` | 静默空会被当成空文件 |
+| 请求 > `max_chunk` | **短读**（返回 `max_chunk` 字节） | 报错即把分片义务推给调用方 |
+| `max_chunk = 0` | 返回空 | 调用方续读循环必须能因「0 字节」终止 |
+| 路径越出 root | `AppError::File("outside root")` | 红线 8（`base` 不是逃逸通道） |
+| 远端 POSIX 绝对路径 + 非空 base | base 被忽略 | 用宿主 `Path::join` 会拼出坏路径 |
+| 远程 `dd` 非零退出 | 携带 stderr 的错误 | 静默截断数据更危险 |
+
+### 5. Good/Base/Bad Cases
+
+- Good：`read_file_bytes(InProject{root}, FileBytesRequest { offset: Some(off), len: Some(rest), ..FileBytesRequest::head(addr) })`
+- Base：图片整读的首段 —— `FileBytesRequest::head(FileAddress::new(target, md_dir, "img/a.png"))`
+- Bad：新开 `read_file_binary` 命令做整读、`read_file_range` 命令做分片（两次实现同一件事）；
+  `max_chunk` 超限时 `Err("chunk limit")`（把常量对齐变成跨栈隐式契约）
+
+### 6. Tests Required
+
+- `common::file::reader_bytes::tests`（夹具路径由 `tempdir()` 推导，红线 13）：整读 / range /
+  读到尾 / 尾部越界裁剪 / 越界 offset 报错 / **超上界短读** / **连续短读重组整文件** /
+  空文件 / InProject 越界 / **base 逃逸 root** / Trusted 放行 / 文件大小 / `plan_range` 收敛边界（纯函数）。
+- `common::file::reader::join_tests`：`join_remote_path` 的 POSIX 语义（不含 `\`、绝对路径忽略 base、
+  尾分隔符与前导 `./` 归一）与 `local_join` 的宿主语义 —— 钉住「远端寻址与宿主平台无关」。
+- 前端侧：`shared/api/fileBytes` 的续读循环用例（见 `frontend/api-layer.md` 同名场景）。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+```rust
+// ① 整读 + 上限拒绝：500MB PDF 直接不可用，且 >1MB 的远程图片全部失败
+#[tauri::command] async fn read_pdf(path: String) -> Result<Vec<u8>, AppError> {
+    let bytes = std::fs::read(path)?;          // 红线 3 + 红线 4 双违反
+    Ok(bytes)
+}
+// ② 远端路径用宿主 Path 拼
+let full = Path::new(&base).join(&rel);        // Windows 宿主 ⇒ "/home/u/p\src/a.rs"
+```
+#### Correct
+```rust
+let (address, scope) = resolve_file_target(&state, &workspace, file_path, base).await?;
+let bytes = reader_bytes::read_file_bytes(
+    scope,
+    FileBytesRequest { offset, len: length, ..FileBytesRequest::head(address) },
+).await?;
+Ok(tauri::ipc::Response::new(bytes))            // 二进制流；短读由前端续读补齐
+```

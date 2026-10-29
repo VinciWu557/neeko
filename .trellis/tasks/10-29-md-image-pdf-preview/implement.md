@@ -104,3 +104,38 @@ pnpm test:fe                                        # 全量前端单测（push/
 - [x] 失败可见性：`ImageFileView` 失败态显示具体原因 + `console.warn`(filePath/basePath/src)，
       `MarkdownImage` 失败态加 `title`（此前只有文件名，排查只能靠猜）。
 - [x] `pnpm check:quick` 34/34 通过。
+
+## 第二轮修复（code review 反馈：抽象与契约）
+
+> 第一轮实现把「载荷有界」表达成「超限报错」，把「远端路径」用宿主 `Path` 拼，
+> 于是同一条契约在两个消费点各自出错。本轮改的是抽象，不是补丁。
+
+- [x] **`max_chunk` 语义改为「至多返回」（短读）**：`plan_range` 收敛而非报错；
+  消费侧 `shared/api/fileBytes` 的 `readFileRange` / `readFileBytesAll` 按返回长度续读。
+  根因消除：远程图片 > 1MB 不再失败，pdf.js range 不再静默截断（此前会永久挂起），
+  两端也不再需要「抄同一个常量」。
+- [x] **`FileAddress` 收敛寻址**：`reader.rs` 定义「环境 + 基准 + 路径」，文本请求与字节请求内嵌；
+  命令层 `resolve_file_target` 是唯一解析入口（三个命令不再各拼一遍 scope + 根）。
+- [x] **`join_remote_path` / `local_join` 按目标环境分流**：WSL/SSH 用 POSIX 串拼接
+  （远端路径不用宿主 `Path` 拼）。同时修掉既有缺陷：Windows 宿主上远端文本读取/预览的坏路径。
+- [x] **跨 IPC 传相对路径 + base**：`read_file_bytes` / `read_file_size` 增加可选 `base`；
+  前端删掉 `toAbsoluteLocalPath`（不再拍平绝对路径），改为 `normalizeAssetPath` + base 下发。
+- [x] **字节通道下沉 `src/shared/api/fileBytes.ts`**：`shared` 不再反向依赖 `features/file`
+  （删掉 `import/no-restricted-paths` disable），`features/file/api` 只留文本/目录命令。
+- [x] **pdf.js 改 legacy 构建 + 显式运行时资源**：`pdfjs-dist/legacy/build/*`（带 `getOrInsertComputed`
+  polyfill）+ `cMapUrl` / `standardFontDataUrl` / `wasmUrl`；`vite.config.ts` 的 `pdfjsAssets()`
+  从 node_modules 直出资源（dev 中间件 + build emit，不复制进仓库）。
+- [x] **组件级状态派生**：`MarkdownImage` / `ImageFileView` 的错误态改为「记录失败的 src」
+  （流式消息换图不再永久停在失败态）；删掉 `MarkdownImage` 无人使用的 default memo 导出；
+  `PdfToolbar` 页码输入可清空；翻译块 `BlockPair` 也接管 `img`（第 4 个渲染点）。
+- [x] **测试补齐**：`shared/api/__tests__/fileBytes.test.ts`（续读 / 空区间 / EOF / 上限前置）、
+  `reader.rs::join_tests`（远端 POSIX 语义）、`reader_bytes` 的短读/重组/base 逃逸用例、
+  `PdfFileView` 的资源路径断言、`localAsset` 的协议相对与 `normalizeAssetPath`。
+- [x] **文档同步**：`backend/command-guidelines.md`、`frontend/api-layer.md` 的契约/错误矩阵/
+  测试要求按新形状重写（删掉已废弃的 `FileBytesRequest::whole`、`toAbsoluteLocalPath` 条目）；
+  `path_identity_scope.json` 台账同步。
+
+**未在本轮修复（有意保留）**：远程 `stat -c` / `dd iflag` 的 GNU 假定（BSD/macOS 远端不支持，
+本地无可验证环境，已在 spec 与错误文案中写明）；`PdfFileView` 滚动的 rAF 节流（性能项，
+不影响正确性）；远程 `InProject` scope 强校验（既有欠账，需远程 realpath）。
+

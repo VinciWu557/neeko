@@ -589,3 +589,132 @@ useEffect(() => {
 "去重状态按终端归属" 两个用例）与
 `features/terminal/components/__tests__/TerminalViewBase.fitScheduler.test.tsx`
 （必须用 `rerender` 同一组件实例，两次 `render()` 是两个实例、反而绕开该 bug）。
+
+---
+
+## 场景：本地资产 / 二进制预览的通道契约 2026-10-29
+
+### 1. Scope / Trigger
+
+- Trigger：markdown 图片在 chat / 会话 / PR 渲染点全部 404（未接管 `img`、basePath 时传时不传、
+  `data:` URI 被旧正则误拼），远程项目图片与 PDF 完全不可用（asset 协议够不着远程磁盘）。
+- Scope：`src/shared/api/fileBytes.ts`（字节通道唯一入口）、`src/shared/utils/localAsset.ts`
+  （src 解析唯一入口）、`src/shared/hooks/useAssetUrl.ts`（异步字节通道）、
+  `src/shared/hooks/useAssetBasePath.ts`（基准回落）、`src/features/editor/components/pdf/*`、
+  `vite.config.ts`（pdf.js 运行时资源直出）。
+
+### 2. Signatures
+
+```typescript
+// 同步：src 判定与 URL 派生（唯一入口，渲染点禁止自写路径归一）
+export function resolveAssetUrl(src: string, basePath?: string): string
+export function normalizeAssetPath(src: string): string   // URL 派生与 IPC 传参共用同一套归一
+export function isRemoteAssetSrc(src: string): boolean
+export function resolveMarkdownBasePath(explicit, projectRoot): string | undefined
+
+// 异步：字节通道（唯一入口在 shared/api —— 依赖方向 features → shared）
+export function readFileBytes(workspace, filePath, o?: { base?, offset?, length? }): Promise<ArrayBuffer>
+export function readFileRange(workspace, filePath, r: { base?, begin, end }): Promise<Uint8Array>  // 续读补齐
+export function readFileBytesAll(workspace, filePath, o?: { base?, maxBytes? }): Promise<ArrayBuffer>
+export function readFileSize(workspace, filePath, o?: { base? }): Promise<number>
+export const MAX_ASSET_BYTES: number   // 整读（预览资产）上限，默认 64MB
+
+export function useAssetUrl(src?, basePath?, projectId?): { url, loading, error }
+export function useAssetBasePath(explicit?: string): string | undefined
+```
+
+后端契约见 `backend/command-guidelines.md`「二进制字节读取的 range 契约」。
+
+### 3. Contracts
+
+1. **通道由消费者类型决定，不由偏好决定**：
+   - `<img>`（本地项目）→ asset 协议（`convertFileSrc`，零 IPC）；
+   - SSH / WSL 的一切字节 → `shared/api/fileBytes` 二进制流 → `blob:` URL；
+   - pdf.js → `PDFDataRangeTransport` + `readFileRange`（续读补齐）。
+2. **判定顺序是契约**（`resolveAssetUrl`）：空 → Windows 盘符（`C:/`，**必须先于** scheme 判定，
+   因为 `C:` 形似 scheme）→ 协议相对（`//host/…`，与 `<a>` 侧同一规则）→ 通用 scheme
+   （`/^[a-z][a-z0-9+.-]+:/i`）→ POSIX 绝对 → 相对拼 basePath → 无 basePath 原样返回。
+3. **短读是契约，不是错误**：后端单次只「至多返回」一段字节。需要完整区间时一律用
+   `readFileRange` / `readFileBytesAll`（它们按返回长度推进 offset），
+   **禁止在消费侧复制后端上界常量**做「够不够 / 要不要报错」判断 —— 抄大了 pdf.js 拿不到
+   完整块会永久挂起，抄小了直接误报失败（两种情况都已在真实事故里出现过）。
+4. **跨 IPC 传「相对路径 + 基准目录」，前端不拍平绝对路径**：远端（WSL/SSH）的路径语义是
+   POSIX，由后端按目标环境语义拼接；前端拼绝对路径会让 Windows 宿主上的远端寻址失效。
+5. **blob URL 生命周期归 `useAssetUrl`**：卸载 / 换文件必须 `revokeObjectURL`，否则字节常驻 webview。
+6. **`loading` / `error` 一律派生**（请求 key 与当前入参不一致 ⇒ 在飞），不在 effect 体内同步
+   `setState`（级联渲染，且切文件会出现一帧旧图）。组件级的「加载失败」同理：记
+   「哪个 src/filePath 失败了」再比较，而不是布尔 + 复位 effect。
+7. **basePath 缺省回落当前 Workspace 根**（`useActiveWorkspaceRoot`，worktree 感知）：chat 消息 /
+   PR 描述没有 md 文件语境，不靠调用方自觉传参。
+   **编辑器内的基准同样必须是单元工作树根**，不是 `project.path`：
+   图片预览用 `workspaceRootOf(tab.workspace.key, projectPath)`，md/html 预览用
+   `editorBasePathOf(workspace.key, projectPath, filePath)`。worktree 里同一相对路径指向
+   工作树内的文件，拼主仓根会解析到**另一个文件**（图片 404 / 显示错图）。
+8. **字节通道放在 `shared/api/`**，`features/file/api` 不再承载它：`shared/` 消费字节通道不得
+   反向依赖 `features/*`（此前用 `import/no-restricted-paths` disable 顶着的写法已废止）。
+9. **pdf.js 用 legacy 构建 + 显式资源路径**：现代构建不带 `Map.prototype.getOrInsertComputed` /
+   `Promise.withResolvers` 之类新内建的 polyfill，WKWebView / WebKitGTK 上会运行期 `TypeError`
+   （打开任何 PDF 都失败）；`cMapUrl` / `standardFontDataUrl` / `wasmUrl` 不配则 CJK 文本缺字、
+   标准字体取不到、JPX 图像解不出。资源由 `vite.config.ts` 的 `pdfjsAssets()` 从 node_modules
+   直出（dev 中间件 + build emit），挂载点 `/pdfjs/` 与 `usePdfDocument.ts` 的
+   `PDFJS_ASSET_BASE` **必须一致**。
+
+### 4. Validation & Error Matrix
+
+| Condition | Expected Behavior | Error / Risk |
+|---|---|---|
+| `data:` URI + basePath | 原样直通，不改写 | 旧实现会拼进 `convertFileSrc`（已修） |
+| 协议相对 `//host/x.png` | 原样直通 | 判成本地路径会让远程项目去读不存在的文件 |
+| 本地项目绝对/相对图片 | asset URL 直连，不发 IPC | — |
+| SSH/WSL 图片 | `readFileBytesAll` → blob URL | asset 协议物理不可达 |
+| 图片 > 单次上界（1MB） | 续读补齐后正常显示 | 逐次请求 + 大小探测，不受单次上界影响 |
+| 资产 > `MAX_ASSET_BYTES` | 传输前报错（明确文案） | 静默拉满会把 webview 打爆 |
+| 读取中途文件被截断 | `Unexpected end of file at byte N` | 静默返回半截数据更危险 |
+| 远程读取越界 / 损坏 | `AppError::File`，UI 显示错误文案 | 静默空数据会被误当空文件 |
+| PDF 空文件 / 结构损坏 | 明确错误文案，不崩溃、不无限加载 | 空内容会让 pdf.js 永久等待 |
+| 未选中项目 | 渲染期派生错误分支（不在 effect 里 `setState`） | — |
+
+### 5. Good/Base/Bad Cases
+
+- Good：`<MarkdownImage src="img/a.webp" />` —— 本地项目走 asset URL，远程项目自动走 blob。
+- Base：`<MarkdownPreview basePath={skillDir} />` —— 显式 basePath 优先于 Workspace 根。
+- Bad：在渲染点里写 `convertFileSrc(basePath + '/' + src)`、自定义正则判定 `data:`、
+  或把 `basePath + src` 拼成绝对路径再交给 IPC。
+
+### 6. Tests Required
+
+- `shared/api/__tests__/fileBytes.test.ts`：传参形态（相对路径 + base，缺省 null）、
+  **短读续读重组区间**、空区间不发请求、EOF 报错、整读的大小探测 + 上限前置失败。
+- `shared/utils/__tests__/localAsset.test.ts`：scheme 直通、`data:` 不改写、协议相对、盘符路径
+  不被当协议、相对拼 basePath、无 basePath 原样返回、`normalizeAssetPath` 归一。
+- `shared/hooks/__tests__/useAssetUrl.test.ts`：本地不触 IPC、远程取字节生成 blob（断言相对路径 +
+  base）、反斜杠归一、卸载 revoke、读取失败落 error、空 src 不触发。
+- `features/editor/components/pdf/__tests__/pdfRangeTransport.test.ts`：乱序响应不串数据、abort 后不回填、
+  `normalizeRange` 边界。
+- `features/editor/components/__tests__/PdfFileView.test.tsx`：`disableAutoFetch`、range → `readFileRange`
+  `{begin,end}`、只渲染可视页、翻页/缩放/键盘、pdf.js 资源路径、损坏与空文件错误态。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+```typescript
+// ① 每个渲染点各自拼通道：漏传 basePath ⇒ 404；正则漏掉 data: ⇒ 内联图被改写
+function resolveImageSrc(src: string, basePath?: string) {
+  if (/^(https?:|data:|blob:|asset:)\/?\//i.test(src)) return src;   // data: 不匹配
+  if (!basePath) return src;
+  return convertFileSrc(`${basePath}/${src}`);
+}
+
+// ② 整读 + 消费侧复制后端上界：>1MB 的图片直接失败
+const bytes = await invoke('read_file_bytes', { workspace, filePath });   // 短读未续读
+
+// ③ range 请求静默截断：pdf.js 判该段未满足 ⇒ 永久挂起（既不重试也不报错）
+const chunk = await readFileBytes(w, f, begin, Math.min(end - begin, CHUNK));
+```
+
+#### Correct
+```typescript
+const url = resolveAssetUrl(src, basePath);                       // 同步可渲染
+const bytes = await readFileBytesAll(w, normalizeAssetPath(src), { base: basePath });
+const chunk = await readFileRange(w, filePath, { begin, end });    // 续读补齐，无常量耦合
+```
