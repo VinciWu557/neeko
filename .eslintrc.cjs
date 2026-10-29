@@ -299,7 +299,12 @@ module.exports = {
     },
     // ── API files: allow @tauri-apps/api/core import ──────────────────────
     {
-      files: ['src/features/*/api/*.ts', 'src/app/*/api/*.ts'],
+      files: [
+        'src/features/*/api/*.ts',
+        'src/app/*/api/*.ts',
+        'src/shared/api/*.ts',
+        'src/shared/*/api/*.ts',
+      ],
       rules: {
         'no-restricted-imports': 'off',
       },

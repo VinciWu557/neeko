@@ -135,6 +135,14 @@
       "kind": "legit",
       "note": "取扩展名/文件名查语言表"
     },
+    "src/shared/utils/localAsset.ts": {
+      "counts": {
+        "backslash": 1,
+        "strip": 1
+      },
+      "kind": "legit",
+      "note": "图片/PDF 资产 src 的唯一解析入口（红线 12 允许的 URL 派生归一；normalizeAssetPath 同时供 URL 派生与 IPC 相对路径复用）"
+    },
     "src/shared/utils/markdownLinks.ts": {
       "counts": {
         "backslash": 2,
@@ -142,13 +150,6 @@
       },
       "kind": "legit",
       "note": "md 内链 → 绝对路径"
-    },
-    "src/ui/MarkdownPreview.tsx": {
-      "counts": {
-        "backslash": 3
-      },
-      "kind": "legit",
-      "note": "图片 src → asset: URL 构建"
     }
   },
   "owner": "src/shared/utils/fileRef.ts",
