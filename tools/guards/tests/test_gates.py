@@ -360,7 +360,8 @@ class ContextCommandSetTest(unittest.TestCase):
         #   会留孤儿进程 + 判据失效；真实往返归 #[ignore] 集成用例）
         # + check_ui_style_tokens（UI 样式层禁硬编码色 / 暗色假设 / 写死白字 / 无焦点环）
         # + check_styles_layout（src/styles 目录与文件名规范，见 src/styles/README.md）
-        self.assertEqual(self.in_process_count("local"), 30)
+        # + check_readme_claims（README 的版本/agent 清单/主题数/快捷键表/图片与代码一致）
+        self.assertEqual(self.in_process_count("local"), 31)
 
     def test_coverage_entry_is_the_manual_stage(self):
         self.assertEqual(
@@ -386,7 +387,7 @@ class ContextCommandSetTest(unittest.TestCase):
         self.assertEqual(self.command_ids("ci", suite="lint", source="python"), [])
         # 与 local 档同源（同一批进程内判据）：新增一条就要同时改这里 ——
         # 这两个数字互不相等时，意味着某条护栏只在本地跑、对 PR 零约束力（历史事故）。
-        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 30)
+        self.assertEqual(self.in_process_count("ci", suite="lint", source="python"), 31)
 
 
 if __name__ == "__main__":
