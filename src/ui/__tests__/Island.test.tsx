@@ -7,7 +7,13 @@ describe('Island', () => {
   it('renders the shared shell classes with content', () => {
     render(<Island data-testid="island">content</Island>);
     const island = screen.getByTestId('island');
-    expect(island).toHaveClass('rounded-lg', 'shadow-sm', 'bg-bg-secondary');
+    expect(island).toHaveClass(
+      'rounded-lg',
+      'border',
+      'border-border-subtle',
+      'shadow-sm',
+      'bg-bg-secondary',
+    );
     expect(screen.getByText('content')).toBeInTheDocument();
   });
 
@@ -22,7 +28,15 @@ describe('Island', () => {
   });
 
   it('exposes the shell class string for non-div hosts like ResizablePanel', () => {
-    for (const token of ['flex', 'flex-col', 'rounded-lg', 'shadow-sm', 'bg-bg-secondary']) {
+    for (const token of [
+      'flex',
+      'flex-col',
+      'rounded-lg',
+      'border',
+      'border-border-subtle',
+      'shadow-sm',
+      'bg-bg-secondary',
+    ]) {
       expect(ISLAND_CLASS.split(' ')).toContain(token);
     }
   });

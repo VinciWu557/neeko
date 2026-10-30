@@ -38,18 +38,25 @@ function AgentBar({ agents, selectedAgentId, compactMode, onAgentClick }: AgentB
 
   return (
     <>
-      <div ref={agentListRef} className="flex flex-1 min-w-0 min-h-6 gap-1 flex-wrap items-center">
+      <div ref={agentListRef} className="flex items-center gap-0.5 flex-wrap min-w-0">
         {agents.map((agent) => {
           const selected = selectedAgentId === agent.id;
           return (
             <button
               key={agent.id}
-              className={`tb-icon-btn flex items-center gap-1.5 px-2 min-h-6 max-w-full rounded-md transition-colors ${selected ? 'text-text-primary bg-bg-hover' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'}`}
-              style={{ fontSize: 'var(--terminal-font-size)' }}
+              className={`tb-icon-btn group/agent flex items-center gap-1.5 px-1.5 h-6 max-w-full rounded-md text-text-meta transition-colors ${selected ? 'text-text-primary bg-bg-hover' : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary'}`}
               onClick={() => onAgentClick(agent)}
               title={agent.name}
             >
-              <AgentIcon icon={agent.icon} />
+              <span
+                className={
+                  selected
+                    ? 'opacity-100'
+                    : 'opacity-75 group-hover/agent:opacity-100 transition-opacity'
+                }
+              >
+                <AgentIcon icon={agent.icon} />
+              </span>
               {showName && <span className="min-w-0 break-words">{agent.name}</span>}
             </button>
           );

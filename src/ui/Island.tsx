@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
  * / fixed height) and positioning (`relative`) stay per call site.
  */
 export const ISLAND_CLASS =
-  'flex flex-col overflow-hidden rounded-lg shadow-sm bg-bg-secondary min-h-0';
+  'flex flex-col overflow-hidden rounded-lg border border-border-subtle shadow-sm bg-bg-secondary min-h-0';
 
 export interface IslandProps extends React.HTMLAttributes<HTMLDivElement> {}
 

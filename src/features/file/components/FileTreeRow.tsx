@@ -154,7 +154,7 @@ function FileTreeRow({
       aria-selected={isHighlighted}
       data-active={isActive || undefined}
       data-selected={isSelected || undefined}
-      className={`flex items-center gap-1 py-0.5 pr-2 text-[var(--font-size)] cursor-pointer rounded select-none min-w-0 ${
+      className={`flex items-center gap-1 py-0.5 pr-2 text-[var(--font-size)] cursor-pointer rounded select-none min-w-0 transition-colors ${
         isHighlighted ? 'bg-bg-selected' : 'hover:bg-bg-hover'
       }`}
       style={{ paddingLeft: indent }}
@@ -183,13 +183,13 @@ function FileTreeRow({
             }`}
           />
           <img
-            className="w-4 h-4 shrink-0 block"
+            className={`w-4 h-4 shrink-0 block ${isHighlighted ? 'opacity-100' : 'opacity-80'}`}
             src={nodeIconSrc(node)}
             alt=""
             width={16}
             height={16}
           />
-          <span className={`flex-1 font-medium truncate ${nameColorClass}`}>{node.name}</span>
+          <span className={`flex-1 font-normal truncate ${nameColorClass}`}>{node.name}</span>
           {statusBadge && <GitStatusBadge badge={statusBadge.badge} chip={statusBadge.chip} />}
           {node.is_truncated && (
             <span
@@ -220,7 +220,7 @@ function FileTreeRow({
         <>
           <span className="w-3.5 h-3.5 shrink-0" />
           <img
-            className="w-3.5 h-3.5 shrink-0 block"
+            className={`w-3.5 h-3.5 shrink-0 block ${isHighlighted ? 'opacity-100' : 'opacity-80'}`}
             src={fileIconSrc(node.name)}
             alt=""
             width={14}

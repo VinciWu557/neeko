@@ -109,7 +109,7 @@ const ProjectGroup: React.FC<ProjectGroupProps> = ({
         role="button"
         tabIndex={0}
         className={cn(
-          'flex items-center gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-bg-hover relative',
+          'flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer hover:bg-bg-hover relative',
         )}
         onClick={actions.onToggle}
         onKeyDown={(e) => {
@@ -123,21 +123,21 @@ const ProjectGroup: React.FC<ProjectGroupProps> = ({
       >
         <span
           data-testid="project-group-avatar"
-          className="w-7 h-7 rounded-md flex items-center justify-center text-[0.95em] font-bold shrink-0 uppercase"
+          className="w-5 h-5 rounded flex items-center justify-center text-text-micro font-semibold shrink-0 uppercase"
           style={{
             color: avatarStyle.color,
             backgroundColor: avatarStyle.backgroundColor,
-            border: `1.5px solid ${avatarStyle.color}`,
+            border: `1px solid ${avatarStyle.color}40`,
           }}
           aria-hidden="true"
         >
           {initials}
         </span>
         <div className="flex-1 flex items-baseline gap-1.5 min-w-0">
-          <span className="text-[var(--font-size)] font-semibold text-text-primary truncate">
+          <span className="text-[var(--font-size)] font-medium text-text-primary truncate">
             {name}
           </span>
-          <span className="text-[0.85em] text-text-muted">({sessionCount})</span>
+          <span className="text-text-micro text-text-muted">({sessionCount})</span>
         </div>
 
         {/* 按钮 overlay：hover 时出现，不消耗 flex 空间 */}
@@ -192,7 +192,7 @@ const ProjectGroup: React.FC<ProjectGroupProps> = ({
           </HeaderActionButton>
         </div>
       </div>
-      {expanded && <div className="pb-1.5">{children}</div>}
+      {expanded && <div className="pb-1 space-y-0.5">{children}</div>}
     </div>
   );
 };

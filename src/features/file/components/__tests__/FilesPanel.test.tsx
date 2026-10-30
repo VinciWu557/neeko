@@ -456,15 +456,18 @@ describe('FilesPanel 文件管理', () => {
     expect(screen.getByText('Delete')).toBeInTheDocument();
   });
 
-  it('文件图标不使用半透明样式（浅色背景下保持彩色可见）', () => {
+  it('非高亮行文件图标使用 opacity-80 柔化，高亮行保持不透明', () => {
     render(<FilesPanel {...baseProps} />);
 
     // b.ts → /icons/typescript.svg（彩色 SVG；图标 alt="" 装饰性图片）
-    const fileIcon = screen
-      .getAllByAltText('')
-      .find((img) => img.getAttribute('src') === '/icons/typescript.svg');
-    expect(fileIcon).toBeDefined();
-    expect(fileIcon!.className).not.toMatch(/opacity/);
+    const findIcon = () =>
+      screen.getAllByAltText('').find((img) => img.getAttribute('src') === '/icons/typescript.svg');
+    expect(findIcon()).toBeDefined();
+    expect(findIcon()!.className).toMatch(/opacity-80/);
+
+    // 选中后高亮行图标回到 100%，避免状态色被透明度削弱
+    fireEvent.click(screen.getByText('b.ts'));
+    expect(findIcon()!.className).not.toMatch(/opacity-80/);
   });
 
   it('选中文件节点时滚动到可见（定位/点击复用同一选中逻辑）', () => {

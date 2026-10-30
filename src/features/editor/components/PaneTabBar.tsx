@@ -76,7 +76,9 @@ function PaneTabBar({
 }: PaneTabBarProps) {
   return (
     <div className="shrink-0 bg-bg-secondary">
-      <div className="h-8 flex items-center px-2 gap-1">
+      {/* 单行头部：Tab、Agent 快捷按钮与分屏控制共处一条工具带，
+          AgentBar 换行时以 min-h-8 自适应增高，不再单独占用第二行。 */}
+      <div className="min-h-8 flex items-center px-2 py-1 gap-1 border-b border-border-subtle">
         <div className="flex-1 min-w-0">
           <TabBar
             tabs={tabs}
@@ -105,61 +107,63 @@ function PaneTabBar({
             onAddAgentTerminal={onActionMenuAgentTerminal}
           />
         )}
-      </div>
 
-      {showAgentBarRow && (
-        <div className="px-2 py-1 flex flex-wrap items-center gap-1">
-          {showAgentBarContent && (
-            <AgentBar
-              agents={agents}
-              selectedAgentId={currentAgentId}
-              compactMode={compactMode}
-              onAgentClick={onAgentClick}
-            />
-          )}
-          {!showAgentBarContent && <div className="flex-1" />}
-          <div className="flex items-center gap-0.5 shrink-0 ml-auto">
-            <button
-              className="tb-icon-btn flex items-center justify-center w-6 h-6 rounded-md transition-colors text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              title={splitInfo.canSplit ? 'Split Horizontal' : 'Maximum panes reached'}
-              disabled={!splitInfo.canSplit}
-              onClick={onSplitHorizontal}
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <rect x="1" y="2" width="10" height="8" stroke="currentColor" strokeWidth="1" />
-                <path d="M6 2V10" stroke="currentColor" strokeWidth="1" />
-              </svg>
-            </button>
-            <button
-              className="tb-icon-btn flex items-center justify-center w-6 h-6 rounded-md transition-colors text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-              title={splitInfo.canSplit ? 'Split Vertical' : 'Maximum panes reached'}
-              disabled={!splitInfo.canSplit}
-              onClick={onSplitVertical}
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                <rect x="1" y="2" width="10" height="8" stroke="currentColor" strokeWidth="1" />
-                <path d="M1 6H11" stroke="currentColor" strokeWidth="1" />
-              </svg>
-            </button>
-            {splitInfo.paneCount > 1 && (
+        {showAgentBarRow && (
+          <>
+            <div className="h-3.5 border-l border-border-subtle shrink-0" />
+            {showAgentBarContent && (
+              <div className="flex items-center min-w-0 max-w-[40%]">
+                <AgentBar
+                  agents={agents}
+                  selectedAgentId={currentAgentId}
+                  compactMode={compactMode}
+                  onAgentClick={onAgentClick}
+                />
+              </div>
+            )}
+            <div className="flex items-center gap-0.5 shrink-0">
               <button
                 className="tb-icon-btn flex items-center justify-center w-6 h-6 rounded-md transition-colors text-text-secondary hover:bg-bg-hover hover:text-text-primary"
-                title="Close Pane"
-                onClick={onClosePane}
+                title={splitInfo.canSplit ? 'Split Horizontal' : 'Maximum panes reached'}
+                disabled={!splitInfo.canSplit}
+                onClick={onSplitHorizontal}
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                  <path
-                    d="M3 3L9 9M9 3L3 9"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                  />
+                  <rect x="1" y="2" width="10" height="8" stroke="currentColor" strokeWidth="1" />
+                  <path d="M6 2V10" stroke="currentColor" strokeWidth="1" />
                 </svg>
               </button>
-            )}
-          </div>
-        </div>
-      )}
+              <button
+                className="tb-icon-btn flex items-center justify-center w-6 h-6 rounded-md transition-colors text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                title={splitInfo.canSplit ? 'Split Vertical' : 'Maximum panes reached'}
+                disabled={!splitInfo.canSplit}
+                onClick={onSplitVertical}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <rect x="1" y="2" width="10" height="8" stroke="currentColor" strokeWidth="1" />
+                  <path d="M1 6H11" stroke="currentColor" strokeWidth="1" />
+                </svg>
+              </button>
+              {splitInfo.paneCount > 1 && (
+                <button
+                  className="tb-icon-btn flex items-center justify-center w-6 h-6 rounded-md transition-colors text-text-secondary hover:bg-bg-hover hover:text-text-primary"
+                  title="Close Pane"
+                  onClick={onClosePane}
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path
+                      d="M3 3L9 9M9 3L3 9"
+                      stroke="currentColor"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

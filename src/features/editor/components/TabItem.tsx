@@ -79,10 +79,10 @@ function TabItem<T extends TabLike>({
       tabIndex={isActive ? 0 : -1}
       aria-selected={isActive}
       className={cn(
-        'flex items-center gap-1 h-6 px-2 rounded-md min-w-0 max-w-[10rem] transition-colors',
+        'flex items-center gap-1 h-6 px-2 rounded-md border min-w-0 max-w-[10rem] transition-colors',
         isActive
-          ? 'bg-bg-selected text-text-primary'
-          : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary',
+          ? 'bg-bg-selected border-border-subtle text-text-primary'
+          : 'border-transparent text-text-secondary hover:bg-bg-hover hover:text-text-primary',
         isDragging && 'opacity-50 shadow-lg shadow-black/20 z-50',
       )}
       onClick={handleClick}
@@ -101,14 +101,11 @@ function TabItem<T extends TabLike>({
 
       {isPinned && <Pin size={10} className="shrink-0 opacity-50" />}
 
-      <span className="truncate cursor-pointer" style={{ fontSize: 'var(--terminal-font-size)' }}>
-        {tab.title}
-      </span>
+      <span className="truncate cursor-pointer text-text-ui">{tab.title}</span>
 
       {!isPinned && (
         <button
-          className="tb-icon-btn w-4 h-4 rounded text-inherit hover:bg-bg-hover transition-colors flex items-center justify-center shrink-0 leading-none"
-          style={{ fontSize: 'var(--terminal-font-size)' }}
+          className="tb-icon-btn w-4 h-4 rounded text-text-meta hover:bg-bg-hover transition-colors flex items-center justify-center shrink-0 leading-none"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={handleClose}
           title="Close tab"

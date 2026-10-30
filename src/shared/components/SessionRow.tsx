@@ -58,9 +58,9 @@ const SessionRow: React.FC<SessionRowProps> = ({
       role="button"
       tabIndex={0}
       className={cn(
-        'group flex items-center gap-2.5 pl-4 pr-3 py-2 mx-1.5 rounded-md cursor-pointer transition-colors',
+        'group flex items-center gap-2 pl-2.5 pr-2 py-1 mx-1.5 rounded-md border cursor-pointer transition-colors',
         deleting && 'wt-deleting',
-        isActive ? 'bg-bg-selected' : 'hover:bg-bg-hover',
+        isActive ? 'bg-bg-selected border-border-subtle' : 'border-transparent hover:bg-bg-hover',
       )}
       onClick={onClick}
       onKeyDown={(e) => {
@@ -73,27 +73,31 @@ const SessionRow: React.FC<SessionRowProps> = ({
     >
       <span
         className={cn(
-          'w-7 h-7 rounded-md flex items-center justify-center shrink-0',
+          'w-4 h-4 flex items-center justify-center shrink-0',
           isActive ? 'text-text-primary' : 'text-text-muted',
         )}
-        style={{
-          backgroundColor: isActive ? 'var(--bg-selected)' : 'transparent',
-        }}
       >
-        <Icon size={16} />
+        <Icon size={13} />
       </span>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 flex items-center gap-1.5 min-w-0">
         {editing ?? (
           <>
-            <div
-              className="text-[var(--font-size)] font-semibold text-text-primary truncate"
+            <span
+              className={cn(
+                'text-text-ui truncate',
+                isActive
+                  ? 'font-medium text-text-primary'
+                  : 'text-text-secondary group-hover:text-text-primary',
+              )}
               onDoubleClick={onLabelDoubleClick}
               title={labelTitle}
             >
               {label}
-            </div>
+            </span>
             {branch && (
-              <div className="text-[0.85em] font-mono text-text-muted truncate">{branch}</div>
+              <span className="text-text-meta font-mono text-text-muted truncate shrink-0 max-w-[60%]">
+                {branch}
+              </span>
             )}
           </>
         )}
