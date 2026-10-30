@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范总索引"}
+{"file": ".trellis/spec/frontend/design-tokens.md", "reason": "主题变量分层、对比度约束、禁止写法与九个历史踩坑"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "React 组件设计、Props 与样式组合约定"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门禁与静态检查要求"}
+{"file": ".trellis/tasks/10-30-refine-ui-visual-comfort-and-hierarchy/research/orca-vs-neeko-visual-audit.md", "reason": "Neeko 与 Orca 像素级对比数据及源码改动定位"}

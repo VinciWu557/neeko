@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端开发规范总索引"}
+{"file": ".trellis/spec/frontend/design-tokens.md", "reason": "主题变量契约、对比度测试断言与 check_ui_style_tokens 护栏规则"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量门禁与检查规范"}
+{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "前端组件单测规范"}
+{"file": ".trellis/tasks/10-30-refine-ui-visual-comfort-and-hierarchy/research/orca-vs-neeko-visual-audit.md", "reason": "视觉审计基准与单测兼容性要求"}
