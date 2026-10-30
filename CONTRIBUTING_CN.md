@@ -57,47 +57,45 @@ pnpm tauri dev        # 启动开发模式（前端端口 1420）
 | --- | --- |
 | `pnpm tauri dev` | 运行开发模式 |
 | `pnpm tauri build` | 构建发布版本 |
-| `pnpm lint` | 全部静态检查：进程内判据 + `lint:fe` + `lint:rust`（不含测试） |
-| `pnpm lint:fe` | 前端静态检查（ESLint + `tsc --noEmit`）—— `lint_fe` gate 的 argv |
+| `pnpm lint` | 全部静态检查：`lint:fe` + `lint:rust`（不含测试） |
+| `pnpm lint:fe` | 前端静态检查（ESLint + `tsc --noEmit`） |
 | `pnpm lint:rust` | Rust 静态检查（`cargo fmt --check` + `clippy -D warnings`） |
+| `pnpm lint:rust:all-targets` | 含测试目标的 Rust 静态检查（`clippy --all-targets -D warnings`）—— CI 跑的那条 |
 | `pnpm lint:fix` | 写回修复：`cargo fmt`（Rust）+ ESLint `--fix`（前端） |
 | `pnpm type-check` | 仅 TypeScript 类型检查 |
-| `pnpm test` | 全部测试门禁：`test:fe` + `test:rust` + `test:host` |
+| `pnpm test` | 全部测试：`test:fe` + `test:rust` + `test:host` |
 | `pnpm test:fe` | 运行一次前端测试（监听用 `test:fe:watch`） |
 | `pnpm test:fe:coverage` | 带覆盖率跑前端测试 —— 会执行 `vitest.config.ts` 里的地板 |
 | `pnpm test:rust` | 运行 Rust 测试 |
 | `pnpm test:rust:coverage` | 带覆盖率跑 Rust 测试 —— 执行 `package.json` 里的 `--fail-under-lines` |
-| `pnpm test:coverage` | 两套覆盖率门禁 |
+| `pnpm test:coverage` | 两套覆盖率 |
 | `pnpm test:host` | Java 调试 host 自检（需 JDK，缺失时明确跳过） |
-| `pnpm check` | 本地全量：`lint` + 全部测试门禁（单次框架调用） |
+| `pnpm check` | 全量：`lint` + `test` |
+| `pnpm check:quick` | 开发循环的默认命令：`lint:fe` + `lint:rust` + `test:fe` |
 | `pnpm release <version>` | 升级版本、生成 changelog、打 tag（见[发布流程](#发布流程)） |
 
-覆盖率是 **CI 门禁、不是 push 门禁**：本地 hook 守住延迟预算，`frontend-test` job 跑
-`pnpm test:fe:coverage`、`backend-coverage` job 跑 `pnpm test:rust:coverage`（仅当 PR 动了
-`src-tauri/**` 或 `package.json`），地板下滑会在 CI 失败。改动带 per-file pin 的文件、或新增
-未测试的 Rust 代码时，本地也跑一遍同一条命令（Rust 地板只有 ~1.75pt 余量）。
+覆盖率由 **CI 把关**：`frontend-test` job 跑 `pnpm test:fe:coverage`、`backend-coverage` job 跑
+`pnpm test:rust:coverage`（仅当 PR 动了 `src-tauri/**` 或 `package.json`），地板下滑会在 CI 失败。
+改动带 per-file pin 的文件、或新增未测试的 Rust 代码时，本地也跑一遍同一条命令（Rust 地板只有
+~1.75pt 余量）。
 
 ## 项目结构
 
-目录树与模块职责的**单一事实源**是各侧的 `AGENTS.md`，本文不复述（维护副本必然漂移）：
+后端目录树与模块职责的**单一事实源**是 `src-tauri/AGENTS.md`，本文不复述（维护副本必然漂移）：
 
-- 前端（Feature-Based）：`src/AGENTS.md`「模块布局」
 - 后端（Domain-Driven）：`src-tauri/AGENTS.md`「模块布局」
-- 全栈总览：`docs/ARCHITECTURE.md`
 
 目录清单请用 `ls` / Glob 现取 —— 根 `AGENTS.md`「顶层目录」已把这条定为元规则。
 
 ## 代码规范
 
-规范的**单一事实源**是仓库根的 [`AGENTS.md`](./AGENTS.md)：15 条「审查红线」由护栏
-`check_agents_md_size.py` 校验「正文落点唯一 + 完整」，红线表是机读台账。本文只给落点索引：
+规范的**单一事实源**是仓库根的 [`AGENTS.md`](./AGENTS.md)：15 条「审查红线」都在那里，
+每条规则的正文只存在于一个 `AGENTS.md` 文件。本文只给落点索引：
 
 | 主题 | 权威落点 |
 | --- | --- |
 | 架构原则（高内聚低耦合 / 依赖倒置 / OCP / DRY-KISS-YAGNI） | `AGENTS.md`「架构基本原则」 |
-| 15 条审查红线（违反即 Block，编号可被 spec / 代码注释引用） | `AGENTS.md` 红线表（编号 → 摘要 → 落点） |
-| 前端导入/导出防火墙 | `src/AGENTS.md`「模块导入/导出规范」 |
-| 前端状态管理、React 性能 | `src/AGENTS.md`「前端架构约定」 |
+| 15 条审查红线（违反即 Block，编号可被代码注释引用） | `AGENTS.md` 红线表（编号 → 摘要 → 落点） |
 | 后端命令层、错误与并发 | `src-tauri/AGENTS.md`「Rust 命令层约定」「错误与并发」 |
 
 > 2026-09-25 前本文逐条复述了上述条文，已证明会漂移（当时副本里的 `pnpm lint` 描述、前端
@@ -113,7 +111,8 @@ pnpm tauri dev        # 启动开发模式（前端端口 1420）
 
 ## 提交信息规范
 
-遵循 **Conventional Commits 1.0.0**，由 commitlint 强制校验：
+遵循 **Conventional Commits 1.0.0**，规则写在 `commitlint.config.ts`，可用
+`pnpm commitlint --edit <file>` 本地校验：
 
 ```text
 <type>(<scope>): <subject>
@@ -165,69 +164,28 @@ fix(file): refresh expanded dir caches on file move/delete
 
 ## 质量门（Quality Gates）
 
-[lefthook](https://github.com/evilmartians/lefthook) 会在提交时自动执行。
-Hooks 通过 `pnpm prepare`（或 `pnpm lefthook install`）安装。
-**Hook 清单以 `lefthook.yml` 为准**，且每个 hook 只做**一次框架调用** —— 哪些门禁在哪个场合
-跑只声明在 `tools/guards/ledger/gates.json`，绝不在 `lefthook.yml` 里重抄一份：
+本仓库**没有本地 git hook**。门禁在 CI（`.github/workflows/ci.yml`），每条门禁都是一个具名脚本，
+因此任何一条结论都能在本地用同一条命令复现：
 
-| Hook | 触发条件 | 执行内容 |
+| 门禁 | 脚本 | CI job |
 | --- | --- | --- |
-| `pre-commit` | 每次提交 | `pnpm guards run --stage commit --staged` |
-| `commit-msg` | 每次提交 | `pnpm commitlint` |
-| `pre-push` | 每次推送 | `pnpm guards run --stage push --changed {push_files} --jobs 3` |
+| 前端静态检查 | `pnpm lint:fe` | `frontend-check` |
+| 前端测试 + 覆盖率 | `pnpm test:fe:coverage` | `frontend-test` |
+| Rust 静态检查（全目标） | `pnpm lint:rust:all-targets` | `backend-check` |
+| Rust 测试 | `pnpm test:rust` | `backend-test` |
+| Rust 覆盖率 | `pnpm test:rust:coverage` | `backend-coverage` |
+| Java host 自检 | `pnpm test:host` | `java-host-check` |
 
-单元测试与 host 自检都只在 push 档跑（commit 保持静态门，暖缓存 ~10s）。跳过不再来自手写 glob，
-而是各门禁自报的 `scopes` —— 能改变某条门禁结论的文件，都由该门禁自己的声明覆盖。
+开 PR 前请在本地跑一遍**最小回归集** —— 定义见 [`AGENTS.md`](./AGENTS.md)「Development Commands」
+（单一事实源，此处不复述）。
 
-### 新增一条护栏
-
-护栏清单**就是** `tools/guards/checks/` 目录 —— 放一个模块即完成注册，
-`package.json` / `ci.yml` / `lefthook.yml` 一处都不用改（此前正是「三份手抄清单」让本地与
-CI 的门禁集悄悄漂移）。模块只导出两样东西：
-
-```python
-GUARD = Guard(id="check_my_rule", title="…", scopes=("src/**/*.ts",),
-              stages=("local", "ci", "commit"), red_lines=(8,), fix_hint="…")
-
-def check(ctx: Context) -> GuardResult: ...   # 只返回结论，不 print
-```
-
-框架统一兜住过去每条护栏各写一遍、且各自写歪的部分：
-
-- **不许空转通过** —— `scanned == 0` 判为「护栏自身失效」（退出码 2）而非通过；
-  仓库根由 marker 向上定位，全仓一处实现，不再出现 `parents[N]`；
-- **强制配套单测** —— 必须有 `tests/test_<id>.py`，护栏单测先于任何结论执行；
-- **退出码可区分** —— 0 通过 / 1 违规 / 2 护栏坏了，坏掉的工具无法伪装成「检查过了」；
-  坏护栏还会额外打一条 CI `::warning::` —— 否则它只躺在默认折叠的日志块里，等于静默消失；
-- **每条护栏都有时间预算**（`budget_ms`，默认 10s）—— 慢到没人愿意跑的门禁就是消失了
-  的门禁，所以超时按「护栏坏了」报，而不是按「代码违规」。
-
-`pnpm guards list` 打印当前注册表；`pnpm guards list --stage ci` 直接回答「CI 到底门禁哪几条」
-（并把被排除的护栏点名 —— 本地与 CI 门禁集当初正是因为没有这样一条命令才漂移）；
-`pnpm guards list <id>` 打印该护栏的台账明细。
-
-**护栏与它的测试要一起 `git add`。** `lefthook run pre-commit` 跑的是**暂存区**那棵树：
-只 add 了 `tests/test_check_x.py` 而 `core/…` 或 `checks/check_x.py` 还留在旧版本，
-hook 就会拿新测试去跑旧框架 —— 报错看起来像代码 bug，实际是版本错配。
-
-所有质量门通过前提交会被拦截。开 PR 前请在本地跑一遍**最小回归集** —— 定义见
-[`AGENTS.md`](./AGENTS.md)「Development Commands」（单一事实源，此处不复述）。
-
-### 新增一条 gate
-
-**gate** 是「判据来自外部命令（`argv`）而非进程内函数」的护栏，声明在
-`tools/guards/ledger/gates.json` 的一个对象里：`argv` / `kind`（lint|test）/ `stages` /
-`ci_job`（当且仅当 `stages` 含 `ci`）/ `platforms` / `budget_ms` / `scopes`（展开形态，
-不用 `{a,b}` 花括号）/ `fix_hint`。消费端**零改动**：`pnpm lint` / `test` / `check` /
-`test:coverage`、`lefthook.yml` 与 CI guards job 全部按 stage/kind/形态选择。未知键在加载时
-报错（拼错 `stage` 不许静默按默认值生效），且每条 gate 与 CI workflow / lefthook hook 的一致性
-由 `check_gate_topology`（A1/A3）校验：声明在某个 CI job 跑、命令却不在该 job 的步骤里 = 失败，
-而不是静默的空转。
+新增门禁需要同时动三处：`package.json` 加脚本、`.github/workflows/ci.yml` 加 job 步骤、
+`.github/BRANCH_PROTECTION.md` 加 required check（若需阻塞合并）。只改一处会得到一条看起来存在、
+实际不触发的门。
 
 ## 测试要求
 
-分层覆盖率基线见 [`AGENTS.md`](./AGENTS.md)「TDD 开发模式」；前端测试框架、目录约定与
-mock 策略见 `src/AGENTS.md`「测试」。
+分层覆盖率基线见 [`AGENTS.md`](./AGENTS.md)「TDD 开发模式」。
 
 本文只保留其它落点没有的一条：
 
@@ -245,8 +203,7 @@ mock 策略见 `src/AGENTS.md`「测试」。
 
 - 行为变更时同步更新相关文档：
   - `AGENTS.md` —— 项目上下文与规范单一事实源
-  - `docs/neeko-development-spec.md` —— 全栈架构规范
-  - `docs/ARCHITECTURE.md` —— 架构总览
+  - `README.md` —— 面向用户的功能清单
 - 项目维护中英双语文档（`README.md` / `README_CN.md`、
   `CONTEXT.md` / `CONTEXT_CN.md`）。新增文档时建议同时提供中英两个版本。
 

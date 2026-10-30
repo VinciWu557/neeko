@@ -205,8 +205,8 @@ pnpm tauri build    # 打包构建
 ## 开发
 
 ```bash
-pnpm check:quick   # 默认门禁：静态检查 + 改动文件相关测试
-pnpm check         # 本地全量（pre-push 与 CI 也会执行）
+pnpm check:quick   # 默认门禁：静态检查 + 前端测试
+pnpm check         # 全量（CI 也会执行）
 ```
 
 - 工作模式是 TDD：先写失败测试，再写最小实现。
@@ -215,14 +215,11 @@ pnpm check         # 本地全量（pre-push 与 CI 也会执行）
 
 ## 文档
 
-| 文档                                                       | 内容                                |
-| -------------------------------------------------------- | --------------------------------- |
-| [docs/features.md](docs/features.md)                     | 能力清单单一事实源 —— 本 README 所摘要的那份清单    |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)             | 模块布局、DTO 契约与数据流                   |
-| [CONTEXT.md](CONTEXT.md)                                 | 领域术语表（项目、worktree、Agent、Skill、任务） |
-| [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md) | 完整且可改绑的快捷键清单                      |
-| [CHANGELOG.md](CHANGELOG.md)                             | 每个版本的变化                           |
-| [CONTRIBUTING\_CN.md](CONTRIBUTING_CN.md)                | 如何参与贡献，以及 CI 会卡什么                 |
+| 文档                          | 内容                                |
+| ----------------------------- | --------------------------------- |
+| [CONTEXT.md](CONTEXT.md)      | 领域术语表（项目、worktree、Agent、Skill、任务） |
+| [CHANGELOG.md](CHANGELOG.md)  | 每个版本的变化                           |
+| [CONTRIBUTING\_CN.md](CONTRIBUTING_CN.md) | 如何参与贡献，以及 CI 会卡什么          |
 
 ## 社区
 

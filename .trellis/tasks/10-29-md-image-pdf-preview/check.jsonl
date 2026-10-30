@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "纯函数 100% 覆盖与组件测试规范（resolveAssetUrl / PdfFileView）"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "read_file_bytes Rust 单测与 tempdir 夹具（红线 13）要求"}
-{"file": ".trellis/spec/unit-test/mock-strategies.md", "reason": "invoke / convertFileSrc / pdfjs 的 mock 策略"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量门禁与 check:quick 覆盖面边界"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust 侧质量门禁（clippy/fmt/test）"}
-{"file": ".trellis/spec/security/allowlist.md", "reason": "AC5/红线 4/8 复核：二进制不进 JSON、路径越界防护"}

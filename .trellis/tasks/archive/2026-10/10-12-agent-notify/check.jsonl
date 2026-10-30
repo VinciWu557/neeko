@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/security/allowlist.md", "reason": "capabilities 新增 notification 权限必须最小集，禁止 allow-all（红线 8）"}
-{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "审查命令层是否保持极薄、IPC 载荷是否越界"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审查是否有平铺 #[cfg]、mod.rs 是否极薄（红线 9/10）"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核对 policy/signal 单测覆盖率与测试独立性、夹具路径规则（红线 13）"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端设置切片与回流接线的导入防火墙/性能规范审查"}

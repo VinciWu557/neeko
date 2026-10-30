@@ -1,6 +1,0 @@
-{"file": ".trellis/tasks/10-25-fsevent-stream-consolidation/prd.md", "reason": "逐条核对 Acceptance Criteria（含「不包含 fseventsd CPU 下降」这条口径）"}
-{"file": ".trellis/tasks/10-25-fsevent-stream-consolidation/design.md", "reason": "核对不变量 I1-I5 是否被违反；§9 的 refs 分类陷阱与重启窗口风险"}
-{"file": ".trellis/tasks/10-25-fsevent-stream-consolidation/implement.md", "reason": "核对每阶段的验证命令是否跑过；特别检查 P1 的「假通过测试」是否已按警告处理"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "检查 watcher 强/弱所有权契约是否被 R2 合并破坏（泄漏或双所有者）"}
-{"file": ".trellis/spec/backend/git-domain.md", "reason": "检查 git-meta 事件语义（信号≠事实、version 号段）是否在合并后保持"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "clippy -D warnings 全目标、测试独立性、无 debug 残留"}

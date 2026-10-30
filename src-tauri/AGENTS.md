@@ -1,8 +1,7 @@
 # Neeko 后端（`src-tauri/`）开发规则
 
 > **根文件硬指令：改 `src-tauri/**` 前必须读本文件**（工具不会总是自动注入）。跨栈规则在仓库根
-> `AGENTS.md`（红线表列出各自落点）；前端规则在 `src/AGENTS.md`。红线编号与根文件索引一一
-> 对应。机制细节与事故记录在 `.trellis/spec/backend/`，本文只保留祈使句与判据。
+> `AGENTS.md`（红线表列出各自落点）。红线编号与根文件索引一一对应。
 
 ## 模块布局
 
@@ -13,7 +12,7 @@
 `platform/`（平台适配器集中层）；其余按域分目录，清单以 `ls src-tauri/src` 为准 ——
 **2026-09-25 核对**：旧副本列的 `skill/` 已不存在，`about/` `library/` `search/` 未在列，故删除副本。
 
-完整树状与职责：`docs/ARCHITECTURE.md`、`.trellis/spec/backend/directory-structure.md`。
+完整树状与职责以 `ls -R src-tauri/src` 与各域 `mod.rs` 为准。
 
 ## 主链路
 
@@ -31,8 +30,7 @@
 - **终端缓存 key 的唯一实现处**是前端 `src/features/terminal/components/terminalCache.ts` 与
   `terminalTabCleanup.ts`（形如 `wsl:{distro}:{projectId}:{tabId}:p{n}`、
   `{projectId}:wt:{path}:{tabId}:{paneId}`）。**以代码为准，勿在文档维护副本** —— 旧根文档写的
-  `:side` 后缀与 `{projectId}:wt:{worktreePath}` 两段式在仓库中已不存在（2026-09-25 核对），
-  而 `docs/ARCHITECTURE.md` 与旧文档当时已经互相矛盾。
+  `:side` 后缀与 `{projectId}:wt:{worktreePath}` 两段式在仓库中已不存在（2026-09-25 核对）。
 - **SSH IO**（`terminal/remote.rs`）：`channel.make_writer()` 分离读写，`tokio::select!` 三路并发
   —— input: `input_rx` → writer；resize: `resize_rx` → `channel.window_change()`；
   output: `channel.wait()` → emit `terminal-output-{id}`。事件名受根文件红线 5 约束。
@@ -40,9 +38,7 @@
   `~/.neeko/config.json`（字体、Diff 模式、Shell、IDE/Agent 覆盖）。
 - **Git status 的身份是「仓库单元」而不是 project**：一个 project = 1 + N 个单元（linked worktree
   的 HEAD / index / workdir 各自独立），身份、快照槽、watcher 资源、写后 poke 一律按 `WorkspaceRef`
-  定址（前端对应 `WorkspaceKey`）。契约全文与退役清单：
-  `.trellis/spec/backend/git-domain.md` §12（前端侧见 `state-management.md` 同名场景）；护栏
-  `tools/guards/checks/check_workspace_identity.py` 钉住（已接 `pnpm lint` 与 CI）。
+  定址（前端对应 `WorkspaceKey`）。
 - 旧根文档记载的「Agent 自动启动延迟：本地即时 / WSL 500ms / SSH 800ms」在本次核对中**未在代码里找到
   对应常量**，故不复述；要恢复请先定位实现，不要抄文档。
 
@@ -81,8 +77,7 @@
 `CREATE_NO_WINDOW`）与「已有 SSH channel」场景的 `ssh::exec` 辅助（`SshExecutor` 是自建连接模型，
 无法复用已打开的 channel）。
 
-基础设施豁免只有两类，且文件内必须注释说明原因 —— 清单见
-`.trellis/spec/backend/quality-guidelines.md`「平台差异集中化 · 边界」。
+基础设施豁免只有两类，且文件内必须注释说明原因。
 
 已迁移正例参照：`common/git/transport.rs`、`common/file/services.rs`、`agent/manager.rs`、
 `lsp/process.rs`。
@@ -92,8 +87,7 @@ Windows 的 `CREATE_NO_WINDOW` 语义由 `platform::process_spawn::apply_child_f
 creation flags，重复附加反而会让平台差异离开集中层。
 
 同步桥（`collect_blocking` / `collect_blocking_with` / `spawn_detached` /
-`command_exists_blocking`）的线程语义与允许调用位置：见
-`.trellis/spec/backend/concurrency-guidelines.md`「`core::exec` 的同步桥语义」。
+`command_exists_blocking`）的线程语义与允许调用位置见 `core/exec.rs` 的注释。
 
 **2. 跨平台 shell 选择** —— Local 执行路径必须区分 Windows (`cmd /c`) 与 Unix (`sh -c`)。正确参照
 `terminal/mod.rs` 的 task-command 分支（`#[cfg(target_os = "windows")]` → `cmd` /
@@ -104,16 +98,13 @@ portable-pty 阻塞读写，必须包裹进 `tokio::task::spawn_blocking`。参�
 `lsp/manager.rs` 的既有用法。
 
 **6. Command 层保持极薄** —— `#[tauri::command]` 只做参数接收 + 反序列化校验 + 调度
-manager/service，禁止在 Command 内部平铺 Git、SSH、PTY 核心控制逻辑。委派写法与原因见
-`.trellis/spec/backend/command-guidelines.md`「命令边界的两条硬约束」。
+manager/service，禁止在 Command 内部平铺 Git、SSH、PTY 核心控制逻辑。
 
 **7. `if let` 嵌套不超过 3 层** —— 连续 3 层及以上 `if let` / `if let else if` 必须拍平为单个
 `match`；反向，仅 1-2 个 happy path 的解构优先 `if let`，禁止写出带 `_ => {}` 占位的 `match`。
-理由与样例见 `.trellis/spec/backend/quality-guidelines.md`「禁止模式 5」。
 
 **8. 路径安全校验** —— 前端传入的路径（IDE 路径、项目 Root、文件操作路径）在 Rust 端消费前必须
-`canonicalize()`，严防路径穿越。`capabilities` 配置禁止放开 `fs:allow-all`、`shell:allow-all`
-（见 `.trellis/spec/security/allowlist.md`）。
+`canonicalize()`，严防路径穿越。`capabilities` 配置禁止放开 `fs:allow-all`、`shell:allow-all`。
 
 **9. `mod.rs` 保持极薄** —— `mod.rs`（或同名根文件）只允许 `mod` 声明与 `pub use` re-export。
 业务 `fn`、`impl` 块、结构体字段实现必须抽离到同级独立文件（`services.rs`、`manager.rs`、`types.rs`）。
@@ -125,13 +116,11 @@ clippy `missing_const_for_fn`），业务代码无条件调用统一接口。
 
 禁止在通用文件（`commands.rs` / `manager.rs` / 根级模块）内平铺 `#[cfg]` 块或保留未门控的平台专属
 import —— 未门控会在非目标平台触发 `unused_imports`，被 clippy `-D warnings` 升级为 CI 错误。
-**完整模式、反模式与历史豁免撤销：`.trellis/spec/backend/quality-guidelines.md`「平台差异集中化」。**
 
 **测试域（`#[cfg(test)]` 域内，含外部 `tests.rs` 与 `#[cfg(all(test, …))]` item）**：平台差异只允许
 **item 级**门控 —— 整测试（平台维度上移测试名）、item 级 gated `const` / fixture（每平台一条真实腿，
 无腿平台给同签名 stub）；**禁止**把 `#[cfg]` 挂在函数体内的语句 / 裸块 / 断言 / match arm / 字段
 init 上（门控粒度 < 作用域粒度 = `unused_*` 与「断言在非目标平台静默消失」的共同温床）。
-判据 `check_platform_cfg_placement`（零容忍，已接 `pnpm lint` 与 CI）。
 
 **11. 换行边界（Line-Ending Boundary）** —— Git 客户端同时面对「git 归一化视图」（blob/diff/status，
 受 `text`/`core.autocrlf` 影响时统一 LF，**确定**）与「工作区物化字节」（由平台 + git 配置决定，
@@ -143,8 +132,6 @@ Windows 默认 `autocrlf=true` 会转 CRLF，**不确定**）。
   测试仓库必须用确定性 builder（`tests/unit/support.rs::TestRepo`、`operations.rs::init_repo`：
   仓库级 `core.autocrlf=false` + `.gitattributes * -text` 双保险）；必须断言字节时走行尾无关比较
   （`support::assert_content_eq` / `assert_worktree_eq`），或优先在归一化视图（status/diff）上断言。
-  护栏：`tools/guards/checks/check_worktree_byte_assertions.py`（已接 `pnpm lint` 与 CI）。
-  细则见 `.trellis/spec/unit-test/backend-testing.md`。
 
 **13. 测试夹具路径平台无关** —— 测试中进入 `Path`/`PathBuf` 语义或路径敏感 API（`is_absolute()`、
 `canonicalize()`、存在性判定）的路径字面量，**禁止硬编码 POSIX 绝对路径**（`/opt/…`、`/home/…`、
@@ -153,11 +140,9 @@ Windows 默认 `autocrlf=true` 会转 CRLF，**不确定**）。
 
 执行方式：本红线无稳定语法指纹（静态 grep 实证 45+ 文件合法命中，脚本化信噪比不可接受），由
 **AI 审查对 diff 内夹具路径字面量专项检查**，唯一可靠判定是 CI 的 Windows `cargo test` job。
-已踩样例见 `.trellis/spec/backend/dap-domain.md` 反例表。
 
 **15. 语言差异必须落在插件数据** —— LSP 的语言差异（会话根范围、检测压制、调优开关、安装方式、能力
 声明）一律作为 `LspPlugin` 字段声明，**禁止**在通用模块（`lsp/session/*`、`manager.rs`、`profile.rs`、
 `plugin/registry.rs`、`plugin_manager.rs`）写 `language_id == "xxx"`、语言白名单或按语言 `if`/`match`。
 
-改通用模块需要知道「这是哪种语言」时，先问「这条知识能不能作为插件字段携带」。字段清单、消费点与
-三条护栏测试见 `.trellis/spec/backend/lsp-domain.md`「语言差异必须落在插件数据」。
+改通用模块需要知道「这是哪种语言」时，先问「这条知识能不能作为插件字段携带」。

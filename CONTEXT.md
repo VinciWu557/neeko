@@ -1,7 +1,7 @@
 # Neeko — Domain Glossary
 
 > Canonical vocabulary for this project. Use these terms and no others when writing code, issues, PRDs, and test descriptions.
-> For architecture details (module layout, type definitions, data flows), see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+> For module layout, type definitions and data flows, read the source tree.
 >
 > Last updated: 2026-05-26 (domain module reorganization).
 

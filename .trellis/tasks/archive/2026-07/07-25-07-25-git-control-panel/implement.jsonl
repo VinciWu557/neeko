@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Tabbed Shell Component 模式 — 合并 Dock 面板的架构约定"}
-{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "键盘快捷键按 Tab 域限定 — contentEditable guard + 当前 Tab 过滤"}

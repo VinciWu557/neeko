@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量门禁与护栏接入约定：pnpm check:quick 的覆盖面、checks/ 目录即注册、失败文案与 fix_hint 要求"}
-{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "判定 README 的哪些声明该由护栏强制、哪些只能靠人（决定 C1-C5 判据边界，避免把语义判断塞进 guard）"}
-{"file": ".trellis/tasks/10-28-readme-rework/design.md", "reason": "本任务权威设计：§1 IA、§2 事实锚点表、§3 截图/fixture 方案、§7 护栏 C1-C5 与正反例"}
-{"file": "docs/ARCHITECTURE.md", "reason": "写 README Architecture 段与六组能力边界时的事实来源（三域分层、命令注册表、跨域映射）"}

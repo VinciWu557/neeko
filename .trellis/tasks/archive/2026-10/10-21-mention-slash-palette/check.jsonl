@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "后端测试夹具路径平台无关（红线 13）—— list_agent_commands 的测试"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "复核组件规模与门禁；确认没有靠拆分规避 ratchet"}
-{"file": "src/AGENTS.md", "reason": "复核 @ 提及的路径是否全程走 FileRef（红线 12）"}

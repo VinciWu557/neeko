@@ -1,9 +1,0 @@
-{"file": ".trellis/tasks/10-13-agent-insert-addressing-arbitration/prd.md", "reason": "本任务需求与决议索引（Q1–Q7）；Q5 为唯一开放项，未定案不得开工批 1"}
-{"file": ".trellis/tasks/10-13-agent-insert-addressing-arbitration/design.md", "reason": "投递形态三选一的判据（§0）、7 处「首个」口径实测表（§1.2）、护栏 A1–A4/G3 判据下限（§3）、风险表 T1–T8（§7）"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "激活态单源约束：批 3 要移除 useKeyboardShortcuts 对 store 顶层 activeTabId 的依赖（design §1.3）"}
-{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "现有「拖拽到输入框 · 双目标分发」章节（405-500 行）描述的是本任务判定为 defect 的形态，批 5 需整段重写；动手前先读它原本的意图"}
-{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "注册表 handler 的 useEffect 登记/注销生命周期与引用计数约定（批 1 T2 风险）"}
-{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "Red 先行与测试独立性：批 1「未登记返回 false」「StrictMode 双挂载」「clipboard 兜底可达」三条必须先失败"}
-{"file": ".trellis/spec/unit-test/mock-strategies.md", "reason": "editorStore / clipboard / registry 的 mock 边界（useFileDrop.test.ts 两条 Priority-1 测试要改写）"}
-{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "把「顺序口径只有一处」「tabId 必填不回退」落成可执行判据而非纪律（批 4 护栏设计）"}
-{"file": "docs/domain-model.md", "reason": "WorkspaceSession 词汇与 terminal 地址派生小节（10-12 已落地）；批 4 的 GUARD.docs 指针必须指向此处，registry.py 会校验其存在"}

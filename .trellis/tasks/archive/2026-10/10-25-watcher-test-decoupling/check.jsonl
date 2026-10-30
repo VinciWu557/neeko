@@ -1,4 +1,0 @@
-{"file": ".trellis/tasks/10-25-watcher-test-decoupling/prd.md", "reason": "逐条核对验收标准（含 fseventsd CPU < 5% / < 30% 与零 sleep）"}
-{"file": ".trellis/tasks/10-25-watcher-test-decoupling/design.md", "reason": "核对分层归类是否与实现一致；失败模式矩阵是否被合并破坏"}
-{"file": ".trellis/tasks/10-25-watcher-test-decoupling/implement.md", "reason": "核对每阶段的验证命令是否跑过；变异验证矩阵是否逐条完成"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "检查 _watcher Option 化是否破坏单一强所有者契约（泄漏或双所有者）"}

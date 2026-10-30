@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "store 唯一缓存与写入口的既有规约"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "类型投影幂等性判据（Detection 往返）"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "表单控件复用 ui/ 原语 + 渲染测试断言 DOM（变异漏抓教训）"}

@@ -1,8 +1,0 @@
-{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "红线 4/6：IPC 2MB 边界与 Command 薄层，read_file_bytes 命令设计依据"}
-{"file": ".trellis/spec/backend/command-execution.md", "reason": "红线 1/2：远程字节读取必须走统一 exec 通道（base64 经 core::exec）"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "红线 3：Local fs 读取包 spawn_blocking 的隔离要求"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "reader.rs / file/commands.rs 落点与模块归属"}
-{"file": ".trellis/spec/frontend/api-layer.md", "reason": "前端 invoke 封装约定，useAssetUrl / read_file_bytes 前端入口落位"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "MarkdownImage / PdfFileView 组件拆分与 props 约定"}
-{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "useAssetUrl hook 的生命周期与副作用规范"}
-{"file": ".trellis/spec/security/allowlist.md", "reason": "红线 8：路径 canonicalize + scope 校验，capabilities 约束"}

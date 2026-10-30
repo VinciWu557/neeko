@@ -202,8 +202,8 @@ pnpm tauri build    # packaged build
 ## Develop
 
 ```bash
-pnpm check:quick   # default gate: static checks + tests for the files you touched
-pnpm check         # full local run (also executed by pre-push and CI)
+pnpm check:quick   # default gate: static checks + frontend tests
+pnpm check         # full local run (also executed by CI)
 ```
 
 - TDD is the working mode: failing test first, then the minimal implementation.
@@ -212,14 +212,11 @@ pnpm check         # full local run (also executed by pre-push and CI)
 
 ## Documentation
 
-| Document                                                 | What it covers                                                                         |
-| -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| [docs/features.md](docs/features.md)                     | The canonical capability inventory — the single source of truth this README summarises |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)             | Module layout, DTO contracts and data flows                                            |
-| [CONTEXT.md](CONTEXT.md)                                 | Domain glossary (project, worktree, agent, skill, task)                                |
-| [docs/keyboard-shortcuts.md](docs/keyboard-shortcuts.md) | The full, remappable shortcut list                                                     |
-| [CHANGELOG.md](CHANGELOG.md)                             | What changed in each release                                                           |
-| [CONTRIBUTING.md](CONTRIBUTING.md)                       | How to contribute and what CI enforces                                                 |
+| Document                     | What it covers                                       |
+| ---------------------------- | ---------------------------------------------------- |
+| [CONTEXT.md](CONTEXT.md)     | Domain glossary (project, worktree, agent, skill, task) |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release                         |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute and what CI enforces         |
 
 ## Community
 

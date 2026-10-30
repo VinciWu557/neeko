@@ -1,8 +1,0 @@
-{"file": ".trellis/tasks/10-16-notify-dsh/research/step0-spike-report.md", "reason": "审查是否满足实测得出的硬约束：P6b 投递断言不能只看 204；P2 不跑包管理器"}
-{"file": ".trellis/tasks/10-16-notify-dsh/research/dsh-consumption-decision.md", "reason": "审查是否偏离目标：不碰 chat 层、不为「对话接入」写代码"}
-{"file": "packages/dsh-neeko/src/notify-wiring.ts", "reason": "审查三个断言：①Agent 的 header 取自 agent.session（不是 agent 本身）；②turn_completed 必须过 turn/end.reason 门；③两条腿都调用 installNotifyReporter"}
-{"file": "packages/dsh-neeko/src/notify-transport.ts", "reason": "审查投递层：两个 env 覆盖都要支持；永不 reject 但失败必须可报告（DeliveryFailure）"}
-{"file": "src-tauri/src/agent/hooks/install/selection.rs", "reason": "审查收敛路径是否显式跳过自供源（否则 dir()==None 会误报 Failed）"}
-{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "审查自供源语义（§3/3b/4/4b：shapes 为空的两件事分离、self_supplied 不是 path.is_empty、包侧跨栈护栏）"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "审查测试确定性：不得 spawn 真二进制（§7）、夹具路径由 tempdir 推导"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "审查 §18(c)：护栏必须钉在不变量上，不能断言「某个标识符出现过」"}

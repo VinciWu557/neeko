@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查原语采用率与 token 引用合规性"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查护栏注册与门禁接线"}
-{"file": ".trellis/tasks/07-26-ui-design-audit/design.md", "reason": "对照 §8 成功指标与 §8.1 复测命令验收"}

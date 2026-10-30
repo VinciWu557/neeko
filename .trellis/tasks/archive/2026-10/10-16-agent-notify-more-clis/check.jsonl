@@ -1,5 +1,0 @@
-{"file": ".trellis/tasks/10-16-agent-notify-more-clis/design.md", "reason": "审查子任务是否守住跨子任务契约：InstallShape/HookEntry 数据化、shim 零 CLI 知识、核心域零改动"}
-{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "审查新增 shim 与既有模板的契约面是否一致（坐标格式/token 头/路由/fail-open）"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审查红线 9/10：mod.rs 是否极薄、平台差异是否集中化"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核对纯函数覆盖率与夹具平台无关性（红线 13）"}
-{"file": ".trellis/spec/security/allowlist.md", "reason": "核对用户配置写入路径是否引入路径穿越/权限扩大（红线 8）"}

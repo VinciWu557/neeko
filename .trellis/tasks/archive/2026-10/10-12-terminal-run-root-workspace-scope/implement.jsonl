@@ -1,9 +1,0 @@
-{"file": ".trellis/spec/backend/git-domain.md", "reason": "§15 WorkspaceSession 命令寻址契约 —— terminal 运行根迁移要复刻的既有先例（唯一解析入口 / 禁 resolve_project / 护栏 A2）"}
-{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "Tauri 命令层模式：命令保持极薄、状态访问、错误返回（create_terminal_session 首参改造遵循）"}
-{"file": ".trellis/spec/backend/command-execution.md", "reason": "统一命令执行边界与禁止形态，terminal 传输分支改动不越层"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "红线 3 阻塞 I/O 隔离 —— resolve_workspace_target / CheckoutPath 解析的异步边界"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码风格与平台特定代码规则"}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "store selector / 唯一派生点纪律（runTask 取 workspace session 的写法对齐）"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门禁与禁止模式（api wrapper / useCallback / 无 any）"}
-{"file": ".trellis/spec/security/allowlist.md", "reason": "路径安全与 capability 白名单（红线 8 上下文）"}
-{"file": "docs/domain-model.md", "reason": "App→Project→Workspace 领域分层与 workspace.root ≡ 运行根的定义（本任务第一性原理来源）"}

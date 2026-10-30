@@ -1,9 +1,0 @@
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "common/db/ 拆包（mod/pool/migrations）与 common/cache/ 新域的落点、命名、mod.rs 极薄（红线 9）"}
-{"file": ".trellis/spec/backend/command-guidelines.md", "reason": "4 个 cache 命令的极薄形态（红线 6）：参数校验 + 调度，核心逻辑落 CacheStore"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "run_blocking / run_blocking_result 的用法与允许调用位置（红线 3）；连接池与阻塞 DB 调用的线程语义"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "anyhow 内部 + 命令边界转 AppError；r2d2::Error 与 rusqlite::Error 的转换路径"}
-{"file": ".trellis/spec/backend/type-safety.md", "reason": "DbPool 类型别名与 CacheStore 构造签名的类型组织约定"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "AC3 升级测试 / AC7 并发测试 / AC8 原子性测试的夹具规范：tempdir() 推导路径（红线 13）、禁止工作区字节断言（红线 11）"}
-{"file": ".trellis/spec/frontend/api-layer.md", "reason": "sqlitePort 的 invoke 封装必须落在 api/ 目录（红线：API wrapper 外的 invoke 被 ESLint 拦）"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "check:quick 与 check 的分工；禁止模式 10（配置纯净）在 Port 接线时的适用边界"}
-{"file": ".trellis/tasks/10-19-generic-sqlite-cache/design.md", "reason": "技术设计：迁移链分派器形态、池配置（with_init 必需）、事务写法（stmt 作用域）、前端 Port 契约与 namespace 归属"}

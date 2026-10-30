@@ -1,2 +1,0 @@
-{"file": "AGENTS.md", "reason": "红线 14（能力声明必须与实现一致）是本次的核心判据，复核实现是否真的同源"}
-{"file": ".trellis/spec/backend/agent-chat-transports.md", "reason": "复核新增的检查清单是否覆盖全部 5 个已知识断点"}

@@ -1,7 +1,0 @@
-{"file": ".trellis/tasks/10-25-fsevent-stream-consolidation/prd.md", "reason": "需求与验收标准；含采样取证结论（为何不以 fseventsd CPU 为验收目标）"}
-{"file": ".trellis/tasks/10-25-fsevent-stream-consolidation/design.md", "reason": "技术设计：R2 合并的代码事实基础、两条流的结构、回调改造点与不变量"}
-{"file": ".trellis/tasks/10-25-fsevent-stream-consolidation/implement.md", "reason": "分阶段执行清单（P1/P2/P4/P3）、验证命令、回滚点、假通过测试的警告"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "§后台线程资源所有权：WatcherHandle 单一强所有者 + Weak 借用者契约；改 watcher 生命周期必须遵守"}
-{"file": ".trellis/spec/backend/git-domain.md", "reason": "§生产者：一个单元一套资源（worker + file watcher + git-meta watcher）；version 号段与快照契约 —— R2 合并不得破坏"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "common/file/watcher 目录职责与 platform/<theme>/ 落点约定（红线 10）"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Rust 侧 clippy 全目标、TDD 与测试组织约定"}

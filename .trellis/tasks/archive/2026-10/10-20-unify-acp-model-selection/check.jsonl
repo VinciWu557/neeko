@@ -1,8 +1,0 @@
-{"file": ".trellis/tasks/10-20-unify-acp-model-selection/research/acp-model-selection.md", "reason": "核对实现是否与协议一致：字段名、category 探测顺序、响应全量语义、旧 API 隔离要求。"}
-{"file": ".trellis/tasks/10-20-unify-acp-model-selection/design.md", "reason": "核对实现是否符合设计决策：ModelInfo 是否真的精简、是否有 agent_id 特判、能力是否挂在协议层。"}
-{"file": ".trellis/tasks/10-20-unify-acp-model-selection/implement.md", "reason": "核对阶段完整性与变异验证清单是否全部执行。"}
-{"file": ".trellis/spec/backend/conversation-adapter.md", "reason": "检查 trait 扩展是否违反既有约定、默认方法是否正确使用。"}
-{"file": ".trellis/spec/backend/type-safety.md", "reason": "检查序列化演进是否向后兼容、联合类型是否穷尽处理。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 Unsupported / Io / Agent 错误分类是否正确，有无吞错。"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "检查 ModelCatalogResult 是否穷尽分支，有无 any。"}
-{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "检查静态护栏写法是否符合项目范式。"}

@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/security/allowlist.md", "reason": "审查：改写用户 config.toml（含 experimental_bearer_token）不得泄漏/扩大权限（红线 8）"}
-{"file": ".trellis/spec/backend/agent-hooks-domain.md", "reason": "审查 Codex 是否复用同一 shim 契约（坐标/token/路由/exit 0）"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "审查红线 9/10/15：mod.rs 极薄、无平台平铺、无 CLI 分支进通用模块"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "审查 toml_merger 的「无关内容逐字不变」是否被测试钉死（红线 13）"}

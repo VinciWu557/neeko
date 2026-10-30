@@ -270,14 +270,12 @@ pnpm run build && node scripts/sync-profiles.mjs   # 改完必须两步一起
   它不会被引用，所以无害，但 `ls` profile 的 `lib/` 会看到幽灵文件。
 - 屏幕模式是**三态**（`'main' | 'fullscreen' | 未表态`），默认是 main —— 不要让某层自己定义缺省值（见铁律九）
 - Vite 预打包缓存与本包无关，但改了 `patches/*.patch` 后根仓库需要 `rm -rf node_modules/.vite`
-  （见 `.trellis/spec/frontend/quality-guidelines.md`）
 - **`tsconfig.json` 没开 `noUnusedLocals`**，所以死代码（未使用的 import / 常量 / 私有字段）
   不会被 `prepublishOnly` 拦住。想查就单独跑
   `npx tsc --noEmit -p tsconfig.json --noUnusedLocals`
 - **`pi-tui` 的组件对「缓存数组」不一致**：`Text` / `Markdown` / `Box` 返回缓存实例，
   `Container` / `Spacer` 每次新建。给 `render()` 加装饰时必须用副本，否则每帧叠加
-  （实测 500 帧涨 8016 字节）。判据与修法见
-  `.trellis/spec/guides/code-reuse-thinking-guide.md`「缓存返回同一个数组实例」
+  （实测 500 帧涨 8016 字节）。给 `render()` 加装饰时必须用副本，否则每帧叠加。
 - **`SelectList` 不支持 `pageUp` / `pageDown`**：`handleInput` 只处理 up / down / confirm /
   cancel，且上下**环绕**（不是钳制）。实测，不是从类型推的。
 - **同一策略复制 N 份时，各份的私有状态可以互相矛盾**：三个选择器曾各持一个

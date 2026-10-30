@@ -1,3 +1,0 @@
-{"file": "src-tauri/src/terminal/manager.rs", "reason": "非drain锁收敛对象：sessions/pty_handles 三处风格混用"}
-{"file": "src-tauri/src/terminal/remote.rs", "reason": "非drain锁收敛对象：sessions/ssh_handles/drains旁路"}
-{"file": "src-tauri/src/common/terminal/drain.rs", "reason": "既有lock helper与5个drain helper，收敛基准"}

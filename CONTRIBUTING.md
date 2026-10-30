@@ -61,36 +61,36 @@ pnpm tauri dev        # start the dev app (frontend on port 1420)
 | --- | --- |
 | `pnpm tauri dev` | Run the app in development mode |
 | `pnpm tauri build` | Build a release bundle |
-| `pnpm lint` | Every static check: in-process guards + `lint:fe` + `lint:rust:all-targets` (no tests) |
-| `pnpm lint:fe` | Frontend static checks (ESLint + `tsc --noEmit`) — the `lint_fe` gate's argv |
-| `pnpm lint:rust` | Rust static checks, lib-only (`cargo fmt --check` + `clippy -D warnings`) — the commit-tier fast path |
-| `pnpm lint:rust:all-targets` | Rust static checks incl. test targets (`cargo fmt --check` + `clippy --all-targets -D warnings`) — the tier `pnpm lint` / push / CI use |
+| `pnpm lint` | All static checks: `lint:fe` + `lint:rust` (no tests) |
+| `pnpm lint:fe` | Frontend static checks (ESLint + `tsc --noEmit`) |
+| `pnpm lint:rust` | Rust static checks, lib-only (`cargo fmt --check` + `clippy -D warnings`) |
+| `pnpm lint:rust:all-targets` | Rust static checks incl. test targets (`cargo fmt --check` + `clippy --all-targets -D warnings`) — what CI runs |
 | `pnpm lint:fix` | Write-back fixes: `cargo fmt` (Rust) + ESLint `--fix` (frontend) |
 | `pnpm type-check` | TypeScript type check only |
-| `pnpm test` | All test gates: `test:fe` + `test:rust` + `test:host` |
+| `pnpm test` | All tests: `test:fe` + `test:rust` + `test:host` |
 | `pnpm test:fe` | Frontend tests once (`test:fe:watch` for watch) |
 | `pnpm test:fe:coverage` | Frontend tests with coverage — enforces the floors in `vitest.config.ts` |
 | `pnpm test:rust` | Run Rust tests |
 | `pnpm test:rust:coverage` | Rust tests with coverage — enforces `--fail-under-lines` from `package.json` |
 | `pnpm test:coverage` | Both coverage gates |
 | `pnpm test:host` | Java debug host self-check (needs a JDK; skips loudly otherwise) |
-| `pnpm check` | Everything local: `lint` + every test gate (one framework call) |
+| `pnpm check` | Everything: `lint` + `test` |
+| `pnpm check:quick` | The default development loop: `lint:fe` + `lint:rust` + `test:fe` |
 | `pnpm release <version>` | Bump version, generate changelog, tag (see [Release](#release-process)) |
 
-Coverage is a **CI gate, not a push gate**: the local hooks stay inside the latency budget, while
-`frontend-test` runs `pnpm test:fe:coverage` and `backend-coverage` runs `pnpm test:rust:coverage`
-(only when a PR touches `src-tauri/**` or `package.json`), so a floor that slips fails in CI.
-Run the same command locally when you touch a file that has a per-file pin in `vitest.config.ts`,
-or add untested Rust code (the floor has ~1.75pt of headroom, not more).
+Coverage is a **CI gate**: `frontend-test` runs `pnpm test:fe:coverage` and
+`backend-coverage` runs `pnpm test:rust:coverage` (only when a PR touches
+`src-tauri/**` or `package.json`), so a floor that slips fails in CI.
+Run the same command locally when you touch a file that has a per-file pin in
+`vitest.config.ts`, or add untested Rust code (the floor has ~1.75pt of headroom,
+not more).
 
 ## Project Structure
 
-The per-side `AGENTS.md` files are the **single source of truth** for directory
-trees and module responsibilities; this guide does not restate them (copies drift):
+`src-tauri/AGENTS.md` is the **single source of truth** for the backend directory
+tree and module responsibilities; this guide does not restate it (copies drift):
 
-- Frontend (Feature-Based): `src/AGENTS.md` → "模块布局"
 - Backend (Domain-Driven): `src-tauri/AGENTS.md` → "模块布局"
-- Full-stack overview: `docs/ARCHITECTURE.md`
 
 List directories with `ls` / Glob instead of maintaining a copy — the root
 `AGENTS.md` "顶层目录" section makes that a standing rule.
@@ -98,17 +98,13 @@ List directories with `ls` / Glob instead of maintaining a copy — the root
 ## Coding Conventions
 
 The **single source of truth** for conventions is [`AGENTS.md`](./AGENTS.md) at
-the repo root: its 15 "review red lines" are enforced by the
-`check_agents_md_size.py` guard (every rule's full text lives in exactly one
-file, and the red-line table is the machine-readable ledger). Below is a
-location index only:
+the repo root: its 15 "review red lines" live there, and every rule's full text
+lives in exactly one `AGENTS.md` file. Below is a location index only:
 
 | Topic | Authoritative location |
 | --- | --- |
 | Architecture principles (cohesion/coupling, DIP, OCP, DRY-KISS-YAGNI) | `AGENTS.md` → "架构基本原则" |
 | The 15 review red lines (Block-level; cite by number) | `AGENTS.md` red-line table (number → summary → home) |
-| Frontend import/export firewall | `src/AGENTS.md` → "模块导入/导出规范" |
-| Frontend state management, React performance | `src/AGENTS.md` → "前端架构约定" |
 | Backend command layer, errors & concurrency | `src-tauri/AGENTS.md` → "Rust 命令层约定", "错误与并发" |
 
 > Before 2026-09-25 this guide restated all of the above and demonstrably drifted
@@ -128,7 +124,8 @@ with a regression test.
 
 ## Commit Message Guidelines
 
-We follow **Conventional Commits 1.0.0**, enforced by commitlint:
+We follow **Conventional Commits 1.0.0**. `pnpm commitlint --edit <file>` checks a
+message locally; the same rules are in `commitlint.config.ts`:
 
 ```text
 <type>(<scope>): <subject>
@@ -182,128 +179,31 @@ Keep commits **atomic**: split unrelated changes into separate commits.
 
 ## Quality Gates
 
-[lefthook](https://github.com/evilmartians/lefthook) runs automatically on
-commit. Hooks are installed via `pnpm prepare` (or `pnpm lefthook install`).
-**`lefthook.yml` owns the hook list**, and each hook is a **single call into the
-guard framework** — which gates run in which context is declared once in
-`tools/guards/ledger/gates.json`, never restated in `lefthook.yml`:
+There are **no local git hooks**. The gate is CI (`.github/workflows/ci.yml`),
+and every gate is one named script, so a gate's verdict can be reproduced
+locally by running that script:
 
-| Hook | Trigger | Runs |
+| Gate | Script | CI job |
 | --- | --- | --- |
-| `pre-commit` | every commit | `pnpm guards run --stage commit --staged` |
-| `commit-msg` | every commit | `pnpm commitlint` |
-| `pre-push` | every push | `pnpm guards run --stage push --changed {push_files} --jobs 4` |
+| Frontend static checks | `pnpm lint:fe` | `frontend-check` |
+| Frontend tests + coverage | `pnpm test:fe:coverage` | `frontend-test` |
+| Rust static checks (all targets) | `pnpm lint:rust:all-targets` | `backend-check` |
+| Rust tests | `pnpm test:rust` | `backend-test` |
+| Rust coverage | `pnpm test:rust:coverage` | `backend-coverage` |
+| Java host self-check | `pnpm test:host` | `java-host-check` |
 
-The tests, the host self-check and the full-target lint run at push, not at commit:
-commit stays a fast static gate (`lint_fe` + lib-only `lint_rust`, ~10s warm), push pays
-for the minutes-scale work. `lint_rust_all_targets`（`fmt + clippy --all-targets`）is the
-only Rust static check outside the commit tier — it covers the lib (so `lint_rust` need
-not repeat in CI) and, in CI, it is the only lint landing zone for platform-specific test
-code. Skipping comes from each gate's declared `scopes` (not from hand-written
-`lefthook.yml` globs), so a file that can change a gate's verdict is covered by that gate's
-own declaration.
+Before opening a PR, run the **minimal regression set** locally — its definition
+lives in [`AGENTS.md`](./AGENTS.md) → "Development Commands" (single source of
+truth, not restated here).
 
-### Adding a gate
-
-A **gate** is a guard whose verdict comes from an external command (`argv`) rather
-than an in-process function. It is declared in `tools/guards/ledger/gates.json`:
-
-```jsonc
-{
-  "id": "lint_fe",
-  "title": "eslint + tsc",
-  "argv": ["pnpm", "lint:fe"],
-  "kind": "lint",                  // lint | test
-  "stages": ["local", "commit", "ci"],
-  "ci_job": "frontend-check",      // required iff "ci" ∈ stages
-  "platforms": ["linux", "macos", "windows"],
-  "budget_ms": 180000,             // over budget ⇒ exit 2 (gate unavailable)
-  "scopes": ["src/*.ts", "src/**/*.tsx"],   // expanded form — no `{a,b}` braces
-  "fix_hint": "…"
-}
-```
-
-Consumers need **zero** edits: `pnpm lint` / `test` / `check` / `test:coverage`,
-`lefthook.yml` and the CI guards job all select by `stage`/`kind`/`form`. Unknown
-keys are rejected at load (a typo like `stage` must not silently fall back to a
-default), `ci` ⇔ `ci_job`, and every gate is validated against the CI workflow
-and the lefthook hooks by `check_gate_topology` (A1/A3) — a gate declared for a
-CI job whose command is not in that job's steps is a failure, not a silent no-op.
-
-### Adding a guard
-
-The guard list **is** the directory `tools/guards/checks/` — dropping a module
-there registers it, and none of `package.json`, `ci.yml` or `lefthook.yml` needs
-to change (three hand-copied lists is exactly how the local and CI gate sets
-drifted apart before). A module exports two things:
-
-```python
-GUARD = Guard(id="check_my_rule", title="…", scopes=("src/**/*.ts",),
-              stages=("local", "ci", "commit"), red_lines=(8,), fix_hint="…")
-
-def check(ctx: Context) -> GuardResult: ...   # returns findings, never prints
-```
-
-The framework enforces the parts every guard used to re-invent badly:
-
-- **no vacuous pass** — `scanned == 0` is reported as *the guard itself broke*
-  (exit 2), not as a pass; the repo root is resolved in one place by marker,
-  never by `parents[N]`;
-- **a companion test is mandatory** — `tests/test_<id>.py` must exist, and the
-  guard suite runs before any verdict is printed;
-- **exit codes are distinguished** — 0 pass / 1 violation / 2 guard error, so a
-  broken tool can never masquerade as "checked". A broken guard also raises a CI
-  `::warning::`, because a guard that silently died would otherwise hide inside
-  a collapsed log group;
-- **every guard has a time budget** (`budget_ms`, default 10s) — a gate slow
-  enough that nobody runs it is a gate that has disappeared, so overrunning it
-  is reported as *guard error*, not as a code violation.
-
-`pnpm guards list` prints the live registry; `pnpm guards list --stage ci` shows
-exactly what CI gates on (and names any guard left out — the local/CI gate sets
-drifted apart precisely because no command could answer that before);
-`pnpm guards list <id>` dumps that guard's ledger.
-
-**Stage a guard together with its test.** `lefthook run pre-commit` evaluates the
-*staged* tree, so staging `tests/test_check_x.py` while `core/…` or
-`checks/check_x.py` stays at an older revision makes the hook run new tests
-against the old framework — it will fail with something that looks like a code
-bug but is really a split snapshot.
-
-A commit is blocked until all gates pass. Before opening a PR, run the **minimal
-regression set** locally — its definition lives in [`AGENTS.md`](./AGENTS.md) →
-"Development Commands" (single source of truth, not restated here).
-
-### Adding an invariant
-
-Every "hard metric" / red line / invariant must be enforced at the strongest
-level available, and its enforcement must be machine-resolvable. Register it in
-`tools/guards/ledger/invariants.json` (pointer-only — the rule text stays in its
-spec):
-
-```jsonc
-{
-  "id": "my-invariant",
-  "title": "…",
-  "tier": "structure",            // type | structure | guard | lint | test | prose
-  "enforcement": [ { "kind": "guard", "ref": "check_my_rule" } ],
-  "red_line": 12                  // optional; must exist in the red-line ledger
-}
-```
-
-The `check_invariant_enforcement` guard resolves each pointer (`guard` →
-`checks/{ref}.py`, `test` → file, `lint` → rule in `.eslintrc.cjs`,
-`type`/`structure` → file + `note`) and fails CI when one cannot be resolved.
-Invariants that genuinely cannot be mechanized use `tier: "prose"` **with a
-`reason`** and are printed on every run — visible debt, not silent debt. See
-[`.trellis/spec/guides/invariant-enforcement.md`](./.trellis/spec/guides/invariant-enforcement.md)
-for the tier ladder and rationale.
+Adding a gate means adding a script to `package.json`, a job step to
+`.github/workflows/ci.yml`, and — if it must block merges — an entry in
+`.github/BRANCH_PROTECTION.md`. Changing only one of the three yields a gate that
+looks present and never fires.
 
 ## Testing Requirements
 
-The per-layer coverage baseline lives in [`AGENTS.md`](./AGENTS.md) → "TDD 开发模式";
-the frontend test framework, directory layout and mock strategy live in
-`src/AGENTS.md` → "测试".
+The per-layer coverage baseline lives in [`AGENTS.md`](./AGENTS.md) → "TDD 开发模式".
 
 This guide keeps only the rule that has no other home:
 
@@ -322,8 +222,7 @@ This guide keeps only the rule that has no other home:
 
 - Update the relevant docs when behavior changes:
   - `AGENTS.md` — single source of truth for project context & conventions
-  - `docs/neeko-development-spec.md` — full-stack architecture spec
-  - `docs/ARCHITECTURE.md` — architecture overview
+  - `README.md` — user-facing capability inventory
 - The project maintains bilingual docs (`README.md` / `README_CN.md`,
   `CONTEXT.md` / `CONTEXT_CN.md`). When adding a doc, consider providing both
   language versions.

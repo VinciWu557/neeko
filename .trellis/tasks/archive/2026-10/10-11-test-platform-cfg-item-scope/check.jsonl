@@ -1,2 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对禁令口径、护栏清单与 checklist 已同步"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "核对迁移后的测试仍满足夹具/断言约定（红线 13）"}

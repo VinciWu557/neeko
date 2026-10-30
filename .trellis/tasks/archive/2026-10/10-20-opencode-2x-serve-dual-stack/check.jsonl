@@ -1,7 +1,0 @@
-{"file": ".trellis/tasks/10-20-opencode-2x-serve-dual-stack/research/opencode-2x-protocol.md", "reason": "核对实现与两版实测协议一致：启动行、端点路径、载荷字段名（model.id vs model.modelID、permission vs permissions、response vs decision）。"}
-{"file": ".trellis/tasks/10-20-opencode-2x-serve-dual-stack/design.md", "reason": "核对是否落实三项决策：密码注入、ServeProtocol 单一分派点、事件翻译分模块；以及回滚路径是否仍然成立。"}
-{"file": ".trellis/tasks/10-20-opencode-2x-serve-dual-stack/implement.md", "reason": "核对阶段完整性与变异验证清单是否逐条执行。"}
-{"file": ".trellis/spec/backend/command-execution.md", "reason": "检查 spawn 是否仍只走 core::exec facade（红线 1），env 注入是否落在 facade 而非业务层。"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查拆分后的 mod.rs 是否极薄、有无三层 if let、有无 unwrap、有无新增平台 cfg。"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查 resume NotFound、探测失败降级、post_serve 吞错是否符合分类约定。"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "检查新增纯函数（URL 构造/载荷构造/事件翻译/探测）是否都有断言，v1 与 v2 是否各有一套样本。"}

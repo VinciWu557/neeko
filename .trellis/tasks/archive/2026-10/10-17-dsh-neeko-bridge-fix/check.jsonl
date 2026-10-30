@@ -1,5 +1,0 @@
-{"file": ".trellis/tasks/10-17-dsh-neeko-bridge-fix/design.md", "reason": "§4 门禁：四条反证测试的形态与各自反证什么"}
-{"file": ".trellis/tasks/10-17-dsh-neeko-bridge-fix/implement.md", "reason": "Step 0 基线三条 + Step 4 零改动/无副产物判据"}
-{"file": "packages/dsh-neeko/tests/ws-server.spec.ts", "reason": "既有测试形态范例：真起 server + 真连 WS（新测试照此写，不要 mock 掉传输层）"}
-{"file": "packages/dsh-neeko/src/index.ts", "reason": "审查：waterfall 监听器是否与 approval 同处 setup/dispose、next() 让位逻辑、inject 注释"}
-{"file": "AGENTS.md", "reason": "packages/ 门禁豁免条款：验证入口是 prepublishOnly 而非根 check；根仓库零改动"}

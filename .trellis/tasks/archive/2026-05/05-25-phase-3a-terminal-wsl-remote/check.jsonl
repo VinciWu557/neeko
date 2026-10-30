@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify terminal views work correctly after refactor"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Verify strategy interfaces and cache types"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify TerminalViewBase follows conventions"}

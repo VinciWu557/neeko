@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "平台差异集中化（红线 10）与 Pre-Development Checklist：本次禁令的落点与口径同步处"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "测试域约定：夹具路径平台无关（红线 13）、确定性、行尾无关断言 —— 迁移批次必须遵守"}
-{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "约束必须与强制层级同层：新增护栏 + invariants 台账登记纪律"}
-{"file": "tools/guards/checks/check_platform_imports.py", "reason": "既有消费分析护栏（语法表层与判据参考；批 0 抽 core/rust_cfg 的等价性基线）"}

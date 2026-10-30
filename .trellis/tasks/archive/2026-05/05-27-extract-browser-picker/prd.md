@@ -1,1 +1,0 @@
-Extract useBrowserPicker from useBrowserPanel

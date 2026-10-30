@@ -1,8 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "cargo clippy --all-targets -D warnings 的零容忍判据；平台差异集中化与 mod.rs 极薄的审查口径"}
-{"file": ".trellis/spec/unit-test/backend-testing.md", "reason": "审查 AC3/AC7/AC8/AC10 的测试是否真有判别力：夹具路径平台无关、变异验证、断言而非「跑通」"}
-{"file": ".trellis/spec/unit-test/real-source-determinism.md", "reason": "迁移链是真实 SQL 语义，测试不得用假实现替代；审查是否用了真库真迁移"}
-{"file": ".trellis/spec/backend/concurrency-guidelines.md", "reason": "审查 AC7 并发读写用例与 run_blocking 用法是否符合线程语义约束"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端 Port 适配的门禁口径；AC18 的 check:quick 与全量 check 边界"}
-{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "审查不变量是否被机器钉住：单池、单版本链、单事务、Lock poisoned 零残留"}
-{"file": ".trellis/tasks/10-19-generic-sqlite-cache/design.md", "reason": "对照设计审查实现：尤其 §5 风险表与 §6.3 三条关键变异验证"}
-{"file": ".trellis/tasks/10-19-generic-sqlite-cache/implement.md", "reason": "分阶段验收点、回滚点 A–D 与「全程禁做」清单"}

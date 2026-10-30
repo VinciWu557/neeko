@@ -1,7 +1,0 @@
-{"file": ".trellis/tasks/10-13-agent-insert-addressing-arbitration/prd.md", "reason": "逐条核 AC：接收点与派发点同时存在、拖文件到终端不再静默、仲裁四处口径归零、tabId 必填族、pasteToTerminal 零命中、Q6 三处文档落地"}
-{"file": ".trellis/tasks/10-13-agent-insert-addressing-arbitration/design.md", "reason": "核对实现未偏离 §2 落点形态；重点核 T4（useFileDrop 语义变更）、T7（G3 语境材质误报面）、§5.2（禁止事件+注册表双轨）"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端禁止模式与 ESLint 防火墙：批 1 新文件落 agent-chat/api 是否越界（跨 feature 只允许 index/api/store/types）"}
-{"file": ".trellis/spec/unit-test/frontend-testing.md", "reason": "核对测试层级、独立性与 mock 边界；确认「clipboard 兜底可达」这条 Red 证据被保留而非被改写成断言新行为"}
-{"file": ".trellis/spec/guides/invariant-enforcement.md", "reason": "核对新护栏真的能拦（含故意违规的 Red 验证），而不是恒绿但什么都不查"}
-{"file": "docs/domain-model.md", "reason": "核对术语与寻址契约未漂移：agent 投递目标身份的单一来源仍是 WorkspaceSession（红线 12）"}
-{"file": ".trellis/spec/frontend/interaction-patterns.md", "reason": "核对该 spec 已随批 5 重写；若仍是迁前形态（sendToTerminal(projectId, …)），文档与代码给出相反结论 = 未闭合"}
